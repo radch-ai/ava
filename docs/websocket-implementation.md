@@ -1,9 +1,5 @@
 # WebSocket Implementation
 
-## Overview
-
-The gateway implements a production-ready WebSocket handler with connection limiting, single-writer pattern, and memory optimization using `sync.Pool`.
-
 ## Handler
 
 The `Handler` type manages WebSocket connections with connection limiting and origin validation.
@@ -20,7 +16,7 @@ handler := websocket.NewHandler(
 
 ### Connection Limiting
 
-When `maxConns > 0`, the handler uses a buffered channel as a semaphore to limit concurrent connections:
+When `maxConns > 0`, the handler uses a buffered channel as a semaphore:
 
 ```go
 var sem chan struct{}
@@ -33,7 +29,7 @@ Connections exceeding the limit receive `503 Service Unavailable`.
 
 ### Origin Validation
 
-The `CheckOrigin` function validates the `Origin` header against a whitelist:
+The `CheckOrigin` function validates the `Origin` header:
 
 - Empty origins are allowed (non-browser clients)
 - `"*"` allows all origins (development only)
@@ -65,43 +61,6 @@ Reader Loop          writeCh           Writer Goroutine
     |                                      v
                                          Conn.WriteMessage()
 ```
-
-## Memory Optimization
-
-### sync.Pool for wsMessage
-
-Message structs are pooled to reduce GC pressure:
-
-```go
-var wsMsgPool = sync.Pool{
-    New: func() interface{} {
-        return &wsMessage{}
-    },
-}
-```
-
-**Usage pattern:**
-
-```go
-// Get from pool
-msg := wsMsgPool.Get().(*wsMessage)
-msg.messageType = websocket.TextMessage
-msg.data = message
-
-// After use, reset and return to pool
-msg.messageType = 0
-msg.data = nil
-wsMsgPool.Put(msg)
-```
-
-### Buffer Sizing
-
-| Constant | Value | Purpose |
-|----------|-------|---------|
-| `defaultBufferSize` | 8192 (8KB) | Per-connection read/write buffers |
-| `maxMessageSize` | 65536 (64KB) | Maximum message size limit |
-
-**Memory calculation:** With 100K concurrent connections, buffers use ~1.6GB RAM (16KB per connection).
 
 ## Connection Lifecycle
 
@@ -135,28 +94,6 @@ The handler sends ping frames every 30 seconds to detect dead connections:
 
 ```go
 const pingInterval = 30 * time.Second
-
-func (h *Handler) pingLoop(ctx context.Context, writeCh chan<- *wsMessage, logger zerolog.Logger) {
-    ticker := time.NewTicker(pingInterval)
-    defer ticker.Stop()
-
-    for {
-        select {
-        case <-ctx.Done():
-            return
-        case <-ticker.C:
-            msg := wsMsgPool.Get().(*wsMessage)
-            msg.messageType = websocket.PingMessage
-            msg.data = nil
-            select {
-            case writeCh <- msg:
-            case <-ctx.Done():
-                wsMsgPool.Put(msg)
-                return
-            }
-        }
-    }
-}
 ```
 
 Pong responses reset the read deadline:
@@ -223,17 +160,4 @@ case err := <-writerErrCh:
 
 See `internal/websocket/handler_test.go` for connection tests and `internal/websocket/handler_bench_test.go` for benchmarks.
 
-### Running Benchmarks
-
-```bash
-go test -bench=. -benchmem ./internal/websocket/
-```
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GATEWAY_ALLOWED_ORIGINS` | (none) | Comma-separated origin whitelist |
-| `GATEWAY_MAX_CONNS` | 0 (unlimited) | Maximum concurrent connections |
-
-**Note:** Empty `GATEWAY_ALLOWED_ORIGINS` denies all connections. Use `"*"` for development only.
+See `docs/performance.md` for memory optimization details and scaling implications.

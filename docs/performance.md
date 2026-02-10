@@ -8,9 +8,7 @@ Run benchmarks with:
 go test -bench=. -benchmem ./internal/websocket/
 ```
 
-## Benchmark Results
-
-### Message Throughput
+### Benchmark Tests
 
 | Benchmark | Description |
 |-----------|-------------|
@@ -21,9 +19,9 @@ go test -bench=. -benchmem ./internal/websocket/
 
 ## Memory Optimization
 
-### sync.Pool Usage
+### sync.Pool
 
-Message structs are allocated from a pool to reduce garbage collection pressure:
+Message structs are pooled to reduce garbage collection pressure:
 
 ```go
 var wsMsgPool = sync.Pool{
@@ -33,7 +31,19 @@ var wsMsgPool = sync.Pool{
 }
 ```
 
-**Impact:** Reduces allocations for high-frequency message operations.
+**Usage:**
+
+```go
+// Get from pool
+msg := wsMsgPool.Get().(*wsMessage)
+msg.messageType = websocket.TextMessage
+msg.data = message
+
+// After use, reset and return to pool
+msg.messageType = 0
+msg.data = nil
+wsMsgPool.Put(msg)
+```
 
 ### Buffer Sizes
 

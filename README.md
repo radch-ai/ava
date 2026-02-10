@@ -56,6 +56,10 @@ Runtime configuration via environment variables:
 |----------|---------|-------------|
 | GATEWAY_ADDR | :8080 | Server bind address |
 | GATEWAY_LOG_LEVEL | info | Log level (debug, info, warn, error) |
+| GATEWAY_ALLOWED_ORIGINS | deny all | Comma-separated origin whitelist |
+| GATEWAY_MAX_CONNS | 0 | Maximum concurrent connections (0 = unlimited) |
+
+**Note:** Empty `GATEWAY_ALLOWED_ORIGINS` denies all browser connections. Use `"*"` for development only.
 
 ## API
 
@@ -75,20 +79,11 @@ GET /ws
 
 Upgrades HTTP to WebSocket connection. Requires authentication (future).
 
-## Project Structure
+## Documentation
 
-```
-gateway/
-├── cmd/gateway/         # Service entry point
-├── internal/
-│   ├── config/          # Environment-based configuration
-│   ├── project/         # Generated project details
-│   ├── server/          # HTTP server with graceful shutdown
-│   └── websocket/       # WebSocket handler
-├── scripts/             # Code generation scripts
-├── docs/                # Project documentation
-└── .claude/             # AI assistant context
-```
+- `docs/foundation.md` - Architecture and design patterns
+- `docs/websocket-implementation.md` - Technical implementation details
+- `docs/performance.md` - Benchmarks, scaling, and tuning
 
 ## Deployment
 
