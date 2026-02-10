@@ -1,0 +1,21 @@
+# Binaries for all platforms
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+*.test
+*.out
+
+# Go workspace
+go.work
+
+# Coverage
+*.coverprofile
+coverage.html
+coverage.out
+
+# Environment
+.env
+.env.local
