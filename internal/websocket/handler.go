@@ -317,12 +317,17 @@ func (h *Handler) writer(ctx context.Context, conn *websocket.Conn, writeCh <-ch
 			if !ok {
 				return
 			}
+			if msg.messageType == 0 {
+				// Skip invalid messages (already cleaned up)
+				wsMsgPool.Put(msg)
+				continue
+			}
 			if err := conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
 				logger.Debug().Err(err).Msg("failed to set write deadline")
 			}
 			if err := conn.WriteMessage(msg.messageType, msg.data); err != nil {
 				logger.Debug().Err(err).Msg("write failed")
-				// Reset and return to pool before exiting
+				// Return to pool and continue
 				msg.messageType = 0
 				msg.data = nil
 				wsMsgPool.Put(msg)
@@ -394,14 +399,22 @@ func (h *Handler) forwardAgentEvents(ctx context.Context, eventCh <-chan agent.A
 			msg := wsMsgPool.Get().(*wsMessage)
 			msg.messageType = websocket.TextMessage
 			msg.data = marshalEvent(*wsEvt)
+
+			// Try to send with timeout, using a select that catches channel close
+			sendTimer := time.NewTimer(100 * time.Millisecond)
 			select {
 			case writeCh <- msg:
+				sendTimer.Stop()
+				// Writer will handle pool return
 			case <-ctx.Done():
+				sendTimer.Stop()
+				// Context cancelled - return msg to pool and exit
 				msg.messageType = 0
 				msg.data = nil
 				wsMsgPool.Put(msg)
 				return
-			case <-time.After(100 * time.Millisecond):
+			case <-sendTimer.C:
+				sendTimer.Stop()
 				// Timeout, skip this event
 				msg.messageType = 0
 				msg.data = nil
