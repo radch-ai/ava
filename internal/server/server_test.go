@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -124,20 +125,42 @@ func TestServerWebSocketEndpoint(t *testing.T) {
 	}
 	defer func() { _ = ws.Close() }()
 
-	// Send a test message
-	if err := ws.WriteMessage(gorillawebsocket.TextMessage, []byte("test")); err != nil {
+	// Read connected event first
+	_ = ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, p, err := ws.ReadMessage()
+	if err != nil {
+		t.Fatalf("failed to read connected event: %v", err)
+	}
+
+	var connected map[string]any
+	if err := json.Unmarshal(p, &connected); err != nil {
+		t.Fatalf("failed to unmarshal connected event: %v", err)
+	}
+
+	if connected["type"] != "connected" {
+		t.Errorf("expected connected event, got %v", connected["type"])
+	}
+
+	// Send a valid prompt message
+	promptMsg := map[string]string{"type": "prompt", "text": "test"}
+	data, _ := json.Marshal(promptMsg)
+	if err := ws.WriteMessage(gorillawebsocket.TextMessage, data); err != nil {
 		t.Errorf("failed to write message: %v", err)
 	}
 
-	// Read echo
-	_ = ws.SetReadDeadline(time.Now().Add(2 * time.Second))
-	_, p, err := ws.ReadMessage()
+	// Read agent_start event
+	_, p, err = ws.ReadMessage()
 	if err != nil {
 		t.Errorf("failed to read message: %v", err)
 	}
 
-	if string(p) != "test" {
-		t.Errorf("expected echo 'test', got '%s'", string(p))
+	var agentStart map[string]any
+	if err := json.Unmarshal(p, &agentStart); err != nil {
+		t.Fatalf("failed to unmarshal agent_start event: %v", err)
+	}
+
+	if agentStart["type"] != "agent_start" {
+		t.Errorf("expected agent_start event, got %v", agentStart["type"])
 	}
 }
 
@@ -339,18 +362,41 @@ func TestServerWithRealHTTPClient(t *testing.T) {
 	}
 	defer func() { _ = ws.Close() }()
 
-	// Verify echo works
-	if err := ws.WriteMessage(gorillawebsocket.TextMessage, []byte("hello")); err != nil {
+	// Read connected event
+	_ = ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, p, err := ws.ReadMessage()
+	if err != nil {
+		t.Fatalf("failed to read connected event: %v", err)
+	}
+
+	var connected map[string]any
+	if err := json.Unmarshal(p, &connected); err != nil {
+		t.Fatalf("failed to unmarshal connected event: %v", err)
+	}
+
+	if connected["type"] != "connected" {
+		t.Errorf("expected connected event, got %v", connected["type"])
+	}
+
+	// Send a valid prompt message
+	promptMsg := map[string]string{"type": "prompt", "text": "hello"}
+	data, _ := json.Marshal(promptMsg)
+	if err := ws.WriteMessage(gorillawebsocket.TextMessage, data); err != nil {
 		t.Errorf("failed to write message: %v", err)
 	}
 
-	_, p, err := ws.ReadMessage()
+	_, p, err = ws.ReadMessage()
 	if err != nil {
 		t.Errorf("failed to read message: %v", err)
 	}
 
-	if string(p) != "hello" {
-		t.Errorf("expected echo 'hello', got '%s'", string(p))
+	var agentStart map[string]any
+	if err := json.Unmarshal(p, &agentStart); err != nil {
+		t.Fatalf("failed to unmarshal agent_start event: %v", err)
+	}
+
+	if agentStart["type"] != "agent_start" {
+		t.Errorf("expected agent_start event, got %v", agentStart["type"])
 	}
 }
 
@@ -376,19 +422,20 @@ func TestServerGracefulShutdownWithWebSocket(t *testing.T) {
 	}
 	defer func() { _ = ws.Close() }()
 
-	// Verify connection works
-	if err := ws.WriteMessage(gorillawebsocket.TextMessage, []byte("test")); err != nil {
-		t.Fatalf("failed to write message: %v", err)
-	}
-
-	// Read echo
+	// Verify connection works by reading the connected event
 	_ = ws.SetReadDeadline(time.Now().Add(2 * time.Second))
 	_, p, err := ws.ReadMessage()
 	if err != nil {
 		t.Fatalf("failed to read message: %v", err)
 	}
-	if string(p) != "test" {
-		t.Fatalf("expected echo 'test', got '%s'", string(p))
+
+	var connected map[string]any
+	if err := json.Unmarshal(p, &connected); err != nil {
+		t.Fatalf("failed to unmarshal connected event: %v", err)
+	}
+
+	if connected["type"] != "connected" {
+		t.Fatalf("expected connected event, got %v", connected["type"])
 	}
 
 	// Shutdown server while WebSocket is still connected

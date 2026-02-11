@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/nevaria-ai/gateway/internal/agent"
 	"github.com/rs/zerolog"
 )
 
@@ -32,11 +34,12 @@ var upgrader = websocket.Upgrader{
 
 // A Handler manages WebSocket connections with connection limiting and origin validation.
 type Handler struct {
-	logger      zerolog.Logger
-	upgrader    websocket.Upgrader
-	connSem     chan struct{} // Semaphore for connection limiting
-	maxConns    int
-	activeConns int32 // atomic counter
+	logger       zerolog.Logger
+	upgrader     websocket.Upgrader
+	connSem      chan struct{} // Semaphore for connection limiting
+	maxConns     int
+	activeConns  int32 // atomic counter
+	agentManager *AgentManager
 }
 
 type wsMessage struct {
@@ -49,6 +52,18 @@ var wsMsgPool = sync.Pool{
 	New: func() interface{} {
 		return &wsMessage{}
 	},
+}
+
+// wsEvent represents an event sent to the WebSocket client as JSON.
+type wsEvent struct {
+	Type string `json:"type"`
+	Data any    `json:"data,omitempty"`
+}
+
+// marshalEvent converts an event to JSON bytes for WebSocket transmission.
+func marshalEvent(event wsEvent) []byte {
+	data, _ := json.Marshal(event)
+	return data
 }
 
 // NewHandler creates a new WebSocket handler with connection limiting.
@@ -67,10 +82,11 @@ func NewHandler(logger zerolog.Logger, allowedOrigins []string, maxConns int) *H
 	}
 
 	return &Handler{
-		logger:   logger,
-		upgrader: handlerUpgrader,
-		connSem:  sem,
-		maxConns: maxConns,
+		logger:       logger,
+		upgrader:     handlerUpgrader,
+		connSem:      sem,
+		maxConns:     maxConns,
+		agentManager: NewAgentManager(logger),
 	}
 }
 
@@ -125,8 +141,9 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Set max message size to prevent memory exhaustion attacks
 	conn.SetReadLimit(maxMessageSize)
 
-	// Generate unique connection ID
+	// Generate unique connection ID and session ID
 	connID := uuid.New().String()
+	sessionID := uuid.New().String()
 	logCtx := h.logger.With().
 		Str("conn_id", connID).
 		Str("remote_addr", r.RemoteAddr).
@@ -171,6 +188,37 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Start ping goroutine
 	go h.pingLoop(ctx, writeCh, logCtx)
 
+	// Create or get agent for this session
+	agentInstance := h.agentManager.GetOrCreateAgent(sessionID)
+	agentState := agentInstance.State()
+	agentID := agentState.SessionID // Use session ID as agent ID for now
+
+	// Subscribe to agent events
+	subID, eventCh := agentInstance.Subscribe()
+	defer agentInstance.Unsubscribe(subID)
+
+	// Start goroutine to forward agent events to WebSocket
+	go h.forwardAgentEvents(ctx, eventCh, writeCh, logCtx)
+
+	// Send connected event to client
+	connectedEvent := wsEvent{
+		Type: "connected",
+		Data: map[string]string{
+			"session_id": sessionID,
+			"agent_id":   agentID,
+			"conn_id":    connID,
+		},
+	}
+	msg := wsMsgPool.Get().(*wsMessage)
+	msg.messageType = websocket.TextMessage
+	msg.data = marshalEvent(connectedEvent)
+	select {
+	case writeCh <- msg:
+	case <-time.After(100 * time.Millisecond):
+		wsMsgPool.Put(msg)
+		logCtx.Warn().Msg("failed to send connected event")
+	}
+
 	// Message loop
 	for {
 		select {
@@ -191,10 +239,14 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 				msg.data = nil
 				wsMsgPool.Put(msg)
 			}
+			// Clean up agent on disconnect
+			h.agentManager.RemoveAgent(sessionID)
 			return
 		case err := <-writerErrCh:
 			logCtx.Error().Err(err).Msg("writer failed, closing connection")
 			cancel()
+			// Clean up agent on disconnect
+			h.agentManager.RemoveAgent(sessionID)
 			return
 		default:
 			// Set read deadline before each read
@@ -208,6 +260,8 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 					logCtx.Error().Err(err).Msg("unexpected close")
 				}
 				cancel()
+				// Clean up agent on disconnect
+				h.agentManager.RemoveAgent(sessionID)
 				return
 			}
 
@@ -216,29 +270,38 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 				Int("msg_size", len(message)).
 				Msg("received message")
 
-			// Send to writer goroutine with timeout to avoid blocking forever
-			writeTimer := time.NewTimer(writeTimeout)
-			msg := wsMsgPool.Get().(*wsMessage)
-			msg.messageType = messageType
-			msg.data = message
-			select {
-			case writeCh <- msg:
-				writeTimer.Stop()
-			case <-ctx.Done():
-				writeTimer.Stop()
-				// Return msg to pool on context cancellation
-				msg.messageType = 0
-				msg.data = nil
-				wsMsgPool.Put(msg)
-				return
-			case <-writeTimer.C:
-				logCtx.Error().Msg("write channel timeout")
-				// Return msg to pool on timeout
-				msg.messageType = 0
-				msg.data = nil
-				wsMsgPool.Put(msg)
-				cancel()
-				return
+			// Handle text messages as potential agent prompts
+			if messageType == websocket.TextMessage {
+				h.handleTextMessage(ctx, message, agentInstance, writeCh, logCtx)
+			} else {
+				// Echo non-text messages back
+				writeTimer := time.NewTimer(writeTimeout)
+				msg := wsMsgPool.Get().(*wsMessage)
+				msg.messageType = messageType
+				msg.data = message
+				select {
+				case writeCh <- msg:
+					writeTimer.Stop()
+				case <-ctx.Done():
+					writeTimer.Stop()
+					// Return msg to pool on context cancellation
+					msg.messageType = 0
+					msg.data = nil
+					wsMsgPool.Put(msg)
+					// Clean up agent on disconnect
+					h.agentManager.RemoveAgent(sessionID)
+					return
+				case <-writeTimer.C:
+					logCtx.Error().Msg("write channel timeout")
+					// Return msg to pool on timeout
+					msg.messageType = 0
+					msg.data = nil
+					wsMsgPool.Put(msg)
+					cancel()
+					// Clean up agent on disconnect
+					h.agentManager.RemoveAgent(sessionID)
+					return
+				}
 			}
 		}
 	}
@@ -311,6 +374,163 @@ func (h *Handler) pingLoop(ctx context.Context, writeCh chan<- *wsMessage, logge
 				return
 			}
 		}
+	}
+}
+
+// forwardAgentEvents forwards agent events to the WebSocket client.
+func (h *Handler) forwardAgentEvents(ctx context.Context, eventCh <-chan agent.AgentEvent, writeCh chan<- *wsMessage, logger zerolog.Logger) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-eventCh:
+			if !ok {
+				return
+			}
+			wsEvt := h.agentEventToWSEvent(event)
+			if wsEvt == nil {
+				continue
+			}
+			msg := wsMsgPool.Get().(*wsMessage)
+			msg.messageType = websocket.TextMessage
+			msg.data = marshalEvent(*wsEvt)
+			select {
+			case writeCh <- msg:
+			case <-ctx.Done():
+				msg.messageType = 0
+				msg.data = nil
+				wsMsgPool.Put(msg)
+				return
+			case <-time.After(100 * time.Millisecond):
+				// Timeout, skip this event
+				msg.messageType = 0
+				msg.data = nil
+				wsMsgPool.Put(msg)
+				logger.Debug().Msg("agent event forward timeout")
+			}
+		}
+	}
+}
+
+// handleTextMessage handles incoming text messages from the WebSocket client.
+func (h *Handler) handleTextMessage(ctx context.Context, data []byte, agentInstance *agent.Agent, writeCh chan<- *wsMessage, logger zerolog.Logger) {
+	var msg struct {
+		Type string `json:"type"`
+		Text string `json:"text,omitempty"`
+	}
+
+	if err := json.Unmarshal(data, &msg); err != nil {
+		logger.Debug().Err(err).Msg("failed to unmarshal message")
+		return
+	}
+
+	switch msg.Type {
+	case "prompt":
+		if msg.Text == "" {
+			logger.Debug().Msg("prompt message missing text field")
+			return
+		}
+		// Send prompt to agent
+		if err := agentInstance.Prompt(ctx, msg.Text); err != nil {
+			logger.Error().Err(err).Msg("agent prompt failed")
+		}
+	default:
+		logger.Debug().Str("msg_type", msg.Type).Msg("unknown message type")
+	}
+}
+
+// agentEventToWSEvent converts an agent event to a WebSocket event.
+func (h *Handler) agentEventToWSEvent(event agent.AgentEvent) *wsEvent {
+	switch e := event.(type) {
+	case agent.AgentStartEvent:
+		return &wsEvent{
+			Type: "agent_start",
+			Data: map[string]any{
+				"timestamp": e.Timestamp,
+			},
+		}
+	case agent.AgentEndEvent:
+		return &wsEvent{
+			Type: "agent_end",
+			Data: map[string]any{
+				"timestamp": e.Timestamp,
+				"messages":  e.Messages,
+			},
+		}
+	case agent.TurnStartEvent:
+		return &wsEvent{
+			Type: "turn_start",
+			Data: map[string]any{
+				"timestamp": e.Timestamp,
+			},
+		}
+	case agent.TurnEndEvent:
+		return &wsEvent{
+			Type: "turn_end",
+			Data: map[string]any{
+				"timestamp":   e.Timestamp,
+				"message":     e.Message,
+				"toolResults": e.ToolResults,
+			},
+		}
+	case agent.MessageStartEvent:
+		return &wsEvent{
+			Type: "message_start",
+			Data: map[string]any{
+				"timestamp": e.Timestamp,
+				"message":   e.Message,
+			},
+		}
+	case agent.MessageUpdateEvent:
+		return &wsEvent{
+			Type: "message_update",
+			Data: map[string]any{
+				"timestamp": e.Timestamp,
+				"message":   e.Message,
+				"delta":     e.Delta,
+			},
+		}
+	case agent.MessageEndEvent:
+		return &wsEvent{
+			Type: "message_end",
+			Data: map[string]any{
+				"timestamp": e.Timestamp,
+				"message":   e.Message,
+			},
+		}
+	case agent.ToolExecutionStartEvent:
+		return &wsEvent{
+			Type: "tool_start",
+			Data: map[string]any{
+				"timestamp":    e.Timestamp,
+				"tool_call_id": e.ToolCallID,
+				"tool_name":    e.ToolName,
+				"args":         e.Args,
+			},
+		}
+	case agent.ToolExecutionUpdateEvent:
+		return &wsEvent{
+			Type: "tool_update",
+			Data: map[string]any{
+				"timestamp":      e.Timestamp,
+				"tool_call_id":   e.ToolCallID,
+				"tool_name":      e.ToolName,
+				"partial_result": e.PartialResult,
+			},
+		}
+	case agent.ToolExecutionEndEvent:
+		return &wsEvent{
+			Type: "tool_end",
+			Data: map[string]any{
+				"timestamp":    e.Timestamp,
+				"tool_call_id": e.ToolCallID,
+				"tool_name":    e.ToolName,
+				"result":       e.Result,
+				"is_error":     e.IsError,
+			},
+		}
+	default:
+		return nil
 	}
 }
 

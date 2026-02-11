@@ -44,7 +44,7 @@ docs/                      # Completed work (proper documentation)
 
 ### For Multi-File Tasks (Recommended)
 
-When working on multiple independent code areas, launch parallel `golang-expert` subagents:
+When working on multiple independent code areas, launch parallel subagents:
 
 ```bash
 # Example: 3 parallel subagents for different files
