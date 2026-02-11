@@ -81,8 +81,33 @@ Upgrades HTTP to WebSocket connection. Requires authentication (future).
 
 ## Documentation
 
+All documentation is consolidated in the `docs/` directory for easy navigation:
+
+### Core Package Documentation
+
+- `docs/agent.md` - Agent framework and API reference
+  - Core types, state management, and tool execution
+  - Event system and message handling
+  - Tool registry and usage examples
+  - Configuration and performance considerations
+
+- `docs/llm.md` - LLM client interfaces and providers
+  - Unified interface for multiple providers
+  - Provider-specific implementations:
+    - OpenAI client with streaming support
+    - Anthropic Claude client integration
+    - Google Gemini client
+  - Error handling and metrics collection
+
+- `docs/websocket.md` - WebSocket handler and connection management
+  - Connection handling and agent management
+  - Message types and communication flow
+  - Protocol specification and event formats
+  - Security features and performance optimization
+
+### Architecture and Design
+
 - `docs/foundation.md` - Architecture and design patterns
-- `docs/websocket-implementation.md` - Technical implementation details
 - `docs/performance.md` - Benchmarks, scaling, and tuning
 
 ## Deployment
