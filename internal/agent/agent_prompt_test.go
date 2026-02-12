@@ -11,9 +11,19 @@ import (
 func TestAgent_PromptAddsUserMessage(t *testing.T) {
 	t.Parallel()
 
+	// Create a mock LLM client that returns a simple text response
+	mockLLM := &MockLLMClient{
+		Responses: []MockResponse{
+			{
+				Message: NewTextMessage(RoleAssistant, "Mock response"),
+			},
+		},
+	}
+
 	opts := AgentOptions{
 		SystemPrompt: "You are a helpful assistant.",
 		SessionID:    "test-session",
+		LLMClient:    mockLLM,
 	}
 
 	a := NewAgent(opts)
@@ -52,9 +62,18 @@ func TestAgent_PromptAddsUserMessage(t *testing.T) {
 func TestAgent_PromptEmitsAgentStartEvent(t *testing.T) {
 	t.Parallel()
 
+	mockLLM := &MockLLMClient{
+		Responses: []MockResponse{
+			{
+				Message: NewTextMessage(RoleAssistant, "Mock response"),
+			},
+		},
+	}
+
 	opts := AgentOptions{
 		SystemPrompt: "You are a helpful assistant.",
 		SessionID:    "test-session",
+		LLMClient:    mockLLM,
 	}
 
 	a := NewAgent(opts)
@@ -95,9 +114,18 @@ func TestAgent_PromptEmitsAgentStartEvent(t *testing.T) {
 func TestAgent_PromptEmitsAgentEndEvent(t *testing.T) {
 	t.Parallel()
 
+	mockLLM := &MockLLMClient{
+		Responses: []MockResponse{
+			{
+				Message: NewTextMessage(RoleAssistant, "Mock response"),
+			},
+		},
+	}
+
 	opts := AgentOptions{
 		SystemPrompt: "You are a helpful assistant.",
 		SessionID:    "test-session",
+		LLMClient:    mockLLM,
 	}
 
 	a := NewAgent(opts)
@@ -144,9 +172,18 @@ func TestAgent_PromptEmitsAgentEndEvent(t *testing.T) {
 func TestAgent_PromptSetsStreamingState(t *testing.T) {
 	t.Parallel()
 
+	mockLLM := &MockLLMClient{
+		Responses: []MockResponse{
+			{
+				Message: NewTextMessage(RoleAssistant, "Mock response"),
+			},
+		},
+	}
+
 	opts := AgentOptions{
 		SystemPrompt: "You are a helpful assistant.",
 		SessionID:    "test-session",
+		LLMClient:    mockLLM,
 	}
 
 	a := NewAgent(opts)
@@ -196,9 +233,20 @@ func TestAgent_PromptContextCancellation(t *testing.T) {
 func TestAgent_PromptConcurrent(t *testing.T) {
 	t.Parallel()
 
+	// Create a mock LLM that returns a default response for any call
+	// The mock will return the same response each time it's called
+	mockLLM := &MockLLMClient{
+		Responses: []MockResponse{
+			{
+				Message: NewTextMessage(RoleAssistant, "Concurrent response"),
+			},
+		},
+	}
+
 	opts := AgentOptions{
 		SystemPrompt: "You are a helpful assistant.",
 		SessionID:    "test-session",
+		LLMClient:    mockLLM,
 	}
 
 	a := NewAgent(opts)
@@ -210,6 +258,8 @@ func TestAgent_PromptConcurrent(t *testing.T) {
 	for i := 0; i < numPrompts; i++ {
 		go func(idx int) {
 			ctx := context.Background()
+			// Reset mock before each call so it returns response
+			mockLLM.Reset()
 			errs <- a.Prompt(ctx, "Concurrent message")
 		}(i)
 	}
@@ -222,7 +272,7 @@ func TestAgent_PromptConcurrent(t *testing.T) {
 	}
 
 	state := a.State()
-	// Each prompt adds a user message and a simulated assistant response
+	// Each prompt adds a user message and an assistant response
 	expectedMessages := numPrompts * 2
 	if len(state.Messages) != expectedMessages {
 		t.Errorf("Expected %d messages after concurrent prompts, got %d", expectedMessages, len(state.Messages))
@@ -263,9 +313,21 @@ func TestAgent_StateThreadSafety(t *testing.T) {
 func TestAgent_SubscribeUnsubscribe(t *testing.T) {
 	t.Parallel()
 
+	mockLLM := &MockLLMClient{
+		Responses: []MockResponse{
+			{
+				Message: NewTextMessage(RoleAssistant, "Hello response"),
+			},
+			{
+				Message: NewTextMessage(RoleAssistant, "Hello again response"),
+			},
+		},
+	}
+
 	opts := AgentOptions{
 		SystemPrompt: "You are a helpful assistant.",
 		SessionID:    "test-session",
+		LLMClient:    mockLLM,
 	}
 
 	a := NewAgent(opts)
@@ -391,9 +453,25 @@ func TestAgent_NewAgent(t *testing.T) {
 func TestAgent_PromptAddsMultipleMessages(t *testing.T) {
 	t.Parallel()
 
+	// Create mock LLM with 3 responses
+	mockLLM := &MockLLMClient{
+		Responses: []MockResponse{
+			{
+				Message: NewTextMessage(RoleAssistant, "Response to first message"),
+			},
+			{
+				Message: NewTextMessage(RoleAssistant, "Response to second message"),
+			},
+			{
+				Message: NewTextMessage(RoleAssistant, "Response to third message"),
+			},
+		},
+	}
+
 	opts := AgentOptions{
 		SystemPrompt: "You are a helpful assistant.",
 		SessionID:    "test-session",
+		LLMClient:    mockLLM,
 	}
 
 	a := NewAgent(opts)
@@ -444,9 +522,18 @@ func TestAgent_PromptAddsMultipleMessages(t *testing.T) {
 func TestAgent_PromptEventOrder(t *testing.T) {
 	t.Parallel()
 
+	mockLLM := &MockLLMClient{
+		Responses: []MockResponse{
+			{
+				Message: NewTextMessage(RoleAssistant, "Mock response"),
+			},
+		},
+	}
+
 	opts := AgentOptions{
 		SystemPrompt: "You are a helpful assistant.",
 		SessionID:    "test-session",
+		LLMClient:    mockLLM,
 	}
 
 	a := NewAgent(opts)

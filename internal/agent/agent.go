@@ -55,6 +55,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/google/uuid"
@@ -175,9 +176,15 @@ func (a *Agent) State() AgentState {
 }
 
 // Prompt sends a user message to the agent and runs the tool calling loop.
+// This uses the Loop for actual LLM integration with streaming and tool execution.
 func (a *Agent) Prompt(ctx context.Context, message string) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+
+	// Check if LLM client is configured
+	if a.llmClient == nil {
+		return fmt.Errorf("LLM client not configured")
 	}
 
 	// 1. Lock and add user message to state.Messages
@@ -192,20 +199,33 @@ func (a *Agent) Prompt(ctx context.Context, message string) error {
 	// 3. Set streaming state
 	a.setStreamingState(true, nil)
 
-	// 4. Run the tool calling loop (placeholder - simulates response)
-	if err := a.runToolCallingLoop(ctx); err != nil {
+	// 4. Run tool calling loop using Loop with actual LLM integration
+	// This replaces the old placeholder with real streaming + tool execution
+	loop := NewLoop(a.llmClient)
+
+	// Get current messages as starting point
+	messages := a.State().Messages
+
+	// Run loop - handles LLM streaming and tool execution
+	result, err := loop.Run(ctx, messages, a.state.Tools...)
+	if err != nil {
 		a.setStreamingState(false, nil)
 		return err
 	}
 
-	// 5. Emit AgentEndEvent
+	// 5. Update state with final messages from loop
+	a.mu.Lock()
+	a.state.Messages = result.Messages
+	a.mu.Unlock()
+
+	// 6. Emit AgentEndEvent
 	finalState := a.State()
 	a.emit(AgentEndEvent{
 		Timestamp: finalState.Messages[len(finalState.Messages)-1].Timestamp,
 		Messages:  finalState.Messages,
 	})
 
-	// 6. Clear streaming state
+	// 7. Clear streaming state
 	a.setStreamingState(false, nil)
 
 	return nil
@@ -216,40 +236,4 @@ func (a *Agent) setStreamingState(streaming bool, msg *AgentMessage) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.state.SetStreaming(streaming, msg)
-}
-
-// runToolCallingLoop is a placeholder that simulates the tool calling loop.
-// In the full implementation, this will:
-// - Call the LLM with the current messages
-// - Handle tool calls if any are returned
-// - Emit appropriate events (TurnStart, TurnEnd, MessageStart, etc.)
-// - Continue until the LLM responds without tool calls or context is cancelled
-func (a *Agent) runToolCallingLoop(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-	}
-
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	// Get the last message (user message) for the response
-	lastMsg := a.state.Messages[len(a.state.Messages)-1]
-	if len(lastMsg.Content) == 0 {
-		return nil
-	}
-
-	// Extract text from user message for the simulated response
-	var userText string
-	if tc, ok := lastMsg.Content[0].(TextContent); ok {
-		userText = tc.Text
-	} else {
-		userText = "(message with non-text content)"
-	}
-
-	responseMsg := NewTextMessage(RoleAssistant, "Simulated response to: "+userText)
-	a.state.AddMessage(responseMsg)
-
-	return nil
 }

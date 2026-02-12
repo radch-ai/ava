@@ -26,15 +26,16 @@ type LLMClient interface {
 
 // Stream implements LLMClient by returning canned responses.
 func (m *MockLLMClient) Stream(ctx context.Context, messages []AgentMessage, tools []Tool) (<-chan AgentEvent, error) {
-	if m.responseIndex >= len(m.Responses) {
-		// Return an empty channel if no more responses
+	if len(m.Responses) == 0 {
+		// Return an empty channel if no responses configured
 		ch := make(chan AgentEvent)
 		close(ch)
 		return ch, nil
 	}
 
+	// Use responseIndex and wrap around Responses for cycling
 	resp := m.Responses[m.responseIndex]
-	m.responseIndex++
+	m.responseIndex = (m.responseIndex + 1) % len(m.Responses)
 
 	// If blocking is requested, wait until the channel is closed
 	if resp.BlockUntil != nil {

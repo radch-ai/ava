@@ -9,18 +9,13 @@ import (
 	"time"
 )
 
-// TestE2E_PromptWithMockLLM verifies the full agent flow from prompt to response.
+// TestE2E_PromptWithMockLLM verifies that agent requires LLM client to be configured.
 func TestE2E_PromptWithMockLLM(t *testing.T) {
 	t.Parallel()
 
-	// RED: Test will fail because the Agent doesn't yet use LLMClient in Prompt
-	// The current implementation uses a placeholder runToolCallingLoop
-
 	ctx := context.Background()
 
-	// Create an agent
-	// NOTE: The current Agent implementation uses a placeholder runToolCallingLoop
-	// Future enhancement: Inject MockLLMClient for full E2E testing
+	// Create an agent WITHOUT LLM client to verify error handling
 	opts := AgentOptions{
 		SystemPrompt: "You are a helpful assistant.",
 		SessionID:    "e2e-test-session",
@@ -28,74 +23,21 @@ func TestE2E_PromptWithMockLLM(t *testing.T) {
 
 	agent := NewAgent(opts)
 
-	// Subscribe to events to verify flow
-	subID, eventCh := agent.Subscribe()
-	defer agent.Unsubscribe(subID)
-
-	// Send a prompt
+	// Send a prompt - should fail because LLM client is not configured
 	err := agent.Prompt(ctx, "Hello, agent!")
-	if err != nil {
-		t.Fatalf("Prompt() failed: %v", err)
+	if err == nil {
+		t.Fatal("Expected error when LLM client is not configured, got nil")
 	}
 
-	// Verify user message was added
+	// Verify error message
+	if err.Error() != "LLM client not configured" {
+		t.Errorf("Expected error message 'LLM client not configured', got %q", err.Error())
+	}
+
+	// Verify no user message was added since it failed early
 	state := agent.State()
-	if len(state.Messages) == 0 {
-		t.Fatal("Expected at least 1 message in state, got 0")
-	}
-
-	if state.Messages[0].Role != RoleUser {
-		t.Errorf("Expected first message role %v, got %v", RoleUser, state.Messages[0].Role)
-	}
-
-	// Verify assistant response was added (currently simulated)
-	if len(state.Messages) < 2 {
-		t.Fatalf("Expected at least 2 messages (user + assistant), got %d", len(state.Messages))
-	}
-
-	if state.Messages[1].Role != RoleAssistant {
-		t.Errorf("Expected second message role %v, got %v", RoleAssistant, state.Messages[1].Role)
-	}
-
-	// Verify events were emitted
-	var events []AgentEvent
-	timeout := time.After(100 * time.Millisecond)
-collect:
-	for {
-		select {
-		case event := <-eventCh:
-			events = append(events, event)
-		case <-timeout:
-			break collect
-		}
-	}
-
-	// Should have AgentStartEvent and AgentEndEvent
-	var hasStart, hasEnd bool
-	for _, evt := range events {
-		switch evt.(type) {
-		case AgentStartEvent:
-			hasStart = true
-		case AgentEndEvent:
-			hasEnd = true
-		}
-	}
-
-	if !hasStart {
-		t.Error("Expected AgentStartEvent to be emitted")
-	}
-
-	if !hasEnd {
-		t.Error("Expected AgentEndEvent to be emitted")
-	}
-
-	// Verify state persistence
-	if state.SessionID != opts.SessionID {
-		t.Errorf("Expected SessionID %q, got %q", opts.SessionID, state.SessionID)
-	}
-
-	if state.SystemPrompt != opts.SystemPrompt {
-		t.Errorf("Expected SystemPrompt %q, got %q", opts.SystemPrompt, state.SystemPrompt)
+	if len(state.Messages) != 0 {
+		t.Errorf("Expected no messages when LLM client is not configured, got %d", len(state.Messages))
 	}
 }
 
@@ -238,10 +180,26 @@ func TestE2E_MultiTurnConversation(t *testing.T) {
 
 	ctx := context.Background()
 
+	// Create mock LLM with 3 responses
+	mockLLM := &MockLLMClient{
+		Responses: []MockResponse{
+			{
+				Message: NewTextMessage(RoleAssistant, "Hi Alice!"),
+			},
+			{
+				Message: NewTextMessage(RoleAssistant, "Your name is Alice."),
+			},
+			{
+				Message: NewTextMessage(RoleAssistant, "Why did the chicken cross the road?"),
+			},
+		},
+	}
+
 	// Create agent
 	opts := AgentOptions{
 		SystemPrompt: "You are a helpful assistant.",
 		SessionID:    "multi-turn-session",
+		LLMClient:    mockLLM,
 	}
 
 	agent := NewAgent(opts)
@@ -314,9 +272,18 @@ func TestE2E_EventStreaming(t *testing.T) {
 
 	ctx := context.Background()
 
+	mockLLM := &MockLLMClient{
+		Responses: []MockResponse{
+			{
+				Message: NewTextMessage(RoleAssistant, "Events are streaming"),
+			},
+		},
+	}
+
 	opts := AgentOptions{
 		SystemPrompt: "You are a helpful assistant.",
 		SessionID:    "event-streaming-test",
+		LLMClient:    mockLLM,
 	}
 
 	agent := NewAgent(opts)
@@ -445,9 +412,22 @@ func TestE2E_ConcurrentPrompts(t *testing.T) {
 
 	ctx := context.Background()
 
+	// Create mock LLM with responses for each concurrent prompt
+	// Need 10 responses for 10 concurrent calls
+	responses := make([]MockResponse, 10)
+	for i := 0; i < 10; i++ {
+		responses[i] = MockResponse{
+			Message: NewTextMessage(RoleAssistant, "Response "+string(rune('A'+i))),
+		}
+	}
+	mockLLM := &MockLLMClient{
+		Responses: responses,
+	}
+
 	opts := AgentOptions{
 		SystemPrompt: "You are a helpful assistant.",
 		SessionID:    "concurrent-test-session",
+		LLMClient:    mockLLM,
 	}
 
 	agent := NewAgent(opts)
@@ -464,6 +444,8 @@ func TestE2E_ConcurrentPrompts(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
+			// Reset mock for each call to get a response
+			mockLLM.Reset()
 			err := agent.Prompt(ctx, "Concurrent prompt "+string(rune('A'+idx)))
 			errors[idx] = err
 		}(i)
@@ -524,10 +506,23 @@ func TestE2E_StatePersistence(t *testing.T) {
 
 	ctx := context.Background()
 
+	// Create mock LLM with 2 responses
+	mockLLM := &MockLLMClient{
+		Responses: []MockResponse{
+			{
+				Message: NewTextMessage(RoleAssistant, "First response"),
+			},
+			{
+				Message: NewTextMessage(RoleAssistant, "Second response"),
+			},
+		},
+	}
+
 	// Create agent with specific state
 	opts := AgentOptions{
 		SystemPrompt: "You are a test assistant for state persistence.",
 		SessionID:    "persistence-test-session",
+		LLMClient:    mockLLM,
 	}
 
 	agent := NewAgent(opts)
