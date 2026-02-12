@@ -67,6 +67,7 @@ type AgentOptions struct {
 	ID           string
 	SystemPrompt string
 	SessionID    string
+	LLMClient    LLMClient // Optional LLM client for tool calling loop
 }
 
 // Agent manages agent state with thread-safe access and event broadcasting.
@@ -78,6 +79,7 @@ type Agent struct {
 	subscribersMu sync.Mutex
 	ctx           context.Context
 	cancel        context.CancelFunc
+	llmClient     LLMClient // Optional LLM client for tool calling
 }
 
 // NewAgent creates a new Agent with the given options.
@@ -101,6 +103,7 @@ func NewAgent(opts AgentOptions) *Agent {
 		subscribers: make(map[string]chan AgentEvent),
 		ctx:         ctx,
 		cancel:      cancel,
+		llmClient:   opts.LLMClient,
 	}
 }
 

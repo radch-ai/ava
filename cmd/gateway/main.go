@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/nevaria-ai/gateway/internal/config"
+	"github.com/nevaria-ai/gateway/internal/proxy/models"
 	"github.com/nevaria-ai/gateway/internal/server"
 	"github.com/nevaria-ai/gateway/internal/websocket"
 	"github.com/rs/zerolog"
@@ -32,6 +33,20 @@ func main() {
 
 	// Create logger
 	logger := zerolog.New(os.Stderr).With().Timestamp().Logger()
+
+	// Initialize model registry
+	registry := models.Get()
+	modelConfigPath := os.Getenv("GATEWAY_MODEL_CONFIG")
+	if modelConfigPath == "" {
+		modelConfigPath = "config/models.yaml"
+	}
+
+	if err := registry.LoadFromYAML(modelConfigPath); err != nil {
+		logger.Warn().Err(err).Str("path", modelConfigPath).Msg("failed to load model configuration")
+	} else {
+		routerModel := registry.GetRouterModel()
+		logger.Info().Str("router_model", routerModel).Msg("model registry initialized")
+	}
 
 	// For development, allow all origins if none specified.
 	// In production, always set GATEWAY_ALLOWED_ORIGINS environment variable.

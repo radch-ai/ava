@@ -86,7 +86,7 @@ func NewHandler(logger zerolog.Logger, allowedOrigins []string, maxConns int) *H
 		upgrader:     handlerUpgrader,
 		connSem:      sem,
 		maxConns:     maxConns,
-		agentManager: NewAgentManager(logger),
+		agentManager: NewAgentManager(logger, nil), // No proxy handler initially
 	}
 }
 
@@ -189,7 +189,8 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	go h.pingLoop(ctx, writeCh, logCtx)
 
 	// Create or get agent for this session
-	agentInstance := h.agentManager.GetOrCreateAgent(sessionID)
+	// Use sessionID as userID for now - in production, userId would come from auth
+	agentInstance := h.agentManager.GetOrCreateAgent(sessionID, sessionID)
 	agentState := agentInstance.State()
 	agentID := agentState.SessionID // Use session ID as agent ID for now
 
@@ -384,6 +385,13 @@ func (h *Handler) pingLoop(ctx context.Context, writeCh chan<- *wsMessage, logge
 
 // forwardAgentEvents forwards agent events to the WebSocket client.
 func (h *Handler) forwardAgentEvents(ctx context.Context, eventCh <-chan agent.AgentEvent, writeCh chan<- *wsMessage, logger zerolog.Logger) {
+	defer func() {
+		// Recover from panic on closed channel during shutdown
+		if r := recover(); r != nil {
+			logger.Debug().Msgf("forwardAgentEvents recovered: %v", r)
+		}
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():

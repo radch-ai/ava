@@ -123,7 +123,7 @@ func extractNestedData(msg json.RawMessage) (map[string]any, bool) {
 func TestAgentManagerCreation(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
 
-	manager := NewAgentManager(logger)
+	manager := NewAgentManager(logger, nil)
 
 	if manager == nil {
 		t.Fatal("expected non-nil AgentManager")
@@ -347,18 +347,18 @@ func TestAgentCleanupOnDisconnect(t *testing.T) {
 // TestAgentManagerGetOrCreateAgent tests the GetOrCreateAgent method.
 func TestAgentManagerGetOrCreateAgent(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	manager := NewAgentManager(logger)
+	manager := NewAgentManager(logger, nil)
 
 	sessionID := "test-session-123"
 
 	// First call should create a new agent
-	agent1 := manager.GetOrCreateAgent(sessionID)
+	agent1 := manager.GetOrCreateAgent(sessionID, sessionID)
 	if agent1 == nil {
 		t.Fatal("expected non-nil agent")
 	}
 
 	// Second call should return the same agent
-	agent2 := manager.GetOrCreateAgent(sessionID)
+	agent2 := manager.GetOrCreateAgent(sessionID, sessionID)
 	if agent2 == nil {
 		t.Fatal("expected non-nil agent on second call")
 	}
@@ -371,7 +371,7 @@ func TestAgentManagerGetOrCreateAgent(t *testing.T) {
 	}
 
 	// Different session ID should get different agent
-	agent3 := manager.GetOrCreateAgent("different-session")
+	agent3 := manager.GetOrCreateAgent("different-session", "different-session")
 	if agent3 == nil {
 		t.Fatal("expected non-nil agent for different session")
 	}
@@ -385,12 +385,12 @@ func TestAgentManagerGetOrCreateAgent(t *testing.T) {
 // TestAgentManagerRemoveAgent tests the RemoveAgent method.
 func TestAgentManagerRemoveAgent(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	manager := NewAgentManager(logger)
+	manager := NewAgentManager(logger, nil)
 
 	sessionID := "test-session-remove"
 
 	// Create an agent
-	agent := manager.GetOrCreateAgent(sessionID)
+	agent := manager.GetOrCreateAgent(sessionID, sessionID)
 	if agent == nil {
 		t.Fatal("expected non-nil agent")
 	}
@@ -399,7 +399,7 @@ func TestAgentManagerRemoveAgent(t *testing.T) {
 	manager.RemoveAgent(sessionID)
 
 	// Should create a new agent now
-	newAgent := manager.GetOrCreateAgent(sessionID)
+	newAgent := manager.GetOrCreateAgent(sessionID, sessionID)
 	if newAgent == nil {
 		t.Fatal("expected non-nil agent after remove")
 	}
@@ -473,7 +473,7 @@ func TestInvalidPromptMessage(t *testing.T) {
 // TestConcurrentAgentAccess tests that AgentManager handles concurrent access safely.
 func TestConcurrentAgentAccess(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	manager := NewAgentManager(logger)
+	manager := NewAgentManager(logger, nil)
 
 	// Launch goroutines that all access the same session
 	sessionID := "concurrent-session"
@@ -482,7 +482,7 @@ func TestConcurrentAgentAccess(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		go func() {
 			defer func() { done <- struct{}{} }()
-			agent := manager.GetOrCreateAgent(sessionID)
+			agent := manager.GetOrCreateAgent(sessionID, sessionID)
 			if agent != nil {
 				_ = agent.State() // Just accessing the agent
 			}
@@ -499,7 +499,7 @@ func TestConcurrentAgentAccess(t *testing.T) {
 	}
 
 	// Verify we still have a valid agent
-	agent := manager.GetOrCreateAgent(sessionID)
+	agent := manager.GetOrCreateAgent(sessionID, sessionID)
 	if agent == nil {
 		t.Error("expected valid agent after concurrent access")
 	}
@@ -508,10 +508,10 @@ func TestConcurrentAgentAccess(t *testing.T) {
 // TestAgentPromptContextCancellation tests that prompt respects context cancellation.
 func TestAgentPromptContextCancellation(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	manager := NewAgentManager(logger)
+	manager := NewAgentManager(logger, nil)
 
 	sessionID := "cancel-session"
-	agent := manager.GetOrCreateAgent(sessionID)
+	agent := manager.GetOrCreateAgent(sessionID, sessionID)
 	if agent == nil {
 		t.Fatal("expected non-nil agent")
 	}
