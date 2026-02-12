@@ -3,11 +3,14 @@ package usage
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	_ "github.com/lib/pq" // PostgreSQL driver
 	"github.com/nevaria-ai/gateway/internal/proxy"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
@@ -139,9 +142,63 @@ func (w *UsageWriter) flush() error {
 
 // dbInsert inserts events into the database
 func (w *UsageWriter) dbInsert(events []proxy.UsageEvent) error {
-	// TODO: Implement actual database insert
-	// For now, just log
-	log.Debug().Int("count", len(events)).Msg("Would insert usage events")
+	// Type assert db to sql.DB
+	db, ok := w.db.(*sql.DB)
+	if !ok {
+		return fmt.Errorf("database is not *sql.DB, got %T", w.db)
+	}
+
+	// Begin transaction for atomic insert
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Prepare insert statement
+	stmt, err := tx.Prepare(`
+		INSERT INTO usage_events (
+			user_id, session_id, model, provider,
+			tokens_input, tokens_output, cost_total,
+			charged_from, timestamp
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	// Execute insert for each event
+	for _, event := range events {
+		_, err := stmt.Exec(
+			event.UserID,
+			event.SessionID,
+			event.Model,
+			event.Provider,
+			event.TokensInput,
+			event.TokensOutput,
+			event.CostTotal,
+			event.ChargedFrom,
+			event.Timestamp,
+		)
+		if err != nil {
+			// Log error but continue with other events
+			log.Error().Err(err).
+				Str("user_id", event.UserID).
+				Str("model", event.Model).
+				Msg("failed to insert usage event")
+			continue
+		}
+	}
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	// Log successful batch insert
+	log.Debug().Int("count", len(events)).Msg("Inserted usage events into database")
+
 	return nil
 }
 

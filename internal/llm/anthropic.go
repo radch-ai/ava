@@ -265,7 +265,7 @@ func (c *AnthropicClient) parseSDKStream(ctx context.Context, stream *ssestream.
 
 	go func() {
 		defer close(eventCh)
-		_ = stream.Close()
+		defer stream.Close()
 
 		var currentMessage *agent.AgentMessage
 		var currentText strings.Builder
@@ -353,6 +353,15 @@ func (c *AnthropicClient) parseSDKStream(ctx context.Context, stream *ssestream.
 				}
 
 			case "message_delta":
+				// Emit token usage event if available
+				if event.Usage.InputTokens > 0 || event.Usage.OutputTokens > 0 {
+					eventCh <- agent.TokenUsageEvent{
+						Timestamp:    timestamp,
+						TokensInput:  event.Usage.InputTokens,
+						TokensOutput: event.Usage.OutputTokens,
+					}
+				}
+
 				if currentMessage != nil && len(currentBlocks) > 0 {
 					currentMessage.Content = currentBlocks
 					currentMessage.Timestamp = timestamp

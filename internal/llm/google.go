@@ -107,6 +107,15 @@ func (c *GoogleClient) Stream(ctx context.Context, messages []agent.AgentMessage
 				return
 			}
 
+			// Emit token usage event if available
+			if result.UsageMetadata != nil {
+				eventCh <- agent.TokenUsageEvent{
+					Timestamp:    timestamp,
+					TokensInput:  int64(result.UsageMetadata.PromptTokenCount),
+					TokensOutput: int64(result.UsageMetadata.CandidatesTokenCount),
+				}
+			}
+
 			// Process the result
 			if len(result.Candidates) == 0 {
 				continue

@@ -175,7 +175,7 @@ func (c *OpenAIClient) parseOpenAIStream(ctx context.Context, stream *ssestream.
 
 	go func() {
 		defer close(eventCh)
-		_ = stream.Close()
+		defer stream.Close()
 
 		var currentMessage *agent.AgentMessage
 		var currentText strings.Builder
@@ -201,6 +201,15 @@ func (c *OpenAIClient) parseOpenAIStream(ctx context.Context, stream *ssestream.
 				eventCh <- agent.MessageStartEvent{
 					Timestamp: timestamp,
 					Message:   *currentMessage,
+				}
+			}
+
+			// Emit token usage event if available
+			if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
+				eventCh <- agent.TokenUsageEvent{
+					Timestamp:    timestamp,
+					TokensInput:  chunk.Usage.PromptTokens,
+					TokensOutput: chunk.Usage.CompletionTokens,
 				}
 			}
 

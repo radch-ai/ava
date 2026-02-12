@@ -112,3 +112,12 @@ type ToolExecutionEndEvent struct {
 }
 
 func (ToolExecutionEndEvent) isAgentEvent() {}
+
+// TokenUsageEvent is emitted when token usage information is available.
+type TokenUsageEvent struct {
+	Timestamp    int64
+	TokensInput  int64
+	TokensOutput int64
+}
+
+func (TokenUsageEvent) isAgentEvent() {}

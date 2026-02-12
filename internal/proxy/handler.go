@@ -4,6 +4,8 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/nevaria-ai/gateway/internal/agent"
 )
@@ -158,12 +160,12 @@ func (h *Handler) Handle(ctx context.Context, req ProxyRequest) (*ProxyResponse,
 	// 2. ROUTER (if router is configured)
 	var routerResp *RouterResponse
 	if h.router != nil {
-		// For now, use a simple router request
-		// TODO: Build proper router request from ProxyRequest
-		resp, err := h.router.SelectModel(ctx, &simpleRouterRequest{
-			query:   req.Query,
-			context: quotaResult.UserContext,
-		})
+		// Build proper router request from ProxyRequest with full context
+		routerReq := &proxyRouterRequest{
+			proxyReq: req,
+			context:  quotaResult.UserContext,
+		}
+		resp, err := h.router.SelectModel(ctx, routerReq)
 		if err != nil {
 			return nil, fmt.Errorf("router failed: %w", err)
 		}
@@ -204,9 +206,8 @@ func (h *Handler) Handle(ctx context.Context, req ProxyRequest) (*ProxyResponse,
 		return nil, fmt.Errorf("LLM call failed: %w", err)
 	}
 
-	// 6. Spawn goroutine to track usage after stream
-	// TODO: Implement usage tracking with actual token counting
-	// For now, just return the event channel directly
+	// 6. Wrap event channel to track usage
+	trackedEventCh := h.trackUsage(ctx, eventCh, req.UserID, req.SessionID, selectedModel, estimatedCost, quotaResult)
 
 	addonRemaining := 0.0
 	usingAddon := false
@@ -216,26 +217,150 @@ func (h *Handler) Handle(ctx context.Context, req ProxyRequest) (*ProxyResponse,
 	}
 
 	return &ProxyResponse{
-		Stream:         eventCh,
+		Stream:         trackedEventCh,
 		UsingAddon:     usingAddon,
 		AddonRemaining: addonRemaining,
 	}, nil
 }
 
-// simpleRouterRequest is a simple implementation of RouterRequest
-type simpleRouterRequest struct {
-	query   string
-	context UserContext
+// trackUsage wraps the event channel to track token usage and emit usage events.
+func (h *Handler) trackUsage(ctx context.Context, eventCh <-chan agent.AgentEvent, userID, sessionID, model string, estimatedCost float64, quotaResult *QuotaCheckResult) <-chan agent.AgentEvent {
+	// Determine provider from model name
+	provider := "unknown"
+	switch {
+	case model == "gpt-4":
+		fallthrough
+	case model == "gpt-4o":
+		fallthrough
+	case strings.HasPrefix(model, "gpt-"):
+		provider = "openai"
+	case strings.HasPrefix(model, "claude-"):
+		provider = "anthropic"
+	case strings.HasPrefix(model, "gemini-"):
+		provider = "google"
+	}
+
+	trackedCh := make(chan agent.AgentEvent, 100)
+
+	go func() {
+		defer close(trackedCh)
+
+		var tokensInput int64
+		var tokensOutput int64
+		usageTracked := false
+
+		for event := range eventCh {
+			// Forward all events
+			trackedCh <- event
+
+			// Track token usage
+			switch e := event.(type) {
+			case agent.TokenUsageEvent:
+				tokensInput += e.TokensInput
+				tokensOutput += e.TokensOutput
+			case agent.MessageEndEvent:
+				// Create usage event when message ends
+				if !usageTracked && h.usage != nil {
+					// Calculate actual cost from token counts
+					// For now, use the estimated cost if we don't have pricing info
+					actualCost := estimatedCost
+
+					// Determine charged source
+					chargedFrom := "plan"
+					if quotaResult != nil && quotaResult.UsingAddon {
+						chargedFrom = "addon"
+					}
+
+					usageEvent := UsageEvent{
+						UserID:       userID,
+						SessionID:    sessionID,
+						Model:        model,
+						Provider:     provider,
+						TokensInput:  int(tokensInput),
+						TokensOutput: int(tokensOutput),
+						CostTotal:    actualCost,
+						ChargedFrom:  chargedFrom,
+						Timestamp:    e.Timestamp,
+					}
+
+					// Track usage asynchronously (don't block the stream)
+					go func() {
+						if err := h.usage.Track(context.Background(), usageEvent); err != nil {
+							// Log error but don't fail the request
+							// TODO: Add proper logging
+						}
+					}()
+
+					usageTracked = true
+				}
+			}
+		}
+
+		// Handle case where stream ended without MessageEndEvent
+		// but we have token usage information
+		if !usageTracked && (tokensInput > 0 || tokensOutput > 0) && h.usage != nil {
+			actualCost := estimatedCost
+			chargedFrom := "plan"
+			if quotaResult != nil && quotaResult.UsingAddon {
+				chargedFrom = "addon"
+			}
+
+			usageEvent := UsageEvent{
+				UserID:       userID,
+				SessionID:    sessionID,
+				Model:        model,
+				Provider:     provider,
+				TokensInput:  int(tokensInput),
+				TokensOutput: int(tokensOutput),
+				CostTotal:    actualCost,
+				ChargedFrom:  chargedFrom,
+				Timestamp:    time.Now().Unix(),
+			}
+
+			go func() {
+				if err := h.usage.Track(context.Background(), usageEvent); err != nil {
+					// Log error but don't fail the request
+					// TODO: Add proper logging
+				}
+			}()
+		}
+	}()
+
+	return trackedCh
 }
 
-func (r *simpleRouterRequest) GetUserQuery() string {
-	return r.query
+// proxyRouterRequest implements RouterRequest using full ProxyRequest context
+type proxyRouterRequest struct {
+	proxyReq ProxyRequest
+	context  UserContext
 }
 
-func (r *simpleRouterRequest) GetUserContext() UserContext {
+// GetUserQuery returns the user's query text
+func (r *proxyRouterRequest) GetUserQuery() string {
+	return r.proxyReq.Query
+}
+
+// GetUserContext returns the user's quota and plan context
+func (r *proxyRouterRequest) GetUserContext() UserContext {
 	return r.context
 }
 
-func (r *simpleRouterRequest) GetAvailableModels() []string {
-	return []string{"gpt-4o-mini", "claude-3-5-haiku"}
+// GetAvailableModels returns the list of available models based on tools and context
+// This can be enhanced to filter models based on tool compatibility, user tier, etc.
+func (r *proxyRouterRequest) GetAvailableModels() []string {
+	// Default available models
+	models := []string{"gpt-4o-mini", "claude-3-5-haiku", "gpt-4o", "claude-3-5-sonnet"}
+
+	// Add more capable models if user has premium tier
+	if r.context.PlanTier == "premium" || r.context.PlanTier == "enterprise" {
+		models = append(models, "claude-3-opus", "gpt-4-turbo")
+	}
+
+	// Filter models based on tool requirements if tools are present
+	if len(r.proxyReq.Tools) > 0 {
+		// Some models may not support all tools
+		// For now, return all models - this can be enhanced with tool compatibility checks
+	}
+
+	return models
 }

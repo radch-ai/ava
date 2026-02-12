@@ -5,9 +5,9 @@ go 1.24
 require (
 	github.com/alicebob/miniredis/v2 v2.36.1
 	github.com/anthropics/anthropic-sdk-go v1.22.1
-	github.com/go-redis/redismock/v9 v9.2.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/lib/pq v1.11.2
 	github.com/openai/openai-go v1.12.0
 	github.com/redis/go-redis/v9 v9.17.3
 	github.com/rs/zerolog v1.31.0
