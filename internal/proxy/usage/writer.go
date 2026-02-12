@@ -3,11 +3,13 @@ package usage
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/nevaria-ai/gateway/internal/proxy"
+	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 )
 
@@ -79,9 +81,31 @@ func (w *UsageWriter) writeWithFallback(event proxy.UsageEvent) error {
 
 // pushToRedis pushes an event to Redis queue
 func (w *UsageWriter) pushToRedis(event proxy.UsageEvent) error {
-	// TODO: Implement Redis LPUSH
-	// For now, return error to trigger fallback
-	return ErrRedisUnavailable
+	if w.redis == nil {
+		return ErrRedisNotConfigured
+	}
+
+	// Type assert to redis.Client
+	client, ok := w.redis.(*redis.Client)
+	if !ok {
+		return ErrRedisNotConfigured
+	}
+
+	// Serialize event to JSON
+	data, err := json.Marshal(event)
+	if err != nil {
+		return &UsageError{Op: "redis_push", Err: err}
+	}
+
+	// Push to Redis list with key format "usage:<userID>"
+	key := "usage:" + event.UserID
+	ctx := context.Background()
+
+	if err := client.LPush(ctx, key, data).Err(); err != nil {
+		return &UsageError{Op: "redis_push", Err: err}
+	}
+
+	return nil
 }
 
 // flush writes buffered events to database
