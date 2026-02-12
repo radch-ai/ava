@@ -1,61 +1,98 @@
-# Usage Tracking
+# internal/proxy/usage
 
-Multi-layer usage tracking with graceful degradation.
+Usage tracking with multi-layer fallback.
 
-## Architecture
+## Description
 
-```
-                    ┌─────────────────┐
-Agent Event ─────▶│ Usage Writer   │─────▶ PostgreSQL (primary)
-                    └─────────────────┘       │
-                                            │ (fallback)
-                                            ▼
-                                          Redis (secondary)
-                                            │ (fallback)
-                                            ▼
-                                         Disk queue (tertiary)
-```
+The usage package tracks LLM token usage with a three-tier fallback system: primary database insert, Redis queue fallback, and disk queue as last resort.
 
-## Layers
+## Fallback Flow
 
-| Layer | Purpose | Behavior |
-|--------|---------|----------|
-| **PostgreSQL** | Primary storage | Writes async, persists all records |
-| **Redis** | High-speed cache | Buffers before DB write |
-| **Disk** | Last resort | JSONL files when DB unavailable |
-
-## Event Structure
-
-```go
-type UsageEvent struct {
-    Timestamp     time.Time
-    UserID        string
-    Model         string
-    Provider      string
-    TokensIn      int
-    TokensOut     int
-    Cost          float64
-}
+```mermaid
+flowchart TB
+    Start["Track event"] --> Channel["Send to buffered event channel"]
+    Channel --> HasSpace{Channel has space}
+    HasSpace -->|Yes| Enqueued["Event queued"]
+    HasSpace -->|No - Channel full| Fallback["writeWithFallback"]
+    Fallback --> RedisLPUSH["Try Redis LPUSH"]
+    RedisLPUSH --> Success{Success?}
+    Success -->|YES| Done["Done"]
+    Success -->|NO| DiskQueue["Disk Queue"]
 ```
 
-## Batching
+## Buffered Write Flow
 
-Events are batched for efficiency:
+```mermaid
+flowchart TB
+    Goroutine["Start goroutine"] --> Receive["Receive event"]
+    Goroutine --> Ticker["Ticker - 30s"]
+    Goroutine --> Cancel["Context cancelled"]
+    Receive --> AddBuffer["Add to buffer"]
+    Ticker --> FlushBuffer["Flush buffer"]
+    Cancel --> FinalFlush["Final flush & exit"]
+    AddBuffer --> BatchCheck{"Buffer >= batch_size"}
+    BatchCheck -->|Yes| ImmediateFlush["Flush immediately"]
+    FlushBuffer --> DBInsert["dbInsert"]
+    ImmediateFlush --> DBInsert
+    FinalFlush --> DBInsert
+    DBInsert --> DBSuccess{Success?}
+    DBSuccess -->|YES| Done["Done"]
+    DBSuccess -->|NO| RedisDisk["Redis + Disk"]
+```
 
-1. **Memory buffer** - Accumulates events
-2. **Redis flush** - Writes every 100 events or 10s
-3. **DB persist** - Writes from Redis every 1000 events
+## Types and Functions
 
-## Service Pause
+| Name | Kind | Location | Description |
+|------|------|----------|-------------|
+| UsageWriter | struct | [writer.go#L25](../internal/proxy/usage/writer.go#L25) | Buffered usage writer |
+| NewUsageWriter | func | [writer.go#L38](../internal/proxy/usage/writer.go#L38) | Creates usage writer |
+| Track | func | [writer.go#L52](../internal/proxy/usage/writer.go#L52) | Queues usage event |
+| writeWithFallback | func | [writer.go#L63](../internal/proxy/usage/writer.go#L63) | Writes with tiered fallback |
+| pushToRedis | func | [writer.go#L82](../internal/proxy/usage/writer.go#L82) | LPUSH operation |
+| flush | func | [writer.go#L112](../internal/proxy/usage/writer.go#L112) | Writes buffer to DB |
+| dbInsert | func | [writer.go#L141](../internal/proxy/usage/writer.go#L141) | Batch insert |
+| Start | func | [writer.go#L203](../internal/proxy/usage/writer.go#L203) | Starts processing loop |
+| DiskQueue | struct | [disk_queue.go#L15](../internal/proxy/usage/disk_queue.go#L15) | Disk fallback queue |
+| NewDiskQueue | func | [disk_queue.go#L22](../internal/proxy/usage/disk_queue.go#L22) | Creates disk queue |
+| Push | func | [disk_queue.go#L37](../internal/proxy/usage/disk_queue.go#L37) | Appends event |
+| Pop | func | [disk_queue.go#L67](../internal/proxy/usage/disk_queue.go#L67) | Retrieves next event |
+| UsageError | struct | [writer.go#L247](../internal/proxy/usage/writer.go#L247) | Usage error type |
+| FallbackError | struct | [writer.go#L264](../internal/proxy/usage/writer.go#L264) | Fallback error type |
 
-When primary storage fails:
+## UsageEvent Fields
 
-1. Gateway enters "paused" state
-2. Returns 503 with `Retry-After` header
-3. Continues queueing to disk
-4. Auto-resumes when storage recovers
+| Field | Type | Description |
+|-------|------|-------------|
+| `UserID` | string | User identifier |
+| `SessionID` | string | Session identifier |
+| `Model` | string | Model used |
+| `Provider` | string | LLM provider |
+| `TokensInput` | int | Input tokens used |
+| `TokensOutput` | int | Output tokens used |
+| `CostTotal` | float64 | Total cost |
+| `ChargedFrom` | string | "plan" or "addon" |
+| `Timestamp` | int64 | Unix timestamp |
 
-## Implementation
+## Fallback Tiers
 
-Current: Memory mock with async simulation.
-Planned: PostgreSQL + Redis + disk fallback.
+1. **Database** - PostgreSQL batch insert (primary)
+2. **Redis** - LPUSH to `usage:{userID}` key (fallback)
+3. **Disk** - JSONL file append (last resort)
+
+## Configuration
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `defaultBatchSize` | 1000 | Events per batch |
+| `defaultFlushInterval` | 30s | Time between flushes |
+| `defaultMaxBufferSize` | 10000 | Max buffered events |
+
+## Database Schema
+
+```sql
+INSERT INTO usage_events (
+    user_id, session_id, model, provider,
+    tokens_input, tokens_output, cost_total,
+    charged_from, timestamp
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+```

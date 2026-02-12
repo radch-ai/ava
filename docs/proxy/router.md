@@ -1,61 +1,72 @@
-# Model Router
+# internal/proxy/router
 
-The router intelligently selects which LLM model to use for each request.
+LLM-based intelligent model selection.
 
-## Decision Flow
+## Description
 
-```
-Request ──▶ User Context ──▶ Quota Check ──▶ Router LLM ──▶ Model Selection
-                                                           │
-                                                           ▼
-                                                   Selected Model
-```
+The router package uses an LLM to intelligently select the best model for each request based on query complexity, user quota, and costs.
 
-## Router LLM
+## Router Selection Flow
 
-A cheap, fast model (e.g., gpt-4o-mini) makes routing decisions:
-
-**Input:**
-```json
-{
-  "user_plan": "premium",
-  "quota_remaining_monthly": 45.00,
-  "quota_remaining_6h": 5.00,
-  "query_complexity": "high",
-  "user_preference": "quality"
-}
+```mermaid
+flowchart TB
+    Start["SelectModel"] --> Build["Build router prompt"]
+    Build --> PromptContent["User query - User context - Available models - Model costs"]
+    PromptContent --> Call["Call router LLM - cheap, fast"]
+    Call --> Stream["Stream response - Extract JSON"]
+    Stream --> Parse["Parse RouterResponse"]
+    Parse --> Return["Return selected model + reasoning"]
 ```
 
-**Output:**
-```json
-{
-  "model": "claude-3-5-sonnet",
-  "reason": "high_complexity_query_with_quality_preference"
-}
+## Prompt Structure
+
+```mermaid
+flowchart TB
+    RouterPrompt["Router Prompt"] --> UserQ["1. USER QUERY - The user's actual input text"]
+    RouterPrompt --> UserC["2. USER CONTEXT - Plan tier - Plan quota remaining - Addon quota remaining - Days until reset"]
+    RouterPrompt --> Models["3. AVAILABLE MODELS - List of models - Input/output cost per million"]
+    RouterPrompt --> Prev["4. PREVIOUS ATTEMPTS - Failed model selections with reasons"]
+    RouterPrompt --> Unhealthy["5. UNHEALTHY MODELS - Models to avoid due to health issues"]
+    RouterPrompt --> Instr["6. INSTRUCTIONS - Select best model - Consider cost efficiency - Respect quota - Return JSON"]
 ```
 
-## Selection Logic
+## Types and Functions
 
-| Factor | Economy | Premium | Ultra |
-|--------|----------|----------|--------|
-| **Base plan** | ✓ | ✓ | ✓ |
-| **Premium plan** | ✓ | ✓ | ✓ |
-| **Low quota (<10%)** | Economy only | Economy only | Premium |
-| **High complexity** | Premium | Premium | Ultra |
-| **User preference** | Respects | Respects | Respects |
+| Name | Kind | Location | Description |
+|------|------|----------|-------------|
+| RouterRequest | interface | [types.go#L17](../internal/proxy/router/types.go#L17) | Router request data |
+| RouterResponse | struct | [types.go#L28](../internal/proxy/router/types.go#L28) | Router response data |
+| RouterAttempt | struct | [types.go#L38](../internal/proxy/router/types.go#L38) | Failed attempt tracking |
+| SelectModel | func | [router.go#L17](../internal/proxy/router/router.go#L17) | Calls router LLM |
+| BuildRouterPrompt | func | [prompt.go#L9](../internal/proxy/router/prompt.go#L9) | Creates router prompt |
+| LLMClient | interface | [router.go#L12](../internal/proxy/router/router.go#L12) | LLM client interface |
 
-## Configuration
+## RouterRequest Fields
 
-```yaml
-router:
-  model: gpt-4o-mini     # Which model makes routing decisions
-  timeout: 5s              # Max time for routing decision
-  max_retries: 2            # Retry on routing failures
-```
+| Field | Type | Description |
+|-------|------|-------------|
+| `UserQuery` | string | The user's query text |
+| `AvailableModels` | []string | Models user can access |
+| `UserContext` | UserContext | Quota and plan info |
+| `ModelCosts` | map[string]CostInfo | Pricing for each model |
+| `PreviousAttempts` | []RouterAttempt | Failed attempts |
+| `UnhealthyModels` | []string | Models to avoid |
 
-## Fallback
+## RouterResponse Fields
 
-If router fails:
-1. Return configured default for user's plan
-2. Log error for monitoring
-3. Continue request (don't block)
+| Field | Type | Description |
+|-------|------|-------------|
+| `SelectedModel` | string | Chosen model |
+| `Reasoning` | string | Explanation of choice |
+| `Confidence` | string | high/medium/low |
+| `FallbackOptions` | []string | Alternative models |
+| `EstimatedTokens` | TokenEstimate | Input/output tokens |
+| `EstimatedCost` | CostEstimate | Input/output/total cost |
+
+## Selection Criteria
+
+- Query complexity (simple -> economy, complex -> premium)
+- User's plan tier and remaining quota
+- Cost efficiency
+- Model health status
+- Previous failures

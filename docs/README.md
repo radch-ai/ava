@@ -1,235 +1,190 @@
-# Documentation
+# Architecture
 
-This directory contains all project documentation, consolidated for easy navigation and maintenance. All documentation is centralized here, making docs/ the single source of truth for the project.
+The Nevaria Gateway is a WebSocket-based AI agent gateway with intelligent LLM proxy routing, quota management, and multi-provider support.
 
-## Documentation Structure
+## System Overview
 
-### Agent Framework Documentation
+```mermaid
+flowchart TB
+    subgraph Clients
+        WS[WebSocket Client]
+    end
 
-Comprehensive documentation for the agent framework in [agent/](agent/):
+    subgraph Gateway["Nevaria Gateway"]
+        HTTP[HTTP Server]
+        WSHandler[WebSocket Handler]
+        AgentMgr[Agent Manager]
 
-- **[agent/README.md](agent/README.md)** - Agent framework overview
-  - Quick start guide and basic usage
-  - Architecture overview and design principles
+        subgraph Agents
+            AgentRuntime[Agent Runtime]
+            AgentLoop[Tool Loop]
+            ToolReg[Tool Registry]
+        end
 
-- **[agent/types.md](agent/types.md)** - Core type definitions
-  - Agent state and configuration types
-  - Request and response structures
-  - Event and message types
+        subgraph Proxy["Proxy Layer"]
+            ProxyHandler[Proxy Handler]
+            Router[Model Router]
+            Health[Health Checker]
+            Quota[Quota Manager]
+            Usage[Usage Tracker]
+        end
 
-- **[agent/agent.md](agent/agent.md)** - Agent implementation
-  - Agent creation and initialization
-  - State management and lifecycle
-  - Tool execution and response handling
+        subgraph LLM["LLM Clients"]
+            OpenAI[OpenAI Client]
+            Anthropic[Anthropic Client]
+            Google[Google Client]
+        end
+    end
 
-- **[agent/events.md](agent/events.md)** - Event system
-  - Event types and propagation
-  - Event handlers and middleware
-  - Event-driven communication patterns
+    subgraph Infrastructure
+        Redis[(Redis)]
+        DB[(PostgreSQL)]
+        Disk[Disk Queue]
+    end
 
-- **[agent/loop.md](agent/loop.md)** - Agent execution loop
-  - Prompt generation and message handling
-  - Tool execution flow
-  - Error handling and recovery
+    WS -->|WebSocket| HTTP
+    HTTP --> WSHandler
+    WSHandler --> AgentMgr
+    AgentMgr --> AgentRuntime
+    AgentRuntime --> AgentLoop
+    AgentLoop --> ToolReg
 
-- **[agent/tool.go.md](agent/tool.go.md)** - Tool interface
-  - Tool definition and execution
-  - Tool input/output handling
-  - Custom tool implementation
+    AgentRuntime -->|LLM Call| ProxyHandler
+    ProxyHandler --> Router
+    ProxyHandler --> Health
+    ProxyHandler --> Quota
 
-- **[agent/mock.md](agent/mock.md)** - Testing utilities
-  - Mock agent for testing
-  - Test helpers and fixtures
+    Router --> OpenAI
+    Router --> Anthropic
+    Router --> Google
 
-#### Tool Documentation
+    Quota ---> Redis
+    Health ---> Redis
+    Usage ---> DB
+    Usage ---> Redis
+    Usage ---> Disk
+```
 
-- **[agent/tools/README.md](agent/tools/README.md)** - Built-in tools overview
-- **[agent/tools/example.md](agent/tools/example.md)** - Example tool implementations
-- **[agent/tools/registry.md](agent/tools/registry.md)** - Tool registry and registration
+## Package Structure
 
-### LLM Client Documentation
+```mermaid
+flowchart TB
+    Gateway[Gateway]
 
-LLM client interfaces and provider implementations in [llm/](llm/):
+    Gateway --> CMD[cmd]
+    Gateway --> Internal
 
-- **[llm/README.md](llm/README.md)** - LLM client overview
-  - Unified client interface design
-  - Quick start guide
+    CMD --> Main[main.go]
 
-- **[llm/types.md](llm/types.md)** - Core type definitions
-  - Client interface and common types
-  - Request and response structures
-  - Error handling types
+    Internal --> Config[config]
+    Internal --> Server[server]
+    Internal --> WebSocket[websocket]
+    Internal --> Agent[agent]
+    Internal --> LLM[llm]
+    Internal --> Proxy[proxy]
 
-- **[llm/factory.md](llm/factory.md)** - Client factory
-  - Provider selection and configuration
-  - Client instantiation patterns
+    Agent ---> AgentTools[tools]
 
-- **[llm/tools.md](llm/tools.md)** - Tool integration
-  - Function calling support
-  - Tool schema definitions
+    Proxy --> PConfig[config]
+    Proxy --> PHealth[health]
+    Proxy --> PModels[models]
+    Proxy --> PQuota[quota]
+    Proxy --> PRouter[router]
+    Proxy --> PUsage[usage]
+```
 
-- **[llm/openai.md](llm/openai.md)** - OpenAI client
-  - OpenAI API integration
-  - Streaming support
+## Data Flows
 
-- **[llm/anthropic.md](llm/anthropic.md)** - Anthropic client
-  - Claude API integration
-  - Message and streaming support
+| Flow | Description |
+|------|-------------|
+| WebSocket Connection | Client connects, agent is created/retrieved, events stream |
+| Proxy Request | Quota check -> Router -> Health check -> LLM call -> Usage track |
+| Agent Tool Loop | LLM stream -> Extract tool calls -> Execute -> Add results -> Repeat |
 
-- **[llm/google.md](llm/google.md)** - Google client
-  - Gemini API integration
-  - Vertex AI support
+## Design Patterns
 
-### Project Package Documentation
+| Pattern | Description |
+|---------|-------------|
+| [Factory](../internal/llm/factory.go) | Creates provider-specific LLM clients |
+| [Strategy](../internal/agent/loop.go) | Pluggable tool execution |
+| [Observer](../internal/agent/agent.go) | Event subscription system |
+| [Circuit Breaker](../internal/proxy/health/circuit.go) | Provider health management |
+| [Middleware](../internal/proxy/middleware.go) | HTTP request processing chain |
+| [Singleton](../internal/proxy/models/registry.go) | Global model registry |
+| [Pool](../internal/websocket/handler.go) | `wsMessage` sync.Pool for efficiency |
 
-Project metadata and build information in [project/](project/):
+## Technology Stack
 
-- **[project/README.md](project/README.md)** - Project package overview
-  - Project metadata constants
-  - Version information management
-  - Build-time configuration
+| Component | Technology |
+|-----------|------------|
+| Language | Go 1.24 |
+| WebSocket | gorilla/websocket |
+| OpenAI SDK | openai/openai-go |
+| Anthropic SDK | anthropics/anthropic-sdk-go |
+| Google AI | google.golang.org/genai |
+| Redis | go-redis/v9 |
+| Database | PostgreSQL (lib/pq) |
+| Logging | zerolog |
+| Config | Environment variables + YAML |
 
-- **[project/details.md](project/details.md)** - Project details reference
-  - Name, Slug, Description constants
-  - ModulePath and BinaryName
-  - Version variable with build-time injection
+## Performance
 
-### Server Documentation
+### Connection Scaling
+- Default buffer size: 8KB read + 8KB write per connection
+- 100K connections: ~1.6GB RAM for buffers
+- Connection limiting via semaphore pattern
+- Horizontal scaling required for viral growth
 
-HTTP server implementation with health checks and WebSocket integration in [server/](server/):
+### Optimization Techniques
+- sync.Pool for WebSocket message structs
+- Single-writer pattern for WebSocket writes
+- Redis pipelining for quota operations
+- Batch database inserts for usage tracking
+- Circuit breaker to fail fast on unhealthy providers
 
-- **[server/README.md](server/README.md)** - Server overview
-  - Architecture and design
-  - Graceful shutdown behavior
-  - Endpoint documentation
+## Production Checklist
 
-- **[server/server.md](server/server.md)** - Server implementation
-  - Server struct and constructor
-  - Start and Shutdown methods
-  - Signal handling and lifecycle
+- [ ] Set `GATEWAY_ALLOWED_ORIGINS` to specific origins
+- [ ] Configure `GATEWAY_MAX_CONNS` based on available memory
+- [ ] Set up Redis for quota and health tracking
+- [ ] Configure PostgreSQL for usage events
+- [ ] Set `GATEWAY_MODEL_CONFIG` path
+- [ ] Configure provider API keys
+- [ ] Set appropriate timeouts (default: 120s for LLM calls)
+- [ ] Enable structured logging at appropriate level
+- [ ] Set up monitoring for circuit breaker state
+- [ ] Configure disk queue fallback path
 
-### WebSocket Handler Documentation
+## Protocol Notes
 
-WebSocket connection management and protocol in [websocket/](websocket/):
+### WebSocket Messages
 
-- **[websocket/README.md](websocket/README.md)** - WebSocket overview
-  - Architecture and design
-  - Quick start guide
+**Client to Server:**
+```json
+{
+  "type": "prompt",
+  "text": "user message here"
+}
+```
 
-- **[websocket/handler.md](websocket/handler.md)** - Handler implementation
-  - Connection handling
-  - Message routing and dispatch
+**Server to Client Events:**
+```json
+{
+  "type": "connected",
+  "data": {
+    "session_id": "...",
+    "agent_id": "...",
+    "conn_id": "..."
+  }
+}
+```
 
-- **[websocket/agent_manager.md](websocket/agent_manager.md)** - Agent management
-  - Agent lifecycle over WebSocket
-  - Connection pooling and multiplexing
+Event types: `connected`, `agent_start`, `agent_end`, `turn_start`, `turn_end`, `message_start`, `message_update`, `message_end`, `tool_start`, `tool_update`, `tool_end`
 
-- **[websocket/protocol.md](websocket/protocol.md)** - Protocol specification
-  - Message formats and types
-  - Event streaming protocol
-  - Error handling and status codes
+### Message Flow
 
-### Configuration Documentation
-
-Application configuration in [config/](config/):
-
-- **[config/README.md](config/README.md)** - Configuration overview
-  - Environment variable reference
-  - Security considerations
-  - Quick start guide
-
-- **[config/config.md](config/config.md)** - Config types and functions
-  - Config struct definition
-  - Load function
-  - Validate method
-
-### High-Level Documentation
-
-- **[foundation.md](foundation.md)** - Architecture and design patterns
-  - High-level system architecture
-  - Design decisions and patterns
-  - Technology stack and rationale
-
-- **[performance.md](performance.md)** - Benchmarks, scaling, and tuning
-  - Memory optimization techniques
-  - Horizontal and vertical scaling
-  - Performance testing and monitoring
-
-## Getting Started
-
-1. **Start with architecture** - Read [foundation.md](foundation.md) for high-level understanding
-2. **Configuration** - Review [config/README.md](config/README.md) for environment setup
-3. **Explore agent framework** - Study [agent/README.md](agent/README.md) for core functionality
-4. **Check LLM integration** - Review [llm/README.md](llm/README.md) for provider connections
-5. **WebSocket implementation** - Study [websocket/README.md](websocket/README.md) for real-time communication
-6. **Performance tuning** - Consult [performance.md](performance.md) for optimization
-
-## Documentation Guidelines
-
-- **Centralization**: All documentation lives in docs/ for easy discovery
-- **Comprehensiveness**: Complete coverage of all features and APIs
-- **Maintainability**: Documentation evolves with the codebase
-- **Examples**: All code examples are tested and working
-- **Cross-references**: Related topics are properly linked
-- **Navigation**: Clear structure for easy information finding
-
-## Quick Navigation
-
-### Core Features
-- [Agent Framework](agent/README.md) - AI agent creation and management
-  - [Core Types](agent/types.md) - Type definitions
-  - [Agent Implementation](agent/agent.md) - Agent logic
-  - [Event System](agent/events.md) - Event handling
-  - [Execution Loop](agent/loop.md) - Agent lifecycle
-- [LLM Clients](llm/README.md) - Multi-provider LLM integration
-  - [Client Types](llm/types.md) - Interface definitions
-  - [Client Factory](llm/factory.md) - Provider selection
-  - [OpenAI Client](llm/openai.md) - OpenAI integration
-  - [Anthropic Client](llm/anthropic.md) - Claude integration
-  - [Google Client](llm/google.md) - Gemini integration
-- [Project Package](project/README.md) - Project metadata and build information
-  - [Project Details](project/details.md) - Constants and version
-- [Server](server/README.md) - HTTP server with health checks and WebSocket integration
-  - [Server Implementation](server/server.md) - Server lifecycle and methods
-- [WebSocket Handler](websocket/README.md) - Real-time communication
-  - [Handler Implementation](websocket/handler.md) - Connection handling
-  - [Agent Manager](websocket/agent_manager.md) - Agent lifecycle
-  - [Protocol Specification](websocket/protocol.md) - Message formats
-- [Configuration](config/README.md) - Application configuration
-  - [Config Reference](config/config.md) - Types and functions
-
-### Architecture
-- [System Architecture](foundation.md) - Design patterns and decisions
-- [Performance Guide](performance.md) - Optimization and scaling
-
-## Development Workflow
-
-### Creating New Documentation
-
-When adding new features:
-1. Create or update documentation in docs/
-2. Include API references and examples
-3. Add configuration options
-4. Document error handling
-5. Include performance considerations
-
-### Updating Documentation
-
-- Update documentation as part of code changes
-- Ensure examples match current implementation
-- Add new configuration options as they're introduced
-- Update performance data as optimizations are made
-
-### Contributing
-
-- Follow the established documentation style
-- Use consistent formatting and structure
-- Include code examples for all APIs
-- Document edge cases and error conditions
-- Keep documentation up-to-date with code changes
-
-## Related Resources
-
-- [Repository](https://github.com/nevaria/gateway) - Source code and issue tracking
-- [API Examples](examples/) - Working code examples
-- [Contributing Guide](CONTRIBUTING.md) - How to contribute to the project
+1. Client connects via WebSocket upgrade
+2. Server sends `connected` event with session info
+3. Client sends `prompt` messages
+4. Agent emits streaming events back to client
+5. Connection closes on client disconnect or error
