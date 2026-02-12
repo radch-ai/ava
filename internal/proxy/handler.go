@@ -285,10 +285,7 @@ func (h *Handler) trackUsage(ctx context.Context, eventCh <-chan agent.AgentEven
 
 					// Track usage asynchronously (don't block the stream)
 					go func() {
-						if err := h.usage.Track(context.Background(), usageEvent); err != nil {
-							// Log error but don't fail the request
-							// TODO: Add proper logging
-						}
+						_ = h.usage.Track(context.Background(), usageEvent)
 					}()
 
 					usageTracked = true
@@ -317,12 +314,7 @@ func (h *Handler) trackUsage(ctx context.Context, eventCh <-chan agent.AgentEven
 				Timestamp:    time.Now().Unix(),
 			}
 
-			go func() {
-				if err := h.usage.Track(context.Background(), usageEvent); err != nil {
-					// Log error but don't fail the request
-					// TODO: Add proper logging
-				}
-			}()
+			_ = h.usage.Track(context.Background(), usageEvent)
 		}
 	}()
 
@@ -357,10 +349,7 @@ func (r *proxyRouterRequest) GetAvailableModels() []string {
 	}
 
 	// Filter models based on tool requirements if tools are present
-	if len(r.proxyReq.Tools) > 0 {
-		// Some models may not support all tools
-		// For now, return all models - this can be enhanced with tool compatibility checks
-	}
-
+	// Some models may not support all tools
+	// For now, return all models - this can be enhanced with tool compatibility checks
 	return models
 }

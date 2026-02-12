@@ -175,7 +175,7 @@ func (c *OpenAIClient) parseOpenAIStream(ctx context.Context, stream *ssestream.
 
 	go func() {
 		defer close(eventCh)
-		defer stream.Close()
+		defer func() { _ = stream.Close() }()
 
 		var currentMessage *agent.AgentMessage
 		var currentText strings.Builder

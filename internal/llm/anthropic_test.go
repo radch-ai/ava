@@ -260,7 +260,7 @@ func TestAnthropicClient_Stream_ToolResultMessage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify request has proper tool result format
 		body := r.Body
-		defer body.Close()
+		defer func() { _ = body.Close() }()
 
 		// Read body to verify it contains tool result
 		buf := make([]byte, 1024)

@@ -24,17 +24,15 @@ const (
 
 // UsageWriter tracks usage events with buffered batch writes
 type UsageWriter struct {
-	eventChan  chan proxy.UsageEvent
-	buffer     []proxy.UsageEvent
-	bufferMu   sync.Mutex
-	ticker     *time.Ticker
-	db         any // *sql.DB - using any to avoid import cycles
-	redis      any // *redis.Client - using any to avoid import cycles
-	diskQueue  *DiskQueue
-	dbHealthy  atomic.Bool
-	batchSize  int
-	flushTimer *time.Timer
-	flushMu    sync.Mutex
+	eventChan chan proxy.UsageEvent
+	buffer    []proxy.UsageEvent
+	bufferMu  sync.Mutex
+	ticker    *time.Ticker
+	db        any // *sql.DB - using any to avoid import cycles
+	redis     any // *redis.Client - using any to avoid import cycles
+	diskQueue *DiskQueue
+	dbHealthy atomic.Bool
+	batchSize int
 }
 
 // NewUsageWriter creates a new usage writer with fallback
@@ -131,7 +129,7 @@ func (w *UsageWriter) flush() error {
 		log.Warn().Err(err).Msg("DB insert failed, using fallback")
 		// Move buffer to fallback
 		for _, e := range toFlush {
-			w.writeWithFallback(e)
+			_ = w.writeWithFallback(e)
 		}
 		return err
 	}
@@ -153,7 +151,7 @@ func (w *UsageWriter) dbInsert(events []proxy.UsageEvent) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Prepare insert statement
 	stmt, err := tx.Prepare(`
@@ -166,7 +164,7 @@ func (w *UsageWriter) dbInsert(events []proxy.UsageEvent) error {
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 
 	// Execute insert for each event
 	for _, event := range events {
@@ -202,21 +200,6 @@ func (w *UsageWriter) dbInsert(events []proxy.UsageEvent) error {
 	return nil
 }
 
-// scheduleFlush schedules a flush if not already pending
-func (w *UsageWriter) scheduleFlush() {
-	w.flushMu.Lock()
-	defer w.flushMu.Unlock()
-
-	if w.flushTimer == nil {
-		w.flushTimer = time.AfterFunc(0, func() {
-			w.flush()
-			w.flushMu.Lock()
-			w.flushTimer = nil
-			w.flushMu.Unlock()
-		})
-	}
-}
-
 // Start begins processing usage events
 func (w *UsageWriter) Start(ctx context.Context) {
 	for {
@@ -228,14 +211,14 @@ func (w *UsageWriter) Start(ctx context.Context) {
 			w.bufferMu.Unlock()
 
 			if shouldFlush {
-				w.flush()
+				_ = w.flush()
 			}
 
 		case <-w.ticker.C:
-			w.flush()
+			_ = w.flush()
 
 		case <-ctx.Done():
-			w.flush() // Final flush
+			_ = w.flush() // Final flush
 			w.ticker.Stop()
 			return
 		}

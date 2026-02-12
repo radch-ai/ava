@@ -125,12 +125,12 @@ router:
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	if _, err := tmpFile.Write([]byte(yamlContent)); err != nil {
 		t.Fatalf("Failed to write YAML: %v", err)
 	}
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	// Test loading from YAML
 	registry := NewRegistry()

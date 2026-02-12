@@ -50,7 +50,7 @@ router:
 func TestGetPlan(t *testing.T) {
 	plan := GetPlan("basic")
 	if plan == nil {
-		t.Error("GetPlan returned nil for basic")
+		t.Fatal("GetPlan returned nil for basic")
 	}
 
 	if plan.Name != "basic" {

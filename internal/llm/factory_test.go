@@ -482,19 +482,18 @@ func TestGetProviderClient(t *testing.T) {
 			wantOpenAI: true,
 			wantErr:    false,
 		},
-		// TODO: Re-enable when Anthropic client is implemented
-		// {
-		// 	name: "Anthropic client has Anthropic provider",
-		// 	config: Config{
-		// 		AnthropicAPIKey: "test-anthropic-key",
-		// 	},
-		// 	model: agent.Model{
-		// 		ID:       "claude-3-5-sonnet-20241022",
-		// 		Provider: "anthropic",
-		// 	},
-		// 	wantAnthropic: true,
-		// 	wantErr:       false,
-		// },
+		{
+			name: "Anthropic client has Anthropic provider",
+			config: Config{
+				AnthropicAPIKey: "test-anthropic-key",
+			},
+			model: agent.Model{
+				ID:       "claude-3-5-sonnet-20241022",
+				Provider: "anthropic",
+			},
+			wantAnthropic: true,
+			wantErr:       false,
+		},
 		{
 			name: "Google client has Google provider",
 			config: Config{
@@ -523,10 +522,9 @@ func TestGetProviderClient(t *testing.T) {
 			if tt.wantOpenAI && client.openai == nil {
 				t.Error("Expected OpenAI client to be non-nil")
 			}
-			// TODO: Re-enable when Anthropic client is implemented
-			// if tt.wantAnthropic && client.anthropic == nil {
-			// 	t.Error("Expected Anthropic client to be non-nil")
-			// }
+			if tt.wantAnthropic && client.anthropic == nil {
+				t.Error("Expected Anthropic client to be non-nil")
+			}
 			if tt.wantGoogle && client.google == nil {
 				t.Error("Expected Google client to be non-nil")
 			}

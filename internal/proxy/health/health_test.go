@@ -82,7 +82,7 @@ func TestCircuitBreaker(t *testing.T) {
 
 	// Record 3 failures (threshold is 3)
 	for i := 0; i < 3; i++ {
-		RecordFailure(ctx, client, "openai", "gpt-4o")
+		_ = RecordFailure(ctx, client, "openai", "gpt-4o")
 	}
 
 	// Check if circuit is open
@@ -118,7 +118,7 @@ func TestIsHealthy(t *testing.T) {
 
 	// Record failures to trip circuit breaker
 	for i := 0; i < 3; i++ {
-		RecordFailure(ctx, client, "openai", "gpt-4o")
+		_ = RecordFailure(ctx, client, "openai", "gpt-4o")
 	}
 
 	// Check if unhealthy now
@@ -140,7 +140,7 @@ func TestCircuitBreakerRecovery(t *testing.T) {
 
 	// Trip circuit breaker with failures
 	for i := 0; i < 3; i++ {
-		RecordFailure(ctx, client, "openai", "gpt-4o")
+		_ = RecordFailure(ctx, client, "openai", "gpt-4o")
 	}
 
 	// Verify circuit is open
@@ -150,8 +150,8 @@ func TestCircuitBreakerRecovery(t *testing.T) {
 	}
 
 	// Record 2 successes to recover (success threshold is 2)
-	RecordSuccess(ctx, client, "openai", "gpt-4o")
-	RecordSuccess(ctx, client, "openai", "gpt-4o")
+	_ = RecordSuccess(ctx, client, "openai", "gpt-4o")
+	_ = RecordSuccess(ctx, client, "openai", "gpt-4o")
 
 	// Verify circuit is closed again
 	health, err := GetHealth(ctx, client, "openai", "gpt-4o")
@@ -175,10 +175,10 @@ func TestGetAllHealth(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup: Record some health data for different models
-	RecordFailure(ctx, client, "openai", "gpt-4o")
-	RecordSuccess(ctx, client, "anthropic", "claude-3-5-sonnet")
-	RecordFailure(ctx, client, "google", "gemini-2.0-flash")
-	RecordFailure(ctx, client, "google", "gemini-2.0-flash")
+	_ = RecordFailure(ctx, client, "openai", "gpt-4o")
+	_ = RecordSuccess(ctx, client, "anthropic", "claude-3-5-sonnet")
+	_ = RecordFailure(ctx, client, "google", "gemini-2.0-flash")
+	_ = RecordFailure(ctx, client, "google", "gemini-2.0-flash")
 
 	// Get all health
 	all, err := GetAllHealth(ctx, client)
@@ -205,7 +205,7 @@ func TestDegradedStatus(t *testing.T) {
 
 	// Record 2 failures (below threshold but should show degraded)
 	for i := 0; i < 2; i++ {
-		RecordFailure(ctx, client, "openai", "gpt-4o")
+		_ = RecordFailure(ctx, client, "openai", "gpt-4o")
 	}
 
 	// Check status
@@ -227,7 +227,7 @@ func TestResetHealth(t *testing.T) {
 
 	// Setup: Record some failures
 	for i := 0; i < 2; i++ {
-		RecordFailure(ctx, client, "openai", "gpt-4o")
+		_ = RecordFailure(ctx, client, "openai", "gpt-4o")
 	}
 
 	// Verify degraded state

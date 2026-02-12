@@ -104,7 +104,7 @@ func TestGatewayStatus(t *testing.T) {
 		t.Error("StatusPaused constant incorrect")
 	}
 
-	var status GatewayStatus = StatusHealthy
+	status := StatusHealthy
 	if status != "healthy" {
 		t.Error("GatewayStatus type not working correctly")
 	}

@@ -15,7 +15,6 @@ import (
 // DiskQueue provides disk-based fallback for usage events
 type DiskQueue struct {
 	path   string
-	file   *os.File
 	mu     sync.Mutex
 	closed bool
 }
@@ -49,7 +48,7 @@ func (q *DiskQueue) Push(event proxy.UsageEvent) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Marshal event to JSON
 	data, err := json.Marshal(event)
@@ -82,7 +81,7 @@ func (q *DiskQueue) Pop() (*proxy.UsageEvent, error) {
 		}
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Read first line
 	var event proxy.UsageEvent

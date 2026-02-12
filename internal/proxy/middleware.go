@@ -9,6 +9,14 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// contextKey is a custom type for context keys to avoid collisions.
+type contextKey string
+
+// Context keys.
+const (
+	requestStartKey contextKey = "request_start"
+)
+
 // GatewayState represents the current state of the gateway
 type GatewayState struct {
 	Status      GatewayStatus
@@ -67,8 +75,8 @@ func (m *Middleware) PauseCheck(next http.Handler) http.Handler {
 // CheckContext is middleware to add context to requests
 func CheckContext(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Add request ID to context
-		ctx := context.WithValue(r.Context(), "request_start", 0)
+		// Add request start time to context
+		ctx := context.WithValue(r.Context(), requestStartKey, 0)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
