@@ -3,7 +3,7 @@ package websocket
 import (
 	"testing"
 
-	"github.com/nevaria-ai/gateway/internal/proxy"
+	"github.com/nevaria-ai/gateway/internal/llm-proxy"
 	"github.com/rs/zerolog"
 )
 

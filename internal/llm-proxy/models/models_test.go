@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/nevaria-ai/gateway/internal/proxy"
+	"github.com/nevaria-ai/gateway/internal/llm-proxy"
 )
 
 func TestModelConfig(t *testing.T) {

@@ -108,9 +108,9 @@ flowchart TB
 | [Factory](../internal/llm/factory.go) | Creates provider-specific LLM clients |
 | [Strategy](../internal/agent/loop.go) | Pluggable tool execution |
 | [Observer](../internal/agent/agent.go) | Event subscription system |
-| [Circuit Breaker](../internal/proxy/health/circuit.go) | Provider health management |
-| [Middleware](../internal/proxy/middleware.go) | HTTP request processing chain |
-| [Singleton](../internal/proxy/models/registry.go) | Global model registry |
+| [Circuit Breaker](../internal/llm-proxy/health/circuit.go) | Provider health management |
+| [Middleware](../internal/llm-proxy/middleware.go) | HTTP request processing chain |
+| [Singleton](../internal/llm-proxy/models/registry.go) | Global model registry |
 | [Pool](../internal/websocket/handler.go) | `wsMessage` sync.Pool for efficiency |
 
 ## Technology Stack

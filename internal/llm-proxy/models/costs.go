@@ -1,7 +1,7 @@
 package models
 
 import (
-	"github.com/nevaria-ai/gateway/internal/proxy"
+	"github.com/nevaria-ai/gateway/internal/llm-proxy"
 )
 
 // CalculateCost computes the cost for a given model and token usage

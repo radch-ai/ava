@@ -1,4 +1,4 @@
-# internal/proxy/usage
+# internal/llm-proxy/usage
 
 Usage tracking with multi-layer fallback.
 
@@ -44,20 +44,20 @@ flowchart TB
 
 | Name | Kind | Location | Description |
 |------|------|----------|-------------|
-| UsageWriter | struct | [writer.go#L25](../internal/proxy/usage/writer.go#L25) | Buffered usage writer |
-| NewUsageWriter | func | [writer.go#L38](../internal/proxy/usage/writer.go#L38) | Creates usage writer |
-| Track | func | [writer.go#L52](../internal/proxy/usage/writer.go#L52) | Queues usage event |
-| writeWithFallback | func | [writer.go#L63](../internal/proxy/usage/writer.go#L63) | Writes with tiered fallback |
-| pushToRedis | func | [writer.go#L82](../internal/proxy/usage/writer.go#L82) | LPUSH operation |
-| flush | func | [writer.go#L112](../internal/proxy/usage/writer.go#L112) | Writes buffer to DB |
-| dbInsert | func | [writer.go#L141](../internal/proxy/usage/writer.go#L141) | Batch insert |
-| Start | func | [writer.go#L203](../internal/proxy/usage/writer.go#L203) | Starts processing loop |
-| DiskQueue | struct | [disk_queue.go#L15](../internal/proxy/usage/disk_queue.go#L15) | Disk fallback queue |
-| NewDiskQueue | func | [disk_queue.go#L22](../internal/proxy/usage/disk_queue.go#L22) | Creates disk queue |
-| Push | func | [disk_queue.go#L37](../internal/proxy/usage/disk_queue.go#L37) | Appends event |
-| Pop | func | [disk_queue.go#L67](../internal/proxy/usage/disk_queue.go#L67) | Retrieves next event |
-| UsageError | struct | [writer.go#L247](../internal/proxy/usage/writer.go#L247) | Usage error type |
-| FallbackError | struct | [writer.go#L264](../internal/proxy/usage/writer.go#L264) | Fallback error type |
+| UsageWriter | struct | [writer.go#L25](../internal/llm-proxy/usage/writer.go#L25) | Buffered usage writer |
+| NewUsageWriter | func | [writer.go#L38](../internal/llm-proxy/usage/writer.go#L38) | Creates usage writer |
+| Track | func | [writer.go#L52](../internal/llm-proxy/usage/writer.go#L52) | Queues usage event |
+| writeWithFallback | func | [writer.go#L63](../internal/llm-proxy/usage/writer.go#L63) | Writes with tiered fallback |
+| pushToRedis | func | [writer.go#L82](../internal/llm-proxy/usage/writer.go#L82) | LPUSH operation |
+| flush | func | [writer.go#L112](../internal/llm-proxy/usage/writer.go#L112) | Writes buffer to DB |
+| dbInsert | func | [writer.go#L141](../internal/llm-proxy/usage/writer.go#L141) | Batch insert |
+| Start | func | [writer.go#L203](../internal/llm-proxy/usage/writer.go#L203) | Starts processing loop |
+| DiskQueue | struct | [disk_queue.go#L15](../internal/llm-proxy/usage/disk_queue.go#L15) | Disk fallback queue |
+| NewDiskQueue | func | [disk_queue.go#L22](../internal/llm-proxy/usage/disk_queue.go#L22) | Creates disk queue |
+| Push | func | [disk_queue.go#L37](../internal/llm-proxy/usage/disk_queue.go#L37) | Appends event |
+| Pop | func | [disk_queue.go#L67](../internal/llm-proxy/usage/disk_queue.go#L67) | Retrieves next event |
+| UsageError | struct | [writer.go#L247](../internal/llm-proxy/usage/writer.go#L247) | Usage error type |
+| FallbackError | struct | [writer.go#L264](../internal/llm-proxy/usage/writer.go#L264) | Fallback error type |
 
 ## UsageEvent Fields
 

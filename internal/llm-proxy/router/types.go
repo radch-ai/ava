@@ -1,7 +1,7 @@
 // Package router provides intelligent model selection using LLM-based routing.
 package router
 
-import "github.com/nevaria-ai/gateway/internal/proxy"
+import "github.com/nevaria-ai/gateway/internal/llm-proxy"
 
 // Type aliases for proxy types
 type (

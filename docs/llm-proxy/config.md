@@ -1,4 +1,4 @@
-# internal/proxy/config
+# internal/llm-proxy/config
 
 Configuration and plan definitions.
 
@@ -35,19 +35,19 @@ flowchart TB
 
 | Name | Kind | Location | Description |
 |------|------|----------|-------------|
-| Config | struct | [config.go#L11](../internal/proxy/config/config.go#L11) | Main configuration struct |
-| ModelConfig | struct | [config.go#L17](../internal/proxy/config/config.go#L17) | Model configuration |
-| RouterConfig | struct | [config.go#L26](../internal/proxy/config/config.go#L26) | Router configuration |
-| LoadConfig | func | [config.go#L33](../internal/proxy/config/config.go#L33) | Loads config from YAML |
-| GetModel | func | [config.go#L55](../internal/proxy/config/config.go#L55) | Gets model by name |
-| GetAllModels | func | [config.go#L61](../internal/proxy/config/config.go#L61) | Returns all model names |
-| GetModelsByProvider | func | [config.go#L70](../internal/proxy/config/config.go#L70) | Filters models by provider |
-| GetModelsByTier | func | [config.go#L81](../internal/proxy/config/config.go#L81) | Filters models by tier |
-| Plan | struct | [plans.go#L5](../internal/proxy/config/plans.go#L5) | Subscription plan |
-| GetPlan | func | [plans.go#L39](../internal/proxy/config/plans.go#L39) | Gets plan by name |
-| GetAllPlans | func | [plans.go#L44](../internal/proxy/config/plans.go#L44) | Returns all plans |
-| GetPlanNames | func | [plans.go#L53](../internal/proxy/config/plans.go#L53) | Returns plan names |
-| HasFeature | func | [plans.go#L62](../internal/proxy/config/plans.go#L62) | Checks plan feature |
+| Config | struct | [config.go#L11](../internal/llm-proxy/config/config.go#L11) | Main configuration struct |
+| ModelConfig | struct | [config.go#L17](../internal/llm-proxy/config/config.go#L17) | Model configuration |
+| RouterConfig | struct | [config.go#L26](../internal/llm-proxy/config/config.go#L26) | Router configuration |
+| LoadConfig | func | [config.go#L33](../internal/llm-proxy/config/config.go#L33) | Loads config from YAML |
+| GetModel | func | [config.go#L55](../internal/llm-proxy/config/config.go#L55) | Gets model by name |
+| GetAllModels | func | [config.go#L61](../internal/llm-proxy/config/config.go#L61) | Returns all model names |
+| GetModelsByProvider | func | [config.go#L70](../internal/llm-proxy/config/config.go#L70) | Filters models by provider |
+| GetModelsByTier | func | [config.go#L81](../internal/llm-proxy/config/config.go#L81) | Filters models by tier |
+| Plan | struct | [plans.go#L5](../internal/llm-proxy/config/plans.go#L5) | Subscription plan |
+| GetPlan | func | [plans.go#L39](../internal/llm-proxy/config/plans.go#L39) | Gets plan by name |
+| GetAllPlans | func | [plans.go#L44](../internal/llm-proxy/config/plans.go#L44) | Returns all plans |
+| GetPlanNames | func | [plans.go#L53](../internal/llm-proxy/config/plans.go#L53) | Returns plan names |
+| HasFeature | func | [plans.go#L62](../internal/llm-proxy/config/plans.go#L62) | Checks plan feature |
 
 ## Plans
 

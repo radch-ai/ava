@@ -1,4 +1,4 @@
-# internal/proxy/router
+# internal/llm-proxy/router
 
 LLM-based intelligent model selection.
 
@@ -34,12 +34,12 @@ flowchart TB
 
 | Name | Kind | Location | Description |
 |------|------|----------|-------------|
-| RouterRequest | interface | [types.go#L17](../internal/proxy/router/types.go#L17) | Router request data |
-| RouterResponse | struct | [types.go#L28](../internal/proxy/router/types.go#L28) | Router response data |
-| RouterAttempt | struct | [types.go#L38](../internal/proxy/router/types.go#L38) | Failed attempt tracking |
-| SelectModel | func | [router.go#L17](../internal/proxy/router/router.go#L17) | Calls router LLM |
-| BuildRouterPrompt | func | [prompt.go#L9](../internal/proxy/router/prompt.go#L9) | Creates router prompt |
-| LLMClient | interface | [router.go#L12](../internal/proxy/router/router.go#L12) | LLM client interface |
+| RouterRequest | interface | [types.go#L17](../internal/llm-proxy/router/types.go#L17) | Router request data |
+| RouterResponse | struct | [types.go#L28](../internal/llm-proxy/router/types.go#L28) | Router response data |
+| RouterAttempt | struct | [types.go#L38](../internal/llm-proxy/router/types.go#L38) | Failed attempt tracking |
+| SelectModel | func | [router.go#L17](../internal/llm-proxy/router/router.go#L17) | Calls router LLM |
+| BuildRouterPrompt | func | [prompt.go#L9](../internal/llm-proxy/router/prompt.go#L9) | Creates router prompt |
+| LLMClient | interface | [router.go#L12](../internal/llm-proxy/router/router.go#L12) | LLM client interface |
 
 ## RouterRequest Fields
 

@@ -5,7 +5,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/nevaria-ai/gateway/internal/proxy"
+	"github.com/nevaria-ai/gateway/internal/llm-proxy"
 )
 
 func TestRouterRequest(t *testing.T) {

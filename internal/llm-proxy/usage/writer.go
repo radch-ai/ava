@@ -11,7 +11,7 @@ import (
 	"time"
 
 	_ "github.com/lib/pq" // PostgreSQL driver
-	"github.com/nevaria-ai/gateway/internal/proxy"
+	"github.com/nevaria-ai/gateway/internal/llm-proxy"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 )

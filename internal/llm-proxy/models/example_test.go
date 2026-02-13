@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/nevaria-ai/gateway/internal/proxy/models"
+	"github.com/nevaria-ai/gateway/internal/llm-proxy/models"
 )
 
 // TestLoadRealModelsConfig tests loading the actual models.yaml file
