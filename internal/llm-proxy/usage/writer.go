@@ -1,4 +1,4 @@
-// Package usage provides usage tracking with multi-layer fallback.
+// Package usage provides usage tracking with Redis fallback.
 package usage
 
 import (
@@ -30,20 +30,18 @@ type UsageWriter struct {
 	ticker    *time.Ticker
 	db        any // *sql.DB - using any to avoid import cycles
 	redis     any // *redis.Client - using any to avoid import cycles
-	diskQueue *DiskQueue
 	dbHealthy atomic.Bool
 	batchSize int
 }
 
-// NewUsageWriter creates a new usage writer with fallback
-func NewUsageWriter(db any, redis any, diskQueuePath string) *UsageWriter {
+// NewUsageWriter creates a new usage writer with Redis fallback
+func NewUsageWriter(db any, redis any) *UsageWriter {
 	return &UsageWriter{
 		eventChan: make(chan proxy.UsageEvent, defaultMaxBufferSize),
 		buffer:    make([]proxy.UsageEvent, 0, defaultBatchSize),
 		ticker:    time.NewTicker(defaultFlushInterval),
 		db:        db,
 		redis:     redis,
-		diskQueue: NewDiskQueue(diskQueuePath),
 		batchSize: defaultBatchSize,
 		dbHealthy: atomic.Bool{},
 	}
@@ -55,32 +53,12 @@ func (w *UsageWriter) Track(event proxy.UsageEvent) error {
 	case w.eventChan <- event:
 		return nil
 	default:
-		// Channel full, try immediate fallback
-		return w.writeWithFallback(event)
+		// Channel full, try immediate fallback to Redis
+		return w.pushToRedis(event)
 	}
 }
 
-// writeWithFallback writes an event with multi-layer fallback
-func (w *UsageWriter) writeWithFallback(event proxy.UsageEvent) error {
-	// Try Redis queue first
-	if w.redis != nil {
-		err := w.pushToRedis(event)
-		if err == nil {
-			return nil
-		}
-		log.Warn().Err(err).Msg("Redis queue failed, trying disk")
-	}
-
-	// Fall back to disk queue
-	if err := w.diskQueue.Push(event); err != nil {
-		log.Error().Err(err).Msg("All usage tracking methods failed - data at risk")
-		return err
-	}
-
-	return nil
-}
-
-// pushToRedis pushes an event to Redis queue
+// pushToRedis pushes an event to Redis queue as fallback
 func (w *UsageWriter) pushToRedis(event proxy.UsageEvent) error {
 	if w.redis == nil {
 		return ErrRedisNotConfigured
@@ -126,10 +104,10 @@ func (w *UsageWriter) flush() error {
 	// Try database insert
 	if err := w.dbInsert(toFlush); err != nil {
 		w.dbHealthy.Store(false)
-		log.Warn().Err(err).Msg("DB insert failed, using fallback")
-		// Move buffer to fallback
+		log.Warn().Err(err).Msg("DB insert failed, using Redis fallback")
+		// Move buffer to Redis
 		for _, e := range toFlush {
-			_ = w.writeWithFallback(e)
+			_ = w.pushToRedis(e)
 		}
 		return err
 	}
@@ -261,7 +239,7 @@ func (e *UsageError) Unwrap() error {
 	return e.Err
 }
 
-// FallbackError represents a fallback to a lower-tier storage
+// FallbackError represents a fallback to Redis
 type FallbackError struct {
 	Message string
 }

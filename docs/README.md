@@ -39,7 +39,6 @@ flowchart TB
     subgraph Infrastructure
         Redis[(Redis)]
         DB[(PostgreSQL)]
-        Disk[Disk Queue]
     end
 
     WS -->|WebSocket| HTTP
@@ -61,8 +60,7 @@ flowchart TB
     Quota ---> Redis
     Health ---> Redis
     Usage ---> DB
-    Usage ---> Redis
-    Usage ---> Disk
+    Usage -.->|fallback| Redis
 ```
 
 ## Package Structure
@@ -153,7 +151,6 @@ flowchart TB
 - [ ] Set appropriate timeouts (default: 120s for LLM calls)
 - [ ] Enable structured logging at appropriate level
 - [ ] Set up monitoring for circuit breaker state
-- [ ] Configure disk queue fallback path
 
 ## Protocol Notes
 

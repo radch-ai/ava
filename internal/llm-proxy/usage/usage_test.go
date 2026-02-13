@@ -1,4 +1,4 @@
-// Package usage provides usage tracking with multi-layer fallback.
+// Package usage provides usage tracking with Redis fallback.
 package usage
 
 import (
@@ -28,7 +28,7 @@ func TestTrackUsage(t *testing.T) {
 }
 
 func TestUsageWriter(t *testing.T) {
-	writer := NewUsageWriter(nil, nil, "/tmp/test-usage-backup")
+	writer := NewUsageWriter(nil, nil)
 	if writer == nil {
 		t.Fatal("NewUsageWriter returned nil")
 	}
@@ -54,31 +54,8 @@ func TestUsageWriter(t *testing.T) {
 	}
 }
 
-func TestDiskQueue(t *testing.T) {
-	queue := NewDiskQueue("/tmp/test-usage-disk")
-	if queue == nil {
-		t.Fatal("NewDiskQueue returned nil")
-	}
-
-	event := proxy.UsageEvent{
-		UserID:       "test-user",
-		Model:        "gpt-4o-mini",
-		TokensInput:  100,
-		TokensOutput: 50,
-		CostTotal:    0.0003,
-	}
-
-	err := queue.Push(event)
-	if err != nil {
-		t.Fatalf("Push failed: %v", err)
-	}
-
-	// Note: We'd need a Pop method to test retrieval,
-	// but for now just test Push works
-}
-
 func TestUsageBatching(t *testing.T) {
-	writer := NewUsageWriter(nil, nil, "/tmp/test-usage-batching")
+	writer := NewUsageWriter(nil, nil)
 	if writer == nil {
 		t.Fatal("NewUsageWriter returned nil")
 	}

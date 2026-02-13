@@ -1,10 +1,10 @@
 # internal/llm-proxy/usage
 
-Usage tracking with multi-layer fallback.
+Usage tracking with Redis fallback.
 
 ## Description
 
-The usage package tracks LLM token usage with a three-tier fallback system: primary database insert, Redis queue fallback, and disk queue as last resort.
+The usage package tracks LLM token usage with a two-tier system: primary database insert with Redis queue fallback.
 
 ## Fallback Flow
 
@@ -13,11 +13,8 @@ flowchart TB
     Start["Track event"] --> Channel["Send to buffered event channel"]
     Channel --> HasSpace{Channel has space}
     HasSpace -->|Yes| Enqueued["Event queued"]
-    HasSpace -->|No - Channel full| Fallback["writeWithFallback"]
-    Fallback --> RedisLPUSH["Try Redis LPUSH"]
-    RedisLPUSH --> Success{Success?}
-    Success -->|YES| Done["Done"]
-    Success -->|NO| DiskQueue["Disk Queue"]
+    HasSpace -->|No - Channel full| RedisLPUSH["Try Redis LPUSH"]
+    RedisLPUSH --> Done["Done"]
 ```
 
 ## Buffered Write Flow
@@ -37,7 +34,7 @@ flowchart TB
     FinalFlush --> DBInsert
     DBInsert --> DBSuccess{Success?}
     DBSuccess -->|YES| Done["Done"]
-    DBSuccess -->|NO| RedisDisk["Redis + Disk"]
+    DBSuccess -->|NO| RedisFallback["Redis fallback"]
 ```
 
 ## Types and Functions
@@ -45,19 +42,14 @@ flowchart TB
 | Name | Kind | Location | Description |
 |------|------|----------|-------------|
 | UsageWriter | struct | [writer.go#L25](../internal/llm-proxy/usage/writer.go#L25) | Buffered usage writer |
-| NewUsageWriter | func | [writer.go#L38](../internal/llm-proxy/usage/writer.go#L38) | Creates usage writer |
-| Track | func | [writer.go#L52](../internal/llm-proxy/usage/writer.go#L52) | Queues usage event |
-| writeWithFallback | func | [writer.go#L63](../internal/llm-proxy/usage/writer.go#L63) | Writes with tiered fallback |
-| pushToRedis | func | [writer.go#L82](../internal/llm-proxy/usage/writer.go#L82) | LPUSH operation |
-| flush | func | [writer.go#L112](../internal/llm-proxy/usage/writer.go#L112) | Writes buffer to DB |
-| dbInsert | func | [writer.go#L141](../internal/llm-proxy/usage/writer.go#L141) | Batch insert |
-| Start | func | [writer.go#L203](../internal/llm-proxy/usage/writer.go#L203) | Starts processing loop |
-| DiskQueue | struct | [disk_queue.go#L15](../internal/llm-proxy/usage/disk_queue.go#L15) | Disk fallback queue |
-| NewDiskQueue | func | [disk_queue.go#L22](../internal/llm-proxy/usage/disk_queue.go#L22) | Creates disk queue |
-| Push | func | [disk_queue.go#L37](../internal/llm-proxy/usage/disk_queue.go#L37) | Appends event |
-| Pop | func | [disk_queue.go#L67](../internal/llm-proxy/usage/disk_queue.go#L67) | Retrieves next event |
-| UsageError | struct | [writer.go#L247](../internal/llm-proxy/usage/writer.go#L247) | Usage error type |
-| FallbackError | struct | [writer.go#L264](../internal/llm-proxy/usage/writer.go#L264) | Fallback error type |
+| NewUsageWriter | func | [writer.go#L37](../internal/llm-proxy/usage/writer.go#L37) | Creates usage writer |
+| Track | func | [writer.go#L50](../internal/llm-proxy/usage/writer.go#L50) | Queues usage event |
+| pushToRedis | func | [writer.go#L61](../internal/llm-proxy/usage/writer.go#L61) | LPUSH operation |
+| flush | func | [writer.go#L90](../internal/llm-proxy/usage/writer.go#L90) | Writes buffer to DB |
+| dbInsert | func | [writer.go#L119](../internal/llm-proxy/usage/writer.go#L119) | Batch insert |
+| Start | func | [writer.go#L181](../internal/llm-proxy/usage/writer.go#L181) | Starts processing loop |
+| UsageError | struct | [writer.go#L225](../internal/llm-proxy/usage/writer.go#L225) | Usage error type |
+| FallbackError | struct | [writer.go#L242](../internal/llm-proxy/usage/writer.go#L242) | Fallback error type |
 
 ## UsageEvent Fields
 
@@ -77,7 +69,6 @@ flowchart TB
 
 1. **Database** - PostgreSQL batch insert (primary)
 2. **Redis** - LPUSH to `usage:{userID}` key (fallback)
-3. **Disk** - JSONL file append (last resort)
 
 ## Configuration
 
