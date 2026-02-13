@@ -50,7 +50,7 @@ flowchart LR
 | pingLoop | func | [handler.go#L351](../internal/websocket/handler.go#L351) | Keep-alive ping goroutine |
 | handleTextMessage | func | [handler.go#L437](../internal/websocket/handler.go#L437) | Processes prompt messages |
 | AgentManager | struct | [agent_manager.go#L17](../internal/websocket/agent_manager.go#L17) | Per-connection agents |
-| GetOrCreateAgent | func | [agent_manager.go#L40](../internal/websocket/agent_manager.go#L40) | Gets or creates agent with proxy client |
+| GetOrCreateAgent | func | [agent_manager.go#L40](../internal/websocket/agent_manager.go#L40) | Gets or creates agent with LLM proxy client |
 | RemoveAgent | func | [agent_manager.go#L83](../internal/websocket/agent_manager.go#L83) | Cleanup agent |
 
 ## Configuration
