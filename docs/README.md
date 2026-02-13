@@ -21,7 +21,7 @@ flowchart TB
             ToolReg[Tool Registry]
         end
 
-        subgraph Proxy["Proxy Layer"]
+        subgraph LLMProxy["LLM Proxy"]
             ProxyHandler[Proxy Handler]
             Router[Model Router]
             Health[Health Checker]
@@ -79,16 +79,16 @@ flowchart TB
     Internal --> WebSocket[websocket]
     Internal --> Agent[agent]
     Internal --> LLM[llm]
-    Internal --> Proxy[proxy]
+    Internal --> LLMProxy[llm-proxy]
 
     Agent ---> AgentTools[tools]
 
-    Proxy --> PConfig[config]
-    Proxy --> PHealth[health]
-    Proxy --> PModels[models]
-    Proxy --> PQuota[quota]
-    Proxy --> PRouter[router]
-    Proxy --> PUsage[usage]
+    LLMProxy --> PConfig[config]
+    LLMProxy --> PHealth[health]
+    LLMProxy --> PModels[models]
+    LLMProxy --> PQuota[quota]
+    LLMProxy --> PRouter[router]
+    LLMProxy --> PUsage[usage]
 ```
 
 ## Data Flows
@@ -96,7 +96,7 @@ flowchart TB
 | Flow | Description |
 |------|-------------|
 | WebSocket Connection | Client connects, agent is created/retrieved, events stream |
-| Proxy Request | Quota check -> Router -> Health check -> LLM call -> Usage track |
+| LLM Proxy Request | Quota check -> Router -> Health check -> LLM call -> Usage track |
 | Agent Tool Loop | LLM stream -> Extract tool calls -> Execute -> Add results -> Repeat |
 
 ## Design Patterns

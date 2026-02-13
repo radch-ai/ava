@@ -1,11 +1,11 @@
-# Proxy Request Flow
+# LLM Proxy Request Flow
 
 LLM proxy request processing through quota, routing, health, and usage tracking.
 
 ```mermaid
 sequenceDiagram
     participant C as Caller
-    participant H as Proxy Handler
+    participant H as LLM Proxy Handler
     participant Q as Quota Checker
     participant R as Router
     participant HC as Health Checker

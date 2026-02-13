@@ -4,9 +4,9 @@ Intelligent LLM proxy with routing, quota management, and usage tracking.
 
 ## Description
 
-The proxy package provides a complete LLM proxy implementation with intelligent routing, quota enforcement, health monitoring, and usage tracking.
+The llm-proxy package provides a complete LLM proxy implementation with intelligent routing, quota enforcement, health monitoring, and usage tracking. It acts as an intermediary between agent requests and LLM providers.
 
-## Proxy Handler Flow
+## LLM Proxy Handler Flow
 
 ```mermaid
 flowchart TB
@@ -36,7 +36,7 @@ flowchart TB
 | [models.md](models.md) | Model registry and cost calculation |
 | [quota.md](quota.md) | Quota management with Redis |
 | [router.md](router.md) | LLM-based model selection |
-| [usage.md](usage.md) | Usage tracking with fallback |
+| [usage.md](usage.md) | Usage tracking with Redis fallback |
 
 ## Key Types and Functions
 
@@ -50,7 +50,7 @@ flowchart TB
 | RouterResponse | struct | [handler.go#L55](../internal/llm-proxy/handler.go#L55) | Router response |
 | UsageTracker | interface | [handler.go#L63](../internal/llm-proxy/handler.go#L63) | Usage tracker interface |
 | HandlerOptions | struct | [handler.go#L68](../internal/llm-proxy/handler.go#L68) | Handler configuration |
-| Handler | struct | [handler.go#L77](../internal/llm-proxy/handler.go#L77) | Main proxy handler |
+| Handler | struct | [handler.go#L77](../internal/llm-proxy/handler.go#L77) | Main LLM proxy handler |
 | NewHandler | func | [handler.go#L86](../internal/llm-proxy/handler.go#L86) | Creates handler |
 | ProxyRequest | struct | [handler.go#L97](../internal/llm-proxy/handler.go#L97) | Proxy request data |
 | ProxyResponse | struct | [handler.go#L106](../internal/llm-proxy/handler.go#L106) | Proxy response data |
