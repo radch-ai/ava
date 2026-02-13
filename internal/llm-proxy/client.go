@@ -1,4 +1,4 @@
-// Package proxy provides the proxy client that implements agent.LLMClient.
+// Package proxy provides the LLM proxy client that implements agent.LLMClient.
 package proxy
 
 import (
@@ -8,13 +8,13 @@ import (
 )
 
 // Client implements agent.LLMClient with quota/routing/health checks.
-// It wraps the proxy Handler and adds user context to each request.
+// It wraps the LLM proxy Handler and adds user context to each request.
 type Client struct {
 	handler *Handler
 	userID  string
 }
 
-// NewClient creates a new proxy client for a specific user.
+// NewClient creates a new LLM proxy client for a specific user.
 func NewClient(handler *Handler, userID string) *Client {
 	return &Client{
 		handler: handler,
@@ -44,7 +44,7 @@ func (c *Client) Stream(ctx context.Context, messages []agent.AgentMessage, tool
 		Messages: messages,
 	}
 
-	// Call proxy handler
+	// Call LLM proxy handler
 	resp, err := c.handler.Handle(ctx, req)
 	if err != nil {
 		return nil, err

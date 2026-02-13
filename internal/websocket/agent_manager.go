@@ -10,33 +10,33 @@ import (
 
 // AgentManagerOptions configures a new AgentManager.
 type AgentManagerOptions struct {
-	ProxyHandler *proxy.Handler
+	LLMProxyHandler *proxy.Handler
 }
 
 // AgentManager manages per-connection agents with thread-safe access.
 type AgentManager struct {
-	mu           sync.RWMutex
-	agents       map[string]*agent.Agent
-	logger       zerolog.Logger
-	proxyHandler *proxy.Handler
+	mu       sync.RWMutex
+	agents   map[string]*agent.Agent
+	logger   zerolog.Logger
+	llmProxy *proxy.Handler
 }
 
 // NewAgentManager creates a new AgentManager.
 func NewAgentManager(logger zerolog.Logger, opts *AgentManagerOptions) *AgentManager {
-	var proxyHandler *proxy.Handler
+	var llmProxy *proxy.Handler
 	if opts != nil {
-		proxyHandler = opts.ProxyHandler
+		llmProxy = opts.LLMProxyHandler
 	}
 
 	return &AgentManager{
-		agents:       make(map[string]*agent.Agent),
-		logger:       logger,
-		proxyHandler: proxyHandler,
+		agents:   make(map[string]*agent.Agent),
+		logger:   logger,
+		llmProxy: llmProxy,
 	}
 }
 
 // GetOrCreateAgent returns an existing agent for the session or creates a new one.
-// If a proxy handler is configured, the agent will use proxy.Client for LLM calls.
+// If an LLM proxy handler is configured, the agent will use proxy.Client for LLM calls.
 func (m *AgentManager) GetOrCreateAgent(sessionID string, userID string) *agent.Agent {
 	m.mu.RLock()
 	existingAgent, exists := m.agents[sessionID]
@@ -67,9 +67,9 @@ func (m *AgentManager) createAgent(sessionID string, userID string) *agent.Agent
 		SessionID: sessionID,
 	}
 
-	// If proxy handler is configured, create proxy client for this user
-	if m.proxyHandler != nil {
-		proxyClient := proxy.NewClient(m.proxyHandler, userID)
+	// If LLM proxy handler is configured, create proxy client for this user
+	if m.llmProxy != nil {
+		proxyClient := proxy.NewClient(m.llmProxy, userID)
 		opts.LLMClient = proxyClient
 	} else {
 		// Use mock client for backward compatibility/testing

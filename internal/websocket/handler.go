@@ -86,7 +86,7 @@ func NewHandler(logger zerolog.Logger, allowedOrigins []string, maxConns int) *H
 		upgrader:     handlerUpgrader,
 		connSem:      sem,
 		maxConns:     maxConns,
-		agentManager: NewAgentManager(logger, nil), // No proxy handler initially
+		agentManager: NewAgentManager(logger, nil), // No LLM proxy handler initially
 	}
 }
 

@@ -74,7 +74,7 @@ type HandlerOptions struct {
 	Usage     UsageTracker
 }
 
-// Handler implements the main proxy request flow
+// Handler implements the main LLM proxy request flow
 type Handler struct {
 	llmClient LLMClient
 	quota     QuotaChecker
@@ -83,7 +83,7 @@ type Handler struct {
 	usage     UsageTracker
 }
 
-// NewHandler creates a new proxy handler
+// NewHandler creates a new LLM proxy handler
 func NewHandler(opts HandlerOptions) *Handler {
 	return &Handler{
 		llmClient: opts.LLMClient,
@@ -94,7 +94,7 @@ func NewHandler(opts HandlerOptions) *Handler {
 	}
 }
 
-// ProxyRequest represents a request to the proxy
+// ProxyRequest represents a request to the LLM proxy
 type ProxyRequest struct {
 	UserID    string
 	SessionID string
@@ -103,7 +103,7 @@ type ProxyRequest struct {
 	Messages  []agent.AgentMessage
 }
 
-// ProxyResponse represents a response from the proxy
+// ProxyResponse represents a response from the LLM proxy
 type ProxyResponse struct {
 	Stream         <-chan agent.AgentEvent
 	UsingAddon     bool
@@ -117,7 +117,7 @@ var (
 	ErrRouterFailed   = &ProxyError{Op: "router", Message: "model selection failed"}
 )
 
-// ProxyError represents an error in proxy operations
+// ProxyError represents an error in LLM proxy operations
 type ProxyError struct {
 	Op      string
 	Message string
@@ -135,7 +135,7 @@ func (e *ProxyError) Unwrap() error {
 	return e.Err
 }
 
-// Handle processes a proxy request through the full flow
+// Handle processes an LLM proxy request through the full flow
 func (h *Handler) Handle(ctx context.Context, req ProxyRequest) (*ProxyResponse, error) {
 	// 1. QUOTA CHECK (if quota checker is configured)
 	var quotaResult *QuotaCheckResult

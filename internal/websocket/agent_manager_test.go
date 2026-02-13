@@ -7,16 +7,16 @@ import (
 	"github.com/rs/zerolog"
 )
 
-// TestAgentManagerWithProxy verifies that AgentManager can be created with proxy options.
-func TestAgentManagerWithProxy(t *testing.T) {
+// TestAgentManagerWithLLMProxy verifies that AgentManager can be created with LLM proxy options.
+func TestAgentManagerWithLLMProxy(t *testing.T) {
 	logger := zerolog.Nop()
 
 	// Create mock handler
 	handler := proxy.NewHandler(proxy.HandlerOptions{})
 
-	// Create agent manager with proxy handler
+	// Create agent manager with LLM proxy handler
 	mgr := NewAgentManager(logger, &AgentManagerOptions{
-		ProxyHandler: handler,
+		LLMProxyHandler: handler,
 	})
 
 	if mgr == nil {
@@ -24,16 +24,16 @@ func TestAgentManagerWithProxy(t *testing.T) {
 	}
 }
 
-// TestGetOrCreateAgentWithProxy verifies that agent creation uses proxy client.
-func TestGetOrCreateAgentWithProxy(t *testing.T) {
+// TestGetOrCreateAgentWithLLMProxy verifies that agent creation uses LLM proxy client.
+func TestGetOrCreateAgentWithLLMProxy(t *testing.T) {
 	logger := zerolog.Nop()
 
 	// Create mock handler
 	handler := proxy.NewHandler(proxy.HandlerOptions{})
 
-	// Create agent manager with proxy handler
+	// Create agent manager with LLM proxy handler
 	mgr := NewAgentManager(logger, &AgentManagerOptions{
-		ProxyHandler: handler,
+		LLMProxyHandler: handler,
 	})
 
 	userID := "test-user-123"
@@ -52,13 +52,13 @@ func TestGetOrCreateAgentWithProxy(t *testing.T) {
 	}
 }
 
-// TestAgentManagerRemoveAgentWithProxy verifies agent removal with proxy.
-func TestAgentManagerRemoveAgentWithProxy(t *testing.T) {
+// TestAgentManagerRemoveAgentWithLLMProxy verifies agent removal with LLM proxy.
+func TestAgentManagerRemoveAgentWithLLMProxy(t *testing.T) {
 	logger := zerolog.Nop()
 
 	handler := proxy.NewHandler(proxy.HandlerOptions{})
 	mgr := NewAgentManager(logger, &AgentManagerOptions{
-		ProxyHandler: handler,
+		LLMProxyHandler: handler,
 	})
 
 	sessionID := "test-session-789"
@@ -80,11 +80,11 @@ func TestAgentManagerRemoveAgentWithProxy(t *testing.T) {
 	}
 }
 
-// TestAgentManagerNilProxy verifies behavior when proxy handler is nil.
-func TestAgentManagerNilProxy(t *testing.T) {
+// TestAgentManagerNilLLMProxy verifies behavior when LLM proxy handler is nil.
+func TestAgentManagerNilLLMProxy(t *testing.T) {
 	logger := zerolog.Nop()
 
-	// Create agent manager without proxy handler (backward compatibility)
+	// Create agent manager without LLM proxy handler (backward compatibility)
 	mgr := NewAgentManager(logger, nil)
 
 	sessionID := "test-session-nil"
