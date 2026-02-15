@@ -19,7 +19,7 @@ func TestServerStarts(t *testing.T) {
 	logger := zerolog.Nop()
 	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100)
 
-	srv := New(":8081", logger, wsHandler)
+	srv := New(":8081", logger, wsHandler, nil)
 	go func() {
 		_ = srv.Start()
 	}()
@@ -44,7 +44,7 @@ func TestServerHealthEndpoint(t *testing.T) {
 	logger := zerolog.Nop()
 	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100)
 
-	srv := New(":8081", logger, wsHandler)
+	srv := New(":8081", logger, wsHandler, nil)
 	go func() {
 		_ = srv.Start()
 	}()
@@ -105,7 +105,7 @@ func TestServerWebSocketEndpoint(t *testing.T) {
 	logger := zerolog.Nop()
 	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100)
 
-	srv := New(":8081", logger, wsHandler)
+	srv := New(":8081", logger, wsHandler, nil)
 	go func() {
 		_ = srv.Start()
 	}()
@@ -168,7 +168,7 @@ func TestServerGracefulShutdown(t *testing.T) {
 	logger := zerolog.Nop()
 	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100)
 
-	srv := New(":8081", logger, wsHandler)
+	srv := New(":8081", logger, wsHandler, nil)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -209,7 +209,7 @@ func TestServerStartupFailure(t *testing.T) {
 	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100)
 
 	// Try to bind to an address that requires root (will fail)
-	srv := New(":80", logger, wsHandler)
+	srv := New(":80", logger, wsHandler, nil)
 
 	err := srv.Start()
 	if err == nil {
@@ -223,7 +223,7 @@ func TestServerWithCustomTimeouts(t *testing.T) {
 	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100)
 
 	// Start server with short timeouts
-	srv := New(":8081", logger, wsHandler)
+	srv := New(":8081", logger, wsHandler, nil)
 	go func() {
 		_ = srv.Start()
 	}()
@@ -257,7 +257,7 @@ func TestNewServer(t *testing.T) {
 	logger := zerolog.Nop()
 	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100)
 
-	srv := New(":8081", logger, wsHandler)
+	srv := New(":8081", logger, wsHandler, nil)
 
 	if srv == nil {
 		t.Fatal("expected non-nil server")
@@ -293,7 +293,7 @@ func TestServerInvalidPath(t *testing.T) {
 	logger := zerolog.Nop()
 	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100)
 
-	srv := New(":8081", logger, wsHandler)
+	srv := New(":8081", logger, wsHandler, nil)
 	go func() {
 		_ = srv.Start()
 	}()
@@ -404,7 +404,7 @@ func TestServerGracefulShutdownWithWebSocket(t *testing.T) {
 	logger := zerolog.Nop()
 	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100)
 
-	srv := New(":8081", logger, wsHandler)
+	srv := New(":8081", logger, wsHandler, nil)
 
 	errCh := make(chan error, 1)
 	go func() {

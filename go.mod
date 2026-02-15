@@ -27,6 +27,7 @@ require (
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/s2a-go v0.1.8 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.4 // indirect
+	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect

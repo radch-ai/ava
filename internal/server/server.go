@@ -16,14 +16,15 @@ import (
 
 // A Server manages the HTTP server and WebSocket handlers.
 type Server struct {
-	httpServer *http.Server
-	logger     zerolog.Logger
-	wsHandler  *websocket.Handler
-	shutdownCh chan struct{} // Closed when shutdown is requested
+	httpServer     *http.Server
+	logger         zerolog.Logger
+	wsHandler      *websocket.Handler
+	internalRouter http.Handler  // Internal router mounted at /_internal/
+	shutdownCh     chan struct{} // Closed when shutdown is requested
 }
 
-// New creates a new Server with the given address, logger, and WebSocket handler.
-func New(addr string, logger zerolog.Logger, wsHandler *websocket.Handler) *Server {
+// New creates a new Server with the given address, logger, WebSocket handler, and internal router.
+func New(addr string, logger zerolog.Logger, wsHandler *websocket.Handler, internalRouter http.Handler) *Server {
 
 	mux := http.NewServeMux()
 
@@ -42,6 +43,11 @@ func New(addr string, logger zerolog.Logger, wsHandler *websocket.Handler) *Serv
 	// WebSocket endpoint
 	mux.HandleFunc("/ws", wsHandler.HandleWebSocket)
 
+	// Mount internal router at /_internal/
+	if internalRouter != nil {
+		mux.Handle("/_internal/", http.StripPrefix("/_internal/", internalRouter))
+	}
+
 	return &Server{
 		httpServer: &http.Server{
 			Addr:         addr,
@@ -50,9 +56,10 @@ func New(addr string, logger zerolog.Logger, wsHandler *websocket.Handler) *Serv
 			WriteTimeout: 15 * time.Second,
 			IdleTimeout:  60 * time.Second,
 		},
-		logger:     logger,
-		wsHandler:  wsHandler,
-		shutdownCh: make(chan struct{}),
+		logger:         logger,
+		wsHandler:      wsHandler,
+		internalRouter: internalRouter,
+		shutdownCh:     make(chan struct{}),
 	}
 }
 
