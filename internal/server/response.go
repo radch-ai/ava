@@ -2,7 +2,21 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+)
+
+// Package-level error variables for consistent error handling.
+// These can be used for error wrapping, comparison, and logging.
+var (
+	ErrSessionInvalid   = errors.New("session invalid")
+	ErrSessionExpired   = errors.New("session expired")
+	ErrAuthUnavailable  = errors.New("auth service unavailable")
+	ErrInvalidResponse  = errors.New("invalid response")
+	ErrContextCanceled  = errors.New("context canceled")
+	ErrSecretRequired   = errors.New("internal secret required")
+	ErrInvalidFormat    = errors.New("invalid format")
+	ErrCacheUnavailable = errors.New("cache unavailable")
 )
 
 // respondJSON writes a JSON response with the given status code.
