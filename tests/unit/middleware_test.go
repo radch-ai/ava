@@ -172,7 +172,7 @@ func TestAuthMiddleware_CacheMissThenHit(t *testing.T) {
 
 	mockAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"authenticated": true, "user_id": "user-123"}`))
+		_, _ = w.Write([]byte(`{"authenticated": true, "user_id": "user-123"}`))
 	}))
 	defer mockAuth.Close()
 
@@ -224,7 +224,7 @@ func TestAuthMiddleware_SetCookieForwarding(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Set-Cookie", "session=new.token; Path=/; HttpOnly; Secure")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"authenticated": true, "user_id": "user-123"}`))
+		_, _ = w.Write([]byte(`{"authenticated": true, "user_id": "user-123"}`))
 	}))
 	defer mockAuth.Close()
 

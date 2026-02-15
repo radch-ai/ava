@@ -29,13 +29,6 @@ func GetUserIDFromContext(ctx context.Context) string {
 	return ""
 }
 
-// Cache defines the interface for session caching.
-type Cache interface {
-	Get(ctx context.Context, key string) (string, error)
-	Set(ctx context.Context, key string, value string, ttl time.Duration) error
-	Delete(ctx context.Context, key string) error
-}
-
 // AuthMiddleware handles authentication for incoming requests.
 type AuthMiddleware struct {
 	authClient *auth.Client
