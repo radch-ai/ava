@@ -25,7 +25,7 @@ The following architecture decisions have been **implemented**:
 - ✅ `internal/llm/` - LLM proxy with official SDKs (not porting from pi-ai)
 - ✅ `internal/websocket/` - WebSocket server for client connections
 - ✅ `internal/server/` - HTTP server with graceful shutdown
-- ✅ `internal/config/` - Environment-based configuration
+- ✅ `config/` - Environment-based and model configuration
 
 ### ✅ Tool Execution Model
 

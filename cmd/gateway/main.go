@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/nevaria-ai/gateway/internal/config"
+	"github.com/nevaria-ai/gateway/config"
 	"github.com/nevaria-ai/gateway/internal/llm-proxy/models"
 	"github.com/nevaria-ai/gateway/internal/server"
 	"github.com/nevaria-ai/gateway/internal/websocket"

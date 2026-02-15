@@ -1,4 +1,4 @@
-// Package config provides proxy configuration loading.
+// Package config provides configuration loading for the gateway.
 package config
 
 import (
@@ -8,13 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config holds the proxy configuration
-type Config struct {
-	Models map[string]*ModelConfig `yaml:"models"`
-	Router RouterConfig            `yaml:"router"`
-}
-
-// ModelConfig holds configuration for a single model
+// ModelConfig holds configuration for a single LLM model
 type ModelConfig struct {
 	Provider             string  `yaml:"provider"`
 	InputCostPerMillion  float64 `yaml:"input_cost_per_million"`
@@ -30,14 +24,20 @@ type RouterConfig struct {
 	MaxRetries int    `yaml:"max_retries"`
 }
 
-// LoadConfig loads proxy configuration from a YAML file
-func LoadConfig(path string) (*Config, error) {
+// ModelsConfig holds the LLM models and router configuration
+type ModelsConfig struct {
+	Models map[string]*ModelConfig `yaml:"models"`
+	Router RouterConfig            `yaml:"router"`
+}
+
+// LoadModelsConfig loads model and router configuration from a YAML file
+func LoadModelsConfig(path string) (*ModelsConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	var config Config
+	var config ModelsConfig
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
@@ -53,13 +53,13 @@ func LoadConfig(path string) (*Config, error) {
 }
 
 // GetModel returns a model configuration by name
-func (c *Config) GetModel(name string) (*ModelConfig, bool) {
+func (c *ModelsConfig) GetModel(name string) (*ModelConfig, bool) {
 	cfg, exists := c.Models[name]
 	return cfg, exists
 }
 
 // GetAllModels returns all model names
-func (c *Config) GetAllModels() []string {
+func (c *ModelsConfig) GetAllModels() []string {
 	names := make([]string, 0, len(c.Models))
 	for name := range c.Models {
 		names = append(names, name)
@@ -68,7 +68,7 @@ func (c *Config) GetAllModels() []string {
 }
 
 // GetModelsByProvider returns all models for a specific provider
-func (c *Config) GetModelsByProvider(provider string) []*ModelConfig {
+func (c *ModelsConfig) GetModelsByProvider(provider string) []*ModelConfig {
 	var models []*ModelConfig
 	for _, cfg := range c.Models {
 		if cfg.Provider == provider {
@@ -79,7 +79,7 @@ func (c *Config) GetModelsByProvider(provider string) []*ModelConfig {
 }
 
 // GetModelsByTier returns all models in a specific tier
-func (c *Config) GetModelsByTier(tier string) []*ModelConfig {
+func (c *ModelsConfig) GetModelsByTier(tier string) []*ModelConfig {
 	var models []*ModelConfig
 	for _, cfg := range c.Models {
 		if cfg.Tier == tier {

@@ -833,7 +833,7 @@ git commit -m "feat(websocket): wire LLM client into agent creation"
 ## Task 6: Add Environment Variable Configuration
 
 **Files:**
-- Modify: `internal/config/config.go`
+- Modify: `config/config.go`
 
 **Step 1: Add LLM configuration to Config**
 
@@ -857,7 +857,7 @@ type Config struct {
 
 **Step 2: Update Load() to read LLM env vars**
 
-Modify `internal/config/config.go` Load function:
+Modify `config/config.go` Load function:
 
 ```go
 // Load reads configuration from environment variables.
@@ -883,13 +883,13 @@ func Load() (Config, error) {
 
 **Step 3: Run tests**
 
-Run: `go test ./internal/config -v`
+Run: `go test ./config -v`
 Expected: All PASS
 
 **Step 4: Commit**
 
 ```bash
-git add internal/config/config.go
+git add config/config.go
 git commit -m "feat(config): add LLM configuration from environment"
 ```
 
@@ -914,7 +914,7 @@ import (
 
     "github.com/nevaria-ai/gateway/internal/agent"
     "github.com/nevaria-ai/gateway/internal/agent/tools"
-    "github.com/nevaria-ai/gateway/internal/config"
+    "github.com/nevaria-ai/gateway/config"
     "github.com/nevaria-ai/gateway/internal/llm"
 )
 

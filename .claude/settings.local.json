@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__duckduckgo__search",
+      "mcp__duckduckgo__fetch_content",
+      "mcp__github__get_file_contents",
+      "mcp__github__search_code",
+      "Bash(curl:*)",
+      "mcp__plugin_episodic-memory_episodic-memory__search"
+    ]
+  }
+}

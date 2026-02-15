@@ -63,11 +63,13 @@ All three providers implemented:
 
 ### ✅ Config
 
-**Files:** `internal/config/*.go`
+**Files:** `config/*.go`
 
-**Documentation:** `docs/config/` (2 files)
+**Documentation:** `docs/config.md`
 
 - ✅ Environment variable configuration (GATEWAY_ADDR, GATEWAY_LOG_LEVEL, etc.)
+- ✅ Model and router configuration from YAML
+- ✅ Subscription plan definitions
 
 ---
 

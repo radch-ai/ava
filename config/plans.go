@@ -1,4 +1,4 @@
-// Package config provides proxy configuration loading.
+// Package config provides configuration loading for the gateway.
 package config
 
 // Plan represents a subscription plan with LLM credit allowances
