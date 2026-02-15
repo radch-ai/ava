@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/nevaria-ai/gateway/config"
 	"github.com/nevaria-ai/gateway/internal/llm-proxy/models"
@@ -82,14 +83,18 @@ func main() {
 		logger.Warn().Msg("Redis not configured, session caching disabled")
 	}
 
+	// Create auth middleware with cache support
+	// Default cache TTL to 5 minutes if not specified
+	authMW := server.NewAuthMiddleware(cfg.Auth.URL, cfg.Auth.Secret, cache, 5*time.Minute)
+
 	// Create WebSocket handler with config
 	wsHandler := websocket.NewHandler(logger, allowedOrigins, maxConns)
 
 	// Create internal router for auth service webhooks with cache support
 	internalRouter := server.NewInternalRouter(cfg.Auth.Secret, cache)
 
-	// Create and start server
-	srv := server.New(cfg.ServerAddr, logger, wsHandler, internalRouter)
+	// Create and start server with auth middleware
+	srv := server.New(cfg.ServerAddr, logger, wsHandler, authMW, internalRouter)
 	if err := srv.Start(); err != nil {
 		logger.Error().Err(err).Msg("server failed")
 		os.Exit(1)

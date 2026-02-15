@@ -19,12 +19,14 @@ type Server struct {
 	httpServer     *http.Server
 	logger         zerolog.Logger
 	wsHandler      *websocket.Handler
-	internalRouter http.Handler  // Internal router mounted at /_internal/
-	shutdownCh     chan struct{} // Closed when shutdown is requested
+	authMW         *AuthMiddleware // Authentication middleware
+	internalRouter http.Handler    // Internal router mounted at /_internal/
+	shutdownCh     chan struct{}   // Closed when shutdown is requested
 }
 
-// New creates a new Server with the given address, logger, WebSocket handler, and internal router.
-func New(addr string, logger zerolog.Logger, wsHandler *websocket.Handler, internalRouter http.Handler) *Server {
+// New creates a new Server with the given address, logger, WebSocket handler, auth middleware, and internal router.
+// If authMW is nil, the WebSocket endpoint will not require authentication (for backward compatibility).
+func New(addr string, logger zerolog.Logger, wsHandler *websocket.Handler, authMW *AuthMiddleware, internalRouter http.Handler) *Server {
 
 	mux := http.NewServeMux()
 
@@ -40,8 +42,13 @@ func New(addr string, logger zerolog.Logger, wsHandler *websocket.Handler, inter
 		_, _ = w.Write([]byte("OK"))
 	})
 
-	// WebSocket endpoint
-	mux.HandleFunc("/ws", wsHandler.HandleWebSocket)
+	// WebSocket endpoint - wrap with auth middleware if provided
+	wsHandlerFunc := http.HandlerFunc(wsHandler.HandleWebSocket)
+	if authMW != nil {
+		mux.Handle("/ws", authMW.Authenticate(wsHandlerFunc))
+	} else {
+		mux.Handle("/ws", wsHandlerFunc)
+	}
 
 	// Mount internal router at /_internal/
 	if internalRouter != nil {
@@ -58,6 +65,7 @@ func New(addr string, logger zerolog.Logger, wsHandler *websocket.Handler, inter
 		},
 		logger:         logger,
 		wsHandler:      wsHandler,
+		authMW:         authMW,
 		internalRouter: internalRouter,
 		shutdownCh:     make(chan struct{}),
 	}

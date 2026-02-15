@@ -1,33 +1,15 @@
 package server
 
 import (
-	"context"
+	"bufio"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
 
 	"github.com/nevaria-ai/gateway/internal/auth"
+	internalctx "github.com/nevaria-ai/gateway/internal/ctx"
 )
-
-// Context key type for user ID (prevents collisions)
-type contextKey string
-
-const userIDKey contextKey = "user_id"
-
-// WithUserID adds a user ID to the context.
-func WithUserID(ctx context.Context, userID string) context.Context {
-	return context.WithValue(ctx, userIDKey, userID)
-}
-
-// GetUserIDFromContext retrieves the user ID from the context.
-// Returns empty string if not set.
-func GetUserIDFromContext(ctx context.Context) string {
-	if userID, ok := ctx.Value(userIDKey).(string); ok {
-		return userID
-	}
-	return ""
-}
 
 // AuthMiddleware handles authentication for incoming requests.
 type AuthMiddleware struct {
@@ -50,18 +32,16 @@ func NewAuthMiddleware(authURL, secret string, cache Cache, cacheTTL time.Durati
 // for sliding expiration. Gateway must forward these back to the browser.
 func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Wrap response writer to capture Set-Cookie headers from auth service
-		wrapper := &responseWrapper{ResponseWriter: w}
-
 		// Extract session cookie
 		cookie, err := r.Cookie("session")
 		if err != nil || cookie.Value == "" {
-			m.writeAuthError(wrapper, "authentication_required", "Valid session required. Please login.")
+			m.writeAuthError(w, "authentication_required", "Valid session required. Please login.")
 			return
 		}
 
 		sessionToken := cookie.Value
 		var userID string
+		var setCookie *http.Cookie // Set-Cookie to forward from auth service
 
 		// Check cache first (if available)
 		if m.cache != nil {
@@ -76,33 +56,37 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			sessionInfo, err := m.authClient.ValidateSession(r.Context(), sessionToken)
 			if err != nil {
 				if errors.Is(err, auth.ErrSessionInvalid) {
-					m.writeAuthError(wrapper, "authentication_required", "Valid session required. Please login.")
+					m.writeAuthError(w, "authentication_required", "Valid session required. Please login.")
 					return
 				}
 				// Other errors (timeout, unavailable) - return 503
-				http.Error(wrapper, "Auth service unavailable", http.StatusServiceUnavailable)
+				http.Error(w, "Auth service unavailable", http.StatusServiceUnavailable)
 				return
 			}
 			userID = sessionInfo.UserID
+			setCookie = sessionInfo.SetCookie
 
 			// Store in cache
 			if m.cache != nil && userID != "" {
 				_ = m.cache.Set(r.Context(), "session:"+sessionToken, userID, m.cacheTTL)
 			}
+		}
 
-			// Forward Set-Cookie header if auth service extended the session
-			if sessionInfo.SetCookie != nil {
-				http.SetCookie(wrapper, sessionInfo.SetCookie)
-			}
+		// If we need to set a cookie, wrap the response writer
+		wrapper := w
+		if setCookie != nil {
+			wrapper = &responseWrapper{ResponseWriter: w}
+			http.SetCookie(wrapper, setCookie)
 		}
 
 		// Add user ID to context and call next handler
-		ctx := WithUserID(r.Context(), userID)
+		ctx := internalctx.WithUserID(r.Context(), userID)
 		next.ServeHTTP(wrapper, r.WithContext(ctx))
 	})
 }
 
 // responseWrapper wraps http.ResponseWriter to capture Set-Cookie headers.
+// It implements http.Hijacker to support WebSocket upgrades.
 type responseWrapper struct {
 	http.ResponseWriter
 	wroteHeader bool
@@ -116,8 +100,26 @@ func (rw *responseWrapper) WriteHeader(statusCode int) {
 }
 
 func (rw *responseWrapper) Write(b []byte) (int, error) {
-	rw.WriteHeader(http.StatusOK) // Ensure headers are written
+	// Don't call WriteHeader if it hasn't been called yet - let the handler do it
+	// This is important for WebSocket upgrades
 	return rw.ResponseWriter.Write(b)
+}
+
+// Hijack implements http.Hijacker for WebSocket upgrades.
+// This is required for the WebSocket handler to work properly.
+func (rw *responseWrapper) Hijack() (c interface{}, rw2 *bufio.ReadWriter, err error) {
+	// Type assertion to http.Hijacker
+	if hijacker, ok := rw.ResponseWriter.(http.Hijacker); ok {
+		return hijacker.Hijack()
+	}
+	return nil, nil, errors.New("response writer cannot hijack connection")
+}
+
+// Flush implements http.Flusher for streaming responses.
+func (rw *responseWrapper) Flush() {
+	if flusher, ok := rw.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }
 
 // writeAuthError writes a standardized authentication error response.

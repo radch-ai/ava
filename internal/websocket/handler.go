@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/nevaria-ai/gateway/internal/agent"
+	"github.com/nevaria-ai/gateway/internal/ctx"
 	"github.com/rs/zerolog"
 )
 
@@ -141,11 +142,22 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Set max message size to prevent memory exhaustion attacks
 	conn.SetReadLimit(maxMessageSize)
 
-	// Generate unique connection ID and session ID
+	// Generate unique connection ID
 	connID := uuid.New().String()
-	sessionID := uuid.New().String()
+
+	// Get user_id from context (set by auth middleware)
+	// If not set, fall back to random session ID for backward compatibility
+	userID := ctx.GetUserIDFromContext(r.Context())
+	sessionID := userID
+	if sessionID == "" {
+		// No auth middleware - generate random session ID
+		sessionID = uuid.New().String()
+	}
+
 	logCtx := h.logger.With().
 		Str("conn_id", connID).
+		Str("user_id", userID).
+		Str("session_id", sessionID).
 		Str("remote_addr", r.RemoteAddr).
 		Int("active_conns", int(atomic.LoadInt32(&h.activeConns))).
 		Logger()

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	ctxpkg "github.com/nevaria-ai/gateway/internal/ctx"
 	"github.com/nevaria-ai/gateway/internal/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,7 +43,7 @@ func TestAuthMiddleware_ValidSession(t *testing.T) {
 
 	// Create a handler that checks context
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		userID := server.GetUserIDFromContext(r.Context())
+		userID := ctxpkg.GetUserIDFromContext(r.Context())
 		assert.Equal(t, "user-123", userID)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
@@ -112,16 +113,16 @@ func TestAuthMiddleware_InvalidSession(t *testing.T) {
 
 func TestGetUserIDFromContext(t *testing.T) {
 	ctx := context.Background()
-	ctx = server.WithUserID(ctx, "user-456")
+	ctx = ctxpkg.WithUserID(ctx, "user-456")
 
-	userID := server.GetUserIDFromContext(ctx)
+	userID := ctxpkg.GetUserIDFromContext(ctx)
 	assert.Equal(t, "user-456", userID)
 }
 
 func TestGetUserIDFromContext_NotSet(t *testing.T) {
 	ctx := context.Background()
 
-	userID := server.GetUserIDFromContext(ctx)
+	userID := ctxpkg.GetUserIDFromContext(ctx)
 	assert.Equal(t, "", userID)
 }
 
@@ -137,7 +138,7 @@ func TestAuthMiddleware_CacheHit(t *testing.T) {
 
 	authCalled := false
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		userID := server.GetUserIDFromContext(r.Context())
+		userID := ctxpkg.GetUserIDFromContext(r.Context())
 		assert.Equal(t, "cached-user", userID)
 		authCalled = true
 		w.WriteHeader(http.StatusOK)
