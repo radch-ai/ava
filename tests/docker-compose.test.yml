@@ -1,0 +1,58 @@
+# Docker Compose for Gateway Integration Testing
+#
+# IMPORTANT TIPS:
+# - Always use down -v to remove volumes and start fresh
+# - All connections should be to localhost (ports exposed below)
+# - If having issues: docker compose down -v && docker compose up -d --force-recreate
+#
+# Usage:
+#   docker compose -f tests/docker-compose.test.yml up -d --wait
+#   docker compose -f tests/docker-compose.test.yml down -v
+#
+# Running integration tests:
+#   go test -tags=integration -v ./tests/integration/...
+#
+# Services exposed on host (for debugging):
+#   - Redis: localhost:6380
+#   - Mock Auth Service: localhost:1080
+
+services:
+  # Redis for session caching and rate limiting tests
+  redis-test:
+    image: docker.io/redis:7-alpine
+    container_name: gateway-redis-test
+    command: >
+      sh -c '
+      redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --save "" --appendonly no
+      '
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+    networks:
+      - gateway_test_network
+
+  # Mock Auth Service - Simulates the auth service for session validation
+  mock-auth-service:
+    build:
+      context: ./mocks
+      dockerfile: Dockerfile
+    container_name: gateway-mock-auth
+    environment:
+      PORT: "1080"
+    ports:
+      - "1080:1080"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:1080/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+    networks:
+      - gateway_test_network
+
+networks:
+  gateway_test_network:
+    driver: bridge

@@ -119,3 +119,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	close(s.shutdownCh)
 	return s.httpServer.Shutdown(ctx)
 }
+
+// HTTPServer returns the underlying HTTP server (for testing purposes).
+func (s *Server) HTTPServer() *http.Server {
+	return s.httpServer
+}
+
+// WSHandler returns the WebSocket handler (for testing purposes).
+func (s *Server) WSHandler() *websocket.Handler {
+	return s.wsHandler
+}

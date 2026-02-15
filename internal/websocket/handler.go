@@ -17,7 +17,8 @@ import (
 
 const (
 	defaultBufferSize = 8192
-	maxMessageSize    = 65536 // 64KB
+	MaxMessageSize    = 65536 // 64KB
+	maxMessageSize    = MaxMessageSize
 	readTimeout       = 60 * time.Second
 	writeTimeout      = 10 * time.Second
 	pingInterval      = 30 * time.Second
