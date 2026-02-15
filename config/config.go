@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // A Config holds the application configuration.
@@ -14,6 +15,7 @@ type Config struct {
 	LogLevel       string
 	AllowedOrigins []string
 	MaxConns       int
+	Auth           AuthConfig
 }
 
 // Load reads configuration from environment variables and returns a Config.
@@ -52,11 +54,34 @@ func Load() (*Config, error) {
 		}
 	}
 
+	// Load auth configuration
+	authURL := os.Getenv("AUTH_SERVICE_URL")
+	if authURL == "" {
+		authURL = "http://localhost:8081"
+	}
+
+	authTimeout := 2 * time.Second
+	authTimeoutStr := os.Getenv("AUTH_TIMEOUT")
+	if authTimeoutStr != "" {
+		var err error
+		authTimeout, err = time.ParseDuration(authTimeoutStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid AUTH_TIMEOUT: %q", authTimeoutStr)
+		}
+	}
+
+	internalSecret := os.Getenv("INTERNAL_SECRET")
+
 	return &Config{
 		ServerAddr:     addr,
 		LogLevel:       logLevel,
 		AllowedOrigins: origins,
 		MaxConns:       maxConns,
+		Auth: AuthConfig{
+			URL:     authURL,
+			Timeout: authTimeout,
+			Secret:  internalSecret,
+		},
 	}, nil
 }
 

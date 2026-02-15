@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 func TestLoadFromEnv(t *testing.T) {
@@ -195,5 +196,57 @@ func TestValidateValidConfig(t *testing.T) {
 
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAuthConfigDefaults(t *testing.T) {
+	// Clear auth-related env vars
+	_ = os.Unsetenv("AUTH_SERVICE_URL")
+	_ = os.Unsetenv("AUTH_TIMEOUT")
+	_ = os.Unsetenv("INTERNAL_SECRET")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+
+	if cfg.Auth.URL != "http://localhost:8081" {
+		t.Errorf("expected auth URL http://localhost:8081, got %s", cfg.Auth.URL)
+	}
+
+	if cfg.Auth.Timeout != 2*time.Second {
+		t.Errorf("expected auth timeout 2s, got %v", cfg.Auth.Timeout)
+	}
+
+	if cfg.Auth.Secret != "" {
+		t.Errorf("expected empty secret, got %s", cfg.Auth.Secret)
+	}
+}
+
+func TestAuthConfigFromEnv(t *testing.T) {
+	_ = os.Setenv("AUTH_SERVICE_URL", "http://auth:9090")
+	_ = os.Setenv("AUTH_TIMEOUT", "5s")
+	_ = os.Setenv("INTERNAL_SECRET", "super-secret")
+	defer func() {
+		_ = os.Unsetenv("AUTH_SERVICE_URL")
+		_ = os.Unsetenv("AUTH_TIMEOUT")
+		_ = os.Unsetenv("INTERNAL_SECRET")
+	}()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+
+	if cfg.Auth.URL != "http://auth:9090" {
+		t.Errorf("expected auth URL http://auth:9090, got %s", cfg.Auth.URL)
+	}
+
+	if cfg.Auth.Timeout != 5*time.Second {
+		t.Errorf("expected auth timeout 5s, got %v", cfg.Auth.Timeout)
+	}
+
+	if cfg.Auth.Secret != "super-secret" {
+		t.Errorf("expected secret super-secret, got %s", cfg.Auth.Secret)
 	}
 }
