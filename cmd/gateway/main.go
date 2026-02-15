@@ -8,6 +8,7 @@ import (
 	"github.com/nevaria-ai/gateway/internal/llm-proxy/models"
 	"github.com/nevaria-ai/gateway/internal/server"
 	"github.com/nevaria-ai/gateway/internal/websocket"
+	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 )
 
@@ -63,11 +64,32 @@ func main() {
 		logger.Info().Int("max_conns", maxConns).Msg("using default connection limit")
 	}
 
+	// Create Redis client (optional - for session caching and quota)
+	var redisClient *redis.Client
+	if cfg.RedisAddr != "" {
+		redisClient = redis.NewClient(&redis.Options{
+			Addr:     cfg.RedisAddr,
+			Password: cfg.RedisPassword,
+		})
+		logger.Info().Str("addr", cfg.RedisAddr).Msg("Redis client initialized")
+	}
+
+	// Create Redis cache adapter (reuse existing Redis client)
+	var cache server.Cache
+	if redisClient != nil {
+		cache = server.NewRedisCache(redisClient)
+	} else {
+		logger.Warn().Msg("Redis not configured, session caching disabled")
+	}
+
 	// Create WebSocket handler with config
 	wsHandler := websocket.NewHandler(logger, allowedOrigins, maxConns)
 
+	// Create internal router for auth service webhooks with cache support
+	internalRouter := server.NewInternalRouter(cfg.Auth.Secret, cache)
+
 	// Create and start server
-	srv := server.New(cfg.ServerAddr, logger, wsHandler)
+	srv := server.New(cfg.ServerAddr, logger, wsHandler, internalRouter)
 	if err := srv.Start(); err != nil {
 		logger.Error().Err(err).Msg("server failed")
 		os.Exit(1)

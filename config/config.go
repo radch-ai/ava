@@ -16,6 +16,8 @@ type Config struct {
 	AllowedOrigins []string
 	MaxConns       int
 	Auth           AuthConfig
+	RedisAddr      string
+	RedisPassword  string
 }
 
 // Load reads configuration from environment variables and returns a Config.
@@ -72,6 +74,10 @@ func Load() (*Config, error) {
 
 	internalSecret := os.Getenv("INTERNAL_SECRET")
 
+	// Redis configuration (optional)
+	redisAddr := os.Getenv("REDIS_ADDR")
+	redisPassword := os.Getenv("REDIS_PASSWORD")
+
 	return &Config{
 		ServerAddr:     addr,
 		LogLevel:       logLevel,
@@ -82,6 +88,8 @@ func Load() (*Config, error) {
 			Timeout: authTimeout,
 			Secret:  internalSecret,
 		},
+		RedisAddr:     redisAddr,
+		RedisPassword: redisPassword,
 	}, nil
 }
 
