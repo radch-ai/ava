@@ -218,18 +218,24 @@ func TestAuthConfigDefaults(t *testing.T) {
 		t.Errorf("expected auth timeout 2s, got %v", cfg.Auth.Timeout)
 	}
 
-	if cfg.Auth.Secret != "" {
-		t.Errorf("expected empty secret, got %s", cfg.Auth.Secret)
+	if cfg.Auth.AuthInternalSecret != "" {
+		t.Errorf("expected empty auth internal secret, got %s", cfg.Auth.AuthInternalSecret)
+	}
+
+	if cfg.Auth.InternalSecret != "" {
+		t.Errorf("expected empty internal secret, got %s", cfg.Auth.InternalSecret)
 	}
 }
 
 func TestAuthConfigFromEnv(t *testing.T) {
 	_ = os.Setenv("AUTH_SERVICE_URL", "http://auth:9090")
 	_ = os.Setenv("AUTH_TIMEOUT", "5s")
-	_ = os.Setenv("INTERNAL_SECRET", "super-secret")
+	_ = os.Setenv("AUTH_INTERNAL_SECRET", "super-secret")
+	_ = os.Setenv("INTERNAL_SECRET", "gateway-secret")
 	defer func() {
 		_ = os.Unsetenv("AUTH_SERVICE_URL")
 		_ = os.Unsetenv("AUTH_TIMEOUT")
+		_ = os.Unsetenv("AUTH_INTERNAL_SECRET")
 		_ = os.Unsetenv("INTERNAL_SECRET")
 	}()
 
@@ -246,7 +252,11 @@ func TestAuthConfigFromEnv(t *testing.T) {
 		t.Errorf("expected auth timeout 5s, got %v", cfg.Auth.Timeout)
 	}
 
-	if cfg.Auth.Secret != "super-secret" {
-		t.Errorf("expected secret super-secret, got %s", cfg.Auth.Secret)
+	if cfg.Auth.AuthInternalSecret != "super-secret" {
+		t.Errorf("expected auth internal secret super-secret, got %s", cfg.Auth.AuthInternalSecret)
+	}
+
+	if cfg.Auth.InternalSecret != "gateway-secret" {
+		t.Errorf("expected internal secret gateway-secret, got %s", cfg.Auth.InternalSecret)
 	}
 }

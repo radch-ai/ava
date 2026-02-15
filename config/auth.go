@@ -10,7 +10,11 @@ type AuthConfig struct {
 	// Timeout is the timeout for auth service requests.
 	Timeout time.Duration `env:"AUTH_TIMEOUT" envDefault:"2s"`
 
-	// InternalSecret is the shared secret for service-to-service authentication.
-	// This is required when calling auth service endpoints.
-	Secret string `env:"INTERNAL_SECRET"`
+	// AuthInternalSecret is the secret for calling auth service endpoints.
+	// This is sent as Bearer token when calling /auth/session on the auth service.
+	AuthInternalSecret string `env:"AUTH_INTERNAL_SECRET"`
+
+	// InternalSecret is the gateway's own secret for protecting its /_internal/* endpoints.
+	// Incoming requests to gateway's internal endpoints must present this secret.
+	InternalSecret string `env:"INTERNAL_SECRET"`
 }

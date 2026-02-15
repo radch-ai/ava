@@ -94,7 +94,7 @@ func (c *Client) ValidateSession(ctx context.Context, sessionToken string) (*Ses
 		}
 		return nil, fmt.Errorf("%w: %w", ErrAuthUnavailable, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Handle response status
 	switch resp.StatusCode {

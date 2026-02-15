@@ -85,13 +85,14 @@ func main() {
 
 	// Create auth middleware with cache support
 	// Default cache TTL to 5 minutes if not specified
-	authMW := server.NewAuthMiddleware(cfg.Auth.URL, cfg.Auth.Secret, cache, 5*time.Minute)
+	authMW := server.NewAuthMiddleware(cfg.Auth.URL, cfg.Auth.AuthInternalSecret, cache, 5*time.Minute)
 
 	// Create WebSocket handler with config
 	wsHandler := websocket.NewHandler(logger, allowedOrigins, maxConns)
 
 	// Create internal router for auth service webhooks with cache support
-	internalRouter := server.NewInternalRouter(cfg.Auth.Secret, cache)
+	// Uses gateway's own INTERNAL_SECRET to protect endpoints
+	internalRouter := server.NewInternalRouter(cfg.Auth.InternalSecret, cache)
 
 	// Create and start server with auth middleware
 	srv := server.New(cfg.ServerAddr, logger, wsHandler, authMW, internalRouter)

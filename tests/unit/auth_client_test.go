@@ -74,7 +74,7 @@ func TestAuthClientValidateSession_Success(t *testing.T) {
 			MaxAge:   3600,
 			HttpOnly: true,
 		})
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"authenticated": true,
 			"user_id":       "user-123",
 			"expires_at":    expiresAt,
@@ -163,7 +163,7 @@ func TestAuthClientValidateSession_ContextCanceled(t *testing.T) {
 func TestAuthClientValidateSession_InvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("invalid json"))
+		_, _ = w.Write([]byte("invalid json"))
 	}))
 	defer server.Close()
 
@@ -180,7 +180,7 @@ func TestAuthClientValidateSession_InvalidJSON(t *testing.T) {
 func TestAuthClientValidateSession_MissingUserID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"authenticated": true,
 			"user_id":       "", // missing user_id
 		})
@@ -200,7 +200,7 @@ func TestAuthClientValidateSession_MissingUserID(t *testing.T) {
 func TestAuthClientValidateSession_NonAuthenticatedResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"authenticated": false,
 			"user_id":       "",
 		})
@@ -275,7 +275,7 @@ func TestAuthClientValidateSession_SuccessWithoutSetCookie(t *testing.T) {
 
 		// Return response WITHOUT Set-Cookie header
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"authenticated": true,
 			"user_id":       "user-456",
 			// No expires_at

@@ -72,7 +72,8 @@ func Load() (*Config, error) {
 		}
 	}
 
-	internalSecret := os.Getenv("INTERNAL_SECRET")
+	authInternalSecret := os.Getenv("AUTH_INTERNAL_SECRET")
+	gatewayInternalSecret := os.Getenv("INTERNAL_SECRET")
 
 	// Redis configuration (optional)
 	redisAddr := os.Getenv("REDIS_ADDR")
@@ -84,9 +85,10 @@ func Load() (*Config, error) {
 		AllowedOrigins: origins,
 		MaxConns:       maxConns,
 		Auth: AuthConfig{
-			URL:     authURL,
-			Timeout: authTimeout,
-			Secret:  internalSecret,
+			URL:                authURL,
+			Timeout:            authTimeout,
+			AuthInternalSecret: authInternalSecret,
+			InternalSecret:     gatewayInternalSecret,
 		},
 		RedisAddr:     redisAddr,
 		RedisPassword: redisPassword,
