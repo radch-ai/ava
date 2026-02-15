@@ -26,24 +26,24 @@ func (m *InternalMiddleware) RequireInternalAuth(next http.Handler) http.Handler
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			respondInternalUnauthorized(w, "missing authorization header")
 			return
 		}
 
 		// Expected format: "Bearer <secret>"
 		const bearerPrefix = "Bearer "
 		if !strings.HasPrefix(authHeader, bearerPrefix) {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			respondInternalUnauthorized(w, "invalid authorization format")
 			return
 		}
 
 		token := strings.TrimPrefix(authHeader, bearerPrefix)
 		if token == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			respondInternalUnauthorized(w, "invalid authorization token")
 			return
 		}
 		if token != m.secret {
-			http.Error(w, "Forbidden", http.StatusForbidden)
+			respondError(w, http.StatusForbidden, "invalid authorization token")
 			return
 		}
 
@@ -109,12 +109,12 @@ func handleCacheInvalidation(cache Cache) http.HandlerFunc {
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			respondError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 
 		if reqBody.UserID == "" {
-			http.Error(w, "user_id is required", http.StatusBadRequest)
+			respondError(w, http.StatusBadRequest, "user_id is required")
 			return
 		}
 
@@ -123,9 +123,7 @@ func handleCacheInvalidation(cache Cache) http.HandlerFunc {
 			_ = cache.Delete(r.Context(), cacheKey)
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
 }
 

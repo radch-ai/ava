@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -20,47 +21,59 @@ type Config struct {
 	RedisPassword  string
 }
 
-// Load reads configuration from environment variables and returns a Config.
-func Load() (*Config, error) {
-	addr := os.Getenv("GATEWAY_ADDR")
-	if addr == "" {
-		addr = ":8080"
+// getEnv returns the environment variable value or a default.
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
 	}
+	return defaultValue
+}
 
-	logLevel := os.Getenv("GATEWAY_LOG_LEVEL")
-	if logLevel == "" {
-		logLevel = "info"
+// parseList parses a comma-separated list into a string slice.
+func parseList(value string) []string {
+	if value == "" {
+		return nil
 	}
-
-	// Parse allowed origins from comma-separated env var
-	originsEnv := os.Getenv("GATEWAY_ALLOWED_ORIGINS")
-	var origins []string
-	if originsEnv != "" {
-		origins = strings.Split(originsEnv, ",")
-		// Trim whitespace from each origin
-		for i, o := range origins {
-			origins[i] = strings.TrimSpace(o)
+	var result []string
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			result = append(result, item)
 		}
 	}
+	return result
+}
+
+// isProduction checks if the application is running in production mode.
+func isProduction() bool {
+	return os.Getenv("ENV") == "production" || os.Getenv("APP_ENV") == "prod"
+}
+
+// Load reads configuration from environment variables and returns a Config.
+func Load() (*Config, error) {
+	addr := getEnv("GATEWAY_ADDR", ":8080")
+	logLevel := getEnv("GATEWAY_LOG_LEVEL", "info")
+	origins := parseList(os.Getenv("GATEWAY_ALLOWED_ORIGINS"))
+
 	// NOTE: Empty origins means deny all - requires explicit configuration for security.
 	// Use GATEWAY_ALLOWED_ORIGINS="*" for development only.
 
-	// Parse max connections (default 0 = unlimited)
+	// Parse max connections (default 0 = unlimited) - validate strictly
 	maxConns := 0
 	maxConnsStr := os.Getenv("GATEWAY_MAX_CONNS")
 	if maxConnsStr != "" {
 		var err error
 		maxConns, err = strconv.Atoi(maxConnsStr)
-		if err != nil || maxConns < 0 {
+		if err != nil {
 			return nil, fmt.Errorf("invalid GATEWAY_MAX_CONNS: %q", maxConnsStr)
 		}
 	}
+	if maxConns < 0 {
+		return nil, fmt.Errorf("invalid GATEWAY_MAX_CONNS: must be non-negative")
+	}
 
 	// Load auth configuration
-	authURL := os.Getenv("AUTH_SERVICE_URL")
-	if authURL == "" {
-		authURL = "http://localhost:8081"
-	}
+	authURL := getEnv("AUTH_SERVICE_URL", "http://localhost:8081")
 
 	authTimeout := 2 * time.Second
 	authTimeoutStr := os.Getenv("AUTH_TIMEOUT")
@@ -97,8 +110,43 @@ func Load() (*Config, error) {
 
 // Validate checks that the configuration is valid.
 func (c *Config) Validate() error {
+	var errs []string
+
 	if c.ServerAddr == "" {
-		return fmt.Errorf("server address cannot be empty")
+		errs = append(errs, "server address cannot be empty")
 	}
+
+	// In production, require auth internal secret
+	if isProduction() && c.Auth.AuthInternalSecret == "" {
+		errs = append(errs, "AUTH_INTERNAL_SECRET required in production")
+	}
+
+	// Auth internal secret must be at least 16 characters if set
+	if c.Auth.AuthInternalSecret != "" && len(c.Auth.AuthInternalSecret) < 16 {
+		errs = append(errs, "AUTH_INTERNAL_SECRET must be at least 16 characters")
+	}
+
+	// In production, require internal secret
+	if isProduction() && c.Auth.InternalSecret == "" {
+		errs = append(errs, "INTERNAL_SECRET required in production")
+	}
+
+	// Internal secret must be at least 16 characters if set
+	if c.Auth.InternalSecret != "" && len(c.Auth.InternalSecret) < 16 {
+		errs = append(errs, "INTERNAL_SECRET must be at least 16 characters")
+	}
+
+	// Validate auth URL format - must have http or https scheme
+	if c.Auth.URL != "" {
+		parsedURL, err := url.Parse(c.Auth.URL)
+		if err != nil || parsedURL.Scheme == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+			errs = append(errs, "AUTH_SERVICE_URL must be a valid URL with http or https scheme")
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("config validation failed: %s", strings.Join(errs, "; "))
+	}
+
 	return nil
 }

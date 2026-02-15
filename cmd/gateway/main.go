@@ -34,7 +34,7 @@ func main() {
 	zerolog.SetGlobalLevel(logLevel)
 
 	// Create logger
-	logger := zerolog.New(os.Stderr).With().Timestamp().Logger()
+	logger := zerolog.New(os.Stderr).With().Timestamp().Str("service", "nevaria-gateway").Logger()
 
 	// Initialize model registry
 	registry := models.Get()
