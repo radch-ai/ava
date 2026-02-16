@@ -1,73 +1,208 @@
-# internal/llm-proxy
+# LLM Proxy Package
 
-Intelligent LLM proxy with routing, quota management, and usage tracking.
+Intelligent LLM proxy with routing, quota management, health monitoring, and usage tracking.
 
-## Description
-
-The llm-proxy package provides a complete LLM proxy implementation with intelligent routing, quota enforcement, health monitoring, and usage tracking. It acts as an intermediary between agent requests and LLM providers.
-
-## LLM Proxy Handler Flow
+## Overview
 
 ```mermaid
 flowchart TB
-    Start["Handler.Handle"] --> Quota["1. QUOTA CHECK - CheckQuota - userID, cost"]
-    Quota --> QuotaCheck["Plan quota first - Fallback to addon - Return HasQuota bool"]
-    QuotaCheck --> HasQuota{Has quota?}
-    HasQuota -->|Yes| Router["2. ROUTER - SelectModel - routerRequest"]
-    HasQuota -->|No| ReturnErr["Return error"]
-    Router --> RouterSelect["LLM analyzes query - Considers user quota - Returns best model"]
-    RouterSelect --> Health["3. HEALTH CHECK - IsHealthy - provider, model"]
-    Health --> HealthCheck["Check circuit breaker - Try fallback if needed"]
-    HealthCheck --> Reserve["4. RESERVE QUOTA - ReserveQuota - userID, cost"]
-    Reserve --> ReserveAction["Deduct estimated cost - Track in reserved field"]
-    ReserveAction --> LLM["5. LLM CALL - llmClient.Stream"]
-    LLM --> Stream["Stream events - Return event channel"]
-    Stream --> Track["6. TRACK USAGE - Track - UsageEvent"]
-    Track --> TrackWrap["Wrap event channel - Emit on MessageEnd"]
-    TrackWrap --> Response["Return ProxyResponse - Stream, UsingAddon, AddonRemaining"]
+    Request[Handle Request] --> Quota[Quota Check]
+    Quota -->|Has Quota| Router[Model Router]
+    Quota -->|No Quota| Error[Quota Error]
+
+    Router --> Health[Health Check]
+    Health -->|Healthy| Reserve[Reserve Quota]
+    Health -->|Unhealthy| Fallback[Fallback Model]
+
+    Reserve --> LLM[LLM Call]
+    LLM --> Stream[Stream Events]
+    Stream --> Track[Track Usage]
+    Track --> Response[Return Response]
 ```
+
+## Purpose
+
+The llm-proxy package acts as an intermediary between agent requests and LLM providers, providing:
+
+- Intelligent model selection based on query and quota
+- Quota enforcement with plan and addon credit support
+- Provider health monitoring with circuit breaker
+- Usage tracking for billing and analytics
+- Fallback to alternative models/providers
+
+## Types
+
+### UserContext
+
+```go
+type UserContext struct {
+    UserID                string
+    PlanTier              string
+    QuotaRemaining        float64
+    QuotaRemainingPercent int
+    HasAddonCredits       bool
+    AddonRemaining        float64
+    DaysUntilReset        int
+    IsUsingAddon          bool
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `UserID` | string | User identifier |
+| `PlanTier` | string | Subscription tier |
+| `QuotaRemaining` | float64 | Remaining plan quota |
+| `QuotaRemainingPercent` | int | Remaining quota percentage |
+| `HasAddonCredits` | bool | Has addon credits |
+| `AddonRemaining` | float64 | Addon credits remaining |
+| `DaysUntilReset` | int | Days until monthly reset |
+| `IsUsingAddon` | bool | Currently using addon |
+
+### UsageEvent
+
+```go
+type UsageEvent struct {
+    UserID        string
+    SessionID     string
+    Model         string
+    Provider      string
+    TokensInput   int
+    TokensOutput  int
+    CostTotal     float64
+    ChargedFrom   string
+    Timestamp     int64
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `UserID` | string | User identifier |
+| `SessionID` | string | Session identifier |
+| `Model` | string | Model used |
+| `Provider` | string | Provider name |
+| `TokensInput` | int | Input tokens |
+| `TokensOutput` | int | Output tokens |
+| `CostTotal` | float64 | Total cost |
+| `ChargedFrom` | string | "plan" or "addon" |
+| `Timestamp` | int64 | Unix timestamp |
+
+### ProxyRequest
+
+```go
+type ProxyRequest struct {
+    Messages    []agent.AgentMessage
+    Tools       []agent.Tool
+    UserContext UserContext
+}
+```
+
+### ProxyResponse
+
+```go
+type ProxyResponse struct {
+    Stream          <-chan agent.AgentEvent
+    Model           string
+    UsingAddon      bool
+    AddonRemaining  float64
+}
+```
+
+## Request Flow
+
+1. **Quota Check** - Verify user has sufficient credits (plan first, then addon)
+2. **Router** - Select appropriate model based on query and quota
+3. **Health Check** - Verify selected provider/model is healthy
+4. **Reserve Quota** - Deduct estimated cost from quota
+5. **LLM Call** - Stream from provider
+6. **Track Usage** - Record token usage and cost
 
 ## Sub-packages
 
 | Package | Description |
 |---------|-------------|
-| [config.md](config.md) | Configuration and plan definitions |
-| [health.md](health.md) | Circuit breaker and health monitoring |
 | [models.md](models.md) | Model registry and cost calculation |
-| [quota.md](quota.md) | Quota management with Redis |
 | [router.md](router.md) | LLM-based model selection |
+| [quota.md](quota.md) | Quota management with Redis |
+| [health.md](health.md) | Circuit breaker and health monitoring |
 | [usage.md](usage.md) | Usage tracking with Redis fallback |
 
-## Key Types and Functions
+## Interfaces
 
-| Name | Kind | Location | Description |
-|------|------|----------|-------------|
-| LLMClient | interface | [handler.go#L14](../internal/llm-proxy/handler.go#L14) | LLM client interface |
-| QuotaChecker | interface | [handler.go#L18](../internal/llm-proxy/handler.go#L18) | Quota checker interface |
-| QuotaCheckResult | struct | [handler.go#L25](../internal/llm-proxy/handler.go#L25) | Quota check result |
-| HealthChecker | interface | [handler.go#L36](../internal/llm-proxy/handler.go#L36) | Health checker interface |
-| Router | interface | [handler.go#L43](../internal/llm-proxy/handler.go#L43) | Router interface |
-| RouterResponse | struct | [handler.go#L55](../internal/llm-proxy/handler.go#L55) | Router response |
-| UsageTracker | interface | [handler.go#L63](../internal/llm-proxy/handler.go#L63) | Usage tracker interface |
-| HandlerOptions | struct | [handler.go#L68](../internal/llm-proxy/handler.go#L68) | Handler configuration |
-| Handler | struct | [handler.go#L77](../internal/llm-proxy/handler.go#L77) | Main LLM proxy handler |
-| NewHandler | func | [handler.go#L86](../internal/llm-proxy/handler.go#L86) | Creates handler |
-| ProxyRequest | struct | [handler.go#L97](../internal/llm-proxy/handler.go#L97) | Proxy request data |
-| ProxyResponse | struct | [handler.go#L106](../internal/llm-proxy/handler.go#L106) | Proxy response data |
-| Handle | func | [handler.go#L138](../internal/llm-proxy/handler.go#L138) | Processes full proxy flow |
-| trackUsage | func | [handler.go#L226](../internal/llm-proxy/handler.go#L226) | Wraps channel for usage tracking |
-| Middleware | func | [middleware.go#L28](../internal/llm-proxy/middleware.go#L28) | HTTP middleware |
-| PauseCheck | func | [middleware.go#L60](../internal/llm-proxy/middleware.go#L60) | Pause check middleware |
-| Client | struct | [client.go#L12](../internal/llm-proxy/client.go#L12) | Implements agent.LLMClient |
-| UsageEvent | type | [types.go#L5](../internal/llm-proxy/types.go#L5) | Usage event type |
-| UserContext | type | [types.go#L27](../internal/llm-proxy/types.go#L27) | User context type |
-| ProxyError | struct | [handler.go#L120](../internal/llm-proxy/handler.go#L120) | Proxy error type |
+### LLMClient
 
-## Request Flow Summary
+```go
+type LLMClient interface {
+    Stream(ctx context.Context, messages []agent.AgentMessage, tools []agent.Tool) (<-chan agent.AgentEvent, error)
+}
+```
 
-1. **Quota Check** - Verify user has sufficient credits
-2. **Router** - Select appropriate model
-3. **Health Check** - Verify selected model is healthy
-4. **Reserve Quota** - Deduct estimated cost
-5. **LLM Call** - Stream from provider
-6. **Track Usage** - Record token usage and cost
+### QuotaChecker
+
+```go
+type QuotaChecker interface {
+    CheckQuota(ctx context.Context, userID string, estimatedCost float64) (*QuotaCheckResult, error)
+    ReserveQuota(ctx context.Context, userID string, cost float64, chargedFrom string) error
+}
+```
+
+### HealthChecker
+
+```go
+type HealthChecker interface {
+    IsHealthy(ctx context.Context, provider, model string) bool
+    RecordSuccess(ctx context.Context, provider, model string)
+    RecordFailure(ctx context.Context, provider, model string, err error)
+}
+```
+
+### Router
+
+```go
+type Router interface {
+    SelectModel(ctx context.Context, req RouterRequest) (*RouterResponse, error)
+}
+```
+
+### UsageTracker
+
+```go
+type UsageTracker interface {
+    Track(ctx context.Context, event UsageEvent) error
+}
+```
+
+## Flow
+
+### Proxy Handler Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Caller
+    participant H as Handler
+    participant Q as QuotaChecker
+    participant R as Router
+    participant HC as HealthChecker
+    participant L as LLMClient
+    participant U as UsageTracker
+
+    C->>H: Handle(ctx, request)
+    H->>Q: CheckQuota(userID, cost)
+    Q-->>H: HasQuota=true/false
+    H->>R: SelectModel(request)
+    R-->>H: Selected model
+    H->>HC: IsHealthy(provider, model)
+    HC-->>H: Healthy=true/false
+    H->>Q: ReserveQuota(userID, cost)
+    H->>L: Stream(messages, tools)
+    L-->>H: Event channel
+    H->>U: Track(usage)
+    H-->>C: Response(stream, model)
+```
+
+## File Locations
+
+- [`internal/llm-proxy/handler.go`](../internal/llm-proxy/handler.go) - Main handler
+- [`internal/llm-proxy/types.go`](../internal/llm-proxy/types.go) - Types
+- [`internal/llm-proxy/client.go`](../internal/llm-proxy/client.go) - Agent LLMClient adapter
+- [`internal/llm-proxy/middleware.go`](../internal/llm-proxy/middleware.go) - HTTP middleware
+- [`tests/unit/llm-proxy/`](../tests/unit/llm-proxy/) - Tests

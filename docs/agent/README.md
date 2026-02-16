@@ -1,50 +1,225 @@
-# internal/agent
+# Agent Package
 
-Core agent execution engine with event subscription and tool calling loop.
+Core agent runtime framework with state management, event streaming, and tool execution loop.
 
-## Description
-
-The agent package provides a complete agent runtime with state management, event broadcasting, and tool execution loop. It supports streaming LLM responses with real-time event updates.
-
-## Agent Runtime Flow
+## Overview
 
 ```mermaid
 flowchart TB
-    New[NewAgent] --> UUID["Generate UUID - if no ID"]
-    UUID --> Context["Create context with cancel"]
-    Context --> State["Initialize AgentState"]
-    State --> Return["Return &Agent - state, subscribers, ctx, llmClient"]
+    Prompt[Agent.Prompt] --> AddMessage[Add User Message]
+    AddMessage --> EmitStart[Emit AgentStartEvent]
+    EmitStart --> RunLoop[Run Tool Loop]
+    RunLoop --> Stream[Stream LLM Response]
+    Stream --> EmitMessage[Emit Message Events]
+    EmitMessage --> ToolCalls{Tool Calls?}
+    ToolCalls -->|Yes| ExecuteTools[Execute Tools]
+    ExecuteTools --> AddResults[Add Tool Results]
+    AddResults --> RunLoop
+    ToolCalls -->|No| UpdateState[Update State]
+    UpdateState --> EmitEnd[Emit AgentEndEvent]
 ```
 
-## Prompt Execution Flow
+## Purpose
 
-```mermaid
-flowchart TB
-    Prompt["Agent.Prompt"] --> CheckCtx["Check context - Check LLM client"]
-    CheckCtx --> Lock["Lock & add user message to state.Messages"]
-    Lock --> EmitStart["Emit AgentStartEvent"]
-    EmitStart --> Streaming["Set streaming state = true"]
-    Streaming --> Loop["Create Loop with LLM client"]
-    Loop --> Run["Loop.Run - Stream from LLM"]
-    Run --> Extract["Extract tool calls - if any"]
-    Extract --> Execute["Execute tools - in parallel"]
-    Execute --> AddTool["Add tool results - Repeat until no tools"]
-    AddTool --> UpdateState["Update state with final messages"]
-    UpdateState --> EmitEnd["Emit AgentEndEvent"]
-    EmitEnd --> Clear["Clear streaming state"]
+The agent package provides:
+
+- Agent state management with thread-safe access
+- Event subscription system (10 event types)
+- Tool calling loop with parallel execution
+- Message history tracking
+- LLM client integration
+
+## Types
+
+### Agent
+
+```go
+type Agent struct {
+    mu         sync.RWMutex
+    state      AgentState
+    id         string
+    subscribers map[string]chan AgentEvent
+    subscribersMu sync.Mutex
+    ctx        context.Context
+    cancel     context.CancelFunc
+    llmClient  LLMClient
+}
 ```
 
-## Event Broadcasting
+| Field | Type | Description |
+|-------|------|-------------|
+| `mu` | sync.RWMutex | State mutex |
+| `state` | AgentState | Current agent state |
+| `id` | string | Unique agent identifier |
+| `subscribers` | map[string]chan AgentEvent | Event subscribers |
+| `ctx` | context.Context | Agent context |
+| `cancel` | context.CancelFunc | Context cancel function |
+| `llmClient` | LLMClient | Optional LLM client |
+
+### AgentState
+
+```go
+type AgentState struct {
+    SystemPrompt     string
+    Model            Model
+    ThinkingLevel    ThinkingLevel
+    Tools            []Tool
+    Messages         []AgentMessage
+    IsStreaming      bool
+    StreamMessage    *AgentMessage
+    PendingToolCalls map[string]bool
+    Error            string
+    SessionID        string
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `SystemPrompt` | string | System prompt for LLM |
+| `Model` | Model | Model configuration |
+| `ThinkingLevel` | ThinkingLevel | Thinking intensity |
+| `Tools` | []Tool | Available tools |
+| `Messages` | []AgentMessage | Conversation history |
+| `IsStreaming` | bool | Currently streaming |
+| `StreamMessage` | *AgentMessage | Current streaming message |
+| `PendingToolCalls` | map[string]bool | Pending tool call IDs |
+| `Error` | string | Error state |
+| `SessionID` | string | Session identifier |
+
+### AgentMessage
+
+```go
+type AgentMessage struct {
+    Role       Role
+    Content    []ContentBlock
+    Timestamp  int64
+    ToolCallID string
+    ToolName   string
+    IsError    bool
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Role` | Role | Message role (user/assistant/toolResult) |
+| `Content` | []ContentBlock | Message content |
+| `Timestamp` | int64 | Unix timestamp |
+| `ToolCallID` | string | Tool call ID (for tool results) |
+| `ToolName` | string | Tool name (for tool results) |
+| `IsError` | bool | Error flag (for tool results) |
+
+### Tool
+
+```go
+type Tool struct {
+    Name        string
+    Description string
+    Execute     func(ctx context.Context, args map[string]any) (string, error)
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Name` | string | Tool identifier |
+| `Description` | string | Tool description for LLM |
+| `Execute` | func | Tool execution function |
+
+## Roles
+
+| Role | Description |
+|------|-------------|
+| `RoleUser` | From user |
+| `RoleAssistant` | From AI assistant |
+| `RoleToolResult` | From tool execution |
+
+## Thinking Levels
+
+| Level | Description |
+|-------|-------------|
+| `ThinkingLevelOff` | Disabled |
+| `ThinkingLevelMinimal` | Minimal |
+| `ThinkingLevelLow` | Low |
+| `ThinkingLevelMedium` | Medium |
+| `ThinkingLevelHigh` | High |
+
+## Functions
+
+| Function | Description |
+|----------|-------------|
+| `NewAgent(opts AgentOptions) *Agent` | Creates new agent |
+| `Subscribe() (string, chan AgentEvent)` | Subscribe to events |
+| `Unsubscribe(id string)` | Unsubscribe from events |
+| `State() AgentState` | Gets current state (copy) |
+| `Prompt(ctx context.Context, message string) error` | Sends user message |
+
+### State Management
+
+| Function | Description |
+|----------|-------------|
+| `NewAgentState(opts AgentStateOptions) AgentState` | Creates state |
+| `AddMessage(msg AgentMessage)` | Adds message to history |
+| `SetStreaming(streaming bool, msg *AgentMessage)` | Sets streaming state |
+| `AddPendingToolCall(id string)` | Marks tool call as pending |
+| `RemovePendingToolCall(id string)` | Removes pending tool call |
+
+### Tools
+
+| Function | Description |
+|----------|-------------|
+| `ExecuteToolCall(ctx context.Context, state *AgentState, toolCall ToolCallContent) (AgentMessage, error)` | Executes tool |
+| `FindToolByName(state *AgentState, name string) *Tool` | Finds tool by name |
+
+### Messages
+
+| Function | Description |
+|----------|-------------|
+| `NewTextMessage(role Role, text string) AgentMessage` | Creates text message |
+| `NewToolCallMessage(id, name string, args map[string]any) AgentMessage` | Creates tool call message |
+| `NewToolResultMessage(toolCallID, toolName, result string, isError bool) AgentMessage` | Creates tool result message |
+
+## Event Types
+
+| Event | Description |
+|-------|-------------|
+| `AgentStartEvent` | Agent begins processing |
+| `AgentEndEvent` | Agent finishes processing |
+| `TurnStartEvent` | New interaction cycle begins |
+| `TurnEndEvent` | Interaction cycle completes |
+| `MessageStartEvent` | Message generation starts |
+| `MessageUpdateEvent` | Streaming content delta |
+| `MessageEndEvent` | Message is complete |
+| `ToolExecutionStartEvent` | Tool execution begins |
+| `ToolExecutionUpdateEvent` | Partial tool result |
+| `ToolExecutionEndEvent` | Tool execution completes |
+
+## Flow
+
+### Prompt Execution
 
 ```mermaid
-flowchart TB
-    Emit["emit event"] --> LockMap["Lock subscribers map"]
-    LockMap --> Sub1["Subscriber channel 1"]
-    LockMap --> Sub2["Subscriber channel 2"]
-    LockMap --> SubN["Subscriber channel N"]
-    Sub1 --> Try1["Try send - non-blocking"]
-    Sub2 --> Try2["Try send - non-blocking"]
-    SubN --> TryN["Try send - non-blocking"]
+sequenceDiagram
+    participant C as Caller
+    participant A as Agent
+    participant L as Loop
+    participant LLM as LLM Client
+
+    C->>A: Prompt(message)
+    A->>A: Add user message to state
+    A->>A: Emit AgentStartEvent
+    A->>L: NewLoop(llmClient, state)
+    L->>LLM: Stream completion
+    loop LLM Streaming
+        LLM-->>L: Content delta
+        L->>A: Emit MessageUpdateEvent
+    end
+    L->>L: Extract tool calls
+    loop Has Tool Calls
+        L->>L: Execute tools
+        L->>L: Add tool results
+        L->>LLM: Stream completion
+    end
+    L-->>A: Done
+    A->>A: Emit AgentEndEvent
 ```
 
 ## Sub-packages
@@ -54,46 +229,11 @@ flowchart TB
 | [tools.md](tools.md) | Tool interface and execution framework |
 | [types.md](types.md) | Agent types and event definitions |
 
-## Key Types and Functions
+## File Locations
 
-| Name | Kind | Location | Description |
-|------|------|----------|-------------|
-| Agent | struct | [agent.go#L74](../internal/agent/agent.go#L74) | Agent with state and events |
-| AgentOptions | struct | [agent.go#L66](../internal/agent/agent.go#L66) | Agent creation options |
-| NewAgent | func | [agent.go#L88](../internal/agent/agent.go#L88) | Agent creation |
-| Subscribe | func | [agent.go#L112](../internal/agent/agent.go#L112) | Subscribe to events |
-| Unsubscribe | func | [agent.go#L124](../internal/agent/agent.go#L124) | Unsubscribe from events |
-| emit | func | [agent.go#L133](../internal/agent/agent.go#L133) | Broadcast to subscribers |
-| State | func | [agent.go#L147](../internal/agent/agent.go#L147) | Returns copy of agent state |
-| Prompt | func | [agent.go#L180](../internal/agent/agent.go#L180) | Executes the agent loop |
-| Loop | struct | [loop.go#L18](../internal/agent/loop.go#L18) | Manages tool calling |
-| NewLoop | func | [loop.go#L24](../internal/agent/loop.go#L24) | Creates loop with LLM client |
-| Loop.Run | func | [loop.go#L35](../internal/agent/loop.go#L35) | Executes tool loop |
-| ExecuteToolCall | func | [tool.go#L14](../internal/agent/tool.go#L14) | Executes a tool |
-| FindToolByName | func | [tool.go#L75](../internal/agent/tool.go#L75) | Locates a tool |
-| MockLLMClient | struct | [mock.go#L10](../internal/agent/mock.go#L10) | Mock LLM client for testing |
-
-## Event Types
-
-| Event | Description | Source |
-|-------|-------------|--------|
-| `AgentStartEvent` | Agent begins processing | [events.go#L30](../internal/agent/events.go#L30) |
-| `AgentEndEvent` | Agent finishes processing | [events.go#L37](../internal/agent/events.go#L37) |
-| `TurnStartEvent` | New interaction cycle begins | [events.go#L45](../internal/agent/events.go#L45) |
-| `TurnEndEvent` | Interaction cycle completes | [events.go#L52](../internal/agent/events.go#L52) |
-| `MessageStartEvent` | Message generation starts | [events.go#L61](../internal/agent/events.go#L61) |
-| `MessageUpdateEvent` | Streaming content delta | [events.go#L69](../internal/agent/events.go#L69) |
-| `MessageEndEvent` | Message is complete | [events.go#L78](../internal/agent/events.go#L78) |
-| `ToolExecutionStartEvent` | Tool execution begins | [events.go#L86](../internal/agent/events.go#L86) |
-| `ToolExecutionUpdateEvent` | Partial tool result | [events.go#L96](../internal/agent/events.go#L96) |
-| `ToolExecutionEndEvent` | Tool execution completes | [events.go#L106](../internal/agent/events.go#L106) |
-| `TokenUsageEvent` | Token usage information | [events.go#L117](../internal/agent/events.go#L117) |
-
-## Agent Options
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `ID` | string | Unique agent identifier |
-| `SystemPrompt` | string | System prompt for LLM |
-| `SessionID` | string | Session identifier |
-| `LLMClient` | LLMClient | LLM client for streaming |
+- [`internal/agent/agent.go`](../internal/agent/agent.go) - Main agent implementation
+- [`internal/agent/loop.go`](../internal/agent/loop.go) - Tool calling loop
+- [`internal/agent/tool.go`](../internal/agent/tool.go) - Tool execution
+- [`internal/agent/types.go`](../internal/agent/types.go) - Core types
+- [`internal/agent/events.go`](../internal/agent/events.go) - Event definitions
+- [`tests/unit/agent/`](../tests/unit/agent/) - Tests

@@ -1,79 +1,195 @@
-# internal/websocket
+# WebSocket Package
 
-WebSocket connection management with single-writer pattern and connection limiting.
+WebSocket connection management with authentication integration, connection limiting, and agent event streaming.
 
-## Description
-
-The websocket package handles WebSocket connections with connection limiting via semaphore pattern, single-writer goroutine for thread-safe writes, and automatic keep-alive via ping/pong frames.
-
-## WebSocket Connection Flow
+## Overview
 
 ```mermaid
 flowchart TB
-    Start[HandleWebSocket] --> Check[Check conn limit - semaphore]
-    Check --> Slot{Got slot?}
-    Slot -->|Yes| Increment["Increment activeConns"]
-    Slot -->|No - At capacity| Return503["Return 503 Service Unavailable"]
-    Increment --> Upgrade["Upgrade HTTP to WebSocket"]
-    Upgrade --> ReadLimit["Set read limit - 64KB"]
-    ReadLimit --> IDs["Generate IDs - connID, sessionID"]
-    IDs --> Pong["Set pong handler - Reset read deadline"]
-    Pong --> Create[Create/write goroutines]
-    Pong --> Ping["Create ping goroutine"]
-    Create --> Agent["Get/create agent for session"]
-    Ping --> Agent
-    Agent --> Subscribe["Subscribe to agent events"]
-    Subscribe --> SendConnected["Send connected event to client"]
-    SendConnected --> MessageLoop["Message loop - read/write"]
-    MessageLoop --> Disconnect["On disconnect - Remove agent, release sem"]
+    Request[WebSocket Upgrade] --> AuthMW[Auth Middleware]
+    AuthMW -->|Valid Session| Handler[WebSocket Handler]
+    AuthMW -->|Invalid| Unauthorized[401]
+
+    Handler --> CheckLimit{Connection Limit?}
+    CheckLimit -->|Available| Upgrade[Upgrade to WebSocket]
+    CheckLimit -->|At Capacity| Full[503 Unavailable]
+
+    Upgrade --> AgentMgr[Agent Manager]
+    AgentMgr --> GetAgent[Get/Create Agent]
+    GetAgent --> Subscribe[Subscribe to Events]
+    Subscribe --> Client[Client Connection]
+
+    Client --> ReadLoop[Read Messages]
+    Client --> WriteLoop[Write Events]
+    Client --> Ping[Ping/Pong Keep-Alive]
 ```
 
-## Single-Writer Pattern
+## Purpose
 
-```mermaid
-flowchart LR
-    AgentEv["Agent Events - forwardAgentEvents"] --> Writer["writer goroutine - single"]
-    PingLoop["pingLoop"] --> Writer
-    Responses["Message responses"] --> Writer
-    Writer --> WS["WebSocket Conn - thread-safe"]
-    WS -.-> Pool["wsMessage pool - sync.Pool - messageType | data | reusable"]
+The websocket package handles:
+
+- WebSocket connection lifecycle (upgrade, message handling, cleanup)
+- Connection limiting via semaphore pattern
+- Agent per-connection management
+- Event streaming from agent to client
+- Single-writer pattern for thread-safe writes
+- Keep-alive via ping/pong frames
+
+## Types
+
+### Handler
+
+```go
+type Handler struct {
+    logger        zerolog.Logger
+    upgrader      websocket.Upgrader
+    connSem       chan struct{}
+    maxConns      int
+    activeConns   int32
+    agentManager  *AgentManager
+}
 ```
 
-## Types and Functions
+| Field | Type | Description |
+|-------|------|-------------|
+| `logger` | zerolog.Logger | Structured logger |
+| `upgrader` | websocket.Upgrader | WebSocket upgrader with origin check |
+| `connSem` | chan struct{} | Connection semaphore (for limiting) |
+| `maxConns` | int | Maximum concurrent connections |
+| `activeConns` | int32 | Active connection counter (atomic) |
+| `agentManager` | *AgentManager | Agent instance manager |
 
-| Name | Kind | Location | Description |
-|------|------|----------|-------------|
-| Handler | struct | [handler.go#L36](../internal/websocket/handler.go#L36) | Connection limiting handler |
-| NewHandler | func | [handler.go#L70](../internal/websocket/handler.go#L70) | Creates configured handler |
-| HandleWebSocket | func | [handler.go#L111](../internal/websocket/handler.go#L111) | Upgrade and lifecycle |
-| writer | func | [handler.go#L312](../internal/websocket/handler.go#L312) | Single-writer pattern goroutine |
-| pingLoop | func | [handler.go#L351](../internal/websocket/handler.go#L351) | Keep-alive ping goroutine |
-| handleTextMessage | func | [handler.go#L437](../internal/websocket/handler.go#L437) | Processes prompt messages |
-| AgentManager | struct | [agent_manager.go#L17](../internal/websocket/agent_manager.go#L17) | Per-connection agents |
-| GetOrCreateAgent | func | [agent_manager.go#L40](../internal/websocket/agent_manager.go#L40) | Gets or creates agent with LLM proxy client |
-| RemoveAgent | func | [agent_manager.go#L83](../internal/websocket/agent_manager.go#L83) | Cleanup agent |
+### wsEvent
+
+```go
+type wsEvent struct {
+    Type string
+    Data any
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Type` | string | Event type (connected, agent_start, etc.) |
+| `Data` | any | Event data |
+
+### AgentManager
+
+```go
+type AgentManager struct {
+    mu      sync.RWMutex
+    agents  map[string]*agent.Agent
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `mu` | sync.RWMutex | Agents map mutex |
+| `agents` | map[string]*agent.Agent | Session ID to agent mapping |
+
+## Functions
+
+| Function | Description |
+|----------|-------------|
+| `NewHandler(logger zerolog.Logger, allowedOrigins []string, maxConns int) *Handler` | Creates WebSocket handler |
+| `HandleWebSocket(w http.ResponseWriter, r *http.Request)` | Handles WebSocket connection upgrade |
+
+### AgentManager
+
+| Function | Description |
+|----------|-------------|
+| `GetOrCreateAgent(sessionID, userID string, llmClient llm.Client) *agent.Agent` | Gets or creates agent for session |
+| `RemoveAgent(sessionID string)` | Removes agent from manager |
 
 ## Configuration
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| `defaultBufferSize` | 8192 (8KB) | Read/write buffer size |
-| `maxMessageSize` | 65536 (64KB) | Maximum message size |
+| `MaxMessageSize` | 65536 (64KB) | Maximum message size |
 | `readTimeout` | 60s | Read deadline before pong required |
 | `writeTimeout` | 10s | Write deadline for each message |
 | `pingInterval` | 30s | Ping frame interval |
 
-## Event Mapping
+## WebSocket Protocol
 
-| Agent Event | WebSocket Event Type |
-|-------------|---------------------|
-| `AgentStartEvent` | `agent_start` |
-| `AgentEndEvent` | `agent_end` |
-| `TurnStartEvent` | `turn_start` |
-| `TurnEndEvent` | `turn_end` |
-| `MessageStartEvent` | `message_start` |
-| `MessageUpdateEvent` | `message_update` |
-| `MessageEndEvent` | `message_end` |
-| `ToolExecutionStartEvent` | `tool_start` |
-| `ToolExecutionUpdateEvent` | `tool_update` |
-| `ToolExecutionEndEvent` | `tool_end` |
+### Client to Server
+
+```json
+{
+  "type": "prompt",
+  "text": "user message here"
+}
+```
+
+### Server to Client Events
+
+| Event Type | Description |
+|------------|-------------|
+| `connected` | Connection established with session info |
+| `agent_start` | Agent started processing |
+| `agent_end` | Agent finished processing |
+| `turn_start` | Conversation turn started |
+| `turn_end` | Conversation turn ended |
+| `message_start` | Message streaming started |
+| `message_update` | Message content updated |
+| `message_end` | Message completed |
+| `tool_start` | Tool execution started |
+| `tool_update` | Tool execution updated |
+| `tool_end` | Tool execution completed |
+
+### Connected Event
+
+```json
+{
+  "type": "connected",
+  "data": {
+    "session_id": "...",
+    "agent_id": "...",
+    "conn_id": "..."
+  }
+}
+```
+
+## Flow
+
+### Connection Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant H as Handler
+    participant AM as AgentManager
+    participant A as Agent
+
+    C->>H: WebSocket Upgrade + Session Cookie
+    H->>H: Check connection limit
+    H->>H: Extract userID from context
+    H->>AM: GetOrCreateAgent(sessionID, userID)
+    AM->>A: Create/retrieve agent
+    A-->>AM: Agent
+    AM-->>H: Agent
+    H->>A: Subscribe to events
+    H-->>C: Send "connected" event
+    C->>H: Send "prompt" message
+    H->>A: agent.Prompt(text)
+    A-->>H: Stream events
+    H-->>C: Forward events
+```
+
+### Connection Lifecycle
+
+1. **Authentication**: Auth middleware validates session, adds userID to context
+2. **Connection Limit Check**: Semaphore ensures maxConns not exceeded
+3. **Upgrade**: HTTP connection upgraded to WebSocket
+4. **Agent Creation**: Agent retrieved/created for session
+5. **Event Subscription**: Handler subscribes to agent events
+6. **Connected Event**: Sent to client with connection info
+7. **Message Loop**: Read messages from client, write events to client
+8. **Cleanup**: On disconnect, agent reference removed, semaphore released
+
+## File Locations
+
+- [`internal/websocket/handler.go`](../internal/websocket/handler.go) - Main handler
+- [`internal/websocket/agent_manager.go`](../internal/websocket/agent_manager.go) - Agent manager
+- [`tests/unit/websocket/handler_test.go`](../tests/unit/websocket/handler_test.go) - Tests
+- [`tests/unit/websocket/handler_bench_test.go`](../tests/unit/websocket/handler_bench_test.go) - Benchmarks

@@ -1,109 +1,125 @@
-# config
+# Config Package
 
-Configuration loading for the gateway.
+Centralized configuration management for the gateway application with environment variable parsing, defaults, and validation.
 
-## Description
-
-The config package provides:
-- Environment-based configuration for server settings
-- Model and router configuration loading from YAML files
-- Subscription plan definitions with LLM credit allowances
-
-## Server Configuration
-
-### Config Loading Flow
+## Overview
 
 ```mermaid
 flowchart TB
-    Load[Load] --> Addr["GATEWAY_ADDR - default: :8080"]
-    Load --> Level["GATEWAY_LOG_LEVEL - default: info"]
-    Load --> Origins["GATEWAY_ALLOWED_ORIGINS - comma separated"]
-    Load --> Conns["GATEWAY_MAX_CONNS - default: 0 = unlimited"]
-    Addr --> Return[Return &Config]
-    Level --> Return
-    Origins --> Return
-    Conns --> Return
-    Return --> Config["ServerAddr, LogLevel, AllowedOrigins, MaxConns"]
-    Config --> Validate[cfg.Validate - Check addr not empty]
-    Validate --> Result[Return nil/err]
+    Env[Environment Variables] --> Load[Load Function]
+    Load --> Parse[Parse & Validate]
+    Parse --> Config[Config Struct]
+    Config --> Server[Server Config]
+    Config --> Auth[Auth Config]
 ```
 
-### Server Configuration Fields
+## Purpose
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `ServerAddr` | string | `:8080` | HTTP server bind address |
-| `LogLevel` | string | `info` | Logging level |
-| `AllowedOrigins` | []string | empty | WebSocket allowed origins |
-| `MaxConns` | int | `0` (unlimited) | Max concurrent connections |
+The config package loads and validates all application configuration from environment variables. It provides:
 
-## Models Configuration
+- Server settings (address, logging, CORS, connection limits)
+- Authentication service configuration
+- Redis connection settings
+- Production environment validation
 
-### Models Config Loading Flow
+## Types
 
-```mermaid
-flowchart TB
-    Load[LoadModelsConfig] --> Read["Read YAML file"]
-    Read --> Unmarshal["Unmarshal YAML to ModelsConfig"]
-    Unmarshal --> Validate["Validate router model exists"]
-    Validate --> Valid{Valid?}
-    Valid -->|Yes| ReturnConfig["Return &ModelsConfig"]
-    Valid -->|No| ReturnErr["Return error"]
+### Config
+
+```go
+type Config struct {
+    ServerAddr    string
+    LogLevel      string
+    AllowedOrigins []string
+    MaxConns      int
+    Auth          AuthConfig
+    RedisAddr     string
+    RedisPassword string
+}
 ```
-
-### Model Config Fields
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `provider` | string | LLM provider name |
-| `input_cost_per_million` | float64 | Input token cost per million |
-| `output_cost_per_million` | float64 | Output token cost per million |
-| `max_tokens` | int | Maximum tokens for model |
-| `tier` | string | Model tier (economy, premium, ultra) |
+| `ServerAddr` | string | HTTP server bind address |
+| `LogLevel` | string | Logging level (debug, info, warn, error) |
+| `AllowedOrigins` | []string | CORS allowed origins for WebSocket |
+| `MaxConns` | int | Max concurrent WebSocket connections (0 = unlimited) |
+| `Auth` | AuthConfig | Authentication service configuration |
+| `RedisAddr` | string | Redis server address (optional) |
+| `RedisPassword` | string | Redis password (optional) |
 
-### Router Config Fields
+### AuthConfig
+
+```go
+type AuthConfig struct {
+    URL             string
+    Timeout         time.Duration
+    AuthInternalSecret string
+    InternalSecret  string
+}
+```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `model` | string | Default router model name |
-| `timeout` | string | Request timeout duration |
-| `max_retries` | int | Maximum retry attempts |
+| `URL` | string | Auth service base URL |
+| `Timeout` | time.Duration | Auth request timeout |
+| `AuthInternalSecret` | string | Secret for calling auth service |
+| `InternalSecret` | string | Gateway's internal secret for /_internal/* endpoints |
 
-## Subscription Plans
+## Functions
 
-### Plan Lookup Flow
+| Function | Description |
+|----------|-------------|
+| `Load() (*Config, error)` | Loads configuration from environment variables |
+| `Validate() error` | Validates configuration (production requirements) |
 
-```mermaid
-flowchart TB
-    Start["GetPlan"] --> Check["Check plan name"]
-    Check --> Basic{"basic"}
-    Check --> Pro{"pro"}
-    Check --> Enterprise{"enterprise"}
-    Basic --> BasicPlan["$10/mo - 1K requests - Economy"]
-    Pro --> ProPlan["$50/mo - 10K requests - All models"]
-    Enterprise --> EnterprisePlan["$500/mo - Unlimited - + custom"]
+## Configuration
+
+| Environment Variable | Description | Default |
+|---------------------|-------------|---------|
+| `GATEWAY_ADDR` | Server bind address | `:8080` |
+| `GATEWAY_LOG_LEVEL` | Logging level | `info` |
+| `GATEWAY_ALLOWED_ORIGINS` | Comma-separated CORS origins | (empty = deny all) |
+| `GATEWAY_MAX_CONNS` | Max concurrent connections | `0` (unlimited) |
+| `AUTH_SERVICE_URL` | Auth service URL | `http://localhost:8081` |
+| `AUTH_TIMEOUT` | Auth request timeout | `2s` |
+| `AUTH_INTERNAL_SECRET` | Secret for auth service calls | (required in prod) |
+| `INTERNAL_SECRET` | Gateway internal secret (min 16 chars) | (required in prod) |
+| `REDIS_ADDR` | Redis server address | (optional) |
+| `REDIS_PASSWORD` | Redis password | (optional) |
+
+## Validation Rules
+
+### Production Environment (when `GATEWAY_ADDR` contains public host)
+
+- `AllowedOrigins` must be non-empty
+- `InternalSecret` must be at least 16 characters
+
+### URL Format
+
+- `AuthServiceURL` must be a valid URL
+
+## File Locations
+
+- [`config/config.go`](../config/config.go) - Main configuration
+- [`config/auth.go`](../config/auth.go) - Auth configuration
+- [`config/config_test.go`](../config/config_test.go) - Tests
+
+## Example Configuration
+
+```bash
+# Development
+export GATEWAY_ADDR=":8080"
+export GATEWAY_LOG_LEVEL="debug"
+export GATEWAY_ALLOWED_ORIGINS="http://localhost:3000,http://localhost:5173"
+export AUTH_SERVICE_URL="http://localhost:8081"
+export INTERNAL_SECRET="dev-secret-key-12345"
+
+# Production
+export GATEWAY_ADDR="0.0.0.0:8080"
+export GATEWAY_ALLOWED_ORIGINS="https://app.example.com"
+export AUTH_SERVICE_URL="http://auth-service:8081"
+export AUTH_INTERNAL_SECRET="${AUTH_SERVICE_SECRET}"
+export INTERNAL_SECRET="${RANDOM_SECRET_MIN_16_CHARS}"
+export REDIS_ADDR="redis:6379"
 ```
-
-### Available Plans
-
-| Plan | Monthly Credits | Max Requests | Features |
-|------|-----------------|--------------|----------|
-| `basic` | $10.00 | 1,000 | economy_models, basic_routing |
-| `pro` | $50.00 | 10,000 | all_models, smart_routing, priority_queue |
-| `enterprise` | $500.00 | Unlimited | All features + custom_models, dedicated_support |
-
-## Types and Functions
-
-| Name | Kind | Location | Description |
-|------|------|----------|-------------|
-| Config | struct | [config.go#L11](../config/config.go#L11) | Server configuration struct |
-| Load | func | [config.go#L19](../config/config.go#L19) | Loads server config from environment |
-| Validate | func | [config.go#L63](../config/config.go#L63) | Validates server config |
-| ModelConfig | struct | [models.go#L9](../config/models.go#L9) | Model configuration |
-| RouterConfig | struct | [models.go#L15](../config/models.go#L15) | Router configuration |
-| ModelsConfig | struct | [models.go#L21](../config/models.go#L21) | Models and router configuration |
-| LoadModelsConfig | func | [models.go#L27](../config/models.go#L27) | Loads models config from YAML |
-| Plan | struct | [plans.go#L7](../config/plans.go#L7) | Subscription plan |
-| GetPlan | func | [plans.go#L42](../config/plans.go#L42) | Gets plan by name |
-| GetAllPlans | func | [plans.go#L48](../config/plans.go#L48) | Returns all plans |
-| HasFeature | func | [plans.go#L66](../config/plans.go#L66) | Checks plan feature |

@@ -1,53 +1,91 @@
 # Gateway
 
-WebSocket gateway for Nevaria agent tool execution with LLM proxy and intelligent routing.
+WebSocket gateway for Nevaria agents with authentication, LLM proxy, and distributed tool execution.
 
 ## Quick Start
 
 ```bash
-make build  # Build binary to bin/nevaria-gateway
-make run    # Start server on :8080
-make test   # Run tests
+make build  # Build binary to bin/gateway
+make run     # Start server
+make test    # Run tests
 ```
 
 ## Configuration
 
-Environment-based configuration.
+All configuration is via environment variables.
+
+### Server
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| GATEWAY_ADDR | :8080 | Server bind address |
-| GATEWAY_LOG_LEVEL | info | Log level (debug, info, warn, error) |
-| GATEWAY_ALLOWED_ORIGINS | (empty) | CORS origins (empty = deny all) |
-| GATEWAY_MAX_CONNS | 0 | Max connections (0 = unlimited) |
-| OPENAI_API_KEY | (empty) | OpenAI API key |
-| ANTHROPIC_API_KEY | (empty) | Anthropic API key |
-| GOOGLE_API_KEY | (empty) | Google API key |
-| DEFAULT_LLM_MODEL | gpt-4o | Default LLM model |
-| SYSTEM_PROMPT | (empty) | Default system prompt |
+| `GATEWAY_ADDR` | `:8080` | Server bind address |
+| `GATEWAY_LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
+| `GATEWAY_ALLOWED_ORIGINS` | (empty) | Comma-separated CORS origins for WebSocket |
+| `GATEWAY_MAX_CONNS` | `0` | Max concurrent WebSocket connections (0 = unlimited) |
 
-### Production Example
+### Authentication
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AUTH_SERVICE_URL` | `http://localhost:8081` | Auth service URL |
+| `AUTH_TIMEOUT` | `2s` | Auth request timeout |
+| `AUTH_INTERNAL_SECRET` | (required) | Secret for calling auth service |
+| `INTERNAL_SECRET` | (required) | Gateway secret for /_internal/* endpoints (min 16 chars) |
+
+### Redis (Optional)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REDIS_ADDR` | (empty) | Redis server address |
+| `REDIS_PASSWORD` | (empty) | Redis password |
+
+### LLM Providers
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENAI_API_KEY` | (empty) | OpenAI API key |
+| `ANTHROPIC_API_KEY` | (empty) | Anthropic API key |
+| `GOOGLE_API_KEY` | (empty) | Google AI API key |
+| `GATEWAY_MODEL_CONFIG` | `config/models.yaml` | Model configuration path |
+
+## Production Setup
 
 ```bash
-export GATEWAY_ADDR=":8080"
+export GATEWAY_ADDR="0.0.0.0:8080"
 export GATEWAY_LOG_LEVEL="info"
 export GATEWAY_ALLOWED_ORIGINS="https://app.example.com"
 export GATEWAY_MAX_CONNS="10000"
+
+export AUTH_SERVICE_URL="http://auth-service:8081"
+export AUTH_INTERNAL_SECRET="${AUTH_SERVICE_SECRET}"
+export INTERNAL_SECRET="${RANDOM_SECRET_MIN_16_CHARS}"
+
+export REDIS_ADDR="redis:6379"
 export OPENAI_API_KEY="sk-..."
-export DEFAULT_LLM_MODEL="gpt-4o"
+export ANTHROPIC_API_KEY="sk-..."
 ```
 
-### Development Example
+## Endpoints
+
+| Path | Method | Auth | Description |
+|------|--------|------|-------------|
+| `/health` | GET, HEAD | None | Health check |
+| `/ws` | GET | Session cookie | WebSocket connection |
+| `/_internal/*` | * | Bearer token | Internal service endpoints |
+
+## Development
 
 ```bash
-export GATEWAY_ADDR=":8080"
-export GATEWAY_LOG_LEVEL="debug"
-export GATEWAY_ALLOWED_ORIGINS="*"
-export GATEWAY_MAX_CONNS="0"
-export OPENAI_API_KEY="sk-..."
-export DEFAULT_LLM_MODEL="gpt-4o-mini"
+# Run with debug logging
+make run
+
+# Run specific test
+go test ./tests/unit/...
+
+# Run integration tests (requires services)
+go test ./tests/integration/... -tags=integration
 ```
 
 ## Architecture
 
-See [architecture/](architecture/) for complete system documentation.
+For complete system architecture, component diagrams, and API documentation, see [docs/](docs/).
