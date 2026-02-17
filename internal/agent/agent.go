@@ -237,3 +237,27 @@ func (a *Agent) setStreamingState(streaming bool, msg *AgentMessage) {
 	defer a.mu.Unlock()
 	a.state.SetStreaming(streaming, msg)
 }
+
+// AddTools adds tools to the agent's tool list in a thread-safe manner.
+// This is used for dynamic tool registration, such as when nodes connect.
+func (a *Agent) AddTools(tools ...Tool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.state.Tools = append(a.state.Tools, tools...)
+}
+
+// RemoveTools removes tools from the agent by name prefix.
+// This is used when nodes disconnect.
+func (a *Agent) RemoveTools(prefix string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	var updated []Tool
+	for _, tool := range a.state.Tools {
+		// Keep tools that don't start with the prefix
+		if len(tool.Name) < len(prefix) || tool.Name[:len(prefix)] != prefix {
+			updated = append(updated, tool)
+		}
+	}
+	a.state.Tools = updated
+}
