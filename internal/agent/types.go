@@ -319,6 +319,8 @@ type AgentStateOptions struct {
 	ThinkingLevel ThinkingLevel
 	Tools         []Tool
 	SessionID     string
+	UserID        string
+	AgentID       string
 }
 
 // AgentState tracks the current state of an agent session.
@@ -333,6 +335,8 @@ type AgentState struct {
 	PendingToolCalls map[string]bool
 	Error            string
 	SessionID        string
+	UserID           string
+	AgentID          string
 }
 
 // NewAgentState creates a new AgentState with the given options.
@@ -343,6 +347,8 @@ func NewAgentState(opts AgentStateOptions) AgentState {
 		ThinkingLevel:    opts.ThinkingLevel,
 		Tools:            opts.Tools,
 		SessionID:        opts.SessionID,
+		UserID:           opts.UserID,
+		AgentID:          opts.AgentID,
 		Messages:         []AgentMessage{},
 		PendingToolCalls: make(map[string]bool),
 	}

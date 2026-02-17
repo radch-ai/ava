@@ -97,3 +97,57 @@ func TestAgentManagerNilLLMProxy(t *testing.T) {
 		t.Fatal("GetOrCreateAgent returned nil")
 	}
 }
+
+// TestAgentKeyCompositeKey verifies agents are keyed by (userID, agentID)
+func TestAgentKeyCompositeKey(t *testing.T) {
+	logger := zerolog.Nop()
+	mgr := websocket.NewAgentManager(logger, nil)
+
+	userID := "user-123"
+	agentID := "agent-456"
+
+	// Create agent with composite key
+	agent1 := mgr.GetOrCreateAgentForUser(userID, agentID)
+	if agent1 == nil {
+		t.Fatal("GetOrCreateAgentForUser returned nil")
+	}
+
+	// Same composite key returns same agent
+	agent2 := mgr.GetOrCreateAgentForUser(userID, agentID)
+	if agent1 != agent2 {
+		t.Error("Expected same agent for same (userID, agentID)")
+	}
+
+	// Different agentID returns different agent
+	agent3 := mgr.GetOrCreateAgentForUser(userID, "agent-789")
+	if agent1 == agent3 {
+		t.Error("Expected different agent for different agentID")
+	}
+
+	// Different userID returns different agent
+	agent4 := mgr.GetOrCreateAgentForUser("user-456", agentID)
+	if agent1 == agent4 {
+		t.Error("Expected different agent for different userID")
+	}
+}
+
+// TestRemoveAgentForUser verifies agent removal by composite key
+func TestRemoveAgentForUser(t *testing.T) {
+	logger := zerolog.Nop()
+	mgr := websocket.NewAgentManager(logger, nil)
+
+	userID := "user-123"
+	agentID := "agent-456"
+
+	// Create agent
+	agent1 := mgr.GetOrCreateAgentForUser(userID, agentID)
+
+	// Remove agent
+	mgr.RemoveAgentForUser(userID, agentID)
+
+	// Verify new agent is created after removal
+	agent2 := mgr.GetOrCreateAgentForUser(userID, agentID)
+	if agent1 == agent2 {
+		t.Error("Expected different agent after removal")
+	}
+}

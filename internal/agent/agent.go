@@ -68,6 +68,8 @@ type AgentOptions struct {
 	ID           string
 	SystemPrompt string
 	SessionID    string
+	UserID       string
+	AgentID      string
 	LLMClient    LLMClient // Optional LLM client for tool calling loop
 }
 
@@ -76,6 +78,8 @@ type Agent struct {
 	mu            sync.RWMutex
 	state         AgentState
 	id            string
+	userID        string
+	agentID       string
 	subscribers   map[string]chan AgentEvent
 	subscribersMu sync.Mutex
 	ctx           context.Context
@@ -85,10 +89,22 @@ type Agent struct {
 
 // NewAgent creates a new Agent with the given options.
 // If no ID is provided, a UUID will be generated.
+// If no UserID is provided, it defaults to "unknown".
+// If no AgentID is provided, it defaults to the agent's ID.
 func NewAgent(opts AgentOptions) *Agent {
 	id := opts.ID
 	if id == "" {
 		id = uuid.New().String()
+	}
+
+	userID := opts.UserID
+	if userID == "" {
+		userID = "unknown"
+	}
+
+	agentID := opts.AgentID
+	if agentID == "" {
+		agentID = id
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -96,10 +112,14 @@ func NewAgent(opts AgentOptions) *Agent {
 	state := NewAgentState(AgentStateOptions{
 		SystemPrompt: opts.SystemPrompt,
 		SessionID:    opts.SessionID,
+		UserID:       userID,
+		AgentID:      agentID,
 	})
 
 	return &Agent{
 		id:          id,
+		userID:      userID,
+		agentID:     agentID,
 		state:       state,
 		subscribers: make(map[string]chan AgentEvent),
 		ctx:         ctx,
@@ -172,6 +192,8 @@ func (a *Agent) State() AgentState {
 		PendingToolCalls: pendingToolCalls,
 		Error:            a.state.Error,
 		SessionID:        a.state.SessionID,
+		UserID:           a.state.UserID,
+		AgentID:          a.state.AgentID,
 	}
 }
 

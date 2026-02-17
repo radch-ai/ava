@@ -8,15 +8,22 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// AgentKey is the composite key for agent lookup: (userID, agentID)
+type AgentKey struct {
+	UserID  string
+	AgentID string
+}
+
 // AgentManagerOptions configures a new AgentManager.
 type AgentManagerOptions struct {
 	LLMProxyHandler *proxy.Handler
 }
 
-// AgentManager manages per-connection agents with thread-safe access.
+// AgentManager manages per-user agents with thread-safe access.
+// Agents are keyed by composite (userID, agentID) to support multiple agents per user.
 type AgentManager struct {
 	mu       sync.RWMutex
-	agents   map[string]*agent.Agent
+	agents   map[AgentKey]*agent.Agent
 	logger   zerolog.Logger
 	llmProxy *proxy.Handler
 }
@@ -29,17 +36,18 @@ func NewAgentManager(logger zerolog.Logger, opts *AgentManagerOptions) *AgentMan
 	}
 
 	return &AgentManager{
-		agents:   make(map[string]*agent.Agent),
+		agents:   make(map[AgentKey]*agent.Agent),
 		logger:   logger,
 		llmProxy: llmProxy,
 	}
 }
 
-// GetOrCreateAgent returns an existing agent for the session or creates a new one.
-// If an LLM proxy handler is configured, the agent will use proxy.Client for LLM calls.
-func (m *AgentManager) GetOrCreateAgent(sessionID string, userID string) *agent.Agent {
+// GetOrCreateAgentForUser returns an existing agent for the (userID, agentID) pair or creates a new one.
+func (m *AgentManager) GetOrCreateAgentForUser(userID, agentID string) *agent.Agent {
+	key := AgentKey{UserID: userID, AgentID: agentID}
+
 	m.mu.RLock()
-	existingAgent, exists := m.agents[sessionID]
+	existingAgent, exists := m.agents[key]
 	m.mu.RUnlock()
 
 	if exists {
@@ -50,21 +58,22 @@ func (m *AgentManager) GetOrCreateAgent(sessionID string, userID string) *agent.
 	defer m.mu.Unlock()
 
 	// Double-check after acquiring write lock
-	if existingAgent, exists := m.agents[sessionID]; exists {
+	if existingAgent, exists := m.agents[key]; exists {
 		return existingAgent
 	}
 
 	// Create new agent with appropriate LLM client
-	newAgent := m.createAgent(sessionID, userID)
-	m.agents[sessionID] = newAgent
+	newAgent := m.createAgent(userID, agentID)
+	m.agents[key] = newAgent
 
 	return newAgent
 }
 
 // createAgent creates a new agent with the appropriate LLM client.
-func (m *AgentManager) createAgent(sessionID string, userID string) *agent.Agent {
+func (m *AgentManager) createAgent(userID, agentID string) *agent.Agent {
 	opts := agent.AgentOptions{
-		SessionID: sessionID,
+		ID:        agentID,
+		SessionID: userID + ":" + agentID,
 	}
 
 	// If LLM proxy handler is configured, create proxy client for this user
@@ -79,13 +88,37 @@ func (m *AgentManager) createAgent(sessionID string, userID string) *agent.Agent
 	return agent.NewAgent(opts)
 }
 
-// RemoveAgent removes the agent for the given session.
+// RemoveAgentForUser removes the agent for the given (userID, agentID) pair.
+func (m *AgentManager) RemoveAgentForUser(userID, agentID string) {
+	key := AgentKey{UserID: userID, AgentID: agentID}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if existingAgent, exists := m.agents[key]; exists {
+		existingAgent.Unsubscribe(key.UserID)
+		delete(m.agents, key)
+	}
+}
+
+// GetOrCreateAgent is deprecated - use GetOrCreateAgentForUser instead.
+func (m *AgentManager) GetOrCreateAgent(sessionID string, userID string) *agent.Agent {
+	return m.GetOrCreateAgentForUser(userID, sessionID)
+}
+
+// RemoveAgent is deprecated - use RemoveAgentForUser instead.
+// For backward compatibility, this removes any agent matching the sessionID as agentID.
 func (m *AgentManager) RemoveAgent(sessionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if existingAgent, exists := m.agents[sessionID]; exists {
-		existingAgent.Unsubscribe(sessionID) // Unsubscribe any event channels
-		delete(m.agents, sessionID)
+	// Remove any agent that has this sessionID as its agentID
+	// This maintains backward compatibility with the old single-key system
+	for key, agent := range m.agents {
+		if key.AgentID == sessionID {
+			agent.Unsubscribe(key.UserID)
+			delete(m.agents, key)
+			return // Only remove first match (old behavior)
+		}
 	}
 }

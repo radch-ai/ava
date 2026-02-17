@@ -188,3 +188,37 @@ func TestContentBlockJSON(t *testing.T) {
 		}
 	})
 }
+
+// TestAgentStateWithUserID verifies AgentState includes UserID
+func TestAgentStateWithUserID(t *testing.T) {
+	opts := agent.AgentStateOptions{
+		UserID:    "user-123",
+		AgentID:   "agent-456",
+		SessionID: "session-789",
+	}
+	state := agent.NewAgentState(opts)
+
+	if state.UserID != "user-123" {
+		t.Errorf("expected UserID user-123, got %s", state.UserID)
+	}
+	if state.AgentID != "agent-456" {
+		t.Errorf("expected AgentID agent-456, got %s", state.AgentID)
+	}
+}
+
+// TestAgentWithUserID verifies Agent includes UserID
+func TestAgentWithUserID(t *testing.T) {
+	opts := agent.AgentOptions{
+		UserID:  "user-123",
+		AgentID: "agent-456",
+	}
+	a := agent.NewAgent(opts)
+
+	state := a.State()
+	if state.UserID != "user-123" {
+		t.Errorf("expected UserID user-123, got %s", state.UserID)
+	}
+	if state.AgentID != "agent-456" {
+		t.Errorf("expected AgentID agent-456, got %s", state.AgentID)
+	}
+}
