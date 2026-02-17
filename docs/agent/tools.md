@@ -1,10 +1,150 @@
-# internal/agent/tools
+# Agent Tools
 
-Tool interface and execution framework.
+Tool interface, execution framework, and built-in tools for agent runtime.
 
-## Description
+## Overview
 
-The tools package defines the tool execution interface. Tools are callable functions that can be invoked by the agent during the tool calling loop. Each tool has a name, description, and execute function.
+```mermaid
+flowchart LR
+    Agent[Agent Runtime] --> Tools[Tool Registry]
+    Tools --> Mem0Search[mem0_search]
+    Tools --> Mem0Store[mem0_store]
+    Tools --> ReadFile[read_agent_file]
+    Tools --> WriteFile[write_agent_file]
+    Tools --> Example[echo, math, time, delay]
+
+    Mem0Search --> Mem0[Mem0 Client]
+    Mem0Store --> Mem0
+    ReadFile --> Storage[S3 Storage]
+    WriteFile --> Storage
+```
+
+## Tool Interface
+
+```go
+type Tool struct {
+    Name        string
+    Description string
+    Execute     func(ctx context.Context, args map[string]any) (*ToolResult, error)
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Name` | string | Unique identifier for the tool |
+| `Description` | string | Human-readable description for LLM |
+| `Execute` | func | Function to execute with context and arguments |
+
+## Tool Result
+
+```go
+type ToolResult struct {
+    Content []ContentBlock
+    Details any
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Content` | []ContentBlock | Result content blocks |
+| `Details` | any | Additional metadata |
+
+## Built-in Tools
+
+| Tool | Description | Arguments | Returns |
+|------|-------------|-----------|---------|
+| `mem0_search` | Search long-term memory | `query`, `limit` | Relevant memories |
+| `mem0_store` | Store in long-term memory | `content`, `metadata` | Success confirmation |
+| `read_agent_file` | Read from agent workspace | `path` | File contents |
+| `write_agent_file` | Write to agent workspace | `path`, `content` | Success confirmation |
+| `echo` | Echo input text (example) | `text` | Echoed text |
+| `math` | Arithmetic operations (example) | `operation`, `a`, `b` | Calculation result |
+| `time` | Current time (example) | none | Current timestamp |
+| `delay` | Simulate delay (example) | `duration_ms` | Delay confirmation |
+
+## Production Tools
+
+### Mem0SearchTool
+
+Searches long-term memory for relevant information.
+
+```go
+var Mem0SearchTool = Tool{
+    Name: "mem0_search",
+    Description: "Search long-term memory for relevant information. Use this to retrieve facts, preferences, or past conversations.",
+}
+```
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `query` | string | Yes | Search query |
+| `limit` | int | No | Max results (default: 5) |
+
+### Mem0StoreTool
+
+Stores information in long-term memory.
+
+```go
+var Mem0StoreTool = Tool{
+    Name: "mem0_store",
+    Description: "Store important information in long-term memory for future retrieval. Use for facts, preferences, decisions.",
+}
+```
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `content` | string | Yes | Information to store |
+| `metadata` | map[string]string | No | Optional metadata tags |
+
+### ReadAgentFileTool
+
+Reads a file from the agent's workspace in S3.
+
+```go
+var ReadAgentFileTool = Tool{
+    Name: "read_agent_file",
+    Description: "Read a file from the agent's workspace. Files are stored in S3 under the user's agent workspace.",
+}
+```
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `path` | string | Yes | File path relative to workspace root |
+
+### WriteAgentFileTool
+
+Writes content to a file in the agent's workspace in S3.
+
+```go
+var WriteAgentFileTool = Tool{
+    Name: "write_agent_file",
+    Description: "Write content to a file in the agent's workspace. Existing files will be overwritten.",
+}
+```
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `path` | string | Yes | File path relative to workspace root |
+| `content` | string | Yes | File content to write |
+
+## Example Tools
+
+For testing and development:
+
+| Tool | Description | Arguments |
+|------|-------------|-----------|
+| `echo` | Echoes input text | `text` (string) |
+| `math` | Performs arithmetic | `operation` (string), `a`, `b` (float64) |
+| `time` | Returns current time | none |
+| `delay` | Simulates long operation | `duration_ms` (int/float64) |
 
 ## Tool Execution Flow
 
@@ -20,64 +160,57 @@ flowchart TB
     Result -->|Error| Err["Return error"]
 ```
 
-## Tool Registry Flow
+## S3 Workspace Structure
 
-```mermaid
-flowchart TB
-    Register[RegisterTool] --> Map["Registry map - name to Tool"]
-    Map --> Store["Store tool in registry"]
-    Store --> Return["Return nil - or error if duplicate"]
+```
+s3://{bucket}/workspaces/{user_id}/{agent_id}/
+├── notes/
+│   ├── project-planning.md
+│   └── meeting-summary-2024-01-15.md
+├── code/
+│   └── snippet.go
+└── data/
+    └── config.json
 ```
 
-## Functions and Types
+## Tool Registration
 
-| Name | Kind | Location | Description |
-|------|------|----------|-------------|
-| ExecuteToolCall | func | [tool.go#L14](../internal/agent/tool.go#L14) | Executes a tool from state |
-| FindToolByName | func | [tool.go#L75](../internal/agent/tool.go#L75) | Locates a tool in state |
-| Registry | struct | [tools/registry.go#L23](../internal/agent/tools/registry.go#L23) | Registry for tool management |
-| RegisterTool | func | [tools/registry.go#L45](../internal/agent/tools/registry.go#L45) | Adds tool to registry |
-| GetTool | func | [tools/registry.go#L59](../internal/agent/tools/registry.go#L59) | Retrieves tool by name |
-| ExampleEchoTool | func | [tools/example.go#L24](../internal/agent/tools/example.go#L24) | Example echo tool for testing |
-| ExampleMathTool | func | [tools/example.go#L53](../internal/agent/tools/example.go#L53) | Example math tool for arithmetic |
-| ExampleTimeTool | func | [tools/example.go#L109](../internal/agent/tools/example.go#L109) | Example time tool returns current time |
-| ExampleDelayTool | func | [tools/example.go#L136](../internal/agent/tools/example.go#L136) | Example delay tool simulates long operations |
-
-## Tool Interface
+Tools are added to agents via `AddTools()` method:
 
 ```go
-type Tool struct {
-    Name        string
-    Description string
-    Execute     func(ctx context.Context, args map[string]any) (*ToolResult, error)
-}
+import mem0tools "github.com/nevaria-ai/gateway/internal/agent/tools/mem0"
+import filetools "github.com/nevaria-ai/gateway/internal/agent/tools/files"
+
+agent.AddTools(
+    mem0tools.Mem0SearchTool,
+    mem0tools.Mem0StoreTool,
+    filetools.ReadAgentFileTool,
+    filetools.WriteAgentFileTool,
+)
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| Name | string | Unique identifier for the tool |
-| Description | string | Human-readable description for LLM |
-| Execute | func | Function to execute with context and arguments |
+## Context Requirements
 
-## Tool Result
+Tools require context values to operate:
 
-```go
-type ToolResult struct {
-    Content []ContentBlock
-    Details any
-}
-```
+| Tool | Context Key | Description |
+|------|-------------|-------------|
+| File tools | `UserIDKey` | User identifier for S3 path |
+| File tools | `AgentIDKey` | Agent identifier for S3 path |
+| Mem0 tools | (from agent) | Session ID for memory operations |
 
-| Field | Type | Description |
-|-------|------|-------------|
-| Content | []ContentBlock | Result content blocks |
-| Details | any | Additional metadata |
+## File Locations
 
-## Example Tools
+- [`internal/agent/tool.go`](../internal/agent/tool.go) - Tool execution
+- [`internal/agent/tools/mem0.go`](../internal/agent/tools/mem0.go) - Memory tools
+- [`internal/agent/tools/files.go`](../internal/agent/tools/files.go) - File tools
+- [`internal/agent/tools/example.go`](../internal/agent/tools/example.go) - Example tools
+- [`internal/agent/tools/registry.go`](../internal/agent/tools/registry.go) - Tool registry
+- [`tests/unit/agent/tools/mem0_test.go`](../../tests/unit/agent/tools/mem0_test.go) - Memory tool tests
+- [`tests/unit/agent/tools/files_test.go`](../../tests/unit/agent/tools/files_test.go) - File tool tests
 
-| Tool | Description | Arguments |
-|------|-------------|-----------|
-| `echo` | Echoes input text | `text` (string) |
-| `math` | Performs arithmetic | `operation` (string), `a`, `b` (float64) |
-| `time` | Returns current time | none |
-| `delay` | Simulates long operation | `duration_ms` (int/float64) |
+## Related
+
+- [Agent](../agent/README.md) - Agent runtime with tool execution
+- [Storage](../../storage/README.md) - S3 storage implementation
+- [Mem0](../../mem0/README.md) - Memory client API

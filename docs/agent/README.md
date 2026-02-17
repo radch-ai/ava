@@ -28,6 +28,7 @@ The agent package provides:
 - Tool calling loop with parallel execution
 - Message history tracking
 - LLM client integration
+- Multi-agent support with userID and agentID
 
 ## Types
 
@@ -35,14 +36,16 @@ The agent package provides:
 
 ```go
 type Agent struct {
-    mu         sync.RWMutex
-    state      AgentState
-    id         string
-    subscribers map[string]chan AgentEvent
+    mu            sync.RWMutex
+    state         AgentState
+    id            string
+    userID        string           // User identifier for multi-agent
+    agentID       string           // Agent identifier for multi-agent
+    subscribers   map[string]chan AgentEvent
     subscribersMu sync.Mutex
-    ctx        context.Context
-    cancel     context.CancelFunc
-    llmClient  LLMClient
+    ctx           context.Context
+    cancel        context.CancelFunc
+    llmClient     LLMClient        // Optional LLM client for tool calling
 }
 ```
 
@@ -50,7 +53,9 @@ type Agent struct {
 |-------|------|-------------|
 | `mu` | sync.RWMutex | State mutex |
 | `state` | AgentState | Current agent state |
-| `id` | string | Unique agent identifier |
+| `id` | string | Unique agent instance ID |
+| `userID` | string | User identifier (for multi-agent isolation) |
+| `agentID` | string | Agent identifier (for multi-agent routing) |
 | `subscribers` | map[string]chan AgentEvent | Event subscribers |
 | `ctx` | context.Context | Agent context |
 | `cancel` | context.CancelFunc | Context cancel function |
@@ -70,6 +75,8 @@ type AgentState struct {
     PendingToolCalls map[string]bool
     Error            string
     SessionID        string
+    UserID           string           // User identifier
+    AgentID          string           // Agent identifier
 }
 ```
 
@@ -85,6 +92,8 @@ type AgentState struct {
 | `PendingToolCalls` | map[string]bool | Pending tool call IDs |
 | `Error` | string | Error state |
 | `SessionID` | string | Session identifier |
+| `UserID` | string | User identifier |
+| `AgentID` | string | Agent identifier |
 
 ### AgentMessage
 
@@ -114,7 +123,7 @@ type AgentMessage struct {
 type Tool struct {
     Name        string
     Description string
-    Execute     func(ctx context.Context, args map[string]any) (string, error)
+    Execute     func(ctx context.Context, args map[string]any) (*ToolResult, error)
 }
 ```
 
@@ -123,6 +132,18 @@ type Tool struct {
 | `Name` | string | Tool identifier |
 | `Description` | string | Tool description for LLM |
 | `Execute` | func | Tool execution function |
+
+### AgentStatus
+
+```go
+type AgentStatus string
+
+const (
+    AgentStatusIdle   AgentStatus = "idle"
+    AgentStatusActive AgentStatus = "active"
+    AgentStatusError  AgentStatus = "error"
+)
+```
 
 ## Roles
 
@@ -142,6 +163,14 @@ type Tool struct {
 | `ThinkingLevelMedium` | Medium |
 | `ThinkingLevelHigh` | High |
 
+## Agent Status
+
+| Status | Description |
+|--------|-------------|
+| `AgentStatusIdle` | Agent is idle, waiting for input |
+| `AgentStatusActive` | Agent is processing a request |
+| `AgentStatusError` | Agent encountered an error |
+
 ## Functions
 
 | Function | Description |
@@ -151,6 +180,8 @@ type Tool struct {
 | `Unsubscribe(id string)` | Unsubscribe from events |
 | `State() AgentState` | Gets current state (copy) |
 | `Prompt(ctx context.Context, message string) error` | Sends user message |
+| `AddTools(tools ...Tool)` | Add tools to agent |
+| `RemoveTools(prefix string)` | Remove tools by name prefix |
 
 ### State Management
 
@@ -226,8 +257,17 @@ sequenceDiagram
 
 | Package | Description |
 |---------|-------------|
-| [tools.md](tools.md) | Tool interface and execution framework |
+| [tools.md](tools.md) | Tool interface and built-in tools (Mem0, files) |
 | [types.md](types.md) | Agent types and event definitions |
+
+## Built-in Tools
+
+| Tool | Description | Package |
+|------|-------------|---------|
+| `mem0_search` | Search long-term memory | `tools/mem0.go` |
+| `mem0_store` | Store in long-term memory | `tools/mem0.go` |
+| `read_agent_file` | Read from agent workspace | `tools/files.go` |
+| `write_agent_file` | Write to agent workspace | `tools/files.go` |
 
 ## File Locations
 
@@ -235,5 +275,13 @@ sequenceDiagram
 - [`internal/agent/loop.go`](../internal/agent/loop.go) - Tool calling loop
 - [`internal/agent/tool.go`](../internal/agent/tool.go) - Tool execution
 - [`internal/agent/types.go`](../internal/agent/types.go) - Core types
-- [`internal/agent/events.go`](../internal/agent/events.go) - Event definitions
+- [`internal/agent/status.go`](../internal/agent/status.go) - Agent status enum
+- [`internal/agent/tools/mem0.go`](../internal/agent/tools/mem0.go) - Memory tools
+- [`internal/agent/tools/files.go`](../internal/agent/tools/files.go) - File operation tools
 - [`tests/unit/agent/`](../tests/unit/agent/) - Tests
+
+## Related
+
+- [WebSocket](../websocket.md) - Multi-agent routing via agent_id
+- [Storage](../storage/README.md) - Workspace persistence for agents
+- [Mem0](../mem0/README.md) - Long-term memory tools
