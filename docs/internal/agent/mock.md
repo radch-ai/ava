@@ -6,7 +6,7 @@ Mock implementations for testing the agent runtime.
 
 ```mermaid
 flowchart TB
-    Start(["MockLLMClient.Stream()"]) --> HStream
+    Start("MockLLMClient.Stream()") --> HStream
 
     subgraph SGMock [" "]
         HStream["**Stream() → <-chan AgentEvent**"]
@@ -19,7 +19,7 @@ flowchart TB
         Wait --> EmitEvents["emit MessageStart/Update/End"]
     end
 
-    CloseCh --> Return(["return channel"])
+    CloseCh --> Return("return channel")
     EmitEvents --> Return
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px

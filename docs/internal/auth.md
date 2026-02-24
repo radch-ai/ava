@@ -6,7 +6,7 @@ Auth service client for session validation. Validates session tokens via HTTP ca
 
 ```mermaid
 flowchart TB
-    Start(["ValidateSession(ctx, token)"]) --> BuildURL["url.Parse(baseURL + /auth/session)"]
+    Start("ValidateSession(ctx, token)") --> BuildURL["url.Parse(baseURL + /auth/session)"]
     BuildURL --> CreateReq["http.NewRequestWithContext()"]
     CreateReq --> AddHeaders["req.Header.Set(Authorization, Bearer secret)"]
     AddHeaders --> AddCookie["req.AddCookie(session=token)"]
@@ -24,7 +24,7 @@ flowchart TB
     DecodeResp --> CheckAuth{authenticated?}
     CheckAuth -->|no| ErrInvalid2["return ErrSessionInvalid"]
     CheckAuth -->|yes| ExtractCookie["extract Set-Cookie"]
-    ExtractCookie --> Done(["return SessionInfo"])
+    ExtractCookie --> Done("return SessionInfo")
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3

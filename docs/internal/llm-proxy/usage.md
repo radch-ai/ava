@@ -6,11 +6,11 @@ Usage tracking with Redis primary and file fallback.
 
 ```mermaid
 flowchart TB
-    Start(["Track(ctx, event)"]) --> TryRedis["try Redis.RPush()"]
-    TryRedis -->|success| Done(["return nil"])
+    Start("Track(ctx, event)") --> TryRedis["try Redis.RPush()"]
+    TryRedis -->|success| Done("return nil")
     TryRedis -->|error| Fallback["append to file"]
     Fallback -->|success| Done
-    Fallback -->|error| Err(["return error"])
+    Fallback -->|error| Err("return error")
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3

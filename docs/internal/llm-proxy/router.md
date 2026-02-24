@@ -6,12 +6,12 @@ LLM-based model selection router.
 
 ```mermaid
 flowchart TB
-    Start(["SelectModel(ctx, request)"]) --> GetModels["GetAvailableModels()"]
+    Start("SelectModel(ctx, request)") --> GetModels["GetAvailableModels()"]
     GetModels --> BuildPrompt["build router prompt"]
     BuildPrompt --> CallLLM["call router LLM"]
     CallLLM --> Parse["parse model selection"]
     Parse --> Estimate["estimate tokens & cost"]
-    Estimate --> Response(["return RouterResponse"])
+    Estimate --> Response("return RouterResponse")
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3

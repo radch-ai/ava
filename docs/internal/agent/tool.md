@@ -6,7 +6,7 @@ Tool execution framework for the agent runtime.
 
 ```mermaid
 flowchart TB
-    Start(["ExecuteToolCall(ctx, state, toolCall)"]) --> HFind
+    Start("ExecuteToolCall(ctx, state, toolCall)") --> HFind
 
     subgraph SGExecute [" "]
         HFind["**FindToolByName() → *Tool**"]
@@ -18,10 +18,10 @@ flowchart TB
         DoExecute -->|ok| BuildResult["build AgentMessage"]
     end
 
-    ErrNotFound --> ErrReturn(["return error"])
+    ErrNotFound --> ErrReturn("return error")
     ErrNilExecute --> ErrReturn
-    ErrExecute --> ErrMsgReturn(["return error message"])
-    BuildResult --> Success(["return result message"])
+    ErrExecute --> ErrMsgReturn("return error message")
+    BuildResult --> Success("return result message")
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3

@@ -6,12 +6,12 @@ Context utilities for propagating user ID and agent ID through request lifecycle
 
 ```mermaid
 flowchart TB
-    Start(["Request"]) --> WithUserID["ctx = WithUserID(ctx, userID)"]
+    Start("Request") --> WithUserID["ctx = WithUserID(ctx, userID)"]
     WithUserID --> WithAgentID["ctx = WithAgentID(ctx, agentID)"]
     WithAgentID --> ToolExec["Tool.Execute(ctx, args)"]
     ToolExec --> GetUserID["GetUserIDFromContext(ctx)"]
     GetUserID --> GetAgentID["GetAgentIDFromContext(ctx)"]
-    GetAgentID --> Done(["Context values available"])
+    GetAgentID --> Done("Context values available")
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3

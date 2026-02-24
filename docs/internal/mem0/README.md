@@ -14,11 +14,11 @@ flowchart TB
         Delete["DeleteSession(ctx, userID, runID)"]
     end
 
-    Add --> Memory[("Memory Store")]
+    Add --> Memory["Memory Store"]
     Search --> Memory
     SearchSession --> Memory
-    Create --> SessionID(["Session ID"])
-    Delete --> Clear(["Clear Session"])
+    Create --> SessionID("Session ID")
+    Delete --> Clear("Clear Session")
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3

@@ -6,17 +6,17 @@ Circuit breaker pattern for provider health monitoring.
 
 ```mermaid
 flowchart TB
-    Start(["IsHealthy(provider, model)"]) --> CheckCircuit{circuit open?}
+    Start("IsHealthy(provider, model)") --> CheckCircuit{circuit open?}
     CheckCircuit -->|yes| CheckTimeout{timeout passed?}
-    CheckTimeout -->|no| Unhealthy(["return false"])
+    CheckTimeout -->|no| Unhealthy("return false")
     CheckTimeout -->|yes| HalfOpen["half-open state"]
-    HalfOpen --> Healthy(["return true"])
+    HalfOpen --> Healthy("return true")
     CheckCircuit -->|no| CheckFailures{consecutive failures?}
     CheckFailures -->|>= 5| OpenCircuit["open circuit"]
     CheckFailures -->|< 5| Healthy
 
-    Success(["RecordSuccess()"]) --> CloseCircuit["close circuit"]
-    Failure(["RecordFailure()"]) --> IncFailures["increment failures"]
+    Success("RecordSuccess()") --> CloseCircuit["close circuit"]
+    Failure("RecordFailure()") --> IncFailures["increment failures"]
     IncFailures --> CheckThreshold{>= 5?}
     CheckThreshold -->|yes| OpenCircuit
 

@@ -6,9 +6,9 @@ Subscription plan definitions with LLM credit allowances. Provides plan lookup a
 
 ```mermaid
 flowchart TB
-    Start(["GetPlan(name)"]) --> Lookup["plans[name]"]
-    Lookup -->|found| Done(["return *Plan"])
-    Lookup -->|not found| Nil(["return nil"])
+    Start("GetPlan(name)") --> Lookup["plans[name]"]
+    Lookup -->|found| Done("return *Plan")
+    Lookup -->|not found| Nil("return nil")
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     class Start,Done,Nil mainFn

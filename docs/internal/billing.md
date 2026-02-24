@@ -7,19 +7,19 @@ RevenueCat webhook handling, quota management, and database migrations for subsc
 ```mermaid
 flowchart TB
     subgraph WebhookFlow ["Webhook Flow"]
-        Webhook(["RevenueCat Webhook"]) --> Verify["VerifyWebhookSignature()"]
-        Verify -->|invalid| Reject([Reject])
+        Webhook("RevenueCat Webhook") --> Verify["VerifyWebhookSignature()"]
+        Verify -->|invalid| Reject("Reject")
         Verify -->|valid| Process["Process Event
         📄 webhook.md"]
         Process --> UpdateDB["Update users table"]
-        UpdateDB --> OK([200 OK])
+        UpdateDB --> OK("200 OK")
     end
 
     subgraph QuotaFlow ["Quota Flow"]
-        Check(["CheckQuota()"]) --> QueryDB["Query credits_remaining"]
+        Check("CheckQuota()") --> QueryDB["Query credits_remaining"]
         QueryDB --> CheckPeriod["Check 6-hour period"]
-        CheckPeriod -->|exceeded| QuotaErr([Quota Exceeded])
-        CheckPeriod -->|ok| Allow([Allow Request])
+        CheckPeriod -->|exceeded| QuotaErr("Quota Exceeded")
+        CheckPeriod -->|ok| Allow("Allow Request")
     end
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px

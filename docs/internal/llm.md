@@ -6,19 +6,19 @@ Unified LLM client factory supporting OpenAI, Anthropic, and Google providers.
 
 ```mermaid
 flowchart TB
-    Start(["NewClient(config, model)"]) --> DetectProvider["DetectProviderFromModel()"]
-    DetectProvider -->|error| ErrUnknown([ErrUnknownModel])
+    Start("NewClient(config, model)") --> DetectProvider["DetectProviderFromModel()"]
+    DetectProvider -->|error| ErrUnknown("ErrUnknownModel")
     DetectProvider -->|ok| CheckKey{has API key?}
-    CheckKey -->|no| ErrMissing([ErrMissingAPIKey])
+    CheckKey -->|no| ErrMissing("ErrMissingAPIKey")
     CheckKey -->|OpenAI| CreateOpenAI["newOpenAIClient()
     📄 openai.md"]
     CheckKey -->|Anthropic| CreateAnthropic["newAnthropicClient()
     📄 anthropic.md"]
     CheckKey -->|Google| CreateGoogle["newGoogleClient()
     📄 google.md"]
-    CreateOpenAI & CreateAnthropic & CreateGoogle --> Client(["Client"])
+    CreateOpenAI & CreateAnthropic & CreateGoogle --> Client("Client")
     Client --> Stream["Stream(ctx, messages, tools)"]
-    Stream --> Events(["<-chan AgentEvent"])
+    Stream --> Events("<-chan AgentEvent")
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3

@@ -6,9 +6,9 @@ Project metadata and constants. Generated from project-details file.
 
 ```mermaid
 flowchart TB
-    Start(["Import project"]) --> AccessName["project.Name"]
+    Start("Import project") --> AccessName["project.Name"]
     AccessName --> AccessVersion["project.Version"]
-    AccessVersion --> Done(["Constants available"])
+    AccessVersion --> Done("Constants available")
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     class Start,Done mainFn

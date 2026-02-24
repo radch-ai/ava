@@ -6,12 +6,12 @@ LLM proxy with intelligent routing, quota management, health monitoring, and usa
 
 ```mermaid
 flowchart TB
-    Start(["Handle(ctx, request)"]) --> CheckQuota["quota.CheckQuota()
+    Start("Handle(ctx, request)") --> CheckQuota["quota.CheckQuota()
     📄 quota.md"]
-    CheckQuota -->|no quota| ErrQuota([ErrQuotaExceeded])
+    CheckQuota -->|no quota| ErrQuota("ErrQuotaExceeded")
     CheckQuota -->|has quota| Router["router.SelectModel()
     📄 router.md"]
-    Router -->|error| ErrRouter([ErrRouterFailed])
+    Router -->|error| ErrRouter("ErrRouterFailed")
     Router -->|ok| Health["health.IsHealthy()
     📄 health.md"]
     Health -->|unhealthy| Fallback["use fallback model"]
@@ -20,7 +20,7 @@ flowchart TB
     Reserve --> LLM["llmClient.Stream()
     📄 ../llm.md"]
     LLM --> Track["trackUsage()"]
-    Track --> Response(["return ProxyResponse"])
+    Track --> Response("return ProxyResponse")
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3

@@ -6,11 +6,11 @@ YAML-based LLM model and router configuration. Provides model cost definitions, 
 
 ```mermaid
 flowchart TB
-    Start(["LoadFromYAML(path)"]) --> ReadFile["os.ReadFile(path)"]
+    Start("LoadFromYAML(path)") --> ReadFile["os.ReadFile(path)"]
     ReadFile --> ParseYAML["yaml.Unmarshal(data)"]
     ParseYAML --> ValidateRouter["validate Router.Model exists"]
-    ValidateRouter -->|ok| Done(["return *ModelsConfig"])
-    ValidateRouter -->|error| Err(["return error"])
+    ValidateRouter -->|ok| Done("return *ModelsConfig")
+    ValidateRouter -->|error| Err("return error")
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3

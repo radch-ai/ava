@@ -6,7 +6,7 @@ HTTP server, middleware, and routing for the gateway.
 
 ```mermaid
 flowchart TB
-    Start(["Request"]) --> Mux["http.ServeMux"]
+    Start("Request") --> Mux["http.ServeMux"]
     Mux -->|/health| Health["HealthHandler()"]
     Mux -->|/ws| AuthMW["AuthMiddleware.Authenticate()
     📄 middleware.md"]
@@ -15,10 +15,10 @@ flowchart TB
     
     AuthMW -->|valid| WSHandler["WebSocket Handler
     📄 ../websocket.md"]
-    AuthMW -->|invalid| AuthErr([401 Unauthorized])
+    AuthMW -->|invalid| AuthErr("401 Unauthorized")
     
     Internal -->|valid secret| InternalHandler["Internal handlers"]
-    Internal -->|invalid secret| InternalErr([401 Unauthorized])
+    Internal -->|invalid secret| InternalErr("401 Unauthorized")
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3

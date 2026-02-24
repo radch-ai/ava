@@ -6,15 +6,15 @@ Model registry with cost calculation and metadata.
 
 ```mermaid
 flowchart TB
-    Start(["Get()"]) --> Registry["singleton Registry"]
+    Start("Get()") --> Registry["singleton Registry"]
     Registry --> LoadYAML["LoadFromYAML(path)"]
     LoadYAML --> Parse["parse models.yaml"]
     Parse --> Register["registerModel()"]
     Register --> CalcCost["calculateCost()"]
 
-    Request(["GetCost(model, tokens)"]) --> Lookup["lookup model"]
+    Request("GetCost(model, tokens)") --> Lookup["lookup model"]
     Lookup --> Cost["calculate cost"]
-    Cost --> Return(["return CostInfo"])
+    Cost --> Return("return CostInfo")
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3

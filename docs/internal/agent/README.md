@@ -6,7 +6,7 @@ Core agent runtime framework with state management, event streaming, and tool ex
 
 ```mermaid
 flowchart TB
-    Start(["NewAgent(opts)"]) --> HInit
+    Start("NewAgent(opts)") --> HInit
 
     subgraph SGInit [" "]
         HInit["**initAgent() → *Agent**"]
@@ -15,8 +15,8 @@ flowchart TB
         CreateCtx --> NewState["NewAgentState()"]
     end
 
-    HInit --> AgentReady(["Agent ready"])
-    AgentReady --> Prompt(["Prompt(ctx, message)"])
+    HInit --> AgentReady("Agent ready")
+    AgentReady --> Prompt("Prompt(ctx, message)")
     Prompt --> HPrompt
 
     subgraph SGPrompt [" "]

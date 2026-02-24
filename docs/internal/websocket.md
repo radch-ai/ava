@@ -6,16 +6,16 @@ WebSocket connection handler with multi-agent routing and connection management.
 
 ```mermaid
 flowchart TB
-    Start(["WebSocket Request"]) --> Upgrade["upgrader.Upgrade()"]
-    Upgrade -->|error| UpgradeErr([Upgrade Failed])
+    Start("WebSocket Request") --> Upgrade["upgrader.Upgrade()"]
+    Upgrade -->|error| UpgradeErr("Upgrade Failed")
     Upgrade -->|ok| CheckLimit{connection limit?}
-    CheckLimit -->|at capacity| LimitErr([503])
+    CheckLimit -->|at capacity| LimitErr("503")
     CheckLimit -->|ok| GetUserID["GetUserIDFromContext()
     📄 ../ctx.md"]
     GetUserID --> SendConnected["send connected event"]
     SendConnected --> MsgLoop{message loop}
     MsgLoop -->|text| HandleText["handleTextMessage()"]
-    MsgLoop -->|close| Close([Close Connection])
+    MsgLoop -->|close| Close("Close Connection")
     HandleText --> GetAgent["agentManager.GetOrCreateAgentForUser()
     📄 agent_manager.md"]
     GetAgent --> Subscribe["agent.Subscribe()"]

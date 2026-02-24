@@ -21,9 +21,9 @@ flowchart TB
         CheckURL -->|error| ValidErr["return error"]
     end
 
-    ValidErr --> Exit1([os.Exit(1)])
+    ValidErr --> Exit1("Exit 1")
     ValidNil --> ParseLevel["zerolog.ParseLevel()"]
-    ParseLevel -->|error| Exit2([os.Exit(1)])
+    ParseLevel -->|error| Exit2("Exit 1")
     ParseLevel -->|ok| CreateLogger["zerolog.New()"]
     CreateLogger --> LoadModels["registry.LoadFromYAML()
     📄 ../internal/llm-proxy/models.md"]
@@ -37,8 +37,8 @@ flowchart TB
     CreateWS --> CreateInternal["NewInternalRouter()"]
     CreateInternal --> CreateServer["server.New()"]
     CreateServer --> StartServer["srv.Start()"]
-    StartServer -->|error| Exit3([os.Exit(1)])
-    StartServer -->|ok| Running([Server Running])
+    StartServer -->|error| Exit3("Exit 1")
+    StartServer -->|ok| Running("Server Running")
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3

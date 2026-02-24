@@ -6,15 +6,15 @@ Quota management with Redis backend and plan/addon credit tracking.
 
 ```mermaid
 flowchart TB
-    Start(["CheckQuota(ctx, userID, cost)"]) --> GetPlan["GetPlan(userID)"]
+    Start("CheckQuota(ctx, userID, cost)") --> GetPlan["GetPlan(userID)"]
     GetPlan --> CheckPlan["check plan credits"]
-    CheckPlan -->|sufficient| ReturnPlan(["return plan source"])
+    CheckPlan -->|sufficient| ReturnPlan("return plan source")
     CheckPlan -->|insufficient| CheckAddon["check addon credits"]
-    CheckAddon -->|has addon| ReturnAddon(["return addon source"])
-    CheckAddon -->|no addon| NoQuota(["return HasQuota=false"])
+    CheckAddon -->|has addon| ReturnAddon("return addon source")
+    CheckAddon -->|no addon| NoQuota("return HasQuota=false")
 
-    Reserve(["ReserveQuota()"]) --> DeductRedis["deduct from Redis"]
-    Deduct(["DeductQuota()"]) --> UpdateDB["update database"]
+    Reserve("ReserveQuota()") --> DeductRedis["deduct from Redis"]
+    Deduct("DeductQuota()") --> UpdateDB["update database"]
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3

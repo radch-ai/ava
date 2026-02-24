@@ -6,7 +6,7 @@ Tool calling execution loop. Handles LLM streaming, tool call extraction, and re
 
 ```mermaid
 flowchart TB
-    Start(["Run(ctx, messages, tools)"]) --> HRun
+    Start("Run(ctx, messages, tools)") --> HRun
 
     subgraph SGRun [" "]
         HRun["**Run() → *RunResult**"]
@@ -26,9 +26,9 @@ flowchart TB
         AddResults --> LoopStart
     end
 
-    Break --> ReturnResult(["return RunResult"])
+    Break --> ReturnResult("return RunResult")
     Break2 --> ReturnResult
-    ErrStream --> Err(["return error"])
+    ErrStream --> Err("return error")
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3

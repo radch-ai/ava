@@ -6,7 +6,7 @@ Agent event system for real-time broadcasting of agent lifecycle, message genera
 
 ```mermaid
 flowchart TB
-    Start(["Agent.Prompt()"]) --> EmitStart["emit AgentStartEvent"]
+    Start("Agent.Prompt()") --> EmitStart["emit AgentStartEvent"]
     EmitStart --> EmitTurnStart["emit TurnStartEvent"]
     EmitTurnStart --> StreamLoop{streaming}
     StreamLoop -->|delta| EmitUpdate["emit MessageUpdateEvent"]
@@ -20,7 +20,7 @@ flowchart TB
     CheckMore -->|yes| EmitTurnStart
     CheckMore -->|no| EmitAgentEnd["emit AgentEndEvent"]
     CheckTools -->|no| EmitAgentEnd
-    EmitAgentEnd --> Done(["Done"])
+    EmitAgentEnd --> Done("Done")
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3

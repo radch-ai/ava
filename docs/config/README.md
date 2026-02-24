@@ -21,8 +21,8 @@ flowchart TB
         CheckURL -->|error| ValidErr["return error"]
     end
 
-    ValidNil --> Done(["Config ready"])
-    ValidErr --> Fatal([Fatal Exit])
+    ValidNil --> Done("Config ready")
+    ValidErr --> Fatal("Fatal Exit")
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3

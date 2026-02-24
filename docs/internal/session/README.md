@@ -6,12 +6,12 @@ Session management with timeout support and activity tracking.
 
 ```mermaid
 flowchart TB
-    Start(["Request"]) --> GetOrCreate["GetOrCreateSession(userID, agentID)"]
+    Start("Request") --> GetOrCreate["GetOrCreateSession(userID, agentID)"]
     GetOrCreate --> SearchExisting{active session exists?}
     SearchExisting -->|yes| UpdateActivity["UpdateActivity()"]
     SearchExisting -->|no| CreateNew["NewSession()"]
     CreateNew --> StoreMap["store in map"]
-    UpdateActivity --> Return(["return Session"])
+    UpdateActivity --> Return("return Session")
     StoreMap --> Return
 
     subgraph Cleanup ["Background Cleanup"]

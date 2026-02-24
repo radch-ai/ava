@@ -6,7 +6,7 @@ Core type definitions for the agent runtime: messages, content blocks, roles, an
 
 ```mermaid
 flowchart TB
-    Start(["Create Message"]) --> NewText["NewTextMessage(role, text)"]
+    Start("Create Message") --> NewText["NewTextMessage(role, text)"]
     Start --> NewToolCall["NewToolCallMessage(id, name, args)"]
     Start --> NewResult["NewToolResultMessage(id, name, result, isError)"]
     
