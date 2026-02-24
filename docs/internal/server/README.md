@@ -10,7 +10,7 @@ flowchart TB
     Mux -->|/health| Health["HealthHandler()"]
     Mux -->|/ws| AuthMW["AuthMiddleware.Authenticate()
     📄 middleware.md"]
-    Mux -->|/_internal/*| Internal["InternalRouter
+    Mux -->|/internal| Internal["InternalRouter
     📄 internal.md"]
     
     AuthMW -->|valid| WSHandler["WebSocket Handler

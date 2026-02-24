@@ -59,7 +59,7 @@ flowchart TB
         end
 
         subgraph Internal["Internal Router"]
-            InternalRouter[/_internal/*]
+            InternalRouter["/_internal/"]
             CacheInvalid[Cache Invalidation]
         end
     end
@@ -97,7 +97,7 @@ flowchart TB
     Health --> Redis
 
     AgentMgr -->|Load Workspace| S3Client
-    AgentMgr -->|Load/Save| Workspace
+    AgentMgr -->|Load or Save| Workspace
     AgentRuntime -->|Write Transcript| Transcript
     AgentRuntime -->|Store Memory| Mem0Client
     AgentRuntime -->|Search Memory| Mem0Client
