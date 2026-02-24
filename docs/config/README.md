@@ -6,8 +6,7 @@ Centralized environment-based configuration loading for the gateway application.
 
 ```mermaid
 flowchart TB
-    Start([main]) --> LoadCfg["config.Load() → Config
-    📄 README.md"]
+    Start([main]) --> LoadCfg["config.Load()"]
     LoadCfg --> HValidate
 
     subgraph SGValidate [" "]

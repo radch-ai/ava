@@ -6,8 +6,7 @@ Gateway application entry point. Initializes configuration, logger, model regist
 
 ```mermaid
 flowchart TB
-    Start([main]) --> LoadCfg["config.Load()
-    📄 ../config/README.md"]
+    Start([main]) --> LoadCfg["config.Load()"]
     LoadCfg --> HValidate
 
     subgraph SGValidate [" "]
@@ -25,20 +24,22 @@ flowchart TB
     ValidNil --> ParseLevel["zerolog.ParseLevel()"]
     ParseLevel -->|error| Exit2("Exit 1")
     ParseLevel -->|ok| CreateLogger["zerolog.New()"]
-    CreateLogger --> LoadModels["registry.LoadFromYAML()
-    📄 ../internal/llm-proxy/models.md"]
+    CreateLogger --> LoadModels["registry.LoadFromYAML()"]
     LoadModels --> InitRedis["redis.NewClient()"]
-    InitRedis --> CreateCache["NewRedisCache()
-    📄 ../internal/server/README.md"]
-    CreateCache --> CreateAuthMW["NewAuthMiddleware()
-    📄 ../internal/server/README.md"]
-    CreateAuthMW --> CreateWS["websocket.NewHandler()
-    📄 ../internal/websocket.md"]
+    InitRedis --> CreateCache["NewRedisCache()"]
+    CreateCache --> CreateAuthMW["NewAuthMiddleware()"]
+    CreateAuthMW --> CreateWS["websocket.NewHandler()"]
     CreateWS --> CreateInternal["NewInternalRouter()"]
     CreateInternal --> CreateServer["server.New()"]
     CreateServer --> StartServer["srv.Start()"]
     StartServer -->|error| Exit3("Exit 1")
     StartServer -->|ok| Running("Server Running")
+
+    click LoadCfg href "../config/README.md"
+    click LoadModels href "../internal/llm-proxy/models.md"
+    click CreateCache href "../internal/server/README.md"
+    click CreateAuthMW href "../internal/server/README.md"
+    click CreateWS href "../internal/websocket.md"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3

@@ -7,26 +7,25 @@ Built-in agent tools and tool registry for the agent runtime.
 ```mermaid
 flowchart TB
     subgraph Tools ["Built-in Tools"]
-        Echo["ExampleEchoTool()
-        📄 example.md"]
-        Math["ExampleMathTool()
-        📄 example.md"]
-        Time["ExampleTimeTool()
-        📄 example.md"]
-        Delay["ExampleDelayTool()
-        📄 example.md"]
-        Files["ReadAgentFileTool()
-        WriteAgentFileTool()
-        📄 files.md"]
-        Mem0["Mem0SearchTool()
-        Mem0StoreTool()
-        📄 mem0.md"]
-        Node["NodeToolRegistry
-        📄 node.md"]
+        Echo["ExampleEchoTool()"]
+        Math["ExampleMathTool()"]
+        Time["ExampleTimeTool()"]
+        Delay["ExampleDelayTool()"]
+        Files["ReadAgentFileTool()"]
+        Mem0["Mem0SearchTool()"]
+        Node["NodeToolRegistry"]
     end
     
-    Registry["NewRegistry()
-    📄 registry.md"]
+    Registry["NewRegistry()"]
+    
+    click Echo href "example.md"
+    click Math href "example.md"
+    click Time href "example.md"
+    click Delay href "example.md"
+    click Files href "files.md"
+    click Mem0 href "mem0.md"
+    click Node href "node.md"
+    click Registry href "registry.md"
     
     Echo --> Registry
     Math --> Registry

@@ -10,12 +10,9 @@ flowchart TB
     DetectProvider -->|error| ErrUnknown("ErrUnknownModel")
     DetectProvider -->|ok| CheckKey{has API key?}
     CheckKey -->|no| ErrMissing("ErrMissingAPIKey")
-    CheckKey -->|OpenAI| CreateOpenAI["newOpenAIClient()
-    📄 openai.md"]
-    CheckKey -->|Anthropic| CreateAnthropic["newAnthropicClient()
-    📄 anthropic.md"]
-    CheckKey -->|Google| CreateGoogle["newGoogleClient()
-    📄 google.md"]
+    CheckKey -->|OpenAI| CreateOpenAI["newOpenAIClient()"]
+    CheckKey -->|Anthropic| CreateAnthropic["newAnthropicClient()"]
+    CheckKey -->|Google| CreateGoogle["newGoogleClient()"]
     CreateOpenAI & CreateAnthropic & CreateGoogle --> Client("Client")
     Client --> Stream["Stream(ctx, messages, tools)"]
     Stream --> Events("<-chan AgentEvent")

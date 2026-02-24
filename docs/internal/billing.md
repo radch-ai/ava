@@ -9,8 +9,7 @@ flowchart TB
     subgraph WebhookFlow ["Webhook Flow"]
         Webhook("RevenueCat Webhook") --> Verify["VerifyWebhookSignature()"]
         Verify -->|invalid| Reject("Reject")
-        Verify -->|valid| Process["Process Event
-        📄 webhook.md"]
+        Verify -->|valid| Process["Process Event"]
         Process --> UpdateDB["Update users table"]
         UpdateDB --> OK("200 OK")
     end

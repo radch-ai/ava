@@ -23,11 +23,12 @@ flowchart TB
         HPrompt["**runPrompt() → error**"]
         HPrompt --> AddMsg["Add user message"]
         AddMsg --> EmitStart["emit AgentStartEvent"]
-        EmitStart --> RunLoop["loop.Run()
-        📄 loop.md"]
+        EmitStart --> RunLoop["loop.Run()"]
         RunLoop --> UpdateState["Update state.Messages"]
         UpdateState --> EmitEnd["emit AgentEndEvent"]
     end
+
+    click RunLoop href "loop.md"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3

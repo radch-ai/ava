@@ -10,19 +10,20 @@ flowchart TB
     Upgrade -->|error| UpgradeErr("Upgrade Failed")
     Upgrade -->|ok| CheckLimit{connection limit?}
     CheckLimit -->|at capacity| LimitErr("503")
-    CheckLimit -->|ok| GetUserID["GetUserIDFromContext()
-    📄 ../ctx.md"]
+    CheckLimit -->|ok| GetUserID["GetUserIDFromContext()"]
     GetUserID --> SendConnected["send connected event"]
     SendConnected --> MsgLoop{message loop}
     MsgLoop -->|text| HandleText["handleTextMessage()"]
     MsgLoop -->|close| Close("Close Connection")
-    HandleText --> GetAgent["agentManager.GetOrCreateAgentForUser()
-    📄 agent_manager.md"]
+    HandleText --> GetAgent["agentManager.GetOrCreateAgentForUser()"]
     GetAgent --> Subscribe["agent.Subscribe()"]
     Subscribe --> ForwardEvents["forwardAgentEvents()"]
-    ForwardEvents --> Prompt["agent.Prompt()
-    📄 ../agent/README.md"]
+    ForwardEvents --> Prompt["agent.Prompt()"]
     Prompt --> MsgLoop
+
+    click GetUserID href "../ctx.md"
+    click GetAgent href "../agent/README.md"
+    click Prompt href "../agent/README.md"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3

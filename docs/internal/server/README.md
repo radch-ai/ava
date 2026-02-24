@@ -8,17 +8,16 @@ HTTP server, middleware, and routing for the gateway.
 flowchart TB
     Start("Request") --> Mux["http.ServeMux"]
     Mux -->|health| Health["HealthHandler()"]
-    Mux -->|ws| AuthMW["AuthMiddleware.Authenticate()
-    📄 middleware.md"]
-    Mux -->|internal| Internal["InternalRouter
-    📄 internal.md"]
+    Mux -->|ws| AuthMW["AuthMiddleware.Authenticate()"]
+    Mux -->|internal| Internal["InternalRouter"]
     
-    AuthMW -->|valid| WSHandler["WebSocket Handler
-    📄 ../websocket.md"]
+    AuthMW -->|valid| WSHandler["WebSocket Handler"]
     AuthMW -->|invalid| AuthErr("401 Unauthorized")
     
     Internal -->|valid secret| InternalHandler["Internal handlers"]
     Internal -->|invalid secret| InternalErr("401 Unauthorized")
+
+    click WSHandler href "../websocket.md"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
