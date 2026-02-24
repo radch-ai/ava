@@ -1,142 +1,110 @@
-# Auth Package
+# auth (internal/auth)
 
-HTTP client for communicating with the authentication service. Handles session validation, cookie management, and sliding expiration.
+**⚠️ PLANNED FEATURES - NOT YET IMPLEMENTED**
+
+This document describes the planned Zitadel JWT authentication system. The current implementation uses an external auth service client - see [`client.go`](../internal/auth/client.go) for the actual code.
+
+**Status:** This is the planned Wave 2 implementation. See [`.claude/plans/auth-billing-migration.md`](../.claude/plans/auth-billing-migration.md) for progress.
+
+---
+
+# Zitadel JWT Validation (Planned)
+
+Zitadel JWT validation and authentication middleware for the gateway. Validates incoming JWTs using Zitadel JWKS (JSON Web Key Sets) and extracts user identity for request authorization.
 
 ## Overview
 
+### JWT Validation Flow
+
 ```mermaid
-flowchart LR
-    Client[Gateway / Middleware] -->|ValidateSession| AuthClient[Auth Client]
-    AuthClient -->|HTTP Request| AuthService[Auth Service]
-    AuthService -->|Response| AuthClient
-    AuthClient -->|SessionInfo| Client
+flowchart TB
+    Start([Incoming Request]) --> GetToken["**extractToken()**<br/>Extract from Authorization header"]
+    GetToken -->|missing| MissingToken["return ErrNoToken"]
+    GetToken -->|found| ParseToken["**parseToken()**<br/>Parse JWT string"]
+
+    ParseToken -->|invalid format| InvalidToken["return ErrInvalidToken"]
+    ParseToken -->|valid| GetKey["**getKey()**<br/>Get key from JWKS cache"]
+
+    subgraph SGGetKey [" "]
+        GetKey --> CheckCache{"Cache hit?"}
+        CheckCache -->|yes| ReturnKey["return cached key"]
+        CheckCache -->|no| FetchJWKS["**fetchJWKS()**<br/>Fetch from Zitadel"]
+        FetchJWKS -->|error| JWKSError["return ErrJWKSFetch"]
+        FetchJWKS -->|success| UpdateCache["Update cache"]
+        UpdateCache --> ReturnKey
+    end
+
+    ReturnKey --> Validate["**validateJWT()**<br/>Verify signature and claims"]
+
+    subgraph SGValidate [" "]
+        Validate --> CheckSig["Check signature<br/>using key"]
+        CheckSig -->|invalid| SigError["return ErrInvalidSignature"]
+        CheckSig -->|valid| CheckIssuer["Verify iss claim<br/>== ZITADEL_ISSUER_URL"]
+        CheckIssuer -->|mismatch| IssuerError["return ErrInvalidIssuer"]
+        CheckIssuer -->|match| CheckAudience["Verify aud claim<br/>contains ZITADEL_AUDIENCE"]
+        CheckAudience -->|missing| AudienceError["return ErrInvalidAudience"]
+        CheckAudience -->|match| CheckExpiry["Verify exp claim<br/>> now()"]
+        CheckExpiry -->|expired| ExpiryError["return ErrTokenExpired"]
+        CheckExpiry -->|valid| ExtractSubject["Extract user_id<br/>from sub claim"]
+    end
+
+    ExtractSubject --> Success(["return *SessionInfo"])
+    MissingToken & InvalidToken & JWKSError & SigError & IssuerError & AudienceError & ExpiryError --> Fail(["return error"])
+
+    click GetKey href "#jwks-fetching"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,Success,Fail mainFn
+    class GetKey,Validate,FetchJWKS,CheckSig,CheckIssuer,CheckAudience,CheckExpiry internalFn
+    class MissingToken,InvalidToken,JWKSError,SigError,IssuerError,AudienceError,ExpiryError errorFlow
 ```
 
-## Purpose
+## Current Implementation
 
-The auth package provides a clean HTTP client for validating session tokens against an external auth service. It supports:
+The gateway currently uses an external auth service for session validation. See [`internal/auth/client.go`](../internal/auth/client.go) for the actual implementation.
 
-- Session validation via Bearer token authentication
-- Sliding expiration (updated cookie forwarding)
-- Configurable timeouts
-- Context-aware requests (cancellation support)
-
-## Types
-
-### SessionInfo
-
-```go
-type SessionInfo struct {
-    UserID    string
-    ExpiresAt time.Time
-    SetCookie *http.Cookie  // nil if session wasn't extended
-}
-```
-
-| Field | Description |
-|-------|-------------|
-| `UserID` | Authenticated user identifier |
-| `ExpiresAt` | Session expiration time |
-| `SetCookie` | Updated cookie for sliding expiration (forward to client) |
-
-### Client
-
-```go
-type Client struct {
-    baseURL string
-    secret  string
-    client  *http.Client
-    logger  interface{}
-}
-```
-
-| Field | Description |
-|-------|-------------|
-| `baseURL` | Auth service base URL |
-| `secret` | Internal secret for service-to-service auth |
-| `client` | HTTP client with configured timeout |
-| `logger` | Logger instance |
-
-## Functions
+### Auth Client (Current)
 
 | Function | Description |
 |----------|-------------|
-| `NewAuthClient(baseURL, secret string, logger interface{}) *Client` | Creates new auth client with defaults |
-| `ValidateSession(ctx context.Context, sessionToken string) (*SessionInfo, error)` | Validates session token with auth service |
+| `NewAuthClient(baseURL, secret, logger)` | Creates auth service client |
+| `ValidateSession(ctx, sessionToken)` | Validates session with external auth service |
 
-## Errors
+| Error | Description |
+|-------|-------------|
+| `ErrSessionInvalid` | Session token invalid |
+| `ErrSessionExpired` | Session expired |
+| `ErrAuthUnavailable` | Auth service unreachable |
+| `ErrInvalidResponse` | Invalid response from auth service |
+| `ErrContextCanceled` | Context was canceled |
 
-| Error | When Returned |
-|--------|--------------|
-| `ErrSessionInvalid` | Session token is invalid or not authenticated |
-| `ErrSessionExpired` | Session has expired |
-| `ErrAuthUnavailable` | Auth service is unreachable or returns error status |
-| `ErrInvalidResponse` | Response body cannot be parsed |
-| `ErrContextCanceled` | Request context was canceled |
+## Environment Variables (Current)
 
-## Configuration
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `AUTH_SERVICE_URL` | No | `http://localhost:8081` | Auth service URL |
+| `AUTH_TIMEOUT` | No | `2s` | Auth request timeout |
+| `AUTH_INTERNAL_SECRET` | Yes (prod) | - | Secret for auth service calls |
 
-Uses the following environment variables (via config package):
+## Files to be Created (Planned)
 
-| Env Var | Description | Default |
-|---------|-------------|---------|
-| `AUTH_SERVICE_URL` | Auth service base URL | `http://localhost:8081` |
-| `AUTH_TIMEOUT` | Request timeout | `2s` |
-| `AUTH_INTERNAL_SECRET` | Secret for Bearer authentication | (required) |
+| File | Purpose |
+|------|---------|
+| `internal/auth/jwks.go` | JWKS fetching and JWT validation |
+| `internal/auth/middleware.go` | JWT auth middleware |
+| `internal/auth/validator.go` | JWT validation logic |
 
-## Flow
+## Files to be Removed (After Migration)
 
-```mermaid
-sequenceDiagram
-    participant MW as Middleware
-    participant AC as Auth Client
-    participant AS as Auth Service
+| File | Reason |
+|------|--------|
+| `internal/auth/client.go` | Replaced by JWKS validation |
 
-    MW->>AC: ValidateSession(ctx, token)
-    AC->>AC: Build request with Bearer token
-    AC->>AC: Add session cookie
-    AC->>AS: GET /auth/session
-    AS->>AS: Validate internal secret
-    AS->>AS: Validate session cookie
-    AS-->>AC: 200 OK + user_id
-    AC-->>MW: SessionInfo
-```
+## See Also
 
-## Request Format
-
-**Request to Auth Service:**
-```http
-GET /auth/session HTTP/1.1
-Host: auth-service:8081
-Authorization: Bearer <internal_secret>
-Cookie: session=<session_token>
-```
-
-**Success Response (200 OK):**
-```json
-{
-  "authenticated": true,
-  "user_id": "user-123",
-  "expires_at": 1737654321
-}
-```
-
-**Error Response (401 Unauthorized):**
-```json
-{
-  "error": "invalid token"
-}
-```
-
-## File Locations
-
-- [`internal/auth/client.go`](../internal/auth/client.go) - Main implementation
-- [`tests/unit/auth_client_test.go`](../tests/unit/auth_client_test.go) - Unit tests
-
-## Constants
-
-| Constant | Value | Description |
-|----------|-------|-------------|
-| `defaultAuthURL` | `http://localhost:8081` | Default auth service URL |
-| `defaultTimeout` | `2s` | Default request timeout |
-| `sessionCookieName` | `session` | Cookie name for session token |
+- [Implementation Plan](../.claude/plans/auth-billing-migration.md) - Full migration details
+- [Billing Documentation](billing.md) - RevenueCat webhook integration (partially implemented)
+- [Configuration](config.md) - Environment variables
