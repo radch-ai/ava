@@ -52,6 +52,12 @@ flowchart TB
             Session[Session State]
         end
 
+        subgraph Node["Node Layer"]
+            NodeService[Node Service]
+            NodeRegistry[Node Registry]
+            NodeExecutor[Node Executor]
+        end
+
         subgraph Internal["Internal Router"]
             InternalRouter[/_internal/*]
             CacheInvalid[Cache Invalidation]
@@ -102,6 +108,10 @@ flowchart TB
     SessionMgr --> Session
     AgentMgr --> SessionMgr
 
+    NodeService --> NodeRegistry
+    NodeService --> NodeExecutor
+    NodeService --> AgentMgr
+
     InternalRouter --> CacheInvalid
     CacheInvalid --> Redis
 ```
@@ -113,8 +123,8 @@ flowchart TB
     Gateway[Gateway]
 
     Gateway --> CMD[cmd]
-    Gateway --> Internal
     Gateway --> Config[config/]
+    Gateway --> Internal[internal/]
 
     CMD --> Main[main.go]
 
@@ -130,6 +140,7 @@ flowchart TB
     Internal --> Storage[storage/]
     Internal --> Mem0[mem0/]
     Internal --> Session[session/]
+    Internal --> NodeDir[node/]
 
     LLMProxy --> PConfig[config/]
     LLMProxy --> PHealth[health/]
@@ -147,26 +158,29 @@ flowchart TB
 
     ATools --> Mem0Tools[mem0.go]
     ATools --> FileTools[files.go]
+    ATools --> NodeTools[node.go]
 ```
 
 ## Component Overview
 
 | Package | Purpose |
 |---------|---------|
-| [`config/`](config.md) | Environment-based configuration with validation |
-| [`internal/server/`](server.md) | HTTP server, middleware, routing |
-| [`internal/websocket/`](websocket.md) | WebSocket connection management with multi-agent routing |
-| [`internal/agent/`](agent/README.md) | Agent runtime, state management, event system |
-| [`internal/agent/tools/`](agent/tools.md) | Built-in agent tools (Mem0, file operations) |
-| [`internal/llm/`](llm.md) | LLM client factory for multiple providers |
-| [`internal/llm-proxy/`](llm-proxy/README.md) | LLM proxy with quota, health, routing |
-| [`internal/auth/`](auth.md) | Auth service client for session validation |
-| [`internal/billing/`](billing.md) | RevenueCat webhooks, credit tracking, migrations |
-| [`internal/ctx/`](ctx.md) | Context utilities for user ID and agent ID propagation |
-| [`internal/project/`](project.md) | Project metadata and constants |
-| [`internal/storage/`](storage/README.md) | S3 storage, workspace loader, transcript writer |
-| [`internal/mem0/`](mem0/README.md) | Mem0 API client for long-term memory |
-| [`internal/session/`](session/README.md) | Session management with timeout and reconnection |
+| [`config/`](config/README.md) | Environment-based configuration with validation |
+| [`cmd/gateway`](cmd/gateway.md) | Application entry point |
+| [`internal/server/`](internal/server/README.md) | HTTP server, middleware, routing |
+| [`internal/websocket`](internal/websocket.md) | WebSocket connection management with multi-agent routing |
+| [`internal/agent/`](internal/agent/README.md) | Agent runtime, state management, event system |
+| [`internal/agent/tools`](internal/agent/tools.md) | Built-in agent tools (Mem0, file operations, node tools) |
+| [`internal/llm/`](internal/llm.md) | LLM client factory for multiple providers |
+| [`internal/llm-proxy/`](internal/llm-proxy/README.md) | LLM proxy with quota, health, routing |
+| [`internal/auth/`](internal/auth.md) | Auth service client for session validation |
+| [`internal/billing/`](internal/billing.md) | RevenueCat webhooks, credit tracking, migrations |
+| [`internal/ctx/`](internal/ctx.md) | Context utilities for user ID and agent ID propagation |
+| [`internal/project/`](internal/project.md) | Project metadata and constants |
+| [`internal/storage/`](internal/storage/README.md) | S3 storage, workspace loader, transcript writer |
+| [`internal/mem0/`](internal/mem0/README.md) | Mem0 API client for long-term memory |
+| [`internal/session/`](internal/session/README.md) | Session management with timeout and reconnection |
+| [`internal/node/`](internal/node/README.md) | Distributed node execution for remote tools |
 
 ## Data Flows
 
@@ -181,20 +195,21 @@ flowchart TB
 | Transcript Writing | Turn events → JSONL append to S3 |
 | Session Validation | Cookie extract → Cache check → Auth service call → User ID in context |
 | Cache Invalidation | Internal webhook → Delete from Redis |
+| Node Tool Execution | Agent calls node tool → Service routes to node → Node executes → Result returned |
 
 ## Design Patterns
 
 | Pattern | Description |
 |---------|-------------|
-| [Factory](../internal/llm/factory.go) | Creates provider-specific LLM clients |
-| [Strategy](../internal/agent/loop.go) | Pluggable tool execution |
-| [Observer](../internal/agent/agent.go) | Event subscription system |
-| [Middleware](../internal/server/middleware.go) | HTTP request processing chain |
-| [Singleton](../internal/llm-proxy/models/registry.go) | Global model registry |
-| [Pool](../internal/websocket/handler.go) | `wsMessage` sync.Pool for efficiency |
-| [Circuit Breaker](../internal/llm-proxy/health/circuit.go) | Provider health management |
-| [Composite Key](../internal/websocket/agent_manager.go) | (userID, agentID) for agent isolation |
-| [Workspace](../internal/storage/workspace.go) | OpenClaw-style agent workspace persistence |
+| [Factory](internal/llm/factory.go) | Creates provider-specific LLM clients |
+| [Strategy](internal/agent/loop.go) | Pluggable tool execution |
+| [Observer](internal/agent/agent.go) | Event subscription system |
+| [Middleware](internal/server/middleware.go) | HTTP request processing chain |
+| [Singleton](internal/llm-proxy/models/registry.go) | Global model registry |
+| [Pool](internal/websocket/handler.go) | `wsMessage` sync.Pool for efficiency |
+| [Circuit Breaker](internal/llm-proxy/health/circuit.go) | Provider health management |
+| [Composite Key](internal/websocket/agent_manager.go) | (userID, agentID) for agent isolation |
+| [Workspace](internal/storage/workspace.go) | OpenClaw-style agent workspace persistence |
 
 ## Technology Stack
 
@@ -292,15 +307,26 @@ Event types: `connected`, `agent_start`, `agent_end`, `turn_start`, `turn_end`, 
 
 ## Related Documentation
 
-- [Configuration](config.md) - Environment variables and setup
-- [Server](server.md) - HTTP server and middleware
-- [WebSocket](websocket.md) - WebSocket handler and multi-agent routing
-- [Agent](agent/README.md) - Agent runtime
-- [Agent Tools](agent/tools.md) - Built-in tools (Mem0, files)
-- [LLM](llm.md) - LLM client factory
-- [LLM Proxy](llm-proxy/README.md) - Proxy routing and quota
-- [Auth](auth.md) - Authentication client
-- [Billing](billing.md) - RevenueCat webhooks and credit tracking
-- [Storage](storage/README.md) - S3 storage, workspaces, transcripts
-- [Mem0](mem0/README.md) - Memory API client
-- [Session](session/README.md) - Session management
+### Configuration
+- [Config](config/README.md) - Environment variables and setup
+- [Models](config/models.md) - LLM model configuration
+- [Plans](config/plans.md) - Subscription plan definitions
+
+### Command
+- [Gateway](cmd/gateway.md) - Application entry point
+
+### Internal Packages
+- [Server](internal/server/README.md) - HTTP server and middleware
+- [WebSocket](internal/websocket.md) - WebSocket handler and multi-agent routing
+- [Agent](internal/agent/README.md) - Agent runtime
+- [Agent Tools](internal/agent/tools.md) - Built-in tools (Mem0, files, nodes)
+- [LLM](internal/llm.md) - LLM client factory
+- [LLM Proxy](internal/llm-proxy/README.md) - Proxy routing and quota
+- [Auth](internal/auth.md) - Authentication client
+- [Billing](internal/billing.md) - RevenueCat webhooks and credit tracking
+- [Storage](internal/storage/README.md) - S3 storage, workspaces, transcripts
+- [Mem0](internal/mem0/README.md) - Memory API client
+- [Session](internal/session/README.md) - Session management
+- [Node](internal/node/README.md) - Distributed node execution
+- [Context](internal/ctx.md) - Context utilities
+- [Project](internal/project.md) - Project metadata
