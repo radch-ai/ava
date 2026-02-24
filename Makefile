@@ -40,11 +40,11 @@ test-integration:
 	@sleep 2
 	@if [ -z "$(TEST_PATH)" ]; then \
 		echo "Running integration tests for all packages..."; \
-		TEST_DATABASE_URL="postgres://postgres:postgres@localhost:5433/nevaria_gateway_test?sslmode=disable" \
+		TEST_DATABASE_URL="postgres://test:test@localhost:5433/test?sslmode=disable" \
 			go test -race -coverprofile=coverage-integration.out -tags=integration -v ./... -timeout 5m; \
 	else \
 		echo "Running integration tests for $(TEST_PATH)..."; \
-		TEST_DATABASE_URL="postgres://postgres:postgres@localhost:5433/nevaria_gateway_test?sslmode=disable" \
+		TEST_DATABASE_URL="postgres://test:test@localhost:5433/test?sslmode=disable" \
 			go test -race -coverprofile=coverage-integration.out -tags=integration -v $(TEST_PATH) -timeout 5m; \
 	fi
 	@go tool cover -html=coverage-integration.out -o coverage-integration.html

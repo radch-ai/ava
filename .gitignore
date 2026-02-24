@@ -19,3 +19,4 @@ coverage.out
 # Environment
 .env
 .env.local
+coverage-integration.html
