@@ -7,10 +7,10 @@ HTTP server, middleware, and routing for the gateway.
 ```mermaid
 flowchart TB
     Start("Request") --> Mux["http.ServeMux"]
-    Mux -->|/health| Health["HealthHandler()"]
-    Mux -->|/ws| AuthMW["AuthMiddleware.Authenticate()
+    Mux -->|health| Health["HealthHandler()"]
+    Mux -->|ws| AuthMW["AuthMiddleware.Authenticate()
     📄 middleware.md"]
-    Mux -->|/internal| Internal["InternalRouter
+    Mux -->|internal| Internal["InternalRouter
     📄 internal.md"]
     
     AuthMW -->|valid| WSHandler["WebSocket Handler
