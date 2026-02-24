@@ -6,7 +6,7 @@ Centralized environment-based configuration loading for the gateway application.
 
 ### Load Function
 
-Reads configuration from environment variables and returns a `*Config` struct with all typed fields (Server, Auth, Redis, Billing).
+Reads configuration from environment variables and returns a `*Config` struct with all typed fields (Server, Auth, Redis).
 
 ### Structs and Environment Variables
 
@@ -22,14 +22,8 @@ Reads configuration from environment variables and returns a `*Config` struct wi
 | | `InternalSecret` | `INTERNAL_SECRET` | `string` | - | Prod* | Gateway internal secret (/_internal/*) |
 | **Redis** | `Addr` | `REDIS_ADDR` | `string` | - | No | Redis server address |
 | | `Password` | `REDIS_PASSWORD` | `string` | - | No | Redis password |
-| **Billing** | `DatabaseURL` | `DATABASE_URL` | `string` | - | Yes* | PostgreSQL connection string for billing |
-| | `TestDatabaseURL` | `TEST_DATABASE_URL` | `string` | - | No | Test database URL for integration tests |
-| | `WebhookSecret` | `WEBHOOK_SECRET` | `string` | - | Yes* | HMAC secret for RevenueCat webhook verification |
-| | `WebhookIPWhitelist` | `WEBHOOK_IP_WHITELIST` | `[]string` | - | No | Comma-separated allowed webhook IPs |
 | **Mode** | - | `ENV` | `string` | - | No | Production mode flag (set to `production`) |
 | | - | `APP_ENV` | `string` | - | No | Alternative production mode flag (set to `prod`) |
-
-\* Required when billing features are enabled |
 
 \* Required only when `ENV=production` or `APP_ENV=prod`
 
@@ -194,4 +188,5 @@ make test ./config
 ## See Also
 
 - [Auth Documentation](auth.md) - Auth service client (current implementation)
-- [Implementation Plan](../.claude/plans/auth-billing-migration.md) - Planned Zitadel/RevenueCat migration
+- [Billing Documentation](billing.md) - Billing environment variables (separate package)
+- [Implementation Plan](../.claude/plans/auth-billing-migration.md) - Planned Zitadel migration

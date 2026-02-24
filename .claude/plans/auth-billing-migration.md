@@ -1,84 +1,125 @@
 # Implementation Plan: Gateway Auth & Billing Migration
 
-**Status:** Waves 1-3 Complete, Wave 4-5 Remaining
+**Status:** Wave 1 Complete, Wave 2-5 Remaining
 **Design:** [`.claude/brainstorming/auth-billing-migration.md`](../brainstorming/auth-billing-migration.md)
 **Created:** 2025-02-23
+**Updated:** 2025-02-24 (corrected implementation status)
 
 ## Implementation Status
 
 | Wave | Focus | Status | Documentation |
 |------|-------|--------|---------------|
 | 1 | Foundation & Database | ✅ Complete | [`docs/billing.md`](../../docs/billing.md) |
-| 2 | Zitadel Authentication | ✅ Complete | [`docs/auth.md`](../../docs/auth.md) |
-| 3 | RevenueCat Webhooks | ✅ Complete | [`docs/billing.md`](../../docs/billing.md) |
+| 2 | Zitadel Authentication | ❌ Not Started | [`docs/auth.md`](../../docs/auth.md) (planned) |
+| 3 | RevenueCat Webhooks | ⚠️ Partial | [`docs/billing.md`](../../docs/billing.md) |
 | 4 | Rate Limiting & Quotas | ⏳ TODO | See below |
 | 5 | Integration & Rollout | ⏳ TODO | See below |
 
-## Completed Work (Waves 1-3)
-
-The following components are fully implemented and tested:
+## Completed Work (Wave 1)
 
 ### Wave 1: Foundation & Database ✅
-- ✅ Dependencies added (`zitadel/oidc`, `golang-jwt/jwt`, `pgx/v5`)
+
+**Status:** Complete and tested
+
+- ✅ Dependencies added (`pgx/v5`)
 - ✅ Billing package structure created
-- ✅ Migration command (`cmd/migrate/main.go`)
+- ✅ Migration functions (`RunMigrations`, `CheckMigrations`, `RunMigrationsWithPool`)
 - ✅ Database schema (users, usage_logs, processed_webhooks)
-- ✅ TimescaleDB hypertable support
+- ✅ Idempotent migrations with transaction support
 - ✅ Configuration updated (DATABASE_URL, TEST_DATABASE_URL)
-- ✅ Tests passing
+- ✅ Tests: `internal/billing/migrations_test.go` (10/10 passing)
 
-### Wave 2: Zitadel Authentication ✅
-- ✅ JWKS fetching and caching
-- ✅ JWT validation (signature, claims, expiration)
-- ✅ Bearer token extraction middleware
-- ✅ Session caching in Redis
-- ✅ Configuration (ZITADEL_ISSUER_URL, ZITADEL_AUDIENCE)
-- ✅ Tests passing
-
-### Wave 3: RevenueCat Webhooks ✅
-- ✅ HMAC signature validation
-- ✅ JSON parsing and event routing
-- ✅ Idempotency check (event_id deduplication)
-- ✅ IP whitelist support
-- ✅ Rate limiting (60 req/min)
-- ✅ Event handlers (INITIAL_PURCHASE, RENEWAL, CANCELLATION, REFUND, PRODUCT_CHANGE)
-- ✅ Configuration (WEBHOOK_SECRET, WEBHOOK_IP_WHITELIST)
-- ✅ Tests passing
+**Files:**
+- `internal/billing/migrations.go` - Database migrations
+- `internal/billing/migrations_test.go` - Migration tests
 
 ---
 
 ## Remaining Work
 
-### Wave 4: Rate Limiting & Quotas ⏳
+### Wave 2: Zitadel Authentication ❌
 
-**Goal:** Implement credit-based rate limiting with 6-hourly periods.
+**Goal:** Replace auth service client with direct Zitadel JWKS validation.
 
-**Current State:** `internal/billing/quota.go` exists but is a stub.
+**Current State:** Gateway uses HTTP-based auth service client (`internal/auth/client.go`).
 
 #### Tasks
 
-#### 4.1 Implement Quota Management
+#### 2.1 JWKS Fetching & Caching
+- [ ] Create `internal/auth/jwks.go`
+- [ ] Implement JWKS fetching from Zitadel
+- [ ] Implement in-memory caching with TTL
+- [ ] Add HTTP middleware for JWKS refresh
+
+#### 2.2 JWT Validation
+- [ ] Create `internal/auth/validator.go`
+- [ ] Implement signature verification using JWKS
+- [ ] Implement claims validation (issuer, audience, expiration)
+- [ ] Add unit tests for validation logic
+
+#### 2.3 Middleware Integration
+- [ ] Create `internal/auth/middleware.go`
+- [ ] Extract Bearer token from Authorization header
+- [ ] Call validator, set user context
+- [ ] Handle errors (401, 403)
+
+#### 2.4 Configuration
+- [ ] Add Zitadel config to `config/`
+- [ ] Add `ZITADEL_ISSUER_URL` env var
+- [ ] Add `ZITADEL_AUDIENCE` env var
+- [ ] Add `JWT_CACHE_TTL` env var
+
+#### 2.5 Write Tests
+- [ ] Unit tests for JWKS fetching
+- [ ] Unit tests for JWT validation
+- [ ] Unit tests for middleware
+- [ ] Integration tests with mock Zitadel
+
+#### 2.6 Remove Old Code
+- [ ] Remove `internal/auth/client.go`
+- [ ] Remove `AUTH_SERVICE_URL` from config
+- [ ] Remove `AUTH_INTERNAL_SECRET` from config
+- [ ] Remove `AUTH_TIMEOUT` from config
+
+**Acceptance Criteria:**
+- JWKS fetched and cached
+- JWTs validated correctly
+- Middleware sets user context
+- Old auth service code removed
+- All tests pass
+
+---
+
+### Wave 3: Complete RevenueCat Webhooks ⚠️
+
+**Goal:** Implement quota manager with period-based rate limiting.
+
+**Current State:** Webhook handler is complete (`internal/billing/webhook_impl.go`). Quota manager is a stub (`internal/billing/quota.go`).
+
+#### Tasks
+
+#### 3.1 Quota Management
 - [ ] Implement period calculation logic (6-hour periods)
 - [ ] Implement 10% buffer with cap at remaining credits
 - [ ] Implement Redis caching for period limits
 - [ ] Implement Redis caching for period usage
 - [ ] Implement period rollover detection
 
-#### 4.2 Implement Pre-Request Check
+#### 3.2 Pre-Request Check
 - [ ] Check if user has sufficient credits
 - [ ] Return 402 if insufficient
 - [ ] Check if period limit available
 - [ ] Return 429 if period exceeded
 - [ ] Reserve credit before LLM call
 
-#### 4.3 Implement Post-Request Deduction
+#### 3.3 Post-Request Deduction
 - [ ] Calculate actual credit cost
 - [ ] Deduct from `users.credits_remaining`
 - [ ] Insert into `usage_logs`
 - [ ] Update Redis cache
 - [ ] Handle refunds on error
 
-#### 4.4 Implement Tier Limits
+#### 3.4 Tier Limits
 - [ ] Store tier limits in config
 - [ ] Check agent count before execution
 - [ ] Check cron job count before scheduling
@@ -91,18 +132,18 @@ The following components are fully implemented and tested:
 | pro | 5 | 10 |
 | enterprise | unlimited | unlimited |
 
-#### 4.5 Update LLM Proxy Handler
+#### 3.5 Update LLM Proxy Handler
 - [ ] Add pre-request quota check
 - [ ] Add post-request credit deduction
 - [ ] Add error handling for insufficient credits
 - [ ] Add rate limit headers to responses
 
-#### 4.6 Update Agent Handler
+#### 3.6 Update Agent Handler
 - [ ] Add agent count limit check
 - [ ] Add cron job count limit check
 - [ ] Return appropriate errors for tier limits
 
-#### 4.7 Write Tests
+#### 3.7 Write Tests
 - [ ] Unit tests for period calculation
 - [ ] Unit tests for buffer calculation
 - [ ] Unit tests for credit reservation
@@ -116,6 +157,20 @@ The following components are fully implemented and tested:
 - Credits deducted after LLM calls
 - Agent limits enforced by tier
 - All tests pass
+
+---
+
+### Wave 4: Integration ⏳
+
+**Goal:** Wire up quota manager to existing handlers.
+
+#### Tasks
+
+- [ ] Integrate quota check into WebSocket handler
+- [ ] Integrate quota check into LLM proxy
+- [ ] Add metrics for quota operations
+- [ ] Add circuit breaker for quota service
+- [ ] Add graceful degradation on quota failures
 
 ---
 
@@ -141,8 +196,8 @@ The following components are fully implemented and tested:
 
 #### 5.3 Documentation Updates
 - [x] ~~Update `docs/config.md` with new env vars~~ ✅ Done
-- [x] Create `docs/auth.md` ✅ Done
-- [x] Create `docs/billing.md` ✅ Done
+- [x] Update `docs/auth.md` ✅ Done
+- [x] Update `docs/billing.md` ✅ Done
 - [ ] Create `docs/migration.md` for rollout guide
 - [ ] Update README with new architecture
 - [ ] Create API documentation for webhooks
@@ -159,6 +214,7 @@ The following components are fully implemented and tested:
 - [ ] Manual testing with feature flags
 - [ ] Load testing for rate limiting
 - [ ] Security review of webhook handler
+- [ ] Security review of JWT validation
 
 #### 5.6 Gradual Rollout
 - [ ] Deploy to staging
@@ -169,11 +225,11 @@ The following components are fully implemented and tested:
 - [ ] Enable for 100% of traffic
 
 #### 5.7 Cleanup
-- [ ] Remove old auth client code (`internal/auth/client.go` if exists)
+- [ ] Remove old auth client code (`internal/auth/client.go`)
 - [ ] Remove old auth middleware (if parallel version exists)
 - [ ] Remove feature flags
 - [ ] Update tests
-- [ ] Remove old environment variables (AUTH_SERVICE_URL, AUTH_INTERNAL_SECRET)
+- [ ] Remove old environment variables
 
 #### 5.8 Verification
 - [ ] All tests passing
@@ -195,34 +251,39 @@ The following components are fully implemented and tested:
 
 ### Environment Variables
 
-#### Already Configured ✅
+#### Currently Configured ✅
 ```bash
-# Zitadel Authentication
-ZITADEL_ISSUER_URL=https://zitadel.example.com
-ZITADEL_AUDIENCE=gateway.example.com
-JWT_CACHE_TTL=5m
+# Auth Service (Current - will be removed)
+AUTH_SERVICE_URL=http://localhost:8081
+AUTH_TIMEOUT=2s
+AUTH_INTERNAL_SECRET=
 
-# RevenueCat Billing
+# RevenueCat Webhooks (Implemented)
 WEBHOOK_SECRET=whsec_xxx
 WEBHOOK_IP_WHITELIST=1.2.3.4,5.6.7.8
 
-# Postgres
+# Postgres (Implemented)
 DATABASE_URL=postgres://user:pass@host/db
 TEST_DATABASE_URL=postgres://user:pass@host/test_db
 ```
 
-#### Still Needed ⏳
+#### Will Be Added (Future)
 ```bash
-# Redis (for Wave 4 rate limiting)
+# Zitadel (Wave 2)
+ZITADEL_ISSUER_URL=https://zitadel.example.com
+ZITADEL_AUDIENCE=gateway.example.com
+JWT_CACHE_TTL=5m
+
+# Redis (Wave 3)
 REDIS_ADDR=redis:6379
 REDIS_PASSWORD=
 
-# Feature Flags (for Wave 5 rollout)
+# Feature Flags (Wave 5)
 USE_ZITADEL_AUTH=false
 USE_REVENUECAT_BILLING=false
 ```
 
-### To Be Removed After Full Migration
+#### To Be Removed After Full Migration
 ```bash
 AUTH_SERVICE_URL=        # Remove after Wave 5 cleanup
 AUTH_INTERNAL_SECRET=    # Remove after Wave 5 cleanup
@@ -236,37 +297,54 @@ AUTH_TIMEOUT=           # Remove after Wave 5 cleanup
 ### Already Added ✅
 ```go
 require (
-    github.com/zitadel/oidc/v3 v3.x.x
-    github.com/golang-jwt/jwt/v5 v5.x.x
-    github.com/redis/go-redis/v9 v9.x.x
     github.com/jackc/pgx/v5 v5.x.x
+    github.com/rs/zerolog v1.x.x
+    golang.org/x/time/rate v0.x.x
+)
+```
+
+### Will Be Added (Future)
+```go
+require (
+    github.com/zitadel/oidc/v3 v3.x.x  // Wave 2
+    github.com/golang-jwt/jwt/v5 v5.x.x  // Wave 2
+    github.com/redis/go-redis/v9 v9.x.x  // Wave 3
 )
 ```
 
 ### Infrastructure Requirements
-- ✅ Postgres with TimescaleDB extension
-- ⏳ Redis instance (needed for Wave 4)
-- ✅ Zitadel instance (external)
+- ✅ Postgres
+- ⏳ Redis instance (needed for Wave 3)
+- ❌ Zitadel instance (needed for Wave 2)
 - ✅ RevenueCat account (external)
 
 ---
 
-## Rollout Plan (Updated)
+## Rollout Plan
 
-### Week 1-3: ✅ Complete
+### Week 1: ✅ Complete
 - ✅ Wave 1 (database, migrations)
-- ✅ Wave 2 (Zitadel auth)
-- ✅ Wave 3 (RevenueCat webhooks)
 
-### Week 4: Rate Limiting (Pending)
-- [ ] Deploy Wave 4 (quotas and rate limiting)
-- [ ] Enable for new users only
-- [ ] Monitor rate limit denials
+### Week 2: Zitadel Authentication (Pending)
+- [ ] Implement Wave 2 (JWKS validation)
+- [ ] Deploy to staging
+- [ ] Test with real Zitadel instance
+- [ ] Enable for internal users first
+
+### Week 3: Quota Manager (Pending)
+- [ ] Implement Wave 3 (quota manager)
+- [ ] Deploy to staging
+- [ ] Test rate limiting
+- [ ] Test credit deductions
+
+### Week 4: Integration (Pending)
+- [ ] Deploy Wave 4 (integration)
+- [ ] Test end-to-end flow
 
 ### Week 5: Full Cutover (Pending)
 - [ ] Deploy Wave 5 (integration)
-- [ ] Enable feature flags for all users
-- [ ] Monitor for 1 week
+- [ ] Enable feature flags gradually
+- [ ] Monitor for issues
 
 ### Week 6: Cleanup (Pending)
 - [ ] Remove old auth service code
@@ -277,11 +355,11 @@ require (
 
 ## Success Criteria
 
-- [x] All unit tests passing (Waves 1-3)
-- [x] All integration tests passing (Waves 1-3)
-- [ ] Auth validation p99 < 50ms
-- [ ] Webhook processing p99 < 500ms
-- [ ] Rate limiting functional
+- [x] All unit tests passing (Wave 1)
+- [x] All integration tests passing (Wave 1)
+- [ ] Auth validation p99 < 50ms (Wave 2)
+- [ ] Webhook processing p99 < 500ms (Wave 3)
+- [ ] Rate limiting functional (Wave 3)
 - [ ] No increase in error rate
 - [x] Documentation complete (Waves 1-3)
 - [ ] Security review passed
@@ -290,7 +368,7 @@ require (
 ## Open Questions
 
 1. [ ] Exact credit-to-dollar ratios for each tier
-2. [ ] TimescaleDB retention policy for usage_logs
+2. [ ] Whether to use TimescaleDB for usage_logs
 3. [ ] Credit pack pricing and denominations
 4. [ ] Rollback procedure if issues arise
 
