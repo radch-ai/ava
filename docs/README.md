@@ -124,6 +124,7 @@ flowchart TB
     Internal --> LLM[llm/]
     Internal --> LLMProxy[llm-proxy/]
     Internal --> Auth[auth/]
+    Internal --> Billing[billing/]
     Internal --> Ctx[ctx/]
     Internal --> Project[project/]
     Internal --> Storage[storage/]
@@ -160,6 +161,7 @@ flowchart TB
 | [`internal/llm/`](llm.md) | LLM client factory for multiple providers |
 | [`internal/llm-proxy/`](llm-proxy/README.md) | LLM proxy with quota, health, routing |
 | [`internal/auth/`](auth.md) | Auth service client for session validation |
+| [`internal/billing/`](billing.md) | RevenueCat webhooks, credit tracking, migrations |
 | [`internal/ctx/`](ctx.md) | Context utilities for user ID and agent ID propagation |
 | [`internal/project/`](project.md) | Project metadata and constants |
 | [`internal/storage/`](storage/README.md) | S3 storage, workspace loader, transcript writer |
@@ -203,6 +205,7 @@ flowchart TB
 | OpenAI SDK | openai/openai-go |
 | Anthropic SDK | anthropics/anthropic-sdk-go |
 | Google AI | google.golang.org/genai |
+| PostgreSQL | jackc/pgx/v5 |
 | Redis | go-redis/v9 |
 | S3 Storage | aws/aws-sdk-go-v2 |
 | Logging | zerolog |
@@ -297,6 +300,7 @@ Event types: `connected`, `agent_start`, `agent_end`, `turn_start`, `turn_end`, 
 - [LLM](llm.md) - LLM client factory
 - [LLM Proxy](llm-proxy/README.md) - Proxy routing and quota
 - [Auth](auth.md) - Authentication client
+- [Billing](billing.md) - RevenueCat webhooks and credit tracking
 - [Storage](storage/README.md) - S3 storage, workspaces, transcripts
 - [Mem0](mem0/README.md) - Memory API client
 - [Session](session/README.md) - Session management

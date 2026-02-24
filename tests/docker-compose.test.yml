@@ -17,6 +17,24 @@
 #   - Mock Auth Service: localhost:1080
 
 services:
+  # PostgreSQL for billing and usage tracking tests
+  postgres-test:
+    image: docker.io/postgres:16-alpine
+    container_name: gateway-postgres-test
+    environment:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: test
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "test"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+    networks:
+      - gateway_test_network
+
   # Redis for session caching and rate limiting tests
   redis-test:
     image: docker.io/redis:7-alpine
