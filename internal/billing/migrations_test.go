@@ -1,3 +1,6 @@
+//go:build integration
+// +build integration
+
 // Package billing provides tests for database migrations.
 package billing
 

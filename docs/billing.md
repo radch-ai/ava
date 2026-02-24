@@ -99,6 +99,23 @@ flowchart TB
 | | `AlreadyExists` | `bool` | Whether migration was already applied |
 | | `Error` | `error` | Any error from checking migration |
 
+### Functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `NewWebhookHandler` | `(db Database, webhookSecret string, ipWhitelist []string) *WebhookHandler` | Creates a new webhook handler |
+| `NewQuotaManager` | `(db *pgxpool.Pool) *QuotaManager` | Creates a new quota manager (stub) |
+| `VerifyWebhookSignature` | `(payload []byte, signature, secret string) error` | Verifies HMAC-SHA256 webhook signature |
+| `RunMigrations` | `(ctx context.Context, dbURL string) error` | Runs all database migrations |
+| `CheckMigrations` | `(ctx context.Context, dbURL string) ([]MigrationResult, error)` | Checks migration status |
+| `RunMigrationsWithPool` | `(ctx context.Context, pool *pgxpool.Pool) error` | Runs migrations with existing pool |
+| `WebhookHandler.HandleWebhook` | `(w http.ResponseWriter, r *http.Request)` | Handles incoming webhook HTTP requests |
+| `WebhookHandler.SetLogger` | `(logger zerolog.Logger)` | Sets the logger instance |
+| `WebhookHandler.UpdateIPWhitelist` | `(ips []string)` | Updates the IP whitelist at runtime |
+| `QuotaManager.CheckQuota` | `(ctx context.Context, userID string, creditsNeeded float64) error` | Checks if user has sufficient credits (stub) |
+| `QuotaManager.ReserveCredit` | `(ctx context.Context, userID string, amount float64) error` | Reserves credits for an operation (stub) |
+| `QuotaManager.DeductCredit` | `(ctx context.Context, userID string, agentID string, tokensUsed int, creditCost float64) error` | Deducts credits after LLM operation (stub) |
+
 ### Error Handling
 
 | Error | HTTP Status | Description |
@@ -257,9 +274,42 @@ ON CONFLICT (event_id) DO NOTHING
 
 For general testing patterns, see [gateway testing practices](../README.md#testing).
 
-### Unit Tests (`migrations_test.go`)
+### Unit Tests (`webhook_test.go`)
 
-White box tests that validate database migrations without external dependencies (requires PostgreSQL).
+White box tests for HMAC signature verification. No external dependencies.
+
+| Test Suite | Coverage |
+|------------|----------|
+| `TestVerifyWebhookSignature` | Valid/invalid signatures, empty inputs, tampered payloads |
+| `TestVerifyWebhookSignature_TimingSafeComparison` | Verifies timing-safe comparison |
+
+### Unit Tests (`webhook_impl_test.go`)
+
+White box tests for webhook handler. No external dependencies.
+
+| Test Suite | Coverage |
+|------------|----------|
+| `TestNewWebhookHandler` | Constructor with various IP whitelist configs |
+| `TestWebhookHandler_SetLogger` | Logger configuration |
+| `TestWebhookHandler_UpdateIPWhitelist` | Runtime IP whitelist updates |
+| `TestProductIDToTier` | Product ID to tier/credits mapping |
+| `TestNetSplitHostPort` | IPv4/IPv6 address parsing |
+| `TestWebhookHandler_HandleWebhook_MethodNotAllowed` | HTTP method validation |
+| `TestWebhookHandler_HandleWebhook_IPWhitelist` | IP whitelist enforcement |
+| `TestWebhookHandler_HandleWebhook_InvalidSignature` | Signature validation |
+| `TestWebhookHandler_HandleWebhook_InvalidJSON` | JSON parsing errors |
+| `TestWebhookHandler_HandleWebhook_EmptyBody` | Empty body handling |
+| `TestWebhookHandler_checkIPWhitelist` | IP whitelist check logic |
+| `TestWebhookHandler_writeJSON` | JSON response helper |
+| `TestWebhookHandler_writeError` | Error response helper |
+| `TestWebhookHandler_HandleWebhook_ReadBodyError` | Body read error handling |
+| `TestWebhookEvent_JSONRoundTrip` | JSON serialization/deserialization |
+| `TestCreditsConstants` | Credit constant values |
+| `TestTierConstants` | Tier constant values |
+
+### Integration Tests (`migrations_test.go`)
+
+Tests that require PostgreSQL database. Run with `//go:build integration` tag.
 
 | Test Suite | Coverage |
 |------------|----------|
@@ -276,14 +326,12 @@ White box tests that validate database migrations without external dependencies 
 
 **Running:**
 ```bash
-# Start test dependencies
+# Unit tests only (no database required)
+CGO_ENABLED=1 make test TEST_PATH=./internal/billing
+
+# Integration tests (requires PostgreSQL)
 docker compose -f tests/docker-compose.test.yml up -d --wait
-
-# Run all billing tests
-make test ./internal/billing
-
-# Run specific test
-go test -v ./internal/billing -run TestRunMigrations_IsIdempotent
+make test-integration TEST_PATH=./internal/billing
 ```
 
 ### Dependencies and Location
@@ -299,7 +347,9 @@ go test -v ./internal/billing -run TestRunMigrations_IsIdempotent
 - [`internal/billing/webhook.go`](../internal/billing/webhook.go) - HMAC signature verification
 - [`internal/billing/webhook_impl.go`](../internal/billing/webhook_impl.go) - Webhook HTTP handler
 - [`internal/billing/quota.go`](../internal/billing/quota.go) - Quota manager (stub - Wave 4)
-- [`internal/billing/migrations_test.go`](../internal/billing/migrations_test.go) - Migration tests
+- [`internal/billing/webhook_test.go`](../internal/billing/webhook_test.go) - Signature verification tests
+- [`internal/billing/webhook_impl_test.go`](../internal/billing/webhook_impl_test.go) - Handler unit tests
+- [`internal/billing/migrations_test.go`](../internal/billing/migrations_test.go) - Migration integration tests
 
 ## See Also
 
