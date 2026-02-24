@@ -1,4 +1,4 @@
-# internal/session (internal/session/)
+# Session
 
 Session management with timeout support and activity tracking.
 

@@ -1,4 +1,4 @@
-# internal/llm-proxy/quota (internal/llm-proxy/quota/)
+# LLM Proxy Quota
 
 Quota management with Redis backend and plan/addon credit tracking.
 

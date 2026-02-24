@@ -1,4 +1,4 @@
-# internal/agent/mock (internal/agent/mock.go)
+# Agent Mock
 
 Mock implementations for testing the agent runtime.
 

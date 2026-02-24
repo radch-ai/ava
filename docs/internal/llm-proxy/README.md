@@ -1,4 +1,4 @@
-# internal/llm-proxy (internal/llm-proxy/)
+# LLM Proxy
 
 LLM proxy with intelligent routing, quota management, health monitoring, and usage tracking.
 

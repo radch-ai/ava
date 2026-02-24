@@ -1,4 +1,4 @@
-# internal/llm-proxy/router (internal/llm-proxy/router/)
+# LLM Proxy Router
 
 LLM-based model selection router.
 

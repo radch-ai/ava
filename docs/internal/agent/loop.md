@@ -1,4 +1,4 @@
-# internal/agent/loop (internal/agent/loop.go)
+# Agent Loop
 
 Tool calling execution loop. Handles LLM streaming, tool call extraction, and result collection.
 

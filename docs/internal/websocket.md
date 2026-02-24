@@ -1,4 +1,4 @@
-# internal/websocket (internal/websocket/)
+# WebSocket
 
 WebSocket connection handler with multi-agent routing and connection management.
 

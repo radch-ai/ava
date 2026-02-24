@@ -1,4 +1,4 @@
-# internal/mem0 (internal/mem0/)
+# Mem0
 
 Mem0 API client for long-term memory storage and retrieval.
 

@@ -1,4 +1,4 @@
-# internal/server (internal/server/)
+# Server
 
 HTTP server, middleware, and routing for the gateway.
 

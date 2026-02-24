@@ -1,4 +1,4 @@
-# internal/project (internal/project/)
+# Project
 
 Project metadata and constants. Generated from project-details file.
 

@@ -1,4 +1,4 @@
-# internal/agent/types (internal/agent/types.go)
+# Agent Types
 
 Core type definitions for the agent runtime: messages, content blocks, roles, and state.
 

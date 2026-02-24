@@ -1,4 +1,4 @@
-# internal/agent (internal/agent/)
+# Agent
 
 Core agent runtime framework with state management, event streaming, and tool execution loop.
 

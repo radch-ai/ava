@@ -1,4 +1,4 @@
-# config/models (config/models.go)
+# Models Configuration
 
 YAML-based LLM model and router configuration. Provides model cost definitions, provider mappings, and router settings.
 

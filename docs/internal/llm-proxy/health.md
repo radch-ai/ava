@@ -1,4 +1,4 @@
-# internal/llm-proxy/health (internal/llm-proxy/health/)
+# LLM Proxy Health
 
 Circuit breaker pattern for provider health monitoring.
 

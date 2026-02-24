@@ -1,4 +1,4 @@
-# internal/storage (internal/storage/)
+# Storage
 
 S3-compatible storage for agent workspaces and conversation transcripts.
 

@@ -1,4 +1,4 @@
-# internal/billing (internal/billing/)
+# Billing
 
 RevenueCat webhook handling, quota management, and database migrations for subscription billing.
 

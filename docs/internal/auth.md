@@ -1,4 +1,4 @@
-# internal/auth (internal/auth/)
+# Auth
 
 Auth service client for session validation. Validates session tokens via HTTP calls to the auth service.
 

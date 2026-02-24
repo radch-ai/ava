@@ -1,4 +1,4 @@
-# config (config/)
+# Config
 
 Centralized environment-based configuration loading for the gateway application. Provides typed configuration structs with environment variable binding, validation, and logger initialization.
 

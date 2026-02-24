@@ -1,4 +1,4 @@
-# internal/llm-proxy/models (internal/llm-proxy/models/)
+# LLM Proxy Models
 
 Model registry with cost calculation and metadata.
 

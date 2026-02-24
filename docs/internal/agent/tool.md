@@ -1,4 +1,4 @@
-# internal/agent/tool (internal/agent/tool.go)
+# Agent Tool
 
 Tool execution framework for the agent runtime.
 

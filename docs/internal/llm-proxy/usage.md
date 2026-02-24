@@ -1,4 +1,4 @@
-# internal/llm-proxy/usage (internal/llm-proxy/usage/)
+# LLM Proxy Usage
 
 Usage tracking with Redis primary and file fallback.
 

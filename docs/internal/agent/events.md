@@ -1,4 +1,4 @@
-# internal/agent/events (internal/agent/events.go)
+# Agent Events
 
 Agent event system for real-time broadcasting of agent lifecycle, message generation, and tool execution.
 

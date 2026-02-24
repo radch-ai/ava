@@ -1,4 +1,4 @@
-# internal/agent/status (internal/agent/status.go)
+# Agent Status
 
 Agent status enumeration for tracking agent lifecycle state.
 

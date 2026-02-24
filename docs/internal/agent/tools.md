@@ -1,4 +1,4 @@
-# internal/agent/tools (internal/agent/tools/)
+# Agent Tools
 
 Built-in agent tools and tool registry for the agent runtime.
 

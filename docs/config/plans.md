@@ -1,4 +1,4 @@
-# config/plans (config/plans.go)
+# Plans Configuration
 
 Subscription plan definitions with LLM credit allowances. Provides plan lookup and feature checking.
 

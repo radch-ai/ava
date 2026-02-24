@@ -1,4 +1,4 @@
-# internal/llm (internal/llm/)
+# LLM Client
 
 Unified LLM client factory supporting OpenAI, Anthropic, and Google providers.
 

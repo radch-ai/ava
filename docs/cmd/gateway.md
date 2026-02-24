@@ -1,10 +1,9 @@
-# cmd/gateway (cmd/gateway/main.go)
+# Gateway Command
 
- 
 Gateway application entry point. Initializes configuration, logger, model registry, Redis client, and starts the HTTP/WebSocket server.
- 
+
 ## Overview
- 
+
 ```mermaid
 flowchart TB
     Start([main]) --> LoadCfg["config.Load()

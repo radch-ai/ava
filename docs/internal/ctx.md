@@ -1,4 +1,4 @@
-# internal/ctx (internal/ctx/)
+# Context
 
 Context utilities for propagating user ID and agent ID through request lifecycles.
 

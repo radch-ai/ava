@@ -1,4 +1,4 @@
-# internal/node (internal/node/)
+# Node
 
 Distributed node execution for running tools on remote devices and managed servers.
 
