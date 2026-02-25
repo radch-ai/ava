@@ -9,10 +9,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nevaria-ai/gateway/internal/project"
 	"github.com/nevaria-ai/gateway/internal/websocket"
 	"github.com/rs/zerolog"
 )
+
+// Version is set at build time via ldflags
+var Version = "dev"
 
 // A Server manages the HTTP server and WebSocket handlers.
 type Server struct {
@@ -73,8 +75,8 @@ func New(addr string, logger zerolog.Logger, wsHandler *websocket.Handler, authM
 
 func (s *Server) Start() error {
 	s.logger.Info().
-		Str("service", project.Name).
-		Str("version", project.Version).
+		Str("service", "nevaria-gateway").
+		Str("version", Version).
 		Str("addr", s.httpServer.Addr).
 		Msg("server starting")
 

@@ -141,7 +141,6 @@ internal/
 ├── auth/           # Zetidal API client for session validation
 ├── billing/        # RevenueCat webhooks, migrations
 ├── ctx/            # Context utilities (userID, agentID)
-├── project/        # Project metadata and constants
 ├── storage/        # S3 storage, workspaces, transcripts
 ├── mem0/           # Mem0 API client for memory
 ├── session/        # Session management with Redis
@@ -163,7 +162,6 @@ internal/
 | [`internal/auth/`](internal/auth.md) | Zetidal API client for session validation |
 | [`internal/billing/`](internal/billing.md) | RevenueCat webhooks, credit tracking, migrations |
 | [`internal/ctx/`](internal/ctx.md) | Context utilities for user ID and agent ID propagation |
-| [`internal/project/`](internal/project.md) | Project metadata and constants |
 | [`internal/storage/`](internal/storage/README.md) | S3 storage, workspace loader, transcript writer |
 | [`internal/mem0/`](internal/mem0/README.md) | Mem0 API client for long-term memory |
 | [`internal/session/`](internal/session/README.md) | Session management with timeout and reconnection |
@@ -316,4 +314,3 @@ Event types: `connected`, `agent_start`, `agent_end`, `turn_start`, `turn_end`, 
 - [Session](internal/session/README.md) - Session management
 - [Node](internal/node/README.md) - Distributed node execution
 - [Context](internal/ctx.md) - Context utilities
-- [Project](internal/project.md) - Project metadata
