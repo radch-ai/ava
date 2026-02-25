@@ -4,7 +4,7 @@ import (
 	"sync"
 
 	"github.com/nevaria-ai/gateway/internal/agent"
-	"github.com/nevaria-ai/gateway/internal/llm-proxy"
+	"github.com/nevaria-ai/llm-proxy-sdk/pkg/handler"
 	"github.com/rs/zerolog"
 )
 
@@ -16,7 +16,7 @@ type AgentKey struct {
 
 // AgentManagerOptions configures a new AgentManager.
 type AgentManagerOptions struct {
-	LLMProxyHandler *proxy.Handler
+	LLMProxyHandler *handler.Handler
 }
 
 // AgentManager manages per-user agents with thread-safe access.
@@ -25,12 +25,12 @@ type AgentManager struct {
 	mu       sync.RWMutex
 	agents   map[AgentKey]*agent.Agent
 	logger   zerolog.Logger
-	llmProxy *proxy.Handler
+	llmProxy *handler.Handler
 }
 
 // NewAgentManager creates a new AgentManager.
 func NewAgentManager(logger zerolog.Logger, opts *AgentManagerOptions) *AgentManager {
-	var llmProxy *proxy.Handler
+	var llmProxy *handler.Handler
 	if opts != nil {
 		llmProxy = opts.LLMProxyHandler
 	}
@@ -76,10 +76,10 @@ func (m *AgentManager) createAgent(userID, agentID string) *agent.Agent {
 		SessionID: userID + ":" + agentID,
 	}
 
-	// If LLM proxy handler is configured, create proxy client for this user
+	// If LLM proxy handler is configured, create SDK client for this user
 	if m.llmProxy != nil {
-		proxyClient := proxy.NewClient(m.llmProxy, userID)
-		opts.LLMClient = proxyClient
+		sdkClient := NewSDKClient(m.llmProxy, userID)
+		opts.LLMClient = sdkClient
 	} else {
 		// Use mock client for backward compatibility/testing
 		opts.LLMClient = &agent.MockLLMClient{}

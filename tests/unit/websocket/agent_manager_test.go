@@ -3,8 +3,8 @@ package websocket_test
 import (
 	"testing"
 
-	"github.com/nevaria-ai/gateway/internal/llm-proxy"
 	"github.com/nevaria-ai/gateway/internal/websocket"
+	"github.com/nevaria-ai/llm-proxy-sdk/pkg/handler"
 	"github.com/rs/zerolog"
 )
 
@@ -13,7 +13,7 @@ func TestAgentManagerWithLLMProxy(t *testing.T) {
 	logger := zerolog.Nop()
 
 	// Create mock handler
-	handler := proxy.NewHandler(proxy.HandlerOptions{})
+	handler := handler.NewHandler(handler.HandlerOptions{})
 
 	// Create agent manager with LLM proxy handler
 	mgr := websocket.NewAgentManager(logger, &websocket.AgentManagerOptions{
@@ -30,7 +30,7 @@ func TestGetOrCreateAgentWithLLMProxy(t *testing.T) {
 	logger := zerolog.Nop()
 
 	// Create mock handler
-	handler := proxy.NewHandler(proxy.HandlerOptions{})
+	handler := handler.NewHandler(handler.HandlerOptions{})
 
 	// Create agent manager with LLM proxy handler
 	mgr := websocket.NewAgentManager(logger, &websocket.AgentManagerOptions{
@@ -57,7 +57,7 @@ func TestGetOrCreateAgentWithLLMProxy(t *testing.T) {
 func TestAgentManagerRemoveAgentWithLLMProxy(t *testing.T) {
 	logger := zerolog.Nop()
 
-	handler := proxy.NewHandler(proxy.HandlerOptions{})
+	handler := handler.NewHandler(handler.HandlerOptions{})
 	mgr := websocket.NewAgentManager(logger, &websocket.AgentManagerOptions{
 		LLMProxyHandler: handler,
 	})
