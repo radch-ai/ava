@@ -9,13 +9,9 @@ flowchart TB
     Start("Request") --> Mux["http.ServeMux"]
     Mux -->|health| Health["HealthHandler()"]
     Mux -->|ws| AuthMW["AuthMiddleware.Authenticate()"]
-    Mux -->|internal| Internal["InternalRouter"]
-    
+
     AuthMW -->|valid| WSHandler["WebSocket Handler"]
     AuthMW -->|invalid| AuthErr("401 Unauthorized")
-    
-    Internal -->|valid secret| InternalHandler["Internal handlers"]
-    Internal -->|invalid secret| InternalErr("401 Unauthorized")
 
     click WSHandler href "../websocket.md"
 
@@ -25,9 +21,9 @@ flowchart TB
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
     class Start mainFn
-    class Mux,Health,AuthMW,Internal,InternalHandler internalFn
+    class Mux,Health,AuthMW internalFn
     class WSHandler localPkgs
-    class AuthErr,InternalErr errorFlow
+    class AuthErr errorFlow
 ```
 
 ## Structs
@@ -40,7 +36,6 @@ flowchart TB
 | | `logger` | `zerolog.Logger` | Logger |
 | | `wsHandler` | `*websocket.Handler` | WebSocket handler |
 | | `authMW` | `*AuthMiddleware` | Auth middleware |
-| | `internalRouter` | `http.Handler` | Internal endpoints |
 | | `shutdownCh` | `chan struct{}` | Shutdown signal |
 
 ### AuthMiddleware
@@ -48,7 +43,7 @@ flowchart TB
 | Struct | Field | Type | Description |
 |--------|-------|------|-------------|
 | `AuthMiddleware` | `authClient` | `*auth.Client` | Auth service client |
-| | `cache` | `Cache` | Session cache (optional) |
+| | `cache` | `Cache` | Session cache |
 | | `cacheTTL` | `time.Duration` | Cache TTL |
 
 ### RedisCache
@@ -75,7 +70,7 @@ type Cache interface {
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `New` | `(addr string, logger zerolog.Logger, wsHandler *websocket.Handler, authMW *AuthMiddleware, internalRouter http.Handler) *Server` | Creates server |
+| `New` | `(addr string, logger zerolog.Logger, wsHandler *websocket.Handler, authMW *AuthMiddleware) *Server` | Creates server |
 | `Start` | `() error` | Starts server |
 | `Shutdown` | `(ctx context.Context) error` | Graceful shutdown |
 | `HTTPServer` | `() *http.Server` | Returns HTTP server |
@@ -85,16 +80,8 @@ type Cache interface {
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `NewAuthMiddleware` | `(authURL, secret string, cache Cache, cacheTTL time.Duration) *AuthMiddleware` | Creates auth middleware |
+| `NewAuthMiddleware` | `(authURL string, cache Cache, cacheTTL time.Duration) *AuthMiddleware` | Creates auth middleware |
 | `Authenticate` | `(next http.Handler) http.Handler` | Auth middleware handler |
-
-### Internal
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `NewInternalRouter` | `(secret string, cache Cache) *mux.Router` | Creates internal router |
-| `NewInternalMiddleware` | `(secret string) *InternalMiddleware` | Creates internal auth |
-| `RequireInternalAuth` | `(next http.Handler) http.Handler` | Bearer token auth |
 
 ### Cache
 
@@ -112,7 +99,6 @@ type Cache interface {
 | Missing session cookie | 401 | `authentication_required` |
 | Invalid session | 401 | `authentication_required` |
 | Auth unavailable | 503 | Service unavailable |
-| Invalid internal secret | 401/403 | Unauthorized/Forbidden |
 
 ## Design Notes
 
@@ -124,7 +110,7 @@ type Cache interface {
 |--------|-------------|
 | Context | Sliding session expiration |
 | Options considered | Ignore cookie, wrap response, middleware chain |
-| Rationale | Must forward Set-Cookie from auth service to browser |
+| Rationale | Must forward Set-Cookie from zetidal API to browser |
 
 **Current approach is recommended because:**
 - Preserves WebSocket upgrade capability (Hijacker interface)

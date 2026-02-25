@@ -179,7 +179,6 @@ internal/
 | Memory Operations | Agent prompts → Mem0 search/store → Context enrichment |
 | Transcript Writing | Turn events → JSONL append to S3 |
 | Session Validation | Cookie extract → Cache check → Zetidal API call → User ID in context |
-| Cache Invalidation | Internal webhook → Delete from Redis |
 | Node Tool Execution | Agent calls node tool → Service routes to node → Node executes → Result returned |
 
 ## Design Patterns
@@ -282,13 +281,6 @@ Event types: `connected`, `agent_start`, `agent_end`, `turn_start`, `turn_end`, 
 - **Agents are pre-created** in S3 on account creation
 - **Messages routed** based on `agent_id` field in every message
 - **Agent isolation** via composite key (userID, agentID)
-
-### Internal Endpoints
-
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/_internal/cache/delete` | POST | Bearer | Invalidate session cache |
-| `/_internal/*` | * | Bearer | All internal endpoints protected |
 
 ## Related Documentation
 

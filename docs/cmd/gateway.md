@@ -17,8 +17,7 @@ flowchart TB
     InitRedis --> CreateCache["NewRedisCache()"]
     CreateCache --> CreateAuthMW["NewAuthMiddleware()"]
     CreateAuthMW --> CreateWS["websocket.NewHandler()"]
-    CreateWS --> CreateInternal["NewInternalRouter()"]
-    CreateInternal --> CreateServer["server.New()"]
+    CreateWS --> CreateServer["server.New()"]
     CreateServer --> StartServer["srv.Start()"]
     StartServer -->|error| Exit3("Exit 1")
     StartServer -->|ok| Running("Server Running")
@@ -38,7 +37,7 @@ flowchart TB
     class Start,Running mainFn
     class Exit1,Exit2,Exit3 errorFlow
     class LoadCfg,ValidateCfg,LoadModels,CreateCache,CreateAuthMW,CreateWS localPkgs
-    class ParseLevel,CreateLogger,InitRedis,CreateInternal,CreateServer,StartServer internalFn
+    class ParseLevel,CreateLogger,InitRedis,CreateServer,StartServer internalFn
 ```
 
 ## Variables
@@ -52,7 +51,6 @@ flowchart TB
 | `cache` | `server.Cache` | Session cache adapter |
 | `authMW` | `*server.AuthMiddleware` | Auth middleware |
 | `wsHandler` | `*websocket.Handler` | WebSocket handler |
-| `internalRouter` | `*server.InternalRouter` | Internal endpoints |
 | `srv` | `*server.Server` | HTTP server |
 
 ## Error Handling
