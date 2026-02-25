@@ -30,10 +30,8 @@ flowchart TB
 ```mermaid
 flowchart TB
     Start([Validate]) --> CheckAddr["check ServerAddr"]
-    CheckAddr --> CheckProd{isProduction?}
-    CheckProd -->|Yes| CheckSecrets["check secrets >= 16 chars"]
-    CheckProd -->|No| CheckURL["validate Auth URL"]
-    CheckSecrets --> CheckURL
+    CheckAddr --> CheckRedis["check RedisAddr"]
+    CheckRedis --> CheckURL["validate Auth URL"]
     CheckURL -->|ok| DoneOk("return nil")
     CheckURL -->|error| DoneErr("return error")
 
@@ -54,7 +52,7 @@ flowchart TB
 | | `LogLevel` | `string` | Log level (debug, info, warn, error) |
 | | `AllowedOrigins` | `[]string` | CORS allowed origins |
 | | `MaxConns` | `int` | Max concurrent WebSocket connections |
-| | `Auth` | `AuthConfig` | Auth service configuration |
+| | `Auth` | `AuthConfig` | Zetidal API configuration |
 | | `RedisAddr` | `string` | Redis server address |
 | | `RedisPassword` | `string` | Redis password |
 
@@ -142,22 +140,6 @@ flowchart TB
 - Health checks and circuit breakers need Redis
 - HA deployment ensures no data loss on failures
 
-### Internal Secret Requirements
-
-**Q: Why 16 character minimum for secrets?**
-
-| Aspect | Description |
-|--------|-------------|
-| Context | Secret-based authentication |
-| Options considered | 8, 16, 32 characters |
-| Rationale | 16 characters provides good security/usability balance |
-
-**Current approach is recommended because:**
-- Sufficient entropy for HMAC/signing
-- Not so long as to be unusable
-- Standard security practice
-- Easy to generate with password managers
-
 ## Test Coverage
 
 ### Unit Tests (`config_test.go`)
@@ -168,8 +150,6 @@ flowchart TB
 | `TestLoad_FromEnv` | Environment variable override |
 | `TestLoad_InvalidTimeout` | Invalid timeout duration handling |
 | `TestValidate_ServerAddress` | Server address validation |
-| `TestValidate_ProductionSecrets` | Production secret requirements |
-| `TestValidate_SecretLength` | Secret length validation |
 | `TestValidate_AuthURL` | Auth URL format validation |
 | `TestNewLogger` | Logger creation for different environments |
 | `TestParseLogLevel` | Log level parsing |
