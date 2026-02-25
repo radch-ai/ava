@@ -43,7 +43,6 @@ All configuration is via environment variables.
 | `OPENAI_API_KEY` | (empty) | OpenAI API key |
 | `ANTHROPIC_API_KEY` | (empty) | Anthropic API key |
 | `GOOGLE_API_KEY` | (empty) | Google AI API key |
-| `GATEWAY_MODEL_CONFIG` | `config/models.yaml` | Model configuration path |
 
 ## Production Setup
 

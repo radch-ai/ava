@@ -68,10 +68,6 @@ flowchart TB
 | `GATEWAY_LOG_LEVEL` | No | `info` | Log level (debug, info, warn, error) |
 | `GATEWAY_ALLOWED_ORIGINS` | No | - | Comma-separated CORS allowed origins |
 | `GATEWAY_MAX_CONNS` | No | `0` (unlimited) | Max concurrent WebSocket connections |
-| `GATEWAY_LLM_PROXY_MODELS` | No | `llm-proxy-models.yaml` | Path to LLM proxy models configuration (12-factor app pattern) |
-| `ZETIDAL_URL` | No | `http://localhost:8081` | Zetidal API URL for session validation |
-| `REDIS_ADDR` | Yes | - | Redis server address (required) |
-| `REDIS_PASSWORD` | No | - | Redis password |
 | `ZETIDAL_URL` | No | `http://localhost:8081` | Zetidal API URL for session validation |
 | `REDIS_ADDR` | Yes | - | Redis server address (required) |
 | `REDIS_PASSWORD` | No | - | Redis password |

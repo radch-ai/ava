@@ -131,13 +131,6 @@ internal/
 ├── websocket/      # WebSocket handler, multi-agent routing
 ├── agent/          # Agent runtime, state management, events
 │   └── tools/      # Built-in tools (Mem0, files, nodes)
-├── llm/            # Multi-provider LLM client factory
-├── llm-proxy/      # LLM proxy with quota, health, routing
-│   ├── health/     # Circuit breaker, health checks
-│   ├── models/     # Model registry
-│   ├── quota/      # Credit quota management
-│   ├── router/     # Intelligent model routing
-│   └── usage/      # Usage tracking and billing
 ├── auth/           # Zetidal API client for session validation
 ├── billing/        # RevenueCat webhooks, migrations
 ├── ctx/            # Context utilities (userID, agentID)
@@ -157,8 +150,7 @@ internal/
 | [`internal/websocket`](internal/websocket.md) | WebSocket connection management with multi-agent routing |
 | [`internal/agent/`](internal/agent/README.md) | Agent runtime, state management, event system |
 | [`internal/agent/tools`](internal/agent/tools.md) | Built-in agent tools (Mem0, file operations, node tools) |
-| [`internal/llm/`](internal/llm.md) | LLM client factory for multiple providers |
-| [`internal/llm-proxy/`](internal/llm-proxy/README.md) | LLM proxy with quota, health, routing |
+| [LLM Proxy SDK](https://github.com/nevaria-ai/llm-proxy-sdk) | LLM client factory, quota, health, routing, usage |
 | [`internal/auth/`](internal/auth.md) | Zetidal API client for session validation |
 | [`internal/billing/`](internal/billing.md) | RevenueCat webhooks, credit tracking, migrations |
 | [`internal/ctx/`](internal/ctx.md) | Context utilities for user ID and agent ID propagation |
@@ -185,13 +177,12 @@ internal/
 
 | Pattern | Description |
 |---------|-------------|
-| [Factory](internal/llm/factory.go) | Creates provider-specific LLM clients |
 | [Strategy](internal/agent/loop.go) | Pluggable tool execution |
 | [Observer](internal/agent/agent.go) | Event subscription system |
 | [Middleware](internal/server/middleware.go) | HTTP request processing chain |
-| [Singleton](internal/llm-proxy/models/registry.go) | Global model registry |
+| [Singleton](https://github.com/nevaria-ai/llm-proxy-sdk) | Global model registry |
 | [Pool](internal/websocket/handler.go) | `wsMessage` sync.Pool for efficiency |
-| [Circuit Breaker](internal/llm-proxy/health/circuit.go) | Provider health management |
+| [Circuit Breaker](https://github.com/nevaria-ai/llm-proxy-sdk) | Provider health management |
 | [Composite Key](internal/websocket/agent_manager.go) | (userID, agentID) for agent isolation |
 | [Workspace](internal/storage/workspace.go) | OpenClaw-style agent workspace persistence |
 
@@ -297,8 +288,8 @@ Event types: `connected`, `agent_start`, `agent_end`, `turn_start`, `turn_end`, 
 - [WebSocket](internal/websocket.md) - WebSocket handler and multi-agent routing
 - [Agent](internal/agent/README.md) - Agent runtime
 - [Agent Tools](internal/agent/tools.md) - Built-in tools (Mem0, files, nodes)
-- [LLM](internal/llm.md) - LLM client factory
-- [LLM Proxy](internal/llm-proxy/README.md) - Proxy routing and quota
+- [LLM Client](https://github.com/nevaria-ai/llm-proxy-sdk) - LLM client factory
+- [LLM Proxy](https://github.com/nevaria-ai/llm-proxy-sdk) - Proxy routing and quota
 - [Auth](internal/auth.md) - Authentication client
 - [Billing](internal/billing.md) - RevenueCat webhooks and credit tracking
 - [Storage](internal/storage/README.md) - S3 storage, workspaces, transcripts

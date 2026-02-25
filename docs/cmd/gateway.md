@@ -13,10 +13,10 @@ flowchart TB
     ValidateCfg -->|ok| ParseLevel["zerolog.ParseLevel(cfg.LogLevel) → logLevel, err"]
     ParseLevel -->|error| Exit2("Exit 1")
     ParseLevel -->|ok| SetLevel["zerolog.SetGlobalLevel(logLevel)"]
-    SetLevel --> CreateLogger["zerolog.New(os.Stderr) → logger"]
-     CreateLogger --> GetRegistry["models.Get() → registry"]
-     GetRegistry --> LoadModels["registry.LoadFromYAML(config.GetModelsConfigPath()) → err"]
-    LoadModels -->|error| ExitModel("Exit 1")
+     SetLevel --> CreateLogger["zerolog.New(os.Stderr) → logger"]
+      CreateLogger --> GetRegistry["models.Get() → registry"]
+      GetRegistry --> LoadModels["registry.LoadFromYAML('llm-proxy-models.yaml') → err"]
+     LoadModels -->|error| ExitModel("Exit 1")
     LoadModels --> GetRouter["registry.GetRouterModel() → routerModel"]
     GetRouter --> InitRedis["redis.NewClient(&redis.Options{Addr: cfg.RedisAddr, Password: cfg.RedisPassword}) → redisClient"]
     InitRedis --> CreateCache["server.NewRedisCache(redisClient) → cache"]
