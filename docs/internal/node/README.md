@@ -205,13 +205,13 @@ make test ./internal/node
 | `internal/agent` | Agent and Tool types |
 
 **File Locations:**
-- [`internal/node/service.go`](../../internal/node/service.go) - Node service
-- [`internal/node/types.go`](../../internal/node/types.go) - Types and messages
-- [`internal/node/registry.go`](../../internal/node/registry.go) - Node registry
-- [`internal/node/executor.go`](../../internal/node/executor.go) - Tool executor
-- [`internal/node/handler.go`](../../internal/node/handler.go) - WebSocket handler
-- [`internal/node/adapter.go`](../../internal/node/adapter.go) - Agent adapter
-- [`internal/node/cache.go`](../../internal/node/cache.go) - Response cache
+- [`internal/node/service.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/node/service.go) - Node service
+- [`internal/node/types.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/node/types.go) - Types and messages
+- [`internal/node/registry.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/node/registry.go) - Node registry
+- [`internal/node/executor.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/node/executor.go) - Tool executor
+- [`internal/node/handler.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/node/handler.go) - WebSocket handler
+- [`internal/node/adapter.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/node/adapter.go) - Agent adapter
+- [`internal/node/cache.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/node/cache.go) - Response cache
 
 ## Related
 

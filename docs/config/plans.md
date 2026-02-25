@@ -115,7 +115,7 @@ make test ./config
 |---------|---------|
 | (none) | Uses only standard library |
 
-**File Location:** [`config/plans.go`](../../config/plans.go)
+**File Location:** [`config/plans.go`](https://github.com/nevaria-ai/gateway/blob/main/config/plans.go)
 
 ## Related
 

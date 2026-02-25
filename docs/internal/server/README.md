@@ -178,11 +178,11 @@ make test ./internal/server
 | `internal/websocket` | WebSocket handler |
 
 **File Locations:**
-- [`internal/server/server.go`](../../internal/server/server.go) - HTTP server
-- [`internal/server/middleware.go`](../../internal/server/middleware.go) - Auth middleware
-- [`internal/server/internal.go`](../../internal/server/internal.go) - Internal router
-- [`internal/server/redis_cache.go`](../../internal/server/redis_cache.go) - Redis cache
-- [`internal/server/response.go`](../../internal/server/response.go) - Response utilities
+- [`internal/server/server.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/server/server.go) - HTTP server
+- [`internal/server/middleware.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/server/middleware.go) - Auth middleware
+- [`internal/server/internal.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/server/internal.go) - Internal router
+- [`internal/server/redis_cache.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/server/redis_cache.go) - Redis cache
+- [`internal/server/response.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/server/response.go) - Response utilities
 
 ## Related
 

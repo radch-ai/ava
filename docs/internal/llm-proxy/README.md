@@ -215,9 +215,9 @@ make test ./internal/llm-proxy
 | `internal/llm` | LLM client |
 
 **File Locations:**
-- [`internal/llm-proxy/handler.go`](../../internal/llm-proxy/handler.go) - Main handler
-- [`internal/llm-proxy/types.go`](../../internal/llm-proxy/types.go) - Types
-- [`internal/llm-proxy/client.go`](../../internal/llm-proxy/client.go) - Agent client adapter
+- [`internal/llm-proxy/handler.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/llm-proxy/handler.go) - Main handler
+- [`internal/llm-proxy/types.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/llm-proxy/types.go) - Types
+- [`internal/llm-proxy/client.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/llm-proxy/client.go) - Agent client adapter
 
 ## Related
 

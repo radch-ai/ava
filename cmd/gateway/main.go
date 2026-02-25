@@ -65,27 +65,19 @@ func main() {
 		logger.Info().Int("max_conns", maxConns).Msg("using default connection limit")
 	}
 
-	// Create Redis client (optional - for session caching and quota)
-	var redisClient *redis.Client
-	if cfg.RedisAddr != "" {
-		redisClient = redis.NewClient(&redis.Options{
-			Addr:     cfg.RedisAddr,
-			Password: cfg.RedisPassword,
-		})
-		logger.Info().Str("addr", cfg.RedisAddr).Msg("Redis client initialized")
-	}
+	// Create Redis client (required - for session caching and quota)
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     cfg.RedisAddr,
+		Password: cfg.RedisPassword,
+	})
+	logger.Info().Str("addr", cfg.RedisAddr).Msg("Redis client initialized")
 
-	// Create Redis cache adapter (reuse existing Redis client)
-	var cache server.Cache
-	if redisClient != nil {
-		cache = server.NewRedisCache(redisClient)
-	} else {
-		logger.Warn().Msg("Redis not configured, session caching disabled")
-	}
+	// Create Redis cache adapter
+	cache := server.NewRedisCache(redisClient)
 
 	// Create auth middleware with cache support
 	// Default cache TTL to 5 minutes if not specified
-	authMW := server.NewAuthMiddleware(cfg.Auth.URL, cfg.Auth.AuthInternalSecret, cache, 5*time.Minute)
+	authMW := server.NewAuthMiddleware(cfg.Auth.URL, cache, 5*time.Minute)
 
 	// Create WebSocket handler with config
 	wsHandler := websocket.NewHandler(logger, allowedOrigins, maxConns)

@@ -95,7 +95,7 @@ make test ./internal/ctx
 |---------|---------|
 | `context` | Standard library context |
 
-**File Location:** [`internal/ctx/context.go`](../../internal/ctx/context.go)
+**File Location:** [`internal/ctx/context.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/ctx/context.go)
 
 ## Related
 

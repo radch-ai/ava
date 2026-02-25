@@ -191,9 +191,9 @@ make test ./internal/storage
 | `internal/agent` | AgentMessage type |
 
 **File Locations:**
-- [`internal/storage/s3.go`](../../internal/storage/s3.go) - S3 client interface
-- [`internal/storage/workspace.go`](../../internal/storage/workspace.go) - Workspace loader
-- [`internal/storage/transcript.go`](../../internal/storage/transcript.go) - Transcript writer
+- [`internal/storage/s3.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/storage/s3.go) - S3 client interface
+- [`internal/storage/workspace.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/storage/workspace.go) - Workspace loader
+- [`internal/storage/transcript.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/storage/transcript.go) - Transcript writer
 
 ## Related
 

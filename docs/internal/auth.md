@@ -1,6 +1,6 @@
 # Auth
 
-Auth service client for session validation. Validates session tokens via HTTP calls to the auth service.
+Zetidal API client for session validation. Validates session tokens via HTTP calls to the zetidal API.
 
 ## Overview
 
@@ -8,8 +8,7 @@ Auth service client for session validation. Validates session tokens via HTTP ca
 flowchart TB
     Start("ValidateSession(ctx, token)") --> BuildURL["url.Parse(baseURL + /auth/session)"]
     BuildURL --> CreateReq["http.NewRequestWithContext()"]
-    CreateReq --> AddHeaders["req.Header.Set(Authorization, Bearer secret)"]
-    AddHeaders --> AddCookie["req.AddCookie(session=token)"]
+    CreateReq --> AddCookie["req.AddCookie(session=token)"]
     AddCookie --> DoReq["http.Client.Do(req)"]
     DoReq -->|error| CheckErr{context error?}
     CheckErr -->|canceled| ErrCanceled["return ErrContextCanceled"]
@@ -18,7 +17,6 @@ flowchart TB
     DoReq -->|ok| CheckStatus{status code?}
     CheckStatus -->|200| DecodeResp["json.Decode(response)"]
     CheckStatus -->|401| ErrInvalid["return ErrSessionInvalid"]
-    CheckStatus -->|403| ErrForbidden["return ErrAuthUnavailable"]
     CheckStatus -->|503| ErrUnavailable2["return ErrAuthUnavailable"]
     CheckStatus -->|other| ErrUnexpected["return ErrAuthUnavailable"]
     DecodeResp --> CheckAuth{authenticated?}
@@ -31,15 +29,15 @@ flowchart TB
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
     class Start,Done mainFn
-    class ErrCanceled,ErrUnavailable,ErrOther,ErrInvalid,ErrForbidden,ErrUnavailable2,ErrUnexpected,ErrInvalid2 errorFlow
-    class BuildURL,CreateReq,AddHeaders,AddCookie,DoReq,DecodeResp,ExtractCookie internalFn
+    class ErrCanceled,ErrUnavailable,ErrOther,ErrInvalid,ErrUnavailable2,ErrUnexpected,ErrInvalid2 errorFlow
+    class BuildURL,CreateReq,AddCookie,DoReq,DecodeResp,ExtractCookie internalFn
 ```
 
 ## Constants
 
 | Constant | Type | Value | Description |
 |----------|------|-------|-------------|
-| `defaultAuthURL` | string | `http://localhost:8081` | Default auth service URL |
+| `defaultAuthURL` | string | `http://localhost:8081` | Default zetidal API URL |
 | `defaultTimeout` | Duration | `2s` | Default request timeout |
 | `sessionCookieName` | string | `session` | Session cookie name |
 
@@ -49,8 +47,7 @@ flowchart TB
 
 | Struct | Field | Type | Description |
 |--------|-------|------|-------------|
-| `Client` | `baseURL` | `string` | Auth service base URL |
-| | `secret` | `string` | Internal secret for auth |
+| `Client` | `baseURL` | `string` | Zetidal API base URL |
 | | `Client` | `*http.Client` | HTTP client (exported for testing) |
 | | `logger` | `interface{}` | Logger (zerolog.Logger) |
 
@@ -68,7 +65,7 @@ flowchart TB
 |------------|---------|----------|
 | `ErrSessionInvalid` | 401 response | Session not valid |
 | `ErrSessionExpired` | (unused) | Session has expired |
-| `ErrAuthUnavailable` | Network/503 error | Auth service unreachable |
+| `ErrAuthUnavailable` | Network/503 error | Zetidal API unreachable |
 | `ErrInvalidResponse` | JSON decode error | Malformed response |
 | `ErrContextCanceled` | Context canceled | Request cancelled |
 
@@ -80,31 +77,15 @@ flowchart TB
 
 | Aspect | Description |
 |--------|-------------|
-| Context | Session refresh from auth service |
+| Context | Session refresh from zetidal API |
 | Options considered | Ignore, Pass through, Re-fetch |
-| Rationale | Auth service controls session lifetime |
+| Rationale | Zetidal controls session lifetime |
 
 **Current approach is recommended because:**
-- Auth service decides when to extend sessions
+- Zetidal decides when to extend sessions
 - Gateway just forwards the cookie
 - No session state in gateway
 - Consistent session management
-
-### Internal Secret Header
-
-**Q: Why use Bearer token for internal auth?**
-
-| Aspect | Description |
-|--------|-------------|
-| Context | Service-to-service authentication |
-| Options considered | API key header, mTLS, Bearer token |
-| Rationale | Simple, standard, works with existing infrastructure |
-
-**Current approach is recommended because:**
-- Standard Authorization header pattern
-- Easy to configure via environment
-- Compatible with most auth middleware
-- Can be upgraded to mTLS later
 
 ## Test Coverage
 
@@ -130,7 +111,7 @@ make test ./internal/auth
 |---------|---------|
 | Standard library | HTTP client, JSON, context |
 
-**File Location:** [`internal/auth/client.go`](../../internal/auth/client.go)
+**File Location:** [`internal/auth/client.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/auth/client.go)
 
 ## Related
 

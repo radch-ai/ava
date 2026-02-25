@@ -27,16 +27,15 @@ All configuration is via environment variables.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AUTH_SERVICE_URL` | `http://localhost:8081` | Auth service URL |
+| `AUTH_SERVICE_URL` | `http://localhost:8081` | Zetidal API URL for session validation |
 | `AUTH_TIMEOUT` | `2s` | Auth request timeout |
-| `AUTH_INTERNAL_SECRET` | (required) | Secret for calling auth service |
 | `INTERNAL_SECRET` | (required) | Gateway secret for /_internal/* endpoints (min 16 chars) |
 
-### Redis (Optional)
+### Redis (Required)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `REDIS_ADDR` | (empty) | Redis server address |
+| `REDIS_ADDR` | (required) | Redis server address |
 | `REDIS_PASSWORD` | (empty) | Redis password |
 
 ### LLM Providers
@@ -56,8 +55,7 @@ export GATEWAY_LOG_LEVEL="info"
 export GATEWAY_ALLOWED_ORIGINS="https://app.example.com"
 export GATEWAY_MAX_CONNS="10000"
 
-export AUTH_SERVICE_URL="http://auth-service:8081"
-export AUTH_INTERNAL_SECRET="${AUTH_SERVICE_SECRET}"
+export AUTH_SERVICE_URL="http://zetidal:8081"
 export INTERNAL_SECRET="${RANDOM_SECRET_MIN_16_CHARS}"
 
 export REDIS_ADDR="redis:6379"

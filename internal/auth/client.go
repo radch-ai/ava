@@ -14,8 +14,8 @@ import (
 var (
 	ErrSessionInvalid  = errors.New("session invalid")
 	ErrSessionExpired  = errors.New("session expired")
-	ErrAuthUnavailable = errors.New("auth service unavailable")
-	ErrInvalidResponse = errors.New("invalid response from auth service")
+	ErrAuthUnavailable = errors.New("zetidal API unavailable")
+	ErrInvalidResponse = errors.New("invalid response from zetidal API")
 	ErrContextCanceled = errors.New("context canceled")
 )
 
@@ -29,28 +29,26 @@ const (
 type SessionInfo struct {
 	UserID    string
 	ExpiresAt time.Time
-	// SetCookie is the cookie from auth service if session was extended (sliding expiration).
+	// SetCookie is the cookie from zetidal if session was extended (sliding expiration).
 	// Gateway must forward this back to the browser using http.SetCookie().
 	SetCookie *http.Cookie // nil if session wasn't extended
 }
 
-// Client is an HTTP client for the auth service.
+// Client is an HTTP client for the zetidal API.
 type Client struct {
 	baseURL string
-	secret  string
 	Client  *http.Client // Exported for testing
 	logger  interface{}  // zerolog.Logger, but interface{} to avoid import
 }
 
-// NewAuthClient creates a new auth service client.
-func NewAuthClient(baseURL, secret string, logger interface{}) *Client {
+// NewAuthClient creates a new zetidal API client.
+func NewAuthClient(baseURL string, logger interface{}) *Client {
 	if baseURL == "" {
 		baseURL = defaultAuthURL
 	}
 
 	return &Client{
 		baseURL: baseURL,
-		secret:  secret,
 		Client: &http.Client{
 			Timeout: defaultTimeout,
 		},
@@ -58,13 +56,13 @@ func NewAuthClient(baseURL, secret string, logger interface{}) *Client {
 	}
 }
 
-// ValidateSession validates a session token with the auth service.
+// ValidateSession validates a session token with the zetidal API.
 // The token should be in the format {sessionId}.{secret}.
 func (c *Client) ValidateSession(ctx context.Context, sessionToken string) (*SessionInfo, error) {
 	// Build request URL
 	reqURL, err := url.Parse(c.baseURL + "/auth/session")
 	if err != nil {
-		return nil, fmt.Errorf("%w: invalid auth URL: %w", ErrAuthUnavailable, err)
+		return nil, fmt.Errorf("%w: invalid zetidal URL: %w", ErrAuthUnavailable, err)
 	}
 
 	// Create request with context
@@ -73,8 +71,6 @@ func (c *Client) ValidateSession(ctx context.Context, sessionToken string) (*Ses
 		return nil, fmt.Errorf("%w: failed to create request: %w", ErrAuthUnavailable, err)
 	}
 
-	// Add Authorization header with internal secret
-	req.Header.Set("Authorization", "Bearer "+c.secret)
 	req.Header.Set("Content-Type", "application/json")
 
 	// Add session cookie
@@ -135,9 +131,6 @@ func (c *Client) ValidateSession(ctx context.Context, sessionToken string) (*Ses
 
 	case http.StatusUnauthorized:
 		return nil, ErrSessionInvalid
-
-	case http.StatusForbidden:
-		return nil, fmt.Errorf("%w: invalid internal secret", ErrAuthUnavailable)
 
 	case http.StatusServiceUnavailable:
 		return nil, ErrAuthUnavailable

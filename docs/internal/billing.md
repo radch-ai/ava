@@ -190,9 +190,9 @@ make test ./internal/billing
 | `github.com/jackc/pgx/v5/pgxpool` | Connection pooling |
 
 **File Locations:**
-- [`internal/billing/webhook.go`](../../internal/billing/webhook.go) - Webhook handling
-- [`internal/billing/quota.go`](../../internal/billing/quota.go) - Quota management
-- [`internal/billing/migrations.go`](../../internal/billing/migrations.go) - Database migrations
+- [`internal/billing/webhook.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/billing/webhook.go) - Webhook handling
+- [`internal/billing/quota.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/billing/quota.go) - Quota management
+- [`internal/billing/migrations.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/billing/migrations.go) - Database migrations
 
 ## Related
 

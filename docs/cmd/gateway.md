@@ -6,22 +6,10 @@ Gateway application entry point. Initializes configuration, logger, model regist
 
 ```mermaid
 flowchart TB
-    Start([main]) --> LoadCfg["config.Load()"]
-    LoadCfg --> HValidate
-
-    subgraph SGValidate [" "]
-        HValidate["**cfg.Validate() → error**"]
-        HValidate --> CheckAddr["check ServerAddr"]
-        CheckAddr --> CheckProd{isProduction?}
-        CheckProd -->|Yes| CheckSecrets["check secrets"]
-        CheckSecrets --> CheckURL["validate Auth URL"]
-        CheckProd -->|No| CheckURL
-        CheckURL -->|ok| ValidNil["return nil"]
-        CheckURL -->|error| ValidErr["return error"]
-    end
-
-    ValidErr --> Exit1("Exit 1")
-    ValidNil --> ParseLevel["zerolog.ParseLevel()"]
+    Start([main]) --> LoadCfg["config.Load() → *Config"]
+    LoadCfg --> ValidateCfg["cfg.Validate() → error"]
+    ValidateCfg -->|error| Exit1("Exit 1")
+    ValidateCfg -->|ok| ParseLevel["zerolog.ParseLevel()"]
     ParseLevel -->|error| Exit2("Exit 1")
     ParseLevel -->|ok| CreateLogger["zerolog.New()"]
     CreateLogger --> LoadModels["registry.LoadFromYAML()"]
@@ -36,6 +24,7 @@ flowchart TB
     StartServer -->|ok| Running("Server Running")
 
     click LoadCfg href "../config/README.md"
+    click ValidateCfg href "../config/README.md"
     click LoadModels href "../internal/llm-proxy/models.md"
     click CreateCache href "../internal/server/README.md"
     click CreateAuthMW href "../internal/server/README.md"
@@ -48,8 +37,8 @@ flowchart TB
 
     class Start,Running mainFn
     class Exit1,Exit2,Exit3 errorFlow
-    class LoadCfg,LoadModels,CreateCache,CreateAuthMW,CreateWS localPkgs
-    class HValidate,ParseLevel,CreateLogger,InitRedis,CreateInternal,CreateServer,StartServer internalFn
+    class LoadCfg,ValidateCfg,LoadModels,CreateCache,CreateAuthMW,CreateWS localPkgs
+    class ParseLevel,CreateLogger,InitRedis,CreateInternal,CreateServer,StartServer internalFn
 ```
 
 ## Variables
@@ -59,7 +48,7 @@ flowchart TB
 | `cfg` | `*config.Config` | Loaded configuration |
 | `logger` | `zerolog.Logger` | Configured logger |
 | `registry` | `*models.Registry` | LLM model registry |
-| `redisClient` | `*redis.Client` | Redis client (optional) |
+| `redisClient` | `*redis.Client` | Redis client (required) |
 | `cache` | `server.Cache` | Session cache adapter |
 | `authMW` | `*server.AuthMiddleware` | Auth middleware |
 | `wsHandler` | `*websocket.Handler` | WebSocket handler |
@@ -132,4 +121,4 @@ This package has no unit tests. Integration tests cover the server startup.
 | `github.com/nevaria-ai/gateway/internal/server` | HTTP server |
 | `github.com/nevaria-ai/gateway/internal/websocket` | WebSocket handler |
 
-**File Location:** [`cmd/gateway/main.go`](../../cmd/gateway/main.go)
+**File Location:** [`cmd/gateway/main.go`](https://github.com/nevaria-ai/gateway/blob/main/cmd/gateway/main.go)

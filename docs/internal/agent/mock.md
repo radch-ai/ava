@@ -127,7 +127,7 @@ make test ./internal/agent
 | `context` | Context handling |
 | `time` | Timestamp generation |
 
-**File Location:** [`internal/agent/mock.go`](../../internal/agent/mock.go)
+**File Location:** [`internal/agent/mock.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/agent/mock.go)
 
 ## Related
 

@@ -153,12 +153,12 @@ make test ./internal/llm
 | `internal/agent` | Agent types |
 
 **File Locations:**
-- [`internal/llm/factory.go`](../../internal/llm/factory.go) - Client factory
-- [`internal/llm/types.go`](../../internal/llm/types.go) - Types and config
-- [`internal/llm/openai.go`](../../internal/llm/openai.go) - OpenAI client
-- [`internal/llm/anthropic.go`](../../internal/llm/anthropic.go) - Anthropic client
-- [`internal/llm/google.go`](../../internal/llm/google.go) - Google client
-- [`internal/llm/tools.go`](../../internal/llm/tools.go) - Tool conversion
+- [`internal/llm/factory.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/llm/factory.go) - Client factory
+- [`internal/llm/types.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/llm/types.go) - Types and config
+- [`internal/llm/openai.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/llm/openai.go) - OpenAI client
+- [`internal/llm/anthropic.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/llm/anthropic.go) - Anthropic client
+- [`internal/llm/google.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/llm/google.go) - Google client
+- [`internal/llm/tools.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/llm/tools.go) - Tool conversion
 
 ## Related
 

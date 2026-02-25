@@ -99,9 +99,9 @@ make test ./internal/llm-proxy/models
 | `gopkg.in/yaml.v3` | YAML parsing |
 
 **File Locations:**
-- [`internal/llm-proxy/models/registry.go`](../../../internal/llm-proxy/models/registry.go)
-- [`internal/llm-proxy/models/types.go`](../../../internal/llm-proxy/models/types.go)
-- [`internal/llm-proxy/models/costs.go`](../../../internal/llm-proxy/models/costs.go)
+- [`internal/llm-proxy/models/registry.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/llm-proxy/models/registry.go)
+- [`internal/llm-proxy/models/types.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/llm-proxy/models/types.go)
+- [`internal/llm-proxy/models/costs.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/llm-proxy/models/costs.go)
 
 ## Related
 

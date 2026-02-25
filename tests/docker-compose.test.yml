@@ -14,7 +14,7 @@
 #
 # Services exposed on host (for debugging):
 #   - Redis: localhost:6380
-#   - Mock Auth Service: localhost:1080
+#   - Mock Zetidal API: localhost:1080
 
 services:
   # PostgreSQL for billing and usage tracking tests
@@ -35,7 +35,7 @@ services:
     networks:
       - gateway_test_network
 
-  # Redis for session caching and rate limiting tests
+  # Redis for session caching and rate limiting tests (required)
   redis-test:
     image: docker.io/redis:7-alpine
     container_name: gateway-redis-test
@@ -53,8 +53,27 @@ services:
     networks:
       - gateway_test_network
 
-  # Mock Auth Service - Simulates the auth service for session validation
-  mock-auth-service:
+  # Mock Zetidal API - Simulates the zetidal API for session validation
+  mock-zetidal-api:
+    build:
+      context: ./mocks
+      dockerfile: Dockerfile
+    container_name: gateway-mock-zetidal
+    environment:
+      PORT: "1080"
+    ports:
+      - "1080:1080"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:1080/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+    networks:
+      - gateway_test_network
+
+networks:
+  gateway_test_network:
+    driver: bridge
     build:
       context: ./mocks
       dockerfile: Dockerfile

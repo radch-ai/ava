@@ -85,10 +85,9 @@ func Load() (*Config, error) {
 		}
 	}
 
-	authInternalSecret := os.Getenv("AUTH_INTERNAL_SECRET")
 	gatewayInternalSecret := os.Getenv("INTERNAL_SECRET")
 
-	// Redis configuration (optional)
+	// Redis configuration (required)
 	redisAddr := os.Getenv("REDIS_ADDR")
 	redisPassword := os.Getenv("REDIS_PASSWORD")
 
@@ -98,10 +97,9 @@ func Load() (*Config, error) {
 		AllowedOrigins: origins,
 		MaxConns:       maxConns,
 		Auth: AuthConfig{
-			URL:                authURL,
-			Timeout:            authTimeout,
-			AuthInternalSecret: authInternalSecret,
-			InternalSecret:     gatewayInternalSecret,
+			URL:            authURL,
+			Timeout:        authTimeout,
+			InternalSecret: gatewayInternalSecret,
 		},
 		RedisAddr:     redisAddr,
 		RedisPassword: redisPassword,
@@ -116,14 +114,9 @@ func (c *Config) Validate() error {
 		errs = append(errs, "server address cannot be empty")
 	}
 
-	// In production, require auth internal secret
-	if isProduction() && c.Auth.AuthInternalSecret == "" {
-		errs = append(errs, "AUTH_INTERNAL_SECRET required in production")
-	}
-
-	// Auth internal secret must be at least 16 characters if set
-	if c.Auth.AuthInternalSecret != "" && len(c.Auth.AuthInternalSecret) < 16 {
-		errs = append(errs, "AUTH_INTERNAL_SECRET must be at least 16 characters")
+	// Redis is required
+	if c.RedisAddr == "" {
+		errs = append(errs, "REDIS_ADDR is required")
 	}
 
 	// In production, require internal secret

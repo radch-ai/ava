@@ -19,9 +19,9 @@ type AuthMiddleware struct {
 }
 
 // NewAuthMiddleware creates a new authentication middleware.
-func NewAuthMiddleware(authURL, secret string, cache Cache, cacheTTL time.Duration) *AuthMiddleware {
+func NewAuthMiddleware(authURL string, cache Cache, cacheTTL time.Duration) *AuthMiddleware {
 	return &AuthMiddleware{
-		authClient: auth.NewAuthClient(authURL, secret, nil),
+		authClient: auth.NewAuthClient(authURL, nil),
 		cache:      cache,
 		cacheTTL:   cacheTTL,
 	}

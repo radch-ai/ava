@@ -4,34 +4,44 @@ Centralized environment-based configuration loading for the gateway application.
 
 ## Overview
 
+### Load
+
 ```mermaid
 flowchart TB
-    Start([main]) --> LoadCfg["config.Load()"]
-    LoadCfg --> HValidate
-
-    subgraph SGValidate [" "]
-        HValidate["**Validate() → error**"]
-        HValidate --> CheckAddr["check ServerAddr"]
-        CheckAddr --> CheckProd{isProduction?}
-        CheckProd -->|Yes| CheckSecrets["check secrets >= 16 chars"]
-        CheckProd -->|No| CheckURL["validate Auth URL"]
-        CheckSecrets --> CheckURL
-        CheckURL -->|ok| ValidNil["return nil"]
-        CheckURL -->|error| ValidErr["return error"]
-    end
-
-    ValidNil --> Done("Config ready")
-    ValidErr --> Fatal("Fatal Exit")
+    Start([Load]) --> GetAddr["os.Getenv('GATEWAY_ADDR')"]
+    GetAddr --> GetLevel["os.Getenv('GATEWAY_LOG_LEVEL')"]
+    GetLevel --> GetOrigins["os.Getenv('GATEWAY_ALLOWED_ORIGINS')"]
+    GetOrigins --> GetMaxConns["os.Getenv('GATEWAY_MAX_CONNS')"]
+    GetMaxConns --> GetAuthURL["os.Getenv('AUTH_SERVICE_URL')"]
+    GetAuthURL --> ParseTimeout["time.ParseDuration(AUTH_TIMEOUT)"]
+    ParseTimeout -->|error| ErrTimeout["return nil, error"]
+    ParseTimeout -->|ok| GetRedis["os.Getenv('REDIS_ADDR')"]
+    GetRedis --> DoneOk("return &Config{}, nil")
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
-    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
-    class Start,Done,Fatal mainFn
-    class LoadCfg localPkgs
-    class HValidate internalFn
-    class ValidErr errorFlow
+    class Start,DoneOk mainFn
+    class ErrTimeout errorFlow
+```
+
+### Validate
+
+```mermaid
+flowchart TB
+    Start([Validate]) --> CheckAddr["check ServerAddr"]
+    CheckAddr --> CheckProd{isProduction?}
+    CheckProd -->|Yes| CheckSecrets["check secrets >= 16 chars"]
+    CheckProd -->|No| CheckURL["validate Auth URL"]
+    CheckSecrets --> CheckURL
+    CheckURL -->|ok| DoneOk("return nil")
+    CheckURL -->|error| DoneErr("return error")
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,DoneOk mainFn
+    class DoneErr errorFlow
 ```
 
 ## Structs
@@ -52,9 +62,8 @@ flowchart TB
 
 | Struct | Field | Type | Description |
 |--------|-------|------|-------------|
-| `AuthConfig` | `URL` | `string` | Auth service base URL |
+| `AuthConfig` | `URL` | `string` | Zetidal API base URL |
 | | `Timeout` | `time.Duration` | Auth request timeout |
-| | `AuthInternalSecret` | `string` | Secret for calling auth service |
 | | `InternalSecret` | `string` | Gateway's internal secret for /_internal/* |
 
 ## Environment Variables
@@ -66,11 +75,10 @@ flowchart TB
 | `GATEWAY_ALLOWED_ORIGINS` | No | - | Comma-separated CORS allowed origins |
 | `GATEWAY_MAX_CONNS` | No | `0` (unlimited) | Max concurrent WebSocket connections |
 | `GATEWAY_MODEL_CONFIG` | No | `config/models.yaml` | Path to model configuration YAML |
-| `AUTH_SERVICE_URL` | No | `http://localhost:8081` | Auth service URL |
+| `AUTH_SERVICE_URL` | No | `http://localhost:8081` | Zetidal API URL |
 | `AUTH_TIMEOUT` | No | `2s` | Auth request timeout |
-| `AUTH_INTERNAL_SECRET` | Prod* | - | Secret for auth service calls |
 | `INTERNAL_SECRET` | Prod* | - | Gateway internal secret (/_internal/*) |
-| `REDIS_ADDR` | No | - | Redis server address |
+| `REDIS_ADDR` | Yes | - | Redis server address (required) |
 | `REDIS_PASSWORD` | No | - | Redis password |
 | `ENV` | No | - | Production mode flag (set to `production`) |
 | `APP_ENV` | No | - | Alternative production mode flag (set to `prod`) |
@@ -89,20 +97,20 @@ flowchart TB
 
 ## Design Notes
 
-### Auth Service Timeout
+### Zetidal API Timeout
 
 **Q: Why is the default auth timeout 2 seconds?**
 
 | Aspect | Description |
 |--------|-------------|
-| Context | Auth service session validation |
+| Context | Zetidal API session validation |
 | Options considered | 500ms, 1s, 2s, 5s |
 | Rationale | 2s allows for network delays while failing fast on actual issues |
 
 **Current approach is recommended because:**
 - Fast enough for good UX
 - Allows for network latency
-- Fails fast on actual auth service issues
+- Fails fast on actual API issues
 - Configurable via environment variable
 
 ### AllowedOrigins Empty Default
@@ -121,21 +129,21 @@ flowchart TB
 - Development can use default without configuration
 - Production requires explicit configuration
 
-### Redis Optional Configuration
+### Redis Required Configuration
 
-**Q: Why is Redis configuration optional?**
+**Q: Why is Redis required?**
 
 | Aspect | Description |
 |--------|-------------|
-| Context | Redis for caching and rate limiting |
-| Options considered | Required, Optional, Not implemented |
-| Rationale | Allows operation without external dependencies |
+| Context | Redis for session caching, quota management, and rate limiting |
+| Options considered | Required with HA, Optional, Not implemented |
+| Rationale | Essential for production reliability and performance |
 
 **Current approach is recommended because:**
-- Gateway can function without Redis
-- Features that use Redis can degrade gracefully
-- Development doesn't require Redis setup
-- Production can enable Redis for performance
+- Session caching reduces API calls to zetidal
+- Quota management requires persistent state
+- Health checks and circuit breakers need Redis
+- HA deployment ensures no data loss on failures
 
 ### Internal Secret Requirements
 
@@ -182,8 +190,8 @@ make test ./config
 | `github.com/rs/zerolog` | Structured logging |
 
 **File Locations:**
-- [`config/config.go`](../../config/config.go) - Main configuration
-- [`config/auth.go`](../../config/auth.go) - Auth configuration
+- [`config/config.go`](https://github.com/nevaria-ai/gateway/blob/main/config/config.go) - Main configuration
+- [`config/auth.go`](https://github.com/nevaria-ai/gateway/blob/main/config/auth.go) - Auth configuration
 
 ## Related
 

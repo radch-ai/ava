@@ -21,9 +21,9 @@ flowchart TB
     ForwardEvents --> Prompt["agent.Prompt()"]
     Prompt --> MsgLoop
 
-    click GetUserID href "../ctx.md"
-    click GetAgent href "../agent/README.md"
-    click Prompt href "../agent/README.md"
+    click GetUserID href "ctx.md"
+    click GetAgent href "agent/README.md"
+    click Prompt href "agent/README.md"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
@@ -213,8 +213,8 @@ make test ./internal/websocket
 | `internal/llm-proxy` | LLM proxy client |
 
 **File Locations:**
-- [`internal/websocket/handler.go`](../../internal/websocket/handler.go) - WebSocket handler
-- [`internal/websocket/agent_manager.go`](../../internal/websocket/agent_manager.go) - Agent manager
+- [`internal/websocket/handler.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/websocket/handler.go) - WebSocket handler
+- [`internal/websocket/agent_manager.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/websocket/agent_manager.go) - Agent manager
 
 ## Related
 

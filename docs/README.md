@@ -1,4 +1,4 @@
-# Architecture
+# Nevaria Gateway
 
 The Nevaria Gateway is a WebSocket-based AI agent gateway with authentication, intelligent LLM proxy routing, quota management, multi-provider support, and multi-agent storage with memory persistence.
 
@@ -36,36 +36,36 @@ flowchart TB
             Google[Google Client]
         end
 
-        subgraph Storage["Storage Layer"]
+        subgraph StorageLayer["Storage Layer"]
             S3Client[S3 Client]
             Workspace[Workspace Loader]
             Transcript[Transcript Writer]
         end
 
-        subgraph Memory["Memory Layer"]
+        subgraph MemoryLayer["Memory Layer"]
             Mem0Client[Mem0 Client]
             Mem0Tools[Mem0 Tools]
         end
 
-        subgraph Session["Session Layer"]
+        subgraph SessionLayer["Session Layer"]
             SessionMgr[Session Manager]
-            Session[Session State]
+            SessionState[Session State]
         end
 
-        subgraph Node["Node Layer"]
+        subgraph NodeLayer["Node Layer"]
             NodeService[Node Service]
             NodeRegistry[Node Registry]
             NodeExecutor[Node Executor]
         end
 
-        subgraph Internal["Internal Router"]
-            InternalRouter["/_internal/"]
+        subgraph InternalRouter["Internal Router"]
+            InternalHandler["internal-router"]
             CacheInvalid[Cache Invalidation]
         end
     end
 
     subgraph External["External Services"]
-        AuthService[Auth Service]
+        Zetidal[Zetidal API]
         Redis[(Redis)]
         S3[(S3 Storage)]
         Mem0API[(Mem0 API)]
@@ -75,7 +75,7 @@ flowchart TB
     HTTP --> AuthMW
     AuthMW --> WSHandler
 
-    AuthMW -->|Session Validate| AuthService
+    AuthMW -->|Session Validate| Zetidal
     AuthMW -.->|Cache| Redis
 
     WSHandler --> AgentMgr
@@ -84,7 +84,7 @@ flowchart TB
     AgentLoop --> ToolReg
     AgentLoop --> Mem0Tools
 
-    AgentRuntime -->|LLM Call| ProxyHandler
+    AgentRuntime ----->|LLM Call| ProxyHandler
     ProxyHandler --> Router
     ProxyHandler --> Health
     ProxyHandler --> Quota
@@ -93,72 +93,59 @@ flowchart TB
     Router --> Anthropic
     Router --> Google
 
-    Quota --> Redis
-    Health --> Redis
+    Quota ---> Redis
+    Health ---> Redis
 
-    AgentMgr -->|Load Workspace| S3Client
-    AgentMgr -->|Load or Save| Workspace
-    AgentRuntime -->|Write Transcript| Transcript
+    AgentMgr ---->|Load Workspace| S3Client
+    AgentMgr ---->|Load or Save| Workspace
+    AgentRuntime ---->|Write Transcript| Transcript
     AgentRuntime -->|Store Memory| Mem0Client
     AgentRuntime -->|Search Memory| Mem0Client
 
     S3Client --> S3
     Mem0Client --> Mem0API
 
-    SessionMgr --> Session
+    SessionMgr --> SessionState
     AgentMgr --> SessionMgr
 
     NodeService --> NodeRegistry
     NodeService --> NodeExecutor
     NodeService --> AgentMgr
 
-    InternalRouter --> CacheInvalid
+    InternalHandler --> CacheInvalid
     CacheInvalid --> Redis
 ```
 
 ## Package Structure
 
-```mermaid
-flowchart TB
-    Gateway[Gateway]
+```
+cmd/
+└── gateway/        # Application entry point
 
-    Gateway --> CMD[cmd]
-    Gateway --> Config[config/]
-    Gateway --> Internal[internal/]
+config/             # Environment-based configuration
+├── models/         # LLM model definitions
+└── plans/          # Subscription plans
 
-    CMD --> Main[main.go]
-
-    Internal --> Server[server/]
-    Internal --> WebSocket[websocket/]
-    Internal --> Agent[agent/]
-    Internal --> LLM[llm/]
-    Internal --> LLMProxy[llm-proxy/]
-    Internal --> Auth[auth/]
-    Internal --> Billing[billing/]
-    Internal --> Ctx[ctx/]
-    Internal --> Project[project/]
-    Internal --> Storage[storage/]
-    Internal --> Mem0[mem0/]
-    Internal --> Session[session/]
-    Internal --> NodeDir[node/]
-
-    LLMProxy --> PConfig[config/]
-    LLMProxy --> PHealth[health/]
-    LLMProxy --> PModels[models/]
-    LLMProxy --> PQuota[quota/]
-    LLMProxy --> PRouter[router/]
-    LLMProxy --> PUsage[usage/]
-
-    Agent --> ATools[tools/]
-    Agent --> ALoop[loop.go]
-
-    Server --> Middleware[middleware/]
-    Server --> SInternal[internal/]
-    Server --> Cache[redis_cache/]
-
-    ATools --> Mem0Tools[mem0.go]
-    ATools --> FileTools[files.go]
-    ATools --> NodeTools[node.go]
+internal/
+├── server/         # HTTP server, middleware, routing
+├── websocket/      # WebSocket handler, multi-agent routing
+├── agent/          # Agent runtime, state management, events
+│   └── tools/      # Built-in tools (Mem0, files, nodes)
+├── llm/            # Multi-provider LLM client factory
+├── llm-proxy/      # LLM proxy with quota, health, routing
+│   ├── health/     # Circuit breaker, health checks
+│   ├── models/     # Model registry
+│   ├── quota/      # Credit quota management
+│   ├── router/     # Intelligent model routing
+│   └── usage/      # Usage tracking and billing
+├── auth/           # Zetidal API client for session validation
+├── billing/        # RevenueCat webhooks, migrations
+├── ctx/            # Context utilities (userID, agentID)
+├── project/        # Project metadata and constants
+├── storage/        # S3 storage, workspaces, transcripts
+├── mem0/           # Mem0 API client for memory
+├── session/        # Session management with Redis
+└── node/           # Distributed node execution
 ```
 
 ## Component Overview
@@ -173,7 +160,7 @@ flowchart TB
 | [`internal/agent/tools`](internal/agent/tools.md) | Built-in agent tools (Mem0, file operations, node tools) |
 | [`internal/llm/`](internal/llm.md) | LLM client factory for multiple providers |
 | [`internal/llm-proxy/`](internal/llm-proxy/README.md) | LLM proxy with quota, health, routing |
-| [`internal/auth/`](internal/auth.md) | Auth service client for session validation |
+| [`internal/auth/`](internal/auth.md) | Zetidal API client for session validation |
 | [`internal/billing/`](internal/billing.md) | RevenueCat webhooks, credit tracking, migrations |
 | [`internal/ctx/`](internal/ctx.md) | Context utilities for user ID and agent ID propagation |
 | [`internal/project/`](internal/project.md) | Project metadata and constants |
@@ -193,7 +180,7 @@ flowchart TB
 | Agent Tool Loop | LLM stream → Extract tool calls → Execute → Add results → Repeat |
 | Memory Operations | Agent prompts → Mem0 search/store → Context enrichment |
 | Transcript Writing | Turn events → JSONL append to S3 |
-| Session Validation | Cookie extract → Cache check → Auth service call → User ID in context |
+| Session Validation | Cookie extract → Cache check → Zetidal API call → User ID in context |
 | Cache Invalidation | Internal webhook → Delete from Redis |
 | Node Tool Execution | Agent calls node tool → Service routes to node → Node executes → Result returned |
 
@@ -240,7 +227,7 @@ flowchart TB
 - Single-writer pattern for WebSocket writes
 - Redis pipelining for quota operations
 - Circuit breaker to fail fast on unhealthy providers
-- Session caching to reduce auth service calls
+- Session caching to reduce zetidal API calls
 - Agent instances persist beyond WebSocket connections
 
 ## Protocol Notes

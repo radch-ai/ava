@@ -14,11 +14,10 @@ import (
 )
 
 func TestNewAuthClient(t *testing.T) {
-	baseURL := "http://auth-service:8081"
-	secret := "test-secret"
+	baseURL := "http://zetidal:8081"
 	logger := struct{}{} // mock logger
 
-	client := auth.NewAuthClient(baseURL, secret, logger)
+	client := auth.NewAuthClient(baseURL, logger)
 
 	if client == nil {
 		t.Fatal("expected non-nil client")
@@ -28,13 +27,13 @@ func TestNewAuthClient(t *testing.T) {
 
 func TestNewAuthClientDefaults(t *testing.T) {
 	// Test with empty baseURL (should use default)
-	client := auth.NewAuthClient("", "test-secret", nil)
+	client := auth.NewAuthClient("", nil)
 	if client == nil {
 		t.Fatal("expected non-nil client with defaults")
 	}
 
 	// Test with valid baseURL
-	client2 := auth.NewAuthClient("http://custom:8080", "test-secret", nil)
+	client2 := auth.NewAuthClient("http://custom:8080", nil)
 	if client2 == nil {
 		t.Fatal("expected non-nil client with custom URL")
 	}
@@ -43,14 +42,6 @@ func TestNewAuthClientDefaults(t *testing.T) {
 func TestAuthClientValidateSession_Success(t *testing.T) {
 	// Create a test server that simulates successful auth
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify authorization header
-		authHeader := r.Header.Get("Authorization")
-		if authHeader != "Bearer test-secret" {
-			t.Errorf("expected Authorization header 'Bearer test-secret', got '%s'", authHeader)
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
-
 		// Verify session cookie
 		cookie, err := r.Cookie("session")
 		if err != nil {
@@ -82,7 +73,7 @@ func TestAuthClientValidateSession_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := auth.NewAuthClient(server.URL, "test-secret", nil)
+	client := auth.NewAuthClient(server.URL, nil)
 	ctx := context.Background()
 
 	sessionInfo, err := client.ValidateSession(ctx, "valid-session-token")
@@ -112,7 +103,7 @@ func TestAuthClientValidateSession_Unauthorized(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := auth.NewAuthClient(server.URL, "test-secret", nil)
+	client := auth.NewAuthClient(server.URL, nil)
 	ctx := context.Background()
 
 	_, err := client.ValidateSession(ctx, "invalid-token")
@@ -130,7 +121,7 @@ func TestAuthClientValidateSession_Timeout(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := auth.NewAuthClient(server.URL, "test-secret", nil)
+	client := auth.NewAuthClient(server.URL, nil)
 	ctx := context.Background()
 
 	_, err := client.ValidateSession(ctx, "any-token")
@@ -147,7 +138,7 @@ func TestAuthClientValidateSession_ContextCanceled(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := auth.NewAuthClient(server.URL, "test-secret", nil)
+	client := auth.NewAuthClient(server.URL, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Cancel immediately
@@ -167,7 +158,7 @@ func TestAuthClientValidateSession_InvalidJSON(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := auth.NewAuthClient(server.URL, "test-secret", nil)
+	client := auth.NewAuthClient(server.URL, nil)
 	ctx := context.Background()
 
 	_, err := client.ValidateSession(ctx, "valid-session-token")
@@ -187,7 +178,7 @@ func TestAuthClientValidateSession_MissingUserID(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := auth.NewAuthClient(server.URL, "test-secret", nil)
+	client := auth.NewAuthClient(server.URL, nil)
 	ctx := context.Background()
 
 	_, err := client.ValidateSession(ctx, "valid-session-token")
@@ -207,7 +198,7 @@ func TestAuthClientValidateSession_NonAuthenticatedResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := auth.NewAuthClient(server.URL, "test-secret", nil)
+	client := auth.NewAuthClient(server.URL, nil)
 	ctx := context.Background()
 
 	_, err := client.ValidateSession(ctx, "valid-session-token")
@@ -223,7 +214,7 @@ func TestAuthClientValidateSession_ServiceUnavailable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := auth.NewAuthClient(server.URL, "test-secret", nil)
+	client := auth.NewAuthClient(server.URL, nil)
 	ctx := context.Background()
 
 	_, err := client.ValidateSession(ctx, "any-token")
@@ -233,36 +224,9 @@ func TestAuthClientValidateSession_ServiceUnavailable(t *testing.T) {
 	}
 }
 
-func TestAuthClientValidateSession_InvalidSecret(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader != "Bearer correct-secret" {
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	client := auth.NewAuthClient(server.URL, "wrong-secret", nil)
-	ctx := context.Background()
-
-	_, err := client.ValidateSession(ctx, "any-token")
-
-	if !errors.Is(err, auth.ErrAuthUnavailable) {
-		t.Errorf("expected ErrAuthUnavailable for invalid secret, got: %v", err)
-	}
-}
-
 func TestAuthClientValidateSession_SuccessWithoutSetCookie(t *testing.T) {
 	// Test successful validation without sliding expiration
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader != "Bearer test-secret" {
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
-
 		cookie, err := r.Cookie("session")
 		if err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -283,7 +247,7 @@ func TestAuthClientValidateSession_SuccessWithoutSetCookie(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := auth.NewAuthClient(server.URL, "test-secret", nil)
+	client := auth.NewAuthClient(server.URL, nil)
 	ctx := context.Background()
 
 	sessionInfo, err := client.ValidateSession(ctx, "valid-session")
@@ -307,7 +271,7 @@ func TestAuthClientValidateSession_SuccessWithoutSetCookie(t *testing.T) {
 
 func TestAuthClientValidateSession_NetworkError(t *testing.T) {
 	// Create a client with an invalid URL that will cause a network error
-	client := auth.NewAuthClient("http://invalid-host-that-does-not-exist:9999", "test-secret", nil)
+	client := auth.NewAuthClient("http://invalid-host-that-does-not-exist:9999", nil)
 	ctx := context.Background()
 
 	_, err := client.ValidateSession(ctx, "any-token")
@@ -323,7 +287,7 @@ func TestAuthClientValidateSession_UnexpectedStatus(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := auth.NewAuthClient(server.URL, "test-secret", nil)
+	client := auth.NewAuthClient(server.URL, nil)
 	ctx := context.Background()
 
 	_, err := client.ValidateSession(ctx, "any-token")

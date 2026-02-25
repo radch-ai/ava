@@ -115,7 +115,7 @@ make test ./config
 |---------|---------|
 | `gopkg.in/yaml.v3` | YAML parsing |
 
-**File Location:** [`config/models.go`](../../config/models.go)
+**File Location:** [`config/models.go`](https://github.com/nevaria-ai/gateway/blob/main/config/models.go)
 
 ## Related
 

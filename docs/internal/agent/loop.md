@@ -141,7 +141,7 @@ make test ./internal/agent
 | `context` | Context handling |
 | `fmt` | Error formatting |
 
-**File Location:** [`internal/agent/loop.go`](../../internal/agent/loop.go)
+**File Location:** [`internal/agent/loop.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/agent/loop.go)
 
 ## Related
 

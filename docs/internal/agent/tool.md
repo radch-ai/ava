@@ -107,7 +107,7 @@ make test ./internal/agent
 | `fmt` | Error formatting |
 | `time` | Timestamp generation |
 
-**File Location:** [`internal/agent/tool.go`](../../internal/agent/tool.go)
+**File Location:** [`internal/agent/tool.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/agent/tool.go)
 
 ## Related
 

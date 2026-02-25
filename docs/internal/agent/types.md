@@ -183,7 +183,7 @@ make test ./internal/agent
 | `encoding/json` | JSON marshaling |
 | `time` | Timestamp generation |
 
-**File Location:** [`internal/agent/types.go`](../../internal/agent/types.go)
+**File Location:** [`internal/agent/types.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/agent/types.go)
 
 ## Related
 

@@ -75,4 +75,4 @@ No unit tests. Constants are verified at compile time.
 |---------|---------|
 | (none) | Constants only |
 
-**File Location:** [`internal/project/details.go`](../../internal/project/details.go)
+**File Location:** [`internal/project/details.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/project/details.go)

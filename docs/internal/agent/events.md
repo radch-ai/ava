@@ -155,7 +155,7 @@ make test ./internal/agent
 |---------|---------|
 | (none) | Pure type definitions |
 
-**File Location:** [`internal/agent/events.go`](../../internal/agent/events.go)
+**File Location:** [`internal/agent/events.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/agent/events.go)
 
 ## Related
 

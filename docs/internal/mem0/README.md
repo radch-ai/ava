@@ -137,7 +137,7 @@ make test ./internal/mem0
 |---------|---------|
 | `github.com/google/uuid` | UUID generation |
 
-**File Location:** [`internal/mem0/client.go`](../../internal/mem0/client.go)
+**File Location:** [`internal/mem0/client.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/mem0/client.go)
 
 ## Related
 

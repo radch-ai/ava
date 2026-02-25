@@ -17,16 +17,7 @@ flowchart TB
     end
     
     Registry["NewRegistry()"]
-    
-    click Echo href "example.md"
-    click Math href "example.md"
-    click Time href "example.md"
-    click Delay href "example.md"
-    click Files href "files.md"
-    click Mem0 href "mem0.md"
-    click Node href "node.md"
-    click Registry href "registry.md"
-    
+
     Echo --> Registry
     Math --> Registry
     Time --> Registry
@@ -44,11 +35,11 @@ flowchart TB
 
 | File | Description |
 |------|-------------|
-| [`registry.go`](../../internal/agent/tools/registry.go) | Tool registry for registration and lookup |
-| [`example.go`](../../internal/agent/tools/example.go) | Example tools (echo, math, time, delay) |
-| [`files.go`](../../internal/agent/tools/files.go) | Agent workspace file operations |
-| [`mem0.go`](../../internal/agent/tools/mem0.go) | Long-term memory tools |
-| [`node.go`](../../internal/agent/tools/node.go) | Remote node tool integration |
+| [`registry.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/agent/tools/registry.go) | Tool registry for registration and lookup |
+| [`example.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/agent/tools/example.go) | Example tools (echo, math, time, delay) |
+| [`files.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/agent/tools/files.go) | Agent workspace file operations |
+| [`mem0.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/agent/tools/mem0.go) | Long-term memory tools |
+| [`node.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/agent/tools/node.go) | Remote node tool integration |
 
 ## Tool Categories
 
@@ -167,11 +158,11 @@ make test ./internal/agent/tools
 | `internal/node` | Node types |
 
 **File Locations:**
-- [`internal/agent/tools/registry.go`](../../internal/agent/tools/registry.go)
-- [`internal/agent/tools/example.go`](../../internal/agent/tools/example.go)
-- [`internal/agent/tools/files.go`](../../internal/agent/tools/files.go)
-- [`internal/agent/tools/mem0.go`](../../internal/agent/tools/mem0.go)
-- [`internal/agent/tools/node.go`](../../internal/agent/tools/node.go)
+- [`internal/agent/tools/registry.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/agent/tools/registry.go)
+- [`internal/agent/tools/example.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/agent/tools/example.go)
+- [`internal/agent/tools/files.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/agent/tools/files.go)
+- [`internal/agent/tools/mem0.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/agent/tools/mem0.go)
+- [`internal/agent/tools/node.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/agent/tools/node.go)
 
 ## Related
 

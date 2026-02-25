@@ -72,4 +72,4 @@ make test ./internal/agent
 |---------|---------|
 | (none) | Pure type definition |
 
-**File Location:** [`internal/agent/status.go`](../../internal/agent/status.go)
+**File Location:** [`internal/agent/status.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/agent/status.go)

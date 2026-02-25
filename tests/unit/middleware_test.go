@@ -21,10 +21,6 @@ import (
 func TestAuthMiddleware_ValidSession(t *testing.T) {
 	// Mock auth server
 	mockAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify Authorization header
-		auth := r.Header.Get("Authorization")
-		assert.Equal(t, "Bearer test-secret", auth)
-
 		// Verify cookie
 		cookies := r.Cookies()
 		require.Len(t, cookies, 1)
@@ -39,7 +35,7 @@ func TestAuthMiddleware_ValidSession(t *testing.T) {
 	defer mockAuth.Close()
 
 	// Create middleware without cache
-	mw := server.NewAuthMiddleware(mockAuth.URL, "test-secret", nil, 5*time.Minute)
+	mw := server.NewAuthMiddleware(mockAuth.URL, nil, 5*time.Minute)
 
 	// Create a handler that checks context
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -63,7 +59,7 @@ func TestAuthMiddleware_ValidSession(t *testing.T) {
 }
 
 func TestAuthMiddleware_MissingCookie(t *testing.T) {
-	mw := server.NewAuthMiddleware("http://localhost:8081", "test-secret", nil, 5*time.Minute)
+	mw := server.NewAuthMiddleware("http://localhost:8081", nil, 5*time.Minute)
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler should not be called")
@@ -92,7 +88,7 @@ func TestAuthMiddleware_InvalidSession(t *testing.T) {
 	}))
 	defer mockAuth.Close()
 
-	mw := server.NewAuthMiddleware(mockAuth.URL, "test-secret", nil, 5*time.Minute)
+	mw := server.NewAuthMiddleware(mockAuth.URL, nil, 5*time.Minute)
 
 	called := false
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -134,7 +130,7 @@ func TestAuthMiddleware_CacheHit(t *testing.T) {
 		},
 	}
 
-	mw := server.NewAuthMiddleware("http://localhost:8081", "test-secret", mockCache, 5*time.Minute)
+	mw := server.NewAuthMiddleware("http://localhost:8081", mockCache, 5*time.Minute)
 
 	authCalled := false
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -177,7 +173,7 @@ func TestAuthMiddleware_CacheMissThenHit(t *testing.T) {
 	}))
 	defer mockAuth.Close()
 
-	mw := server.NewAuthMiddleware(mockAuth.URL, "test-secret", mockCache, 5*time.Minute)
+	mw := server.NewAuthMiddleware(mockAuth.URL, mockCache, 5*time.Minute)
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -202,7 +198,7 @@ func TestAuthMiddleware_ServiceUnavailable(t *testing.T) {
 	}))
 	defer mockAuth.Close()
 
-	mw := server.NewAuthMiddleware(mockAuth.URL, "test-secret", nil, 5*time.Minute)
+	mw := server.NewAuthMiddleware(mockAuth.URL, nil, 5*time.Minute)
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler should not be called")
@@ -229,7 +225,7 @@ func TestAuthMiddleware_SetCookieForwarding(t *testing.T) {
 	}))
 	defer mockAuth.Close()
 
-	mw := server.NewAuthMiddleware(mockAuth.URL, "test-secret", nil, 5*time.Minute)
+	mw := server.NewAuthMiddleware(mockAuth.URL, nil, 5*time.Minute)
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -250,7 +246,7 @@ func TestAuthMiddleware_SetCookieForwarding(t *testing.T) {
 }
 
 func TestAuthMiddleware_EmptyCookieValue(t *testing.T) {
-	mw := server.NewAuthMiddleware("http://localhost:8081", "test-secret", nil, 5*time.Minute)
+	mw := server.NewAuthMiddleware("http://localhost:8081", nil, 5*time.Minute)
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler should not be called")

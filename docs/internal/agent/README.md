@@ -191,7 +191,7 @@ make test ./internal/agent
 | `github.com/google/uuid` | UUID generation |
 
 **File Locations:**
-- [`internal/agent/agent.go`](../../internal/agent/agent.go) - Main agent implementation
+- [`internal/agent/agent.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/agent/agent.go) - Main agent implementation
 
 ## Subpackages
 

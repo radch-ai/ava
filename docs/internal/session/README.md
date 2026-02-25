@@ -6,26 +6,24 @@ Session management with timeout support and activity tracking.
 
 ```mermaid
 flowchart TB
-    Start("Request") --> GetOrCreate["GetOrCreateSession(userID, agentID)"]
-    GetOrCreate --> SearchExisting{active session exists?}
-    SearchExisting -->|yes| UpdateActivity["UpdateActivity()"]
-    SearchExisting -->|no| CreateNew["NewSession()"]
+    Start("Request") --> GetOrCreate["GetOrCreateSession"]
+    GetOrCreate --> SearchExisting{"active session?"}
+    SearchExisting -->|yes| UpdateActivity["UpdateActivity"]
+    SearchExisting -->|no| CreateNew["NewSession"]
     CreateNew --> StoreMap["store in map"]
     UpdateActivity --> Return("return Session")
     StoreMap --> Return
-
-    subgraph Cleanup ["Background Cleanup"]
-        Ticker["time.Ticker"] --> CleanupExpired["CleanupExpired()"]
-        CleanupExpired --> CheckExpiry{session.IsExpired()?}
-        CheckExpiry -->|yes| DeleteSession["delete from map"]
-        CheckExpiry -->|no| Skip["skip"]
-    end
+    Return -.-> CleanupStart["Background Cleanup"]
+    CleanupStart --> CleanupExpired["CleanupExpired"]
+    CleanupExpired --> CheckExpiry{"IsExpired?"}
+    CheckExpiry -->|yes| DeleteSession["delete from map"]
+    CheckExpiry -->|no| Skip["skip"]
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
 
     class Start,Return mainFn
-    class GetOrCreate,SearchExisting,UpdateActivity,CreateNew,StoreMap,Ticker,CleanupExpired,CheckExpiry,DeleteSession,Skip internalFn
+    class GetOrCreate,SearchExisting,UpdateActivity,CreateNew,StoreMap,CleanupStart,CleanupExpired,CheckExpiry,DeleteSession,Skip internalFn
 ```
 
 ## Structs
@@ -148,8 +146,8 @@ make test ./internal/session
 | `github.com/rs/zerolog` | Logging |
 
 **File Locations:**
-- [`internal/session/manager.go`](../../internal/session/manager.go) - Session manager
-- [`internal/session/session.go`](../../internal/session/session.go) - Session type
+- [`internal/session/manager.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/session/manager.go) - Session manager
+- [`internal/session/session.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/session/session.go) - Session type
 
 ## Related
 
