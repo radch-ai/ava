@@ -4,7 +4,7 @@ import (
 	"sync"
 
 	"github.com/nevaria-ai/gateway/internal/agent"
-	"github.com/nevaria-ai/llm-proxy-sdk/pkg/handler"
+	llmproxy "github.com/nevaria-ai/llm-proxy-sdk"
 	"github.com/rs/zerolog"
 )
 
@@ -16,7 +16,7 @@ type AgentKey struct {
 
 // AgentManagerOptions configures a new AgentManager.
 type AgentManagerOptions struct {
-	LLMProxyHandler *handler.Handler
+	LLMProxyHandler *llmproxy.Handler
 }
 
 // AgentManager manages per-user agents with thread-safe access.
@@ -25,12 +25,12 @@ type AgentManager struct {
 	mu       sync.RWMutex
 	agents   map[AgentKey]*agent.Agent
 	logger   zerolog.Logger
-	llmProxy *handler.Handler
+	llmProxy *llmproxy.Handler
 }
 
 // NewAgentManager creates a new AgentManager.
 func NewAgentManager(logger zerolog.Logger, opts *AgentManagerOptions) *AgentManager {
-	var llmProxy *handler.Handler
+	var llmProxy *llmproxy.Handler
 	if opts != nil {
 		llmProxy = opts.LLMProxyHandler
 	}

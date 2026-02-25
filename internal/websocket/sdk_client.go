@@ -4,18 +4,18 @@ import (
 	"context"
 
 	"github.com/nevaria-ai/gateway/internal/agent"
-	"github.com/nevaria-ai/llm-proxy-sdk/pkg/handler"
+	llmproxy "github.com/nevaria-ai/llm-proxy-sdk"
 	"github.com/nevaria-ai/llm-proxy-sdk/pkg/types"
 )
 
 // SDKClient implements agent.LLMClient using the SDK handler.
 type SDKClient struct {
-	handler *handler.Handler
+	handler *llmproxy.Handler
 	userID  string
 }
 
 // NewSDKClient creates a new SDK client for a specific user.
-func NewSDKClient(handler *handler.Handler, userID string) *SDKClient {
+func NewSDKClient(handler *llmproxy.Handler, userID string) *SDKClient {
 	return &SDKClient{
 		handler: handler,
 		userID:  userID,
@@ -48,7 +48,7 @@ func (c *SDKClient) Stream(ctx context.Context, messages []agent.AgentMessage, t
 	}
 
 	// Build SDK proxy request
-	req := handler.ProxyRequest{
+	req := llmproxy.ProxyRequest{
 		UserID:    c.userID,
 		SessionID: c.userID + ":session",
 		Query:     query,
