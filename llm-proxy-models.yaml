@@ -1,0 +1,83 @@
+# LLM Model Configuration
+# This file defines all available models with their pricing and capabilities
+
+models:
+  # OpenAI Models
+  gpt-4o:
+    provider: openai
+    input_cost_per_million: 2.50
+    output_cost_per_million: 10.00
+    max_tokens: 128000
+    tier: premium
+
+  gpt-4o-mini:
+    provider: openai
+    input_cost_per_million: 0.15
+    output_cost_per_million: 0.60
+    max_tokens: 128000
+    tier: economy
+
+  o1-preview:
+    provider: openai
+    input_cost_per_million: 15.00
+    output_cost_per_million: 60.00
+    max_tokens: 128000
+    tier: ultra
+
+  o1-mini:
+    provider: openai
+    input_cost_per_million: 3.00
+    output_cost_per_million: 12.00
+    max_tokens: 128000
+    tier: premium
+
+  # Anthropic Models
+  claude-3-5-sonnet:
+    provider: anthropic
+    input_cost_per_million: 3.00
+    output_cost_per_million: 15.00
+    max_tokens: 200000
+    tier: premium
+
+  claude-3-5-haiku:
+    provider: anthropic
+    input_cost_per_million: 0.80
+    output_cost_per_million: 4.00
+    max_tokens: 200000
+    tier: economy
+
+  claude-3-opus:
+    provider: anthropic
+    input_cost_per_million: 15.00
+    output_cost_per_million: 75.00
+    max_tokens: 200000
+    tier: ultra
+
+  # Google Models
+  gemini-2.0-flash:
+    provider: google
+    input_cost_per_million: 0.075
+    output_cost_per_million: 0.30
+    max_tokens: 1000000
+    tier: economy
+
+  gemini-2.0-flash-thinking:
+    provider: google
+    input_cost_per_million: 0.075
+    output_cost_per_million: 0.30
+    max_tokens: 1000000
+    tier: economy
+
+  gemini-2.5-pro:
+    provider: google
+    input_cost_per_million: 1.25
+    output_cost_per_million: 9.95
+    max_tokens: 1000000
+    tier: premium
+
+# Router configuration
+# The router model is used for intelligent model selection based on user context
+router:
+  model: "gpt-4o-mini"  # Must be registered in models section above
+  timeout: 5s
+  max_retries: 2
