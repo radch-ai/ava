@@ -12,13 +12,13 @@ flowchart TB
     AddCookie --> DoReq["http.Client.Do(req)"]
     DoReq -->|error| CheckErr{context error?}
     CheckErr -->|canceled| ErrCanceled["return ErrContextCanceled"]
-    CheckErr -->|timeout| ErrUnavailable["return ErrAuthUnavailable"]
-    CheckErr -->|other| ErrOther["return ErrAuthUnavailable"]
+    CheckErr -->|timeout| ErrUnavailable["return ErrZetidalUnavailable"]
+    CheckErr -->|other| ErrOther["return ErrZetidalUnavailable"]
     DoReq -->|ok| CheckStatus{status code?}
     CheckStatus -->|200| DecodeResp["json.Decode(response)"]
     CheckStatus -->|401| ErrInvalid["return ErrSessionInvalid"]
-    CheckStatus -->|503| ErrUnavailable2["return ErrAuthUnavailable"]
-    CheckStatus -->|other| ErrUnexpected["return ErrAuthUnavailable"]
+    CheckStatus -->|503| ErrUnavailable2["return ErrZetidalUnavailable"]
+    CheckStatus -->|other| ErrUnexpected["return ErrZetidalUnavailable"]
     DecodeResp --> CheckAuth{authenticated?}
     CheckAuth -->|no| ErrInvalid2["return ErrSessionInvalid"]
     CheckAuth -->|yes| ExtractCookie["extract Set-Cookie"]
@@ -37,8 +37,7 @@ flowchart TB
 
 | Constant | Type | Value | Description |
 |----------|------|-------|-------------|
-| `defaultAuthURL` | string | `http://localhost:8081` | Default zetidal API URL |
-| `defaultTimeout` | Duration | `2s` | Default request timeout |
+| `defaultZetidalURL` | string | `http://localhost:8081` | Default zetidal API URL |
 | `sessionCookieName` | string | `session` | Session cookie name |
 
 ## Structs
@@ -65,7 +64,7 @@ flowchart TB
 |------------|---------|----------|
 | `ErrSessionInvalid` | 401 response | Session not valid |
 | `ErrSessionExpired` | (unused) | Session has expired |
-| `ErrAuthUnavailable` | Network/503 error | Zetidal API unreachable |
+| `ErrZetidalUnavailable` | Network/503 error | Zetidal API unreachable |
 | `ErrInvalidResponse` | JSON decode error | Malformed response |
 | `ErrContextCanceled` | Context canceled | Request cancelled |
 
@@ -96,7 +95,7 @@ flowchart TB
 | `TestNewAuthClient` | Client creation with defaults |
 | `TestValidateSession_Success` | Successful validation |
 | `TestValidateSession_InvalidSession` | 401 response handling |
-| `TestValidateSession_AuthUnavailable` | 503 response handling |
+| `TestValidateSession_ZetidalUnavailable` | 503 response handling |
 | `TestValidateSession_Timeout` | Request timeout |
 | `TestValidateSession_ContextCanceled` | Context cancellation |
 
@@ -116,4 +115,4 @@ make test ./internal/auth
 ## Related
 
 - [Server Middleware](../server/README.md) - Auth middleware usage
-- [Config Auth](../../config/README.md) - Auth configuration
+- [Config](../../config/README.md) - Zetidal configuration

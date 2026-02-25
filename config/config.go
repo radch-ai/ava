@@ -7,7 +7,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // A Config holds the application configuration.
@@ -67,18 +66,8 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("invalid GATEWAY_MAX_CONNS: must be non-negative")
 	}
 
-	// Load auth configuration
-	authURL := getEnv("AUTH_SERVICE_URL", "http://localhost:8081")
-
-	authTimeout := 2 * time.Second
-	authTimeoutStr := os.Getenv("AUTH_TIMEOUT")
-	if authTimeoutStr != "" {
-		var err error
-		authTimeout, err = time.ParseDuration(authTimeoutStr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid AUTH_TIMEOUT: %q", authTimeoutStr)
-		}
-	}
+	// Load zetidal configuration
+	zetidalURL := getEnv("ZETIDAL_URL", "http://localhost:8081")
 
 	// Redis configuration (required)
 	redisAddr := os.Getenv("REDIS_ADDR")
@@ -90,8 +79,7 @@ func Load() (*Config, error) {
 		AllowedOrigins: origins,
 		MaxConns:       maxConns,
 		Auth: AuthConfig{
-			URL:     authURL,
-			Timeout: authTimeout,
+			URL: zetidalURL,
 		},
 		RedisAddr:     redisAddr,
 		RedisPassword: redisPassword,
@@ -111,11 +99,11 @@ func (c *Config) Validate() error {
 		errs = append(errs, "REDIS_ADDR is required")
 	}
 
-	// Validate auth URL format - must have http or https scheme
+	// Validate zetidal URL format - must have http or https scheme
 	if c.Auth.URL != "" {
 		parsedURL, err := url.Parse(c.Auth.URL)
 		if err != nil || parsedURL.Scheme == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
-			errs = append(errs, "AUTH_SERVICE_URL must be a valid URL with http or https scheme")
+			errs = append(errs, "ZETIDAL_URL must be a valid URL with http or https scheme")
 		}
 	}
 

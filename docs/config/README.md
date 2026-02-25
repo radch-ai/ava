@@ -12,17 +12,13 @@ flowchart TB
     GetAddr --> GetLevel["os.Getenv('GATEWAY_LOG_LEVEL')"]
     GetLevel --> GetOrigins["os.Getenv('GATEWAY_ALLOWED_ORIGINS')"]
     GetOrigins --> GetMaxConns["os.Getenv('GATEWAY_MAX_CONNS')"]
-    GetMaxConns --> GetAuthURL["os.Getenv('AUTH_SERVICE_URL')"]
-    GetAuthURL --> ParseTimeout["time.ParseDuration(AUTH_TIMEOUT)"]
-    ParseTimeout -->|error| ErrTimeout["return nil, error"]
-    ParseTimeout -->|ok| GetRedis["os.Getenv('REDIS_ADDR')"]
+    GetMaxConns --> GetZetidalURL["os.Getenv('ZETIDAL_URL')"]
+    GetZetidalURL --> GetRedis["os.Getenv('REDIS_ADDR')"]
     GetRedis --> DoneOk("return &Config{}, nil")
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
     class Start,DoneOk mainFn
-    class ErrTimeout errorFlow
 ```
 
 ### Validate
@@ -31,7 +27,7 @@ flowchart TB
 flowchart TB
     Start([Validate]) --> CheckAddr["check ServerAddr"]
     CheckAddr --> CheckRedis["check RedisAddr"]
-    CheckRedis --> CheckURL["validate Auth URL"]
+    CheckRedis --> CheckURL["validate Zetidal URL"]
     CheckURL -->|ok| DoneOk("return nil")
     CheckURL -->|error| DoneErr("return error")
 
@@ -58,10 +54,11 @@ flowchart TB
 
 ### AuthConfig
 
+Defined in [`config/auth.go`](https://github.com/nevaria-ai/gateway/blob/main/config/auth.go).
+
 | Struct | Field | Type | Description |
 |--------|-------|------|-------------|
 | `AuthConfig` | `URL` | `string` | Zetidal API base URL |
-| | `Timeout` | `time.Duration` | Auth request timeout |
 
 ## Environment Variables
 
@@ -72,8 +69,7 @@ flowchart TB
 | `GATEWAY_ALLOWED_ORIGINS` | No | - | Comma-separated CORS allowed origins |
 | `GATEWAY_MAX_CONNS` | No | `0` (unlimited) | Max concurrent WebSocket connections |
 | `GATEWAY_MODEL_CONFIG` | No | `config/models.yaml` | Path to model configuration YAML |
-| `AUTH_SERVICE_URL` | No | `http://localhost:8081` | Zetidal API URL |
-| `AUTH_TIMEOUT` | No | `2s` | Auth request timeout |
+| `ZETIDAL_URL` | No | `http://localhost:8081` | Zetidal API URL for session validation |
 | `REDIS_ADDR` | Yes | - | Redis server address (required) |
 | `REDIS_PASSWORD` | No | - | Redis password |
 | `ENV` | No | - | Production mode flag (set to `production`) |
@@ -81,32 +77,7 @@ flowchart TB
 
 \* Required only when `ENV=production` or `APP_ENV=prod`
 
-## Error Handling
-
-| Error Type | Handler | Exit Code / Behavior |
-|------------|---------|---------------------|
-| Redis not configured | Returns error from `Validate()` | Caller handles (typically fatal) |
-| Invalid `GATEWAY_ADDR` | Returns error from `Validate()` | Caller handles (typically fatal) |
-| Invalid `AUTH_SERVICE_URL` | Returns error from `Validate()` | Caller handles (typically fatal) |
-| Invalid `AUTH_TIMEOUT` | Returns error from `Load()` | Caller handles (typically fatal) |
-
 ## Design Notes
-
-### Zetidal API Timeout
-
-**Q: Why is the default auth timeout 2 seconds?**
-
-| Aspect | Description |
-|--------|-------------|
-| Context | Zetidal API session validation |
-| Options considered | 500ms, 1s, 2s, 5s |
-| Rationale | 2s allows for network delays while failing fast on actual issues |
-
-**Current approach is recommended because:**
-- Fast enough for good UX
-- Allows for network latency
-- Fails fast on actual API issues
-- Configurable via environment variable
 
 ### AllowedOrigins Empty Default
 
@@ -140,20 +111,36 @@ flowchart TB
 - Health checks and circuit breakers need Redis
 - HA deployment ensures no data loss on failures
 
+### Zetidal Session Validation
+
+**Q: Why no configurable timeout for zetidal API?**
+
+| Aspect | Description |
+|--------|-------------|
+| Context | Internal service-to-service communication |
+| Options considered | Configurable timeout, Default timeout only |
+| Rationale | Both services are internal, let zetidal control its own timeouts |
+
+**Current approach is recommended because:**
+- Gateway and zetidal are both internal services
+- Zetidal manages its own request lifecycle
+- Removes unnecessary configuration complexity
+- Simpler operational model
+
 ## Test Coverage
 
 ### Unit Tests (`config_test.go`)
 
 | Test Suite | Coverage |
 |------------|----------|
-| `TestLoad` | Default configuration loading |
-| `TestLoad_FromEnv` | Environment variable override |
-| `TestLoad_InvalidTimeout` | Invalid timeout duration handling |
-| `TestValidate_ServerAddress` | Server address validation |
-| `TestValidate_AuthURL` | Auth URL format validation |
-| `TestNewLogger` | Logger creation for different environments |
-| `TestParseLogLevel` | Log level parsing |
-| `TestIsProduction` | Production detection |
+| `TestLoadFromEnv` | Environment variable override |
+| `TestDefaultValues` | Default configuration loading |
+| `TestValidate` | Server address validation |
+| `TestLoadAllowedOrigins` | CORS origins parsing |
+| `TestLoadMaxConns` | Max connections validation |
+| `TestValidateValidConfig` | Full config validation |
+| `TestZetidalConfigDefaults` | Zetidal URL defaults |
+| `TestZetidalConfigFromEnv` | Zetidal URL from env |
 
 **Running:**
 ```bash
@@ -168,7 +155,7 @@ make test ./config
 
 **File Locations:**
 - [`config/config.go`](https://github.com/nevaria-ai/gateway/blob/main/config/config.go) - Main configuration
-- [`config/auth.go`](https://github.com/nevaria-ai/gateway/blob/main/config/auth.go) - Auth configuration
+- [`config/auth.go`](https://github.com/nevaria-ai/gateway/blob/main/config/auth.go) - Zetidal configuration
 
 ## Related
 

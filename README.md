@@ -27,8 +27,7 @@ All configuration is via environment variables.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AUTH_SERVICE_URL` | `http://localhost:8081` | Zetidal API URL for session validation |
-| `AUTH_TIMEOUT` | `2s` | Auth request timeout |
+| `ZETIDAL_URL` | `http://localhost:8081` | Zetidal API URL for session validation |
 
 ### Redis (Required)
 
@@ -54,7 +53,7 @@ export GATEWAY_LOG_LEVEL="info"
 export GATEWAY_ALLOWED_ORIGINS="https://app.example.com"
 export GATEWAY_MAX_CONNS="10000"
 
-export AUTH_SERVICE_URL="http://zetidal:8081"
+export ZETIDAL_URL="http://zetidal:8081"
 
 export REDIS_ADDR="redis:6379"
 export OPENAI_API_KEY="sk-..."

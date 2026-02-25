@@ -1,12 +1,7 @@
 package config
 
-import "time"
-
-// AuthConfig contains authentication configuration.
+// AuthConfig contains zetidal API configuration for session validation.
 type AuthConfig struct {
 	// URL is the base URL of the zetidal API for session validation.
-	URL string `env:"AUTH_SERVICE_URL" envDefault:"http://localhost:8081"`
-
-	// Timeout is the timeout for auth requests.
-	Timeout time.Duration `env:"AUTH_TIMEOUT" envDefault:"2s"`
+	URL string `env:"ZETIDAL_URL" envDefault:"http://localhost:8081"`
 }

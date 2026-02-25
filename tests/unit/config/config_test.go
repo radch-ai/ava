@@ -3,7 +3,6 @@ package unit
 import (
 	"os"
 	"testing"
-	"time"
 
 	"github.com/nevaria-ai/gateway/config"
 )
@@ -202,10 +201,9 @@ func TestValidateValidConfig(t *testing.T) {
 	}
 }
 
-func TestAuthConfigDefaults(t *testing.T) {
-	// Clear auth-related env vars
-	_ = os.Unsetenv("AUTH_SERVICE_URL")
-	_ = os.Unsetenv("AUTH_TIMEOUT")
+func TestZetidalConfigDefaults(t *testing.T) {
+	// Clear zetidal-related env vars
+	_ = os.Unsetenv("ZETIDAL_URL")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -213,20 +211,14 @@ func TestAuthConfigDefaults(t *testing.T) {
 	}
 
 	if cfg.Auth.URL != "http://localhost:8081" {
-		t.Errorf("expected auth URL http://localhost:8081, got %s", cfg.Auth.URL)
-	}
-
-	if cfg.Auth.Timeout != 2*time.Second {
-		t.Errorf("expected auth timeout 2s, got %v", cfg.Auth.Timeout)
+		t.Errorf("expected zetidal URL http://localhost:8081, got %s", cfg.Auth.URL)
 	}
 }
 
-func TestAuthConfigFromEnv(t *testing.T) {
-	_ = os.Setenv("AUTH_SERVICE_URL", "http://zetidal:9090")
-	_ = os.Setenv("AUTH_TIMEOUT", "5s")
+func TestZetidalConfigFromEnv(t *testing.T) {
+	_ = os.Setenv("ZETIDAL_URL", "http://zetidal:9090")
 	defer func() {
-		_ = os.Unsetenv("AUTH_SERVICE_URL")
-		_ = os.Unsetenv("AUTH_TIMEOUT")
+		_ = os.Unsetenv("ZETIDAL_URL")
 	}()
 
 	cfg, err := config.Load()
@@ -235,10 +227,6 @@ func TestAuthConfigFromEnv(t *testing.T) {
 	}
 
 	if cfg.Auth.URL != "http://zetidal:9090" {
-		t.Errorf("expected auth URL http://zetidal:9090, got %s", cfg.Auth.URL)
-	}
-
-	if cfg.Auth.Timeout != 5*time.Second {
-		t.Errorf("expected auth timeout 5s, got %v", cfg.Auth.Timeout)
+		t.Errorf("expected zetidal URL http://zetidal:9090, got %s", cfg.Auth.URL)
 	}
 }

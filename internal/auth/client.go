@@ -12,16 +12,15 @@ import (
 
 // Errors returned by the auth client.
 var (
-	ErrSessionInvalid  = errors.New("session invalid")
-	ErrSessionExpired  = errors.New("session expired")
-	ErrAuthUnavailable = errors.New("zetidal API unavailable")
-	ErrInvalidResponse = errors.New("invalid response from zetidal API")
-	ErrContextCanceled = errors.New("context canceled")
+	ErrSessionInvalid     = errors.New("session invalid")
+	ErrSessionExpired     = errors.New("session expired")
+	ErrZetidalUnavailable = errors.New("zetidal API unavailable")
+	ErrInvalidResponse    = errors.New("invalid response from zetidal API")
+	ErrContextCanceled    = errors.New("context canceled")
 )
 
 const (
-	defaultAuthURL    = "http://localhost:8081"
-	defaultTimeout    = 2 * time.Second
+	defaultZetidalURL = "http://localhost:8081"
 	sessionCookieName = "session"
 )
 
@@ -44,15 +43,13 @@ type Client struct {
 // NewAuthClient creates a new zetidal API client.
 func NewAuthClient(baseURL string, logger interface{}) *Client {
 	if baseURL == "" {
-		baseURL = defaultAuthURL
+		baseURL = defaultZetidalURL
 	}
 
 	return &Client{
 		baseURL: baseURL,
-		Client: &http.Client{
-			Timeout: defaultTimeout,
-		},
-		logger: logger,
+		Client:  &http.Client{}, // No timeout - internal service communication
+		logger:  logger,
 	}
 }
 
@@ -62,13 +59,13 @@ func (c *Client) ValidateSession(ctx context.Context, sessionToken string) (*Ses
 	// Build request URL
 	reqURL, err := url.Parse(c.baseURL + "/auth/session")
 	if err != nil {
-		return nil, fmt.Errorf("%w: invalid zetidal URL: %w", ErrAuthUnavailable, err)
+		return nil, fmt.Errorf("%w: invalid zetidal URL: %w", ErrZetidalUnavailable, err)
 	}
 
 	// Create request with context
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to create request: %w", ErrAuthUnavailable, err)
+		return nil, fmt.Errorf("%w: failed to create request: %w", ErrZetidalUnavailable, err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -86,9 +83,9 @@ func (c *Client) ValidateSession(ctx context.Context, sessionToken string) (*Ses
 			return nil, fmt.Errorf("%w: %w", ErrContextCanceled, err)
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, fmt.Errorf("%w: request timeout", ErrAuthUnavailable)
+			return nil, fmt.Errorf("%w: request timeout", ErrZetidalUnavailable)
 		}
-		return nil, fmt.Errorf("%w: %w", ErrAuthUnavailable, err)
+		return nil, fmt.Errorf("%w: %w", ErrZetidalUnavailable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -108,7 +105,7 @@ func (c *Client) ValidateSession(ctx context.Context, sessionToken string) (*Ses
 			return nil, ErrSessionInvalid
 		}
 
-		// Capture session cookie for sliding expiration (auth service may extend session)
+		// Capture session cookie for sliding expiration (zetidal may extend session)
 		// Gateway must forward this back to the browser
 		var setCookie *http.Cookie
 		for _, cookie := range resp.Cookies() {
@@ -133,9 +130,9 @@ func (c *Client) ValidateSession(ctx context.Context, sessionToken string) (*Ses
 		return nil, ErrSessionInvalid
 
 	case http.StatusServiceUnavailable:
-		return nil, ErrAuthUnavailable
+		return nil, ErrZetidalUnavailable
 
 	default:
-		return nil, fmt.Errorf("%w: unexpected status %d", ErrAuthUnavailable, resp.StatusCode)
+		return nil, fmt.Errorf("%w: unexpected status %d", ErrZetidalUnavailable, resp.StatusCode)
 	}
 }

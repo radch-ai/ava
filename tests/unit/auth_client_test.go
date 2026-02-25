@@ -114,7 +114,7 @@ func TestAuthClientValidateSession_Unauthorized(t *testing.T) {
 }
 
 func TestAuthClientValidateSession_Timeout(t *testing.T) {
-	// Create a server that delays longer than the client timeout
+	// Create a server that delays longer than the context deadline
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(3 * time.Second)
 		w.WriteHeader(http.StatusOK)
@@ -122,12 +122,14 @@ func TestAuthClientValidateSession_Timeout(t *testing.T) {
 	defer server.Close()
 
 	client := auth.NewAuthClient(server.URL, nil)
-	ctx := context.Background()
+	// Use context with deadline since client no longer has default timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
 
 	_, err := client.ValidateSession(ctx, "any-token")
 
-	if !errors.Is(err, auth.ErrAuthUnavailable) {
-		t.Errorf("expected ErrAuthUnavailable for timeout, got: %v", err)
+	if !errors.Is(err, auth.ErrZetidalUnavailable) {
+		t.Errorf("expected ErrZetidalUnavailable for timeout, got: %v", err)
 	}
 }
 
@@ -219,7 +221,7 @@ func TestAuthClientValidateSession_ServiceUnavailable(t *testing.T) {
 
 	_, err := client.ValidateSession(ctx, "any-token")
 
-	if !errors.Is(err, auth.ErrAuthUnavailable) {
+	if !errors.Is(err, auth.ErrZetidalUnavailable) {
 		t.Errorf("expected ErrAuthUnavailable for 503, got: %v", err)
 	}
 }
@@ -276,7 +278,7 @@ func TestAuthClientValidateSession_NetworkError(t *testing.T) {
 
 	_, err := client.ValidateSession(ctx, "any-token")
 
-	if !errors.Is(err, auth.ErrAuthUnavailable) {
+	if !errors.Is(err, auth.ErrZetidalUnavailable) {
 		t.Errorf("expected ErrAuthUnavailable for network error, got: %v", err)
 	}
 }
@@ -292,7 +294,7 @@ func TestAuthClientValidateSession_UnexpectedStatus(t *testing.T) {
 
 	_, err := client.ValidateSession(ctx, "any-token")
 
-	if !errors.Is(err, auth.ErrAuthUnavailable) {
+	if !errors.Is(err, auth.ErrZetidalUnavailable) {
 		t.Errorf("expected ErrAuthUnavailable for unexpected status, got: %v", err)
 	}
 
