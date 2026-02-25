@@ -111,15 +111,250 @@ type Client interface {
 
 ## Functions
 
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `NewMockClient` | `() *MockClient` | Creates mock client |
-| `NewAPIClient` | `(baseURL, apiKey string) *APIClient` | Creates API client |
-| `Add` | `(ctx, userID, content, runID) error` | Stores memory |
-| `Search` | `(ctx, userID, query) ([]string, error)` | Searches long-term memory |
-| `SearchInSession` | `(ctx, userID, runID, query) ([]string, error)` | Searches session memory |
-| `CreateSession` | `(ctx, userID) (string, error)` | Creates session |
-| `DeleteSession` | `(ctx, userID, runID) error` | Deletes session memories |
+### NewMockClient
+
+```mermaid
+flowchart TB
+    Start(["NewMockClient()"]) --> MakeMemories["make(map[string]*Memory) → memories"]
+    MakeMemories --> MakeByUser["make(map[string][]*Memory) → byUser"]
+    MakeByUser --> MakeByRun["make(map[string][]*Memory) → byRun"]
+
+    subgraph SGCreateClient [" "]
+        MakeByRun --> CreateClient["&MockClient{memories, byUser, byRun} → c"]
+        CreateClient --> Done(["return c"])
+    end
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+
+    class Start,Done mainFn
+    class CreateClient internalFn
+```
+
+### MockClient.Add
+
+```mermaid
+flowchart TB
+    Start(["Add(ctx, userID, content, runID)"]) --> Lock["m.mu.Lock()"]
+    Lock --> NewUUID["uuid.New().String() → id"]
+
+    subgraph SGCreateMemory [" "]
+        NewUUID --> CreateMemory["&Memory{id, userID, runID, content} → memory"]
+        CreateMemory --> StoreMemory["m.memories[id] = memory"]
+    end
+
+    StoreMemory --> AppendUser["m.byUser[userID] = append(m.byUser[userID], memory)"]
+    AppendUser --> CheckRunID{runID?}
+    CheckRunID -->|yes| AppendRun["m.byRun[runID] = append(m.byRun[runID], memory)"]
+    CheckRunID -->|no| Unlock
+    AppendRun --> Unlock["m.mu.Unlock()"]
+    Unlock --> Return(["return nil"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+
+    class Start,Return mainFn
+    class CreateMemory,StoreMemory internalFn
+```
+
+### MockClient.Search
+
+```mermaid
+flowchart TB
+    Start(["Search"]) --> RLock["m.mu.RLock()"]
+    RLock --> GetByUser["m.byUser[userID] → userMemories"]
+    GetByUser --> CheckExists{exists?}
+    CheckExists -->|no| RUnlock["m.mu.RUnlock()"]
+    RUnlock --> ReturnEmpty(["return []string{}, nil"])
+    CheckExists -->|yes| MakeResults["make([]string, 0) → results"]
+    MakeResults --> ToLower["strings.ToLower(query) → queryLower"]
+    ToLower --> LoopMemories["for userMemories"]
+
+    subgraph SGLoopMemories1 [" "]
+        LoopMemories --> GetMemory["mem := range"]
+        GetMemory --> CheckRunID{mem.RunID?}
+        CheckRunID -->|set| NextMemory["continue"]
+        CheckRunID -->|empty| CheckContains{contains?}
+        CheckContains -->|yes| AppendResults["results = append(results, mem.Content)"]
+        CheckContains -->|no| NextMemory
+        AppendResults --> NextMemory
+        NextMemory --> LoopMemories
+    end
+
+    LoopMemories -->|done| RUnlock2["m.mu.RUnlock()"]
+    RUnlock2 --> ReturnResults(["return results, nil"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+
+    class Start,ReturnEmpty,ReturnResults mainFn
+    class LoopMemories,GetMemory internalFn
+```
+
+### MockClient.SearchInSession
+
+```mermaid
+flowchart TB
+    Start(["SearchInSession"]) --> RLock["m.mu.RLock()"]
+    RLock --> GetByRun["m.byRun[runID] → runMemories"]
+    GetByRun --> CheckExists{exists?}
+    CheckExists -->|no| RUnlock["m.mu.RUnlock()"]
+    RUnlock --> ReturnEmpty(["return []string{}, nil"])
+    CheckExists -->|yes| MakeResults["make([]string, 0) → results"]
+    MakeResults --> ToLower["strings.ToLower(query) → queryLower"]
+    ToLower --> LoopMemories["for runMemories"]
+
+    subgraph SGLoopMemories2 [" "]
+        LoopMemories --> GetMemory["mem := range"]
+        GetMemory --> CheckUserID{mem.UserID==userID?}
+        CheckUserID -->|no| NextMemory["continue"]
+        CheckUserID -->|yes| CheckContains{contains?}
+        CheckContains -->|yes| AppendResults["results = append(results, mem.Content)"]
+        CheckContains -->|no| NextMemory
+        AppendResults --> NextMemory
+        NextMemory --> LoopMemories
+    end
+
+    LoopMemories -->|done| RUnlock2["m.mu.RUnlock()"]
+    RUnlock2 --> ReturnResults(["return results, nil"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+
+    class Start,ReturnEmpty,ReturnResults mainFn
+    class LoopMemories,GetMemory internalFn
+```
+
+### MockClient.CreateSession
+
+```mermaid
+flowchart TB
+    Start(["CreateSession(ctx, userID)"]) --> NewUUID["uuid.New().String() → runID"]
+    NewUUID --> Return(["return runID, nil"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### MockClient.DeleteSession
+
+```mermaid
+flowchart TB
+    Start(["DeleteSession(ctx, userID, runID)"]) --> Lock["m.mu.Lock()"]
+    Lock --> GetByRun["m.byRun[runID] → runMemories"]
+    GetByRun --> CheckExists{exists?}
+    CheckExists -->|no| Unlock["m.mu.Unlock()"]
+    Unlock --> Return(["return nil"])
+    CheckExists -->|yes| LoopMemories["for runMemories"]
+
+    subgraph SGLoopMemories [" "]
+        LoopMemories --> GetMemory["mem := range"]
+        GetMemory --> DeleteMemory["delete(m.memories, mem.ID)"]
+        DeleteMemory --> NextMemory
+        NextMemory --> LoopMemories
+    end
+
+    LoopMemories -->|done| DeleteByRun["delete(m.byRun, runID)"]
+    DeleteByRun --> MakeUpdated["make([]*Memory, 0) → updated"]
+    MakeUpdated --> LoopUserMemories["for m.byUser[userID]"]
+
+    subgraph SGLoopUserMemories [" "]
+        LoopUserMemories --> GetUserMemory["mem := range"]
+        GetUserMemory --> CheckRunID2{mem.RunID!=runID?}
+        CheckRunID2 -->|yes| AppendUpdated["updated = append(updated, mem)"]
+        CheckRunID2 -->|no| NextUserMemory["continue"]
+        AppendUpdated --> NextUserMemory
+        NextUserMemory --> LoopUserMemories
+    end
+
+    LoopUserMemories -->|done| SetByUser["m.byUser[userID] = updated"]
+    SetByUser --> Unlock2["m.mu.Unlock()"]
+    Unlock2 --> ReturnDone(["return nil"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+
+    class Start,Return,ReturnDone mainFn
+    class LoopMemories,LoopUserMemories internalFn
+```
+
+### NewAPIClient
+
+```mermaid
+flowchart TB
+    Start(["NewAPIClient(baseURL, apiKey)"]) --> CreateClient["&APIClient{baseURL, apiKey} → c"]
+    CreateClient --> Done(["return c"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Done mainFn
+```
+
+### APIClient.Add
+
+```mermaid
+flowchart TB
+    Start(["Add(ctx, userID, content, runID)"]) --> Return(["return fmt.Errorf(not implemented)"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,Return mainFn
+    class Return errorFlow
+```
+
+### APIClient.Search
+
+```mermaid
+flowchart TB
+    Start(["Search(ctx, userID, query)"]) --> Return(["return nil, fmt.Errorf(not implemented)"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,Return mainFn
+    class Return errorFlow
+```
+
+### APIClient.SearchInSession
+
+```mermaid
+flowchart TB
+    Start(["SearchInSession(ctx, userID, runID, query)"]) --> Return(["return nil, fmt.Errorf(not implemented)"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,Return mainFn
+    class Return errorFlow
+```
+
+### APIClient.CreateSession
+
+```mermaid
+flowchart TB
+    Start(["CreateSession(ctx, userID)"]) --> Return(["return '', fmt.Errorf(not implemented)"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,Return mainFn
+    class Return errorFlow
+```
+
+### APIClient.DeleteSession
+
+```mermaid
+flowchart TB
+    Start(["DeleteSession(ctx, userID, runID)"]) --> Return(["return fmt.Errorf(not implemented)"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,Return mainFn
+    class Return errorFlow
+```
 
 ## Design Notes
 

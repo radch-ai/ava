@@ -63,6 +63,94 @@ flowchart TB
 | | `ExpiresAt` | `time.Time` | Session expiration time |
 | | `SetCookie` | `*http.Cookie` | Cookie for sliding expiration |
 
+## Functions
+
+### NewAuthClient
+
+```mermaid
+flowchart TB
+    Start(["NewAuthClient(baseURL, logger)"]) --> CheckBaseURL{baseURL?}
+    CheckBaseURL -->|empty| SetDefault["baseURL = defaultZetidalURL"]
+    CheckBaseURL -->|set| CreateClient
+    SetDefault --> CreateClient
+
+    subgraph SGCreateClient [" "]
+        CreateClient["&Client{baseURL, &http.Client{}, logger} → c"]
+        CreateClient --> Done(["return c"])
+    end
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+
+    class Start,Done mainFn
+    class CreateClient internalFn
+```
+
+### ValidateSession
+
+```mermaid
+flowchart TB
+    Start(["ValidateSession(ctx, sessionToken)"]) --> ParseURL["url.Parse(baseURL + /auth/session) → reqURL, err"]
+    ParseURL --> CheckParseErr{err?}
+    CheckParseErr -->|yes| ReturnParseErr(["return fmt.Errorf(ErrZetidalUnavailable)"])
+    CheckParseErr -->|no| NewReq["http.NewRequestWithContext(ctx, GET, reqURL) → req, err"]
+
+    subgraph SGNewReq [" "]
+        NewReq --> CheckReqErr{err?}
+        CheckReqErr -->|yes| ReturnReqErr(["return fmt.Errorf(ErrZetidalUnavailable)"])
+        CheckReqErr -->|no| SetContentType["req.Header.Set(Content-Type, application/json)"]
+        SetContentType --> AddCookie["req.AddCookie(&http.Cookie{Name: session, Value: sessionToken})"]
+    end
+
+    AddCookie --> DoReq["c.Client.Do(req) → resp, err"]
+    DoReq --> CheckDoErr{err?}
+    CheckDoErr -->|Canceled| ReturnCanceled(["return fmt.Errorf(ErrContextCanceled)"])
+    CheckDoErr -->|Timeout| ReturnTimeout(["return fmt.Errorf(ErrZetidalUnavailable)"])
+    CheckDoErr -->|other| ReturnOtherErr(["return fmt.Errorf(ErrZetidalUnavailable)"])
+    CheckDoErr -->|no| SwitchStatus{resp.StatusCode?}
+
+    subgraph SGStatusOK [" "]
+        SwitchStatus -->|200| DecodeBody["json.NewDecoder(resp.Body).Decode(&result) → err"]
+        DecodeBody --> CheckDecodeErr{err?}
+        CheckDecodeErr -->|yes| ReturnDecodeErr(["return fmt.Errorf(ErrInvalidResponse)"])
+        CheckDecodeErr -->|no| CheckAuth{result.Authenticated?}
+        CheckAuth -->|no| ReturnNotAuth(["return ErrSessionInvalid"])
+        CheckAuth -->|yes| LoopCookies["for resp.Cookies()"]
+    end
+
+    subgraph SGLoopCookies [" "]
+        LoopCookies --> GetCookie["cookie := range"]
+        GetCookie --> CheckCookieName{cookie.Name==session?}
+        CheckCookieName -->|yes| SetSetCookie["setCookie = cookie"]
+        CheckCookieName -->|no| Continue(["continue"])
+        SetCookie --> BuildInfo
+        Continue --> LoopCookies
+    end
+
+    subgraph SGBuildInfo [" "]
+        LoopCookies -->|done| BuildInfo["&SessionInfo{UserID, ExpiresAt, SetCookie} → info"]
+        BuildInfo --> CheckExpiresAt{result.ExpiresAt?}
+        CheckExpiresAt -->|yes| SetExpiresAt["info.ExpiresAt = time.Unix(result.ExpiresAt, 0)"]
+        CheckExpiresAt -->|no| CheckSetCookie
+        SetExpiresAt --> CheckSetCookie
+        CheckSetCookie -->|yes| InfoSetCookie["info.SetCookie = setCookie"]
+        CheckSetCookie -->|no| ReturnOK
+        InfoSetCookie --> ReturnOK(["return info, nil"])
+    end
+
+    SwitchStatus -->|401| ReturnInvalid(["return ErrSessionInvalid"])
+    SwitchStatus -->|503| ReturnUnavailable(["return ErrZetidalUnavailable"])
+    SwitchStatus -->|other| ReturnUnexpected(["return fmt.Errorf(ErrZetidalUnavailable)"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,ReturnOK,Continue mainFn
+    class ParseURL,NewReq,AddCookie,DoReq,DecodeBody,LoopCookies,BuildInfo internalFn
+    class ReturnParseErr,ReturnReqErr,ReturnCanceled,ReturnTimeout,ReturnOtherErr,ReturnDecodeErr,ReturnNotAuth,ReturnInvalid,ReturnUnavailable,ReturnUnexpected errorFlow
+```
+
 ## Design Notes
 
 ### Sliding Expiration

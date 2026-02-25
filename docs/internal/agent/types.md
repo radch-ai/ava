@@ -2,25 +2,52 @@
 
 Core type definitions for the agent runtime: messages, content blocks, roles, and state.
 
-## Overview
+## NewTextMessage
 
 ```mermaid
 flowchart TB
-    Start(["Create Message"]) --> NewText(["NewTextMessage(role, text) → AgentMessage"])
-    Start --> NewToolCall(["NewToolCallMessage(id, name, args) → AgentMessage"])
-    Start --> NewResult(["NewToolResultMessage(toolCallID, toolName, result, isError) → AgentMessage"])
-
-    NewText --> ReturnText["return AgentMessage{Role: role, Content: []ContentBlock{TextContent{Text: text}}, Timestamp: time.Now().Unix()}"]
-    NewToolCall --> ReturnCall["return AgentMessage{Role: RoleAssistant, Content: []ContentBlock{ToolCallContent{ID: id, Name: name, Arguments: args}}, Timestamp: time.Now().Unix()}"]
-    NewResult --> ReturnResult["return AgentMessage{Role: RoleToolResult, Content: []ContentBlock{TextContent{Text: result}}, Timestamp: time.Now().Unix(), ToolCallID: toolCallID, ToolName: toolName, IsError: isError}"]
-
-    ReturnText --> TextStruct["TextContent{Text: text}"]
-    ReturnCall --> CallStruct["ToolCallContent{ID: id, Name: name, Arguments: args}"]
-    ReturnResult --> ResultStruct["TextContent{Text: result}"]
+    Start(["NewTextMessage(role, text) → AgentMessage"]) --> GetTime["time.Now().Unix() → ts"]
+    GetTime --> Return(["return AgentMessage{Role: role, Content: []ContentBlock{TextContent{Text: text}}, Timestamp: ts}"])
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
 
-    class Start,NewText,NewToolCall,NewResult mainFn
+    class Start,Return mainFn
+```
+
+## NewToolCallMessage
+
+```mermaid
+flowchart TB
+    Start(["NewToolCallMessage(id, name, args) → AgentMessage"]) --> GetTime["time.Now().Unix() → ts"]
+    GetTime --> Return(["return AgentMessage{Role: RoleAssistant, Content: []ContentBlock{ToolCallContent{ID: id, Name: name, Arguments: args}}, Timestamp: ts}"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+## NewToolResultMessage
+
+```mermaid
+flowchart TB
+    Start(["NewToolResultMessage(toolCallID, toolName, result, isError) → AgentMessage"]) --> GetTime["time.Now().Unix() → ts"]
+    GetTime --> Return(["return AgentMessage{Role: RoleToolResult, Content: []ContentBlock{TextContent{Text: result}}, Timestamp: ts, ToolCallID: toolCallID, ToolName: toolName, IsError: isError}"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+## NewAgentState
+
+```mermaid
+flowchart TB
+    Start(["NewAgentState(opts) → AgentState"]) --> MakePending["make(map[string]bool) → pendingToolCalls"]
+    MakePending --> Return(["return AgentState{SystemPrompt: opts.SystemPrompt, Model: opts.Model, ThinkingLevel: opts.ThinkingLevel, Tools: opts.Tools, SessionID: opts.SessionID, UserID: opts.UserID, AgentID: opts.AgentID, Messages: []AgentMessage{}, PendingToolCalls: pendingToolCalls}"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
 ```
 
 ## Constants
@@ -110,14 +137,37 @@ flowchart TB
 | `ToolExecutionError` | `ToolName` | `string` | Tool name |
 | | `Message` | `string` | Error message |
 
+### AgentState
+
+| Struct | Field | Type | Description |
+|--------|-------|------|-------------|
+| `AgentState` | `SystemPrompt` | `string` | System prompt for LLM |
+| | `Model` | `Model` | Model configuration |
+| | `ThinkingLevel` | `ThinkingLevel` | Thinking intensity |
+| | `Tools` | `[]Tool` | Available tools |
+| | `Messages` | `[]AgentMessage` | Conversation history |
+| | `IsStreaming` | `bool` | Currently streaming |
+| | `StreamMessage` | `*AgentMessage` | Current streaming message |
+| | `PendingToolCalls` | `map[string]bool` | Pending tool call IDs |
+| | `Error` | `string` | Error state |
+| | `SessionID` | `string` | Session identifier |
+| | `UserID` | `string` | User identifier |
+| | `AgentID` | `string` | Agent identifier |
+
 ## Functions
 
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `NewTextMessage` | `(role Role, text string) AgentMessage` | Creates text-only message |
-| `NewToolCallMessage` | `(id, name string, args map[string]any) AgentMessage` | Creates tool call message |
-| `NewToolResultMessage` | `(toolCallID, toolName, result string, isError bool) AgentMessage` | Creates tool result message |
-| `NewAgentState` | `(opts AgentStateOptions) AgentState` | Creates new agent state |
+| Function | Description |
+|----------|-------------|
+| `AddMessage` | Adds message to history |
+| `SetStreaming` | Sets streaming state |
+| `AddPendingToolCall` | Marks tool call as pending |
+| `RemovePendingToolCall` | Removes pending tool call |
+| `HasPendingToolCall` | Checks if tool call pending |
+| `Role.String()` | Returns string representation |
+| `ThinkingLevel.String()` | Returns string representation |
+| `ThinkingLevel.IsOff()` | Checks if thinking disabled |
+| `ThinkingLevel.IsEnabled()` | Checks if thinking enabled |
+| `ToolExecutionError.Error()` | Returns error message |
 
 ## Design Notes
 

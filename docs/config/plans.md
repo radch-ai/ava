@@ -4,20 +4,7 @@ Subscription plan definitions with LLM credit allowances. Provides plan lookup a
 
 ## Overview
 
-```mermaid
-flowchart TB
-    HStart["**GetPlan(name) → plan**"]
-    HStart --> Lookup["plans[name]"]
-    Lookup --> CheckPlan["plan != nil"]
-    CheckPlan -->|true| Success["return plan"]
-    CheckPlan -->|false| Failure["return nil"]
-
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
-    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
-
-    class HStart internalFn
-    class Success,Failure errorFlow
-```
+<!-- Overview replaced by individual function flowcharts below -->
 
 ## Constants
 
@@ -41,13 +28,94 @@ flowchart TB
 
 ## Functions
 
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `GetPlan` | `(name string) *Plan` | Returns plan by name |
-| `GetAllPlans` | `() []*Plan` | Returns all available plans |
-| `GetPlanNames` | `() []string` | Returns all plan names |
-| `HasFeature` | `(planName, feature string) bool` | Checks if plan has feature |
-| `ValidatePlan` | `(planName string) bool` | Validates plan name exists |
+### GetPlan
+
+```mermaid
+flowchart TB
+    Start([name string]) --> HGetPlan["**GetPlan(name) → plan**"]
+    HGetPlan --> Lookup["plans[name]"]
+    Lookup --> Return["return plan"]
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+
+    class Start,Return mainFn
+    class HGetPlan internalFn
+```
+
+### GetAllPlans
+
+```mermaid
+flowchart TB
+    Start(["GetAllPlans()"]) --> HGetAll["**GetAllPlans() → result**"]
+    HGetAll --> MakeResult["result ← make([]*Plan, 0, len(plans))"]
+    MakeResult --> Loop["for plan ← range plans"]
+    Loop --> Append["result = append(result, plan)"]
+    Append --> Loop
+    Loop -->|done| Return(["return result"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+
+    class Start,Return mainFn
+    class HGetAll internalFn
+```
+
+### GetPlanNames
+
+```mermaid
+flowchart TB
+    Start(["GetPlanNames()"]) --> HGetNames["**GetPlanNames() → names**"]
+    HGetNames --> MakeNames["names ← make([]string, 0, len(plans))"]
+    MakeNames --> Loop["for name ← range plans"]
+    Loop --> Append["names = append(names, name)"]
+    Append --> Loop
+    Loop -->|done| Return(["return names"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+
+    class Start,Return mainFn
+    class HGetNames internalFn
+```
+
+### HasFeature
+
+```mermaid
+flowchart TB
+    Start([planName, feature string]) --> HHasFeature["**HasFeature(planName, feature) → bool**"]
+    HHasFeature --> HGetPlan["**GetPlan(planName) → plan**"]
+    HGetPlan --> CheckNil["plan == nil"]
+    CheckNil -->|true| ReturnFalse["return false"]
+    CheckNil -->|false| Loop["for f ← range plan.Features"]
+    Loop --> Compare["f == feature"]
+    Compare -->|true| ReturnTrue["return true"]
+    Compare -->|false| Loop
+    Loop -->|done| ReturnFalse
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,ReturnTrue,ReturnFalse mainFn
+    class HHasFeature,HGetPlan internalFn
+```
+
+### ValidatePlan
+
+```mermaid
+flowchart TB
+    Start([planName string]) --> HValidate["**ValidatePlan(planName) → bool**"]
+    HValidate --> Lookup["plans[planName]"]
+    Lookup --> Exists["exists ← value"]
+    Exists --> Return["return exists"]
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+
+    class Start,Return mainFn
+    class HValidate internalFn
+```
 
 ## Plan Features
 

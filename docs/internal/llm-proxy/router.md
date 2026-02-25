@@ -2,11 +2,17 @@
 
 LLM-based model selection router.
 
-## Overview
+### SelectModel
 
 ```mermaid
 flowchart TB
-    Start(["SelectModel(ctx, llmClient, req)"]) --> HBuildPrompt
+    Start(["SelectModel(ctx, llmClient, req)"]) --> HCheckClient
+
+    subgraph SGCheckClient [" "]
+        HCheckClient["**llmClient == nil**"]
+        HCheckClient -->|true| E1["return error"]
+        HCheckClient --> HBuildPrompt
+    end
 
     subgraph SGBuildPrompt [" "]
         HBuildPrompt["**BuildRouterPrompt(req) → prompt**"]
@@ -22,7 +28,7 @@ flowchart TB
 
     subgraph SGLLMStream [" "]
         HLLMStream["**llmClient.Stream(ctx, messages, []Tool{}) → eventCh, err**"]
-        HLLMStream -->|error| E1["return err"]
+        HLLMStream -->|error| E2["return err"]
         HLLMStream --> HCollect
     end
 
@@ -42,7 +48,7 @@ flowchart TB
 
     subgraph SGNilCheck [" "]
         HNilCheck["**assistantMsg == nil**"]
-        HNilCheck -->|true| E2["return error"]
+        HNilCheck -->|true| E3["return error"]
         HNilCheck --> HExtractJSON
     end
 
@@ -58,12 +64,18 @@ flowchart TB
         HSetJSON --> HExtractJSON
     end
 
-    HExtractJSON --> HUnmarshal
+    HExtractJSON --> HCheckEmpty
+
+    subgraph SGCheckEmpty [" "]
+        HCheckEmpty["**jsonText == ''**"]
+        HCheckEmpty -->|true| E4["return error"]
+        HCheckEmpty --> HUnmarshal
+    end
 
     subgraph SGUnmarshal [" "]
         HUnmarshal["**json.Unmarshal([]byte(jsonText), &resp) → err**"]
-        HUnmarshal -->|error| E3["return err"]
-        HUnmarshal --> Done(["return &resp, nil"])
+        HUnmarshal -->|error| E5["return err"]
+        HUnmarshal --> Return(["return &resp, nil"])
     end
 
     NewTextMessage["agent.NewTextMessage(agent.RoleUser, prompt) → AgentMessage"]
@@ -74,9 +86,85 @@ flowchart TB
     classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
-    class Start,Done mainFn
+    class Start,Return mainFn
     class NewTextMessage localPkgs
-    class E1,E2,E3 errorFlow
+    class E1,E2,E3,E4,E5 errorFlow
+```
+
+### BuildRouterPrompt
+
+```mermaid
+flowchart TB
+    Start(["BuildRouterPrompt(req)"]) --> HNewBuilder
+
+    subgraph SGNewBuilder [" "]
+        HNewBuilder["**sb := strings.Builder{}**"]
+        HNewBuilder --> HWriteIntro
+    end
+
+    subgraph SGWriteIntro [" "]
+        HWriteIntro["**Write intro text**"]
+        HWriteIntro --> HWriteQuery
+    end
+
+    subgraph SGWriteQuery [" "]
+        HWriteQuery["**Write User Query section**"]
+        HWriteQuery --> HWriteContext
+    end
+
+    subgraph SGWriteContext [" "]
+        HWriteContext["**Write User Context section**"]
+        HWriteContext --> HWriteModels
+    end
+
+    subgraph SGWriteModels [" "]
+        HWriteModels["**Write Available Models section**"]
+        HWriteModels --> HCheckAttempts
+    end
+
+    subgraph SGCheckAttempts [" "]
+        HCheckAttempts["**len(req.PreviousAttempts) > 0**"]
+        HCheckAttempts -->|true| HWriteAttempts
+        HCheckAttempts -->|false| HCheckUnhealthy
+    end
+
+    subgraph SGWriteAttempts [" "]
+        HWriteAttempts["**Write Previous Failed Attempts section**"]
+        HWriteAttempts --> HCheckUnhealthy
+    end
+
+    subgraph SGCheckUnhealthy [" "]
+        HCheckUnhealthy["**len(req.UnhealthyModels) > 0**"]
+        HCheckUnhealthy -->|true| HWriteUnhealthy
+        HCheckUnhealthy -->|false| HWriteInstructions
+    end
+
+    subgraph SGWriteUnhealthy [" "]
+        HWriteUnhealthy["**Write Unhealthy Models section**"]
+        HWriteUnhealthy --> HWriteInstructions
+    end
+
+    subgraph SGWriteInstructions [" "]
+        HWriteInstructions["**Write Instructions section**"]
+        HWriteInstructions --> HWriteFormat
+    end
+
+    subgraph SGWriteFormat [" "]
+        HWriteFormat["**Write JSON response format**"]
+        HWriteFormat --> Return(["return sb.String()"])
+    end
+
+    WriteString["sb.WriteString(str)"]
+    Fprintf["fmt.Fprintf(&sb, format, args...)"]
+
+    click WriteString href "https://pkg.go.dev/strings#Builder.WriteString"
+    click Fprintf href "https://pkg.go.dev/fmt#Fprintf"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+
+    class Start,Return mainFn
+    class WriteString,Fprintf localPkgs
 ```
 
 ## Structs
@@ -109,13 +197,6 @@ flowchart TB
 |--------|-------|------|-------------|
 | `RouterAttempt` | `Model` | `string` | Model attempted |
 | | `Error` | `string` | Error message |
-
-## Functions
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `SelectModel` | `(ctx context.Context, llmClient LLMClient, req RouterRequest) (*RouterResponse, error)` | Selects best model |
-| `BuildRouterPrompt` | `(req RouterRequest) string` | Builds router prompt |
 
 ## Router Prompt Sections
 

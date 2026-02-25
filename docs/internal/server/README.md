@@ -80,31 +80,261 @@ type Cache interface {
 
 ## Functions
 
-### Server
+### New
 
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `New` | `(addr string, logger zerolog.Logger, wsHandler *websocket.Handler, authMW *AuthMiddleware) *Server` | Creates server |
-| `Start` | `() error` | Starts server |
-| `Shutdown` | `(ctx context.Context) error` | Graceful shutdown |
-| `HTTPServer` | `() *http.Server` | Returns HTTP server |
-| `WSHandler` | `() *websocket.Handler` | Returns WebSocket handler |
+```mermaid
+flowchart TB
+    Start(["New(addr, logger, wsHandler, authMW)"]) --> NewMux["http.NewServeMux() → mux"]
 
-### Middleware
+    subgraph SGHandleHealth [" "]
+        NewMux --> HandleHealth["mux.HandleFunc(health, healthHandler)"]
+    end
 
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `NewAuthMiddleware` | `(authURL string, cache Cache, cacheTTL time.Duration) *AuthMiddleware` | Creates auth middleware |
-| `Authenticate` | `(next http.Handler) http.Handler` | Auth middleware handler |
+    subgraph SGHandleWS [" "]
+        NewMux --> HandleWS["mux.Handle(ws, wsHandlerFunc)"]
+    end
 
-### Cache
+    HandleHealth --> CheckMW{authMW?}
+    CheckMW -->|yes| WrapAuth["authMW.Authenticate(wsHandlerFunc)"]
+    CheckMW -->|no| UseHandler["wsHandlerFunc"]
+    WrapAuth --> WrapWS["mux.Handle(ws, wrapped)"]
+    UseHandler --> WrapWS
+    WrapWS --> CreateServer
 
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `NewRedisCache` | `(client *redis.Client) *RedisCache` | Creates Redis cache |
-| `Get` | `(ctx context.Context, key string) (string, error)` | Gets value |
-| `Set` | `(ctx context.Context, key string, value string, ttl time.Duration) error` | Sets value |
-| `Delete` | `(ctx context.Context, key string) error` | Deletes value |
+    subgraph SGCreateServer [" "]
+        WrapWS --> CreateServer["&Server{httpServer, logger, wsHandler, authMW, shutdownCh} → srv"]
+        CreateServer --> Done(["return srv"])
+    end
+
+    click WrapAuth href "#Authenticate"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+
+    class Start,Done mainFn
+    class WrapAuth localPkgs
+    class HandleHealth,HandleWS,WrapWS,CreateServer internalFn
+```
+
+### Start
+
+```mermaid
+flowchart TB
+    Start(["Start()"]) --> LogInfo["logger.Info()"]
+    LogInfo --> CreateErrCh["make(chan error, 1) → errCh"]
+
+    subgraph SGListen [" "]
+        CreateErrCh --> GoListen["go s.httpServer.ListenAndServe()"]
+        GoListen --> CheckErr{err?}
+        CheckErr -->|yes| SendErr["errCh ← err"]
+        CheckErr -->|no| ReturnListen
+        ReturnListen(["return"])
+    end
+
+    CreateErrCh --> CreateSigCh["make(chan os.Signal, 1) → sigChan"]
+    CreateSigCh --> NotifySignal["signal.Notify(sigChan, SIGINT, SIGTERM)"]
+
+    subgraph SGSelect [" "]
+        NotifySignal --> Select["select"]
+        Select -->|errCh| ErrCh["err := <-errCh"]
+        ErrCh --> LogError["logger.Error()"]
+        LogError --> ReturnErr(["return err"])
+        Select -->|sigChan| Sig["sig := <-sigChan"]
+        Sig --> LogSignal["logger.Info()"]
+        LogSignal --> CreateCtx["context.WithTimeout(30s) → ctx, cancel"]
+        Select -->|shutdownCh| ShutdownCh["<-s.shutdownCh"]
+        ShutdownCh --> LogShutdown["logger.Info()"]
+        LogShutdown --> CreateCtx
+    end
+
+    subgraph SGShutdown [" "]
+        CreateCtx --> Shutdown["s.httpServer.Shutdown(ctx) → err"]
+        Shutdown --> CheckShutdownErr{err?}
+        CheckShutdownErr -->|yes| LogShutdownErr["logger.Error()"]
+        LogShutdownErr --> ReturnShutdownErr(["return fmt.Errorf()"])
+        CheckShutdownErr -->|no| LogStopped["logger.Info()"]
+        LogStopped --> ReturnNil(["return nil"])
+    end
+
+    click Shutdown href "#Shutdown"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,ReturnListen,ReturnNil mainFn
+    class Shutdown localPkgs
+    class ReturnErr,ReturnShutdownErr errorFlow
+```
+
+### Shutdown
+
+```mermaid
+flowchart TB
+    Start(["Shutdown(ctx)"]) --> CloseCh["close(s.shutdownCh)"]
+    CloseCh --> ShutdownServer["s.httpServer.Shutdown(ctx) → err"]
+    ShutdownServer --> Return(["return err"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### HTTPServer
+
+```mermaid
+flowchart TB
+    Start(["HTTPServer()"]) --> Return(["return s.httpServer"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### WSHandler
+
+```mermaid
+flowchart TB
+    Start(["WSHandler()"]) --> Return(["return s.wsHandler"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### NewAuthMiddleware
+
+```mermaid
+flowchart TB
+    Start(["NewAuthMiddleware(authURL, cache, cacheTTL)"]) --> NewAuth["auth.NewAuthClient(authURL, nil) → authClient"]
+
+    subgraph SGCreateMW [" "]
+        NewAuth --> CreateMW["&AuthMiddleware{authClient, cache, cacheTTL} → mw"]
+        CreateMW --> Done(["return mw"])
+    end
+
+    click NewAuth href "../auth.md#NewAuthClient"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+
+    class Start,Done mainFn
+    class NewAuth localPkgs
+    class CreateMW internalFn
+```
+
+### Authenticate
+
+```mermaid
+flowchart TB
+    Start(["Authenticate(next)"]) --> GetCookie["r.Cookie(session) → cookie, err"]
+    GetCookie --> CheckCookie{cookie?}
+    CheckCookie -->|missing| WriteAuthErr(["writeAuthError(w)"])
+    CheckCookie -->|found| SessionToken["sessionToken = cookie.Value"]
+
+    subgraph SGCheckCache [" "]
+        SessionToken --> CheckCache{cache?}
+        CheckCache -->|yes| CacheGet["cache.Get(ctx, session:token) → cachedUserID, err"]
+        CacheGet --> CheckCached{cachedUserID?}
+        CheckCached -->|yes| UserID["userID = cachedUserID"]
+        CheckCached -->|no| Validate
+        CheckCache -->|no| Validate
+    end
+
+    subgraph SGValidate [" "]
+        Validate --> ValidateSession["authClient.ValidateSession(ctx, sessionToken) → sessionInfo, err"]
+        ValidateSession --> CheckError{err?}
+        CheckError -->|SessionInvalid| WriteAuthErr2(["writeAuthError(w)"])
+        CheckError -->|other| Write503(["http.Error(w, 503)"])
+        CheckError -->|no| SetUserID["userID = sessionInfo.UserID"]
+        SetUserID --> SetCookie["setCookie = sessionInfo.SetCookie"]
+        SetCookie --> CacheSet
+    end
+
+    subgraph SGCacheSet [" "]
+        SetCookie --> CheckCacheSet{cache?}
+        CheckCacheSet -->|yes| CacheSet["cache.Set(ctx, session:token, userID, cacheTTL)"]
+        CheckCacheSet -->|no| WrapResponse
+        CacheSet --> WrapResponse
+    end
+
+    subgraph SGWrapResponse [" "]
+        WrapResponse --> CheckSetCookie{setCookie?}
+        CheckSetCookie -->|yes| WrapWriter["wrapper = &responseWrapper{w}"]
+        WrapWriter --> HTTPSetCookie["http.SetCookie(wrapper, setCookie)"]
+        CheckSetCookie -->|no| UseWrapper["wrapper = w"]
+        HTTPSetCookie --> UseWrapper
+    end
+
+    UseWrapper --> WithUserID["internalctx.WithUserID(r.Context(), userID) → ctx"]
+    WithUserID --> Next["next.ServeHTTP(wrapper, r.WithContext(ctx))"]
+
+    click ValidateSession href "../auth.md#ValidateSession"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,Next,WriteAuthErr,WriteAuthErr2,Write503 mainFn
+    class ValidateSession localPkgs
+    class CacheGet,CacheSet,WrapWriter errorFlow
+```
+
+### NewRedisCache
+
+```mermaid
+flowchart TB
+    Start(["NewRedisCache(client)"]) --> CreateCache["&RedisCache{client} → cache"]
+    CreateCache --> Done(["return cache"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Done mainFn
+```
+
+### Cache.Get
+
+```mermaid
+flowchart TB
+    Start(["Get(ctx, key)"]) --> ClientGet["c.client.Get(ctx, key) → val, err"]
+    ClientGet --> CheckError{err?}
+    CheckError -->|Nil| ReturnNotFound(["return '', fmt.Errorf()"])
+    CheckError -->|other| ReturnErr(["return '', err"])
+    CheckError -->|no| ReturnVal(["return val, nil"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,ReturnVal mainFn
+    class ReturnNotFound,ReturnErr errorFlow
+```
+
+### Cache.Set
+
+```mermaid
+flowchart TB
+    Start(["Set(ctx, key, value, ttl)"]) --> ClientSet["c.client.Set(ctx, key, value, ttl).Err() → err"]
+    ClientSet --> Return(["return err"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### Cache.Delete
+
+```mermaid
+flowchart TB
+    Start(["Delete(ctx, key)"]) --> ClientDel["c.client.Del(ctx, key).Err() → err"]
+    ClientDel --> Return(["return err"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
 
 ## Design Notes
 

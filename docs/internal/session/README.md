@@ -54,31 +54,262 @@ flowchart TB
 
 ## Functions
 
-### Manager
+### NewManager
 
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `NewManager` | `(logger zerolog.Logger, timeout time.Duration) *Manager` | Creates manager |
-| `GetOrCreateSession` | `(ctx context.Context, userID, agentID string) *Session` | Gets or creates session |
-| `RemoveSession` | `(sessionID string)` | Removes session |
-| `CleanupExpired` | `() int` | Removes expired sessions |
-| `StartCleanupLoop` | `(interval time.Duration)` | Starts cleanup goroutine |
+```mermaid
+flowchart TB
+    Start(["NewManager(logger, timeout)"]) --> CreateManager["&Manager{sessions, logger, timeout} → m"]
+    CreateManager --> Done(["return m"])
 
-### Session
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
 
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `NewSession` | `(ctx context.Context, userID, agentID string) *Session` | Creates session |
-| `SessionID` | `() string` | Returns session ID |
-| `UserID` | `() string` | Returns user ID |
-| `AgentID` | `() string` | Returns agent ID |
-| `Mem0SessionID` | `() string` | Returns Mem0 session ID |
-| `Messages` | `() []Message` | Returns message copy |
-| `AddMessage` | `(msg Message)` | Adds message |
-| `UpdateActivity` | `()` | Updates last activity |
-| `IsExpired` | `(timeout time.Duration) bool` | Checks expiration |
-| `MessageCount` | `() int` | Returns message count |
-| `ClearMessages` | `()` | Clears messages |
+    class Start,Done mainFn
+```
+
+### GetOrCreateSession
+
+```mermaid
+flowchart TB
+    Start(["GetOrCreateSession"]) --> Lock["m.mu.Lock()"]
+    Lock --> LoopSessions["for sessions"]
+
+    subgraph SGLoopSessions1 [" "]
+        LoopSessions --> GetSession["s := range"]
+        GetSession --> CheckMatch{match?}
+        CheckMatch -->|no| NextSession["continue"]
+        CheckMatch -->|yes| UpdateActivity["s.UpdateActivity()"]
+        UpdateActivity --> Unlock["m.mu.Unlock()"]
+        Unlock --> ReturnFound(["return s"])
+        NextSession --> LoopSessions
+    end
+
+    LoopSessions -->|done| NewSessionCall["NewSession(ctx) → newSession"]
+    NewSessionCall --> StoreSession["m.sessions[id] = newSession"]
+    StoreSession --> Unlock2["m.mu.Unlock()"]
+    Unlock2 --> ReturnNew(["return newSession"])
+
+    click NewSessionCall href "#NewSession"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+
+    class Start,ReturnFound,ReturnNew mainFn
+    class NewSessionCall,UpdateActivity localPkgs
+    class LoopSessions,GetSession internalFn
+```
+
+### RemoveSession
+
+```mermaid
+flowchart TB
+    Start(["RemoveSession(sessionID)"]) --> Lock["m.mu.Lock()"]
+    Lock --> GetSession["m.sessions[sessionID] → s"]
+    GetSession --> CheckExists{exists?}
+    CheckExists -->|no| Unlock["m.mu.Unlock()"]
+    Unlock --> Return(["return"])
+    CheckExists -->|yes| DeleteSession["delete(m.sessions, sessionID)"]
+    DeleteSession --> LogInfo["logger.Info()"]
+    LogInfo --> Unlock2["m.mu.Unlock()"]
+    Unlock2 --> ReturnDone(["return"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return,ReturnDone mainFn
+```
+
+### CleanupExpired
+
+```mermaid
+flowchart TB
+    Start(["CleanupExpired"]) --> Lock["m.mu.Lock()"]
+    Lock --> LoopSessions["for sessions"]
+
+    subgraph SGLoopSessions2 [" "]
+        LoopSessions --> GetSession["id, s := range"]
+        GetSession --> CheckExpired{expired?}
+        CheckExpired -->|yes| DeleteSession["delete(m.sessions, id)"]
+        DeleteSession --> IncCount["count++"]
+        CheckExpired -->|no| NextSession["continue"]
+        IncCount --> NextSession
+        NextSession --> LoopSessions
+    end
+
+    LoopSessions -->|done| CheckCount{count > 0?}
+    CheckCount -->|yes| LogDebug["logger.Debug()"]
+    CheckCount -->|no| Unlock
+    LogDebug --> Unlock["m.mu.Unlock()"]
+    Unlock --> Return(["return count"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+
+    class Start,Return mainFn
+    class LoopSessions,GetSession internalFn
+```
+
+### StartCleanupLoop
+
+```mermaid
+flowchart TB
+    Start(["StartCleanupLoop(interval)"]) --> NewTicker["time.NewTicker(interval) → ticker"]
+    NewTicker --> GoLoop["go func()"]
+
+    subgraph SGGoLoop [" "]
+        GoLoop --> Loop["for range ticker.C"]
+        Loop --> CleanupExpired["m.CleanupExpired() → count"]
+        CleanupExpired --> Loop
+    end
+
+    click CleanupExpired href "#CleanupExpired"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+
+    class Start mainFn
+    class CleanupExpired localPkgs
+```
+
+### NewSession
+
+```mermaid
+flowchart TB
+    Start(["NewSession(ctx, userID, agentID)"]) --> NewNow["time.Now() → now"]
+    NewNow --> NewUUID1["uuid.New().String() → sessionID"]
+    NewUUID1 --> NewUUID2["uuid.New().String() → mem0SessionID"]
+    NewUUID2 --> MakeMessages["make([]Message, 0) → messages"]
+
+    subgraph SGCreateSession [" "]
+        MakeMessages --> CreateSession["&Session{sessionID, userID, agentID, mem0SessionID, messages, now, now} → s"]
+        CreateSession --> Done(["return s"])
+    end
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+
+    class Start,Done mainFn
+    class CreateSession internalFn
+```
+
+### SessionID
+
+```mermaid
+flowchart TB
+    Start(["SessionID()"]) --> Return(["return s.sessionID"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### UserID
+
+```mermaid
+flowchart TB
+    Start(["UserID()"]) --> Return(["return s.userID"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### AgentID
+
+```mermaid
+flowchart TB
+    Start(["AgentID()"]) --> Return(["return s.agentID"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### Mem0SessionID
+
+```mermaid
+flowchart TB
+    Start(["Mem0SessionID()"]) --> Return(["return s.mem0SessionID"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### Messages
+
+```mermaid
+flowchart TB
+    Start(["Messages()"]) --> MakeResult["make([]Message, len(s.messages)) → result"]
+    MakeResult --> Copy["copy(result, s.messages)"]
+    Copy --> Return(["return result"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### AddMessage
+
+```mermaid
+flowchart TB
+    Start(["AddMessage(msg)"]) --> Append["s.messages = append(s.messages, msg)"]
+    Append --> UpdateActivity["s.UpdateActivity()"]
+
+    click UpdateActivity href "#UpdateActivity"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+
+    class Start mainFn
+    class UpdateActivity localPkgs
+```
+
+### UpdateActivity
+
+```mermaid
+flowchart TB
+    Start(["UpdateActivity()"]) --> SetTime["s.lastActivity = time.Now()"]
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start mainFn
+```
+
+### IsExpired
+
+```mermaid
+flowchart TB
+    Start(["IsExpired(timeout)"]) --> CalcSince["time.Since(s.lastActivity) → duration"]
+    CalcSince --> CheckSince{duration > timeout?}
+    CheckSince -->|yes| ReturnTrue(["return true"])
+    CheckSince -->|no| ReturnFalse(["return false"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,ReturnTrue,ReturnFalse mainFn
+```
+
+### MessageCount
+
+```mermaid
+flowchart TB
+    Start(["MessageCount()"]) --> Return(["return len(s.messages)"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### ClearMessages
+
+```mermaid
+flowchart TB
+    Start(["ClearMessages()"]) --> MakeEmpty["s.messages = make([]Message, 0)"]
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start mainFn
+```
 
 ## Design Notes
 

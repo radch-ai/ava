@@ -2,23 +2,48 @@
 
 Model registry with cost calculation and metadata.
 
-## Overview
+### NewRegistry
 
 ```mermaid
 flowchart TB
-    StartGet(["Get()"]) --> HOnce
+    Start(["NewRegistry()"]) --> HNew
+
+    subgraph SGNew [" "]
+        HNew["**models := make(map[string]*ModelConfig)**"]
+        HNew --> Return(["return &Registry{models: models}"])
+    end
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### Get
+
+```mermaid
+flowchart TB
+    Start(["Get()"]) --> HOnce
 
     subgraph SGOnce [" "]
         HOnce["**sync.Once.Do(func)**"]
-        HOnce --> HNewRegistry
+        HOnce --> HCallNew
     end
 
-    subgraph SGNewRegistry [" "]
-        HNewRegistry["**NewRegistry() → r**"]
-        HNewRegistry --> DoneGet(["return r"])
+    subgraph SGCallNew [" "]
+        HCallNew["**globalRegistry = NewRegistry()**"]
+        HCallNew --> Return(["return globalRegistry"])
     end
 
-    StartLoad(["LoadFromYAML(path)"]) --> HReadFile
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### LoadFromYAML
+
+```mermaid
+flowchart TB
+    Start(["LoadFromYAML(path)"]) --> HReadFile
 
     subgraph SGReadFile [" "]
         HReadFile["**os.ReadFile(path) → data, err**"]
@@ -29,30 +54,29 @@ flowchart TB
     subgraph SGUnmarshal [" "]
         HUnmarshal["**yaml.Unmarshal(data, &config) → err**"]
         HUnmarshal -->|error| E2["return err"]
-        HUnmarshal --> HStoreModels
+        HUnmarshal --> HLock
+    end
+
+    subgraph SGLock [" "]
+        HLock["**r.mu.Lock()**"]
+        HLock --> HStoreModels
     end
 
     subgraph SGStoreModels [" "]
-        HStoreModels["**r.models[name] = cfg**"]
-        HStoreModels --> HStoreRouter
+        HStoreModels["**for name, cfg := range config.Models**"]
+        HStoreModels --> HSetName["**cfg.Name = name**"]
+        HSetName --> HMapStore["**r.models[name] = cfg**"]
+        HMapStore --> HUnlock
+    end
+
+    subgraph SGUnlock [" "]
+        HUnlock["**r.mu.Unlock()**"]
+        HUnlock --> HStoreRouter
     end
 
     subgraph SGStoreRouter [" "]
         HStoreRouter["**r.router = config.Router**"]
-        HStoreRouter --> DoneLoad(["return nil"])
-    end
-
-    StartCost(["GetCost(name, inputTokens, outputTokens)"]) --> HGetModel
-
-    subgraph SGGetModel [" "]
-        HGetModel["**GetModel(name) → cfg, ok**"]
-        HGetModel -->|!ok| E3["return error"]
-        HGetModel --> HCalculate
-    end
-
-    subgraph SGCalculate [" "]
-        HCalculate["**CalculateCost(cfg, inputTokens, outputTokens) → cost**"]
-        HCalculate --> DoneCost(["return cost"])
+        HStoreRouter --> Return(["return nil"])
     end
 
     ReadFile["os.ReadFile(path) → data, err"]
@@ -65,9 +89,195 @@ flowchart TB
     classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
-    class StartGet,DoneGet,StartLoad,DoneLoad,StartCost,DoneCost mainFn
+    class Start,Return mainFn
     class ReadFile,Unmarshal localPkgs
-    class E1,E2,E3 errorFlow
+    class E1,E2 errorFlow
+```
+
+### GetModel
+
+```mermaid
+flowchart TB
+    Start(["GetModel(name)"]) --> HLock
+
+    subgraph SGLock [" "]
+        HLock["**r.mu.RLock()**"]
+        HLock --> HLookup
+    end
+
+    subgraph SGLookup [" "]
+        HLookup["**cfg, exists := r.models[name]**"]
+        HLookup --> HUnlock
+    end
+
+    subgraph SGUnlock [" "]
+        HUnlock["**r.mu.RUnlock()**"]
+        HUnlock --> Return(["return cfg, exists"])
+    end
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### GetRouterModel
+
+```mermaid
+flowchart TB
+    Start(["GetRouterModel()"]) --> HLock
+
+    subgraph SGLock [" "]
+        HLock["**r.mu.RLock()**"]
+        HLock --> HGetModel
+    end
+
+    subgraph SGGetModel [" "]
+        HGetModel["**model := r.router.Model**"]
+        HGetModel --> HUnlock
+    end
+
+    subgraph SGUnlock [" "]
+        HUnlock["**r.mu.RUnlock()**"]
+        HUnlock --> Return(["return model"])
+    end
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### GetAllModels
+
+```mermaid
+flowchart TB
+    Start(["GetAllModels()"]) --> HLock
+
+    subgraph SGLock [" "]
+        HLock["**r.mu.RLock()**"]
+        HLock --> HCreateSlice
+    end
+
+    subgraph SGCreateSlice [" "]
+        HCreateSlice["**names := make([]string, 0, len(r.models))**"]
+        HCreateSlice --> HIterate
+    end
+
+    subgraph SGIterate [" "]
+        HIterate["**for name := range r.models**"]
+        HIterate --> HAppend["**names = append(names, name)**"]
+        HAppend --> HUnlock
+    end
+
+    subgraph SGUnlock [" "]
+        HUnlock["**r.mu.RUnlock()**"]
+        HUnlock --> Return(["return names"])
+    end
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### GetModelsByProvider
+
+```mermaid
+flowchart TB
+    Start(["GetModelsByProvider(provider)"]) --> HLock
+
+    subgraph SGLock [" "]
+        HLock["**r.mu.RLock()**"]
+        HLock --> HIterate
+    end
+
+    subgraph SGIterate [" "]
+        HIterate["**for _, cfg := range r.models**"]
+        HIterate --> HCheck["**cfg.Provider == provider**"]
+        HCheck -->|true| HAppend["**models = append(models, cfg)**"]
+        HAppend --> HIterate
+        HCheck -->|false| HIterate
+        HIterate --> HUnlock
+    end
+
+    subgraph SGUnlock [" "]
+        HUnlock["**r.mu.RUnlock()**"]
+        HUnlock --> Return(["return models"])
+    end
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### GetModelsByTier
+
+```mermaid
+flowchart TB
+    Start(["GetModelsByTier(tier)"]) --> HLock
+
+    subgraph SGLock [" "]
+        HLock["**r.mu.RLock()**"]
+        HLock --> HIterate
+    end
+
+    subgraph SGIterate [" "]
+        HIterate["**for _, cfg := range r.models**"]
+        HIterate --> HCheck["**cfg.Tier == tier**"]
+        HCheck -->|true| HAppend["**models = append(models, cfg)**"]
+        HAppend --> HIterate
+        HCheck -->|false| HIterate
+        HIterate --> HUnlock
+    end
+
+    subgraph SGUnlock [" "]
+        HUnlock["**r.mu.RUnlock()**"]
+        HUnlock --> Return(["return models"])
+    end
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### CalculateCost
+
+```mermaid
+flowchart TB
+    Start(["CalculateCost(cfg, inputTokens, outputTokens)"]) --> HCalcInput
+
+    subgraph SGCalcInput [" "]
+        HCalcInput["**inputCost := float64(inputTokens) * cfg.InputCostPerMillion / 1000000**"]
+        HCalcInput --> HCalcOutput
+    end
+
+    subgraph SGCalcOutput [" "]
+        HCalcOutput["**outputCost := float64(outputTokens) * cfg.OutputCostPerMillion / 1000000**"]
+        HCalcOutput --> Return(["return inputCost + outputCost"])
+    end
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### EstimateCost
+
+```mermaid
+flowchart TB
+    Start(["EstimateCost(cfg, estimate)"]) --> HCalcInput
+
+    subgraph SGCalcInput [" "]
+        HCalcInput["**inputCost := float64(estimate.Input) * cfg.InputCostPerMillion / 1000000**"]
+        HCalcInput --> HCalcOutput
+    end
+
+    subgraph SGCalcOutput [" "]
+        HCalcOutput["**outputCost := float64(estimate.Output) * cfg.OutputCostPerMillion / 1000000**"]
+        HCalcOutput --> Return(["return &CostEstimate{Input: inputCost, Output: outputCost, Total: inputCost + outputCost}"])
+    end
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
 ```
 
 ## Structs
@@ -105,21 +315,6 @@ flowchart TB
 | `TierEconomy` | `ModelTier` | `"economy"` | Economy tier |
 | `TierPremium` | `ModelTier` | `"premium"` | Premium tier |
 | `TierUltra` | `ModelTier` | `"ultra"` | Ultra tier |
-
-## Functions
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `Get` | `() *Registry` | Returns singleton registry |
-| `NewRegistry` | `() *Registry` | Creates new registry |
-| `LoadFromYAML` | `(path string) error` | Loads models from YAML |
-| `GetModel` | `(name string) (*ModelConfig, bool)` | Gets model by name |
-| `GetRouterModel` | `() string` | Returns router model |
-| `GetAllModels` | `() []string` | Returns all model names |
-| `GetModelsByProvider` | `(provider string) []*ModelConfig` | Returns provider's models |
-| `GetModelsByTier` | `(tier ModelTier) []*ModelConfig` | Returns tier's models |
-| `CalculateCost` | `(cfg *ModelConfig, inputTokens, outputTokens int) float64` | Calculates cost |
-| `EstimateCost` | `(cfg *ModelConfig, estimate *TokenEstimate) *CostEstimate` | Estimates cost from token estimate |
 
 ## Design Notes
 

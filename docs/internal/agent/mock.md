@@ -2,40 +2,120 @@
 
 Mock implementations for testing the agent runtime.
 
-## Overview
+## Stream
 
 ```mermaid
 flowchart TB
-    Start(["Stream(ctx, messages, tools)"]) --> CheckLen{no responses}
-    CheckLen -->|yes| CreateEmptyCh["make empty channel"]
-    CreateEmptyCh --> CloseEmpty["close channel"]
-    CloseEmpty --> ReturnEmpty(["return channel"])
-    CheckLen -->|no| GetResp["get next response"]
-    GetResp --> IncIndex["increment index"]
-    IncIndex --> CheckBlock{BlockUntil set}
-    CheckBlock -->|yes| Wait["wait for block"]
-    CheckBlock -->|no| CreateCh["make channel"]
-    Wait --> CreateCh
-    CreateCh --> Goroutine["go func"]
-    Goroutine --> CheckCtx1["select"]
-    CheckCtx1 -->|ctx.Done| Return1["return"]
-    CheckCtx1 -->|default| GetTime["get timestamp"]
-    GetTime --> EmitStart["emit MessageStartEvent"]
-    EmitStart --> CheckText{has content}
-    CheckText -->|yes| TypeAssert["type assert Text"]
-    CheckText -->|no| SetDelta["set empty delta"]
-    TypeAssert -->|ok| SetDelta1["set delta text"]
-    TypeAssert -->|not ok| SetDelta
-    SetDelta1 --> EmitUpdate["emit MessageUpdateEvent"]
+    Start(["Stream(ctx, messages, tools) → (<-chan AgentEvent, error)"]) --> CheckLen{"m.Responses empty"}
+    CheckLen -->|yes| MakeEmptyCh["make(chan AgentEvent) → ch"]
+    MakeEmptyCh --> CloseEmpty["close(ch)"]
+    CloseEmpty --> ReturnEmpty(["return ch, nil"])
+    CheckLen -->|no| GetResp["m.Responses[m.responseIndex] → resp"]
+    GetResp --> IncIndex["m.responseIndex = (m.responseIndex + 1) % len(m.Responses)"]
+    IncIndex --> CheckBlock{"resp.BlockUntil nil"}
+    CheckBlock -->|yes| Wait["<-resp.BlockUntil"]
+    CheckBlock -->|no| MakeCh
+    Wait --> MakeCh["make(chan AgentEvent, 10) → ch"]
+    MakeCh --> Goroutine["go func()"]
+    Goroutine --> DeferClose["defer close(ch)"]
+    DeferClose --> SelectCtx["select{ctx.Done() default}"]
+    SelectCtx -->|ctx.Done| ReturnFunc["return"]
+    SelectCtx -->|default| GetTimestamp["time.Now().Unix() → timestamp"]
+    GetTimestamp --> EmitStart["ch <- MessageStartEvent{Timestamp: timestamp, Message: resp.Message}"]
+    EmitStart --> ExtractDelta{"resp.Message.Content[0] is TextContent"}
+    ExtractDelta -->|yes| SetDelta["tc.Text → delta"]
+    ExtractDelta -->|no| SetEmptyDelta["delta = ''"]
     SetDelta --> EmitUpdate
-    EmitUpdate --> EmitEnd["emit MessageEndEvent"]
-    EmitEnd --> CloseCh["close channel"]
-    CloseCh --> Return2["return"]
-    Goroutine --> ReturnCh(["return channel"])
+    SetEmptyDelta --> EmitUpdate["ch <- MessageUpdateEvent{Timestamp: timestamp, Message: resp.Message, Delta: delta}"]
+    EmitUpdate --> EmitEnd["ch <- MessageEndEvent{Timestamp: timestamp, Message: resp.Message}"]
+    EmitEnd --> ReturnFunc
+    Goroutine --> Return(["return ch, nil"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+
+    class Start,ReturnEmpty,Return mainFn
+```
+
+## Reset
+
+```mermaid
+flowchart TB
+    Start(["Reset()"]) --> SetIndex["m.responseIndex = 0"]
+    SetIndex --> Return(["return"])
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
 
-    class Start,ReturnEmpty,ReturnCh mainFn
+    class Start,Return mainFn
+```
+
+## MockTool
+
+```mermaid
+flowchart TB
+    Start(["MockTool(config) → agent.Tool"]) --> CheckName{"config.Name empty"}
+    CheckName -->|yes| SetDefaultName["config.Name = 'mock_tool'"]
+    CheckName -->|no| CheckExecuteFunc
+    SetDefaultName --> CheckExecuteFunc{"config.ExecuteFunc nil"}
+    CheckExecuteFunc -->|no| SetExecute["execute = config.ExecuteFunc"]
+    CheckExecuteFunc -->|yes| CheckError{"config.Error nil"}
+    CheckError -->|no| SetErrorFunc["execute = func(ctx, args) → return nil, config.Error"]
+    CheckError -->|yes| CheckResult{"config.Result nil"}
+    CheckResult -->|no| SetResultFunc["execute = func(ctx, args) → return config.Result, nil"]
+    CheckResult -->|yes| SetDefaultFunc["execute = func(ctx, args) → return &agent.ToolResult{Content: []agent.ContentBlock{agent.TextContent{Text: 'ok'}}}, nil"]
+    SetExecute --> ReturnTool
+    SetErrorFunc --> ReturnTool
+    SetResultFunc --> ReturnTool
+    SetDefaultFunc --> ReturnTool(["return agent.Tool{Name: config.Name, Description: config.Description, Execute: execute}"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,ReturnTool mainFn
+```
+
+## MockEchoTool
+
+```mermaid
+flowchart TB
+    Start(["MockEchoTool(name) → agent.Tool"]) --> ReturnTool(["return MockTool(MockToolConfig{Name: name, Description: 'Echoes back the input', ExecuteFunc: func})"])
+
+    subgraph SGExecuteFunc [" "]
+        HExecuteFunc["**ExecuteFunc(ctx, args) → (*agent.ToolResult, error)**"]
+        HExecuteFunc --> GetInput["args['input'] → input, ok"]
+        GetInput --> CheckInput{"ok false or input empty"}
+        CheckInput -->|yes| ReturnErr(["return nil, &agent.ToolExecutionError{ToolName: name, Message: 'missing or invalid input argument'}"])
+        CheckInput -->|no| ReturnOk(["return &agent.ToolResult{Content: []agent.ContentBlock{agent.TextContent{Text: input}}, Details: input}, nil"])
+    end
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,ReturnTool,ReturnOk mainFn
+    class HExecuteFunc internalFn
+    class ReturnErr errorFlow
+```
+
+## MockFailingTool
+
+```mermaid
+flowchart TB
+    Start(["MockFailingTool(name, err) → agent.Tool"]) --> ReturnTool(["return MockTool(MockToolConfig{Name: name, Description: 'A tool that always fails', Error: err})"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,ReturnTool mainFn
+```
+
+## MockResultTool
+
+```mermaid
+flowchart TB
+    Start(["MockResultTool(name, result) → agent.Tool"]) --> ReturnTool(["return MockTool(MockToolConfig{Name: name, Description: 'A tool with a canned result', Result: result})"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,ReturnTool mainFn
 ```
 
 ## Structs
@@ -73,18 +153,6 @@ type LLMClient interface {
     Stream(ctx context.Context, messages []AgentMessage, tools []Tool) (<-chan AgentEvent, error)
 }
 ```
-
-## Functions
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `NewMockLLMClient` | N/A (struct literal) | Create mock client |
-| `Stream` | `(ctx, messages, tools) (<-chan AgentEvent, error)` | Returns canned responses |
-| `Reset` | `()` | Resets response index |
-| `MockTool` | `(config MockToolConfig) Tool` | Creates mock tool |
-| `MockEchoTool` | `(name string) Tool` | Creates echo tool |
-| `MockFailingTool` | `(name string, err error) Tool` | Creates failing tool |
-| `MockResultTool` | `(name string, result *ToolResult) Tool` | Creates result tool |
 
 ## Design Notes
 

@@ -2,78 +2,259 @@
 
 Built-in agent tools and tool registry for the agent runtime.
 
-## Overview
+## NewRegistry
 
 ```mermaid
 flowchart TB
-    Start(["Tools Subpackage"]) --> NewRegistry(["NewRegistry()"])
-    Start --> DefaultTools(["DefaultTools()"])
-    Start --> Echo(["ExampleEchoTool()"])
-    Start --> Math(["ExampleMathTool()"])
-    Start --> Time(["ExampleTimeTool()"])
-    Start --> Delay(["ExampleDelayTool()"])
-
-    NewRegistry --> MakeMap["make tools map"]
-    MakeMap --> ForTools["for tools"]
-    ForTools --> AddToMap["add tool to map"]
-    AddToMap --> ReturnRegistry(["return registry"])
-
-    DefaultTools --> ReturnSlice(["return tool slice"])
-
-    Echo --> EchoExecute["Execute func"]
-    EchoExecute --> GetText["get text arg"]
-    GetText --> CheckText{valid text}
-    CheckText -->|no| ReturnEchoErr(["return error"])
-    CheckText -->|yes| ReturnEchoOk(["return success"])
-
-    Math --> MathExecute["Execute func"]
-    MathExecute --> GetOp["get operation arg"]
-    GetOp -->|no| ReturnMathErr1(["return error"])
-    GetOp -->|ok| GetA["get a arg"]
-    GetA -->|no| ReturnMathErr2
-    GetA -->|ok| GetB["get b arg"]
-    GetB -->|no| ReturnMathErr3
-    GetB -->|ok| SwitchOp["switch operation"]
-    SwitchOp -->|add| AddOp["add"]
-    SwitchOp -->|subtract| SubOp["subtract"]
-    SwitchOp -->|multiply| MulOp["multiply"]
-    SwitchOp -->|divide| CheckZero{b zero}
-    SwitchOp -->|default| ReturnMathErr4
-    CheckZero -->|yes| ReturnMathErr5(["return error"])
-    CheckZero -->|no| DivOp["divide"]
-    AddOp --> FormatMath["format result"]
-    SubOp --> FormatMath
-    MulOp --> FormatMath
-    DivOp --> FormatMath
-    FormatMath --> ReturnMathOk(["return success"])
-
-    Time --> TimeExecute["Execute func"]
-    TimeExecute --> SelectTime["select"]
-    SelectTime -->|ctx.Done| ReturnTimeErr(["return error"])
-    SelectTime -->|default| GetNow["get time"]
-    GetNow --> ReturnTimeOk(["return success"])
-
-    Delay --> DelayExecute["Execute func"]
-    DelayExecute --> GetDuration["get duration arg"]
-    GetDuration -->|no| CheckInt["check int type"]
-    GetDuration -->|ok| CheckNegative{negative}
-    CheckInt -->|no| ReturnDelayErr1(["return error"])
-    CheckInt -->|ok| ConvertFloat["convert to float"]
-    ConvertFloat --> CheckNegative
-    CheckNegative -->|yes| ReturnDelayErr2(["return error"])
-    CheckNegative -->|no| CalcDuration["calc duration"]
-    CalcDuration --> NewTimer["new timer"]
-    NewTimer --> DeferTimer["defer stop"]
-    DeferTimer --> SelectDelay["select"]
-    SelectDelay -->|ctx.Done| ReturnDelayErr3(["return error"])
-    SelectDelay -->|timer| FormatDelay["format result"]
-    FormatDelay --> ReturnDelayOk(["return success"])
+    Start(["NewRegistry(tools...) → *Registry"]) --> MakeMap["make(map[string]agent.Tool) → toolsMap"]
+    MakeMap --> ForTools["for tool in tools"]
+    ForTools --> AddMap["toolsMap[tool.Name] = tool"]
+    AddMap --> LoopTools
+    LoopTools --> ForTools
+    ForTools -->|done| Return(["return &Registry{tools: toolsMap}"])
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+## RegisterTool
+
+```mermaid
+flowchart TB
+    Start(["RegisterTool(r, name, tool) → bool"]) --> Lock["r.mu.Lock()"]
+    Lock --> CheckExists{"r.tools[name] exists"}
+    CheckExists -->|yes| Unlock["r.mu.Unlock()"]
+    Unlock --> ReturnFalse(["return false"])
+    CheckExists -->|no| AddTool["r.tools[name] = tool"]
+    AddTool --> Unlock2["r.mu.Unlock()"]
+    Unlock2 --> ReturnTrue(["return true"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,ReturnFalse,ReturnTrue mainFn
+```
+
+## GetTool
+
+```mermaid
+flowchart TB
+    Start(["GetTool(r, name) → *agent.Tool"]) --> Lock["r.mu.RLock()"]
+    Lock --> CheckExists{"r.tools[name] exists"}
+    CheckExists -->|yes| GetToolVal["r.tools[name] → tool"]
+    GetToolVal --> Unlock["r.mu.RUnlock()"]
+    Unlock --> ReturnFound(["return &tool"])
+    CheckExists -->|no| Unlock2["r.mu.RUnlock()"]
+    Unlock2 --> ReturnNil(["return nil"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,ReturnFound,ReturnNil mainFn
+```
+
+## DefaultTools
+
+```mermaid
+flowchart TB
+    Start(["DefaultTools() → []agent.Tool"]) --> Return(["return []agent.Tool{ExampleEchoTool(), ExampleMathTool(), ExampleTimeTool(), ExampleDelayTool()}"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+## ExampleEchoTool
+
+```mermaid
+flowchart TB
+    Start(["ExampleEchoTool() → agent.Tool"]) --> ReturnTool(["return agent.Tool{Name: 'echo', Description: 'Echoes the input text back', Execute: func}"])
+
+    subgraph SGExecute [" "]
+        HExecute["**Execute(ctx, args) → (*agent.ToolResult, error)**"]
+        HExecute --> GetText["args['text'] → text, ok"]
+        GetText --> CheckText{"ok false or text empty"}
+        CheckText -->|yes| ReturnErr(["return nil, error"])
+        CheckText -->|no| ReturnOk(["return &agent.ToolResult{Content: []agent.ContentBlock{agent.TextContent{Text: text}}, Details: text}, nil"])
+    end
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+
+    class Start,ReturnTool,ReturnOk,ReturnErr mainFn
+    class HExecute internalFn
+```
+
+## ExampleMathTool
+
+```mermaid
+flowchart TB
+    Start(["ExampleMathTool() → agent.Tool"]) --> ReturnTool(["return agent.Tool{Name: 'math', Description: 'Performs simple math operations', Execute: func}"])
+
+    subgraph SGExecute [" "]
+        HExecute["**Execute(ctx, args) → (*agent.ToolResult, error)**"]
+        HExecute --> GetOp["args['operation'] → operation, ok"]
+        GetOp --> CheckOp{ok false}
+        CheckOp -->|yes| ErrOp(["return nil, error"])
+        CheckOp -->|no| GetA["args['a'] → a, okA"]
+        GetA --> CheckA{okA false}
+        CheckA -->|yes| ErrA
+        CheckA -->|no| GetB["args['b'] → b, okB"]
+        GetB --> CheckB{okB false}
+        CheckB -->|yes| ErrB
+        CheckB -->|no| SwitchOp["switch operation"]
+        SwitchOp -->|add| AddOp["result = a + b"]
+        SwitchOp -->|subtract| SubOp["result = a - b"]
+        SwitchOp -->|multiply| MulOp["result = a * b"]
+        SwitchOp -->|divide| CheckZero{b == 0}
+        CheckZero -->|yes| ErrDiv(["return nil, error"])
+        CheckZero -->|no| DivOp["result = a / b"]
+        SwitchOp -->|default| ErrUnknown
+        AddOp --> FormatResult["fmt.Sprintf('%.2f', result) → text"]
+        SubOp --> FormatResult
+        MulOp --> FormatResult
+        DivOp --> FormatResult
+        FormatResult --> ReturnOk(["return &agent.ToolResult{Content: []agent.ContentBlock{agent.TextContent{Text: text}}, Details: result}, nil"])
+    end
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
-    class Start,NewRegistry,DefaultTools,Echo,Math,Time,Delay,ReturnRegistry,ReturnSlice,ReturnEchoOk,ReturnMathOk,ReturnTimeOk,ReturnDelayOk mainFn
-    class ReturnEchoErr,ReturnMathErr1,ReturnMathErr2,ReturnMathErr3,ReturnMathErr4,ReturnMathErr5,ReturnTimeErr,ReturnDelayErr1,ReturnDelayErr2,ReturnDelayErr3 errorFlow
+    class Start,ReturnTool,ReturnOk mainFn
+    class HExecute internalFn
+    class ErrOp,ErrA,ErrB,ErrDiv,ErrUnknown errorFlow
+```
+
+## ExampleTimeTool
+
+```mermaid
+flowchart TB
+    Start(["ExampleTimeTool() → agent.Tool"]) --> ReturnTool(["return agent.Tool{Name: 'time', Description: 'Returns the current time', Execute: func}"])
+
+    subgraph SGExecute [" "]
+        HExecute["**Execute(ctx, args) → (*agent.ToolResult, error)**"]
+        HExecute --> Select["select{ctx.Done() default}"]
+        Select -->|ctx.Done| ReturnErr(["return nil, ctx.Err()"])
+        Select -->|default| GetNow["time.Now().Format(time.RFC3339) → now"]
+        GetNow --> ReturnOk(["return &agent.ToolResult{Content: []agent.AgentMessage{agent.TextContent{Text: now}}, Details: now}, nil"])
+    end
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,ReturnTool,ReturnOk mainFn
+    class HExecute internalFn
+    class ReturnErr errorFlow
+```
+
+## ExampleDelayTool
+
+```mermaid
+flowchart TB
+    Start(["ExampleDelayTool() → agent.Tool"]) --> ReturnTool(["return agent.Tool{Name: 'delay', Description: 'Waits for specified duration', Execute: func}"])
+
+    subgraph SGExecute [" "]
+        HExecute["**Execute(ctx, args) → (*agent.ToolResult, error)**"]
+        HExecute --> GetDuration["args['duration_ms'] → durationMsFloat, ok"]
+        GetDuration --> CheckFloat{ok false}
+        CheckFloat -->|yes| CheckInt["args['duration_ms'] → durationMsInt, okInt"]
+        CheckInt --> CheckIntOk{okInt false}
+        CheckIntOk -->|yes| ErrInt(["return nil, error"])
+        CheckIntOk -->|no| ConvertFloat["float64(durationMsInt) → durationMsFloat"]
+        ConvertFloat --> CheckNeg
+        CheckFloat -->|no| CheckNeg
+        CheckNeg{"durationMsFloat < 0"}
+        CheckNeg -->|yes| ErrNeg(["return nil, error"])
+        CheckNeg -->|no| CalcDuration["time.Duration(durationMsFloat) * time.Millisecond → duration"]
+        CalcDuration --> NewTimer["time.NewTimer(duration) → timer"]
+        NewTimer --> DeferTimer["defer timer.Stop()"]
+        DeferTimer --> Select["select{ctx.Done() <-timer.C}"]
+        Select -->|ctx.Done| ReturnErr(["return nil, ctx.Err()"])
+        Select -->|timer| FormatResult["fmt.Sprintf('waited %d ms', int(durationMsFloat)) → result"]
+        FormatResult --> ReturnOk(["return &agent.ToolResult{Content: []agent.AgentMessage{agent.TextContent{Text: result}}, Details: durationMsFloat}, nil"])
+    end
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,ReturnTool,ReturnOk mainFn
+    class HExecute internalFn
+    class ErrInt,ErrNeg,ReturnErr errorFlow
+```
+
+## ReadAgentFileTool
+
+```mermaid
+flowchart TB
+    Start(["ReadAgentFileTool(client) → agent.Tool"]) --> ReturnTool(["return agent.Tool{Name: 'read_agent_file', Description: 'Read from agent workspace', Execute: func}"])
+
+    subgraph SGExecute [" "]
+        HExecute["**Execute(ctx, args) → (*agent.ToolResult, error)**"]
+        HExecute --> GetUserID["ctxpkg.GetUserIDFromContext(ctx) → userID"]
+        GetUserID --> GetAgentID["ctxpkg.GetAgentIDFromContext(ctx) → agentID"]
+    GetAgentID --> CheckIDs{"userID empty or agentID empty"}
+    CheckIDs -->|yes| ErrIDs(["return &agent.ToolResult{Content: []agent.ContentBlock{agent.TextContent{Text: 'Error'}}, fmt.Errorf('IDs not found in context')"])
+    CheckIDs -->|no| GetPath["args['path'] → path, ok"]
+    GetPath --> CheckPath{"ok false or path empty"}
+        CheckPath -->|yes| ErrPath(["return &agent.ToolResult{Content: []agent.ContentBlock{agent.TextContent{Text: 'Error'}}, fmt.Errorf('missing path')"])
+        CheckPath -->|no| BuildS3Path["storage.WorkspacePath(userID, agentID, path) → s3Path"]
+        BuildS3Path --> GetFile["client.Get(ctx, s3Path) → data, err"]
+        GetFile -->|error| ErrFile(["return &agent.ToolResult{Content: []agent.ContentBlock{agent.TextContent{Text: 'Error'}}, err"])
+        GetFile -->|ok| ReturnOk(["return &agent.ToolResult{Content: []agent.ContentBlock{agent.TextContent{Text: string(data)}}, nil"])
+    end
+
+    click ctxpkg href "../../ctx/README.md"
+    click storage href "../../storage/README.md"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,ReturnTool,ReturnOk mainFn
+    class HExecute internalFn
+    class ctxpkg,storage localPkgs
+    class ErrIDs,ErrPath,ErrFile errorFlow
+```
+
+## WriteAgentFileTool
+
+```mermaid
+flowchart TB
+    Start(["WriteAgentFileTool(client) → agent.Tool"]) --> ReturnTool(["return agent.Tool{Name: 'write_agent_file', Description: 'Write to agent workspace', Execute: func}"])
+
+    subgraph SGExecute [" "]
+        HExecute["**Execute(ctx, args) → (*agent.ToolResult, error)**"]
+        HExecute --> GetUserID["ctxpkg.GetUserIDFromContext(ctx) → userID"]
+        GetUserID --> GetAgentID["ctxpkg.GetAgentIDFromContext(ctx) → agentID"]
+        GetAgentID --> CheckIDs{"userID empty or agentID empty"}
+        CheckIDs -->|yes| ErrIDs(["return &agent.ToolResult{Content: []agent.ContentBlock{agent.TextContent{Text: 'Error'}}, fmt.Errorf('IDs not found in context')"])
+    CheckIDs -->|no| GetPath["args['path'] → path, ok"]
+    GetPath --> CheckPath{"ok false or path empty"}
+        CheckPath -->|yes| ErrPath(["return &agent.ToolResult{Content: []agent.ContentBlock{agent.TextContent{Text: 'Error'}}, fmt.Errorf('missing path')"])
+        CheckPath -->|no| GetContent["args['content'] → content, ok"]
+        GetContent --> CheckContent{ok false}
+        CheckContent -->|yes| ErrContent(["return &agent.ToolResult{Content: []agent.ContentBlock{agent.TextContent{Text: 'Error'}}, fmt.Errorf('missing content')"])
+        CheckContent -->|no| BuildS3Path["storage.WorkspacePath(userID, agentID, path) → s3Path"]
+        BuildS3Path --> PutFile["client.Put(ctx, s3Path, []byte(content)) → err"]
+        PutFile -->|error| ErrFile(["return &agent.ToolResult{Content: []agent.ContentBlock{agent.TextContent{Text: 'Error'}}, err"])
+        PutFile -->|ok| ReturnOk(["return &agent.ToolResult{Content: []agent.ContentBlock{agent.TextContent{Text: 'Success'}}, nil"])
+    end
+
+    click ctxpkg href "../../ctx/README.md"
+    click storage href "../../storage/README.md"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,ReturnTool,ReturnOk mainFn
+    class HExecute internalFn
+    class ctxpkg,storage localPkgs
+    class ErrIDs,ErrPath,ErrContent,ErrFile errorFlow
 ```
 
 ## Files
@@ -126,15 +307,6 @@ flowchart TB
 |--------|-------|------|-------------|
 | `Registry` | `mu` | `sync.RWMutex` | Thread-safe lock |
 | | `tools` | `map[string]agent.Tool` | Tool storage |
-
-### Functions
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `NewRegistry` | `(tools ...agent.Tool) *Registry` | Creates registry |
-| `RegisterTool` | `(r *Registry, name string, tool agent.Tool) bool` | Registers tool |
-| `GetTool` | `(r *Registry, name string) *agent.Tool` | Gets tool by name |
-| `DefaultTools` | `() []agent.Tool` | Returns example tools |
 
 ## Design Notes
 

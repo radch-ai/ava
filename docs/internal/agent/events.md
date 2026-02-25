@@ -20,9 +20,13 @@ flowchart TB
     EmitEnd --> ClearStream["a.setStreamingState(false, nil)"]
     ClearStream --> ReturnOk(["return nil"])
 
+    click NewTextMessage href "types.md"
+
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
 
     class Start,ReturnErr,ReturnOk mainFn
+    class NewTextMessage localPkgs
 ```
 
 ## Interface

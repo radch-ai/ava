@@ -4,21 +4,7 @@ Context utilities for propagating user ID and agent ID through request lifecycle
 
 ## Overview
 
-```mermaid
-flowchart TB
-    Start([Request]) --> SetUserID["ctx.WithUserID(ctx, userID) → ctx"]
-    SetUserID --> SetAgentID["ctx.WithAgentID(ctx, agentID) → ctx"]
-    SetAgentID --> UseCtx["Tool.Execute(ctx, args)"]
-    UseCtx --> GetUserID["ctx.GetUserIDFromContext(ctx) → userID"]
-    GetUserID --> GetAgentID["ctx.GetAgentIDFromContext(ctx) → agentID"]
-    GetAgentID --> Done(["values available"])
-
-    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
-
-    class Start,Done mainFn
-    class SetUserID,SetAgentID,GetUserID,GetAgentID localPkgs
-```
+<!-- Overview replaced by individual function flowcharts below -->
 
 ## Constants
 
@@ -29,12 +15,87 @@ flowchart TB
 
 ## Functions
 
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `WithUserID` | `(ctx context.Context, userID string) context.Context` | Adds user ID to context |
-| `GetUserIDFromContext` | `(ctx context.Context) string` | Retrieves user ID from context |
-| `WithAgentID` | `(ctx context.Context, agentID string) context.Context` | Adds agent ID to context |
-| `GetAgentIDFromContext` | `(ctx context.Context) string` | Retrieves agent ID from context |
+### WithUserID
+
+```mermaid
+flowchart TB
+    Start([ctx, userID string]) --> HWithUserID["**WithUserID(ctx, userID) → ctx**"]
+    HWithUserID --> SetValue["context.WithValue(ctx, UserIDKey, userID) → ctx"]
+    SetValue --> Return["return ctx"]
+
+    click SetValue href "https://pkg.go.dev/context#WithValue"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+
+    class Start,Return mainFn
+    class HWithUserID internalFn
+    class SetValue localPkgs
+```
+
+### GetUserIDFromContext
+
+```mermaid
+flowchart TB
+    Start([ctx context.Context]) --> HGetUserID["**GetUserIDFromContext(ctx) → userID**"]
+    HGetUserID --> GetValue["ctx.Value(UserIDKey) → value"]
+    GetValue --> Assert["value.(string) → userID, ok"]
+    Assert --> CheckOK["ok"]
+    CheckOK -->|true| ReturnID["return userID"]
+    CheckOK -->|false| ReturnEmpty(["return \"\""])
+
+    click GetValue href "https://pkg.go.dev/context#Context.Value"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+
+    class Start,ReturnID,ReturnEmpty mainFn
+    class HGetUserID internalFn
+    class GetValue localPkgs
+```
+
+### WithAgentID
+
+```mermaid
+flowchart TB
+    Start([ctx, agentID string]) --> HWithAgentID["**WithAgentID(ctx, agentID) → ctx**"]
+    HWithAgentID --> SetValue["context.WithValue(ctx, AgentIDKey, agentID) → ctx"]
+    SetValue --> Return["return ctx"]
+
+    click SetValue href "https://pkg.go.dev/context#WithValue"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+
+    class Start,Return mainFn
+    class HWithAgentID internalFn
+    class SetValue localPkgs
+```
+
+### GetAgentIDFromContext
+
+```mermaid
+flowchart TB
+    Start([ctx context.Context]) --> HGetAgentID["**GetAgentIDFromContext(ctx) → agentID**"]
+    HGetAgentID --> GetValue["ctx.Value(AgentIDKey) → value"]
+    GetValue --> Assert["value.(string) → agentID, ok"]
+    Assert --> CheckOK["ok"]
+    CheckOK -->|true| ReturnID["return agentID"]
+    CheckOK -->|false| ReturnEmpty(["return \"\""])
+
+    click GetValue href "https://pkg.go.dev/context#Context.Value"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+
+    class Start,ReturnID,ReturnEmpty mainFn
+    class HGetAgentID internalFn
+    class GetValue localPkgs
+```
 
 ## Design Notes
 

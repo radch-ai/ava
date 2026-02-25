@@ -121,28 +121,250 @@ type Client interface {
 
 ## Functions
 
-### Path Helpers
+### WorkspacePath
 
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `WorkspacePath` | `(userID, agentID, filename string) string` | S3 path for workspace file |
-| `TranscriptPath` | `(userID, agentID, sessionID string) string` | S3 path for transcript |
+```mermaid
+flowchart TB
+    Start(["WorkspacePath(userID, agentID, filename)"]) --> PathJoin["path.Join(userID, agentID, workspace, filename) → path"]
+    PathJoin --> Return(["return path"])
 
-### Workspace
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
 
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `NewWorkspaceLoader` | `(client Client) *WorkspaceLoader` | Creates loader |
-| `Load` | `(ctx context.Context, userID, agentID string) (*Workspace, error)` | Loads workspace files |
-| `FormatSystemPrompt` | `() string` | Formats as system prompt |
+    class Start,Return mainFn
+```
 
-### Transcript
+### TranscriptPath
 
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `NewTranscriptWriter` | `(client Client) *TranscriptWriter` | Creates writer |
-| `WriteTurn` | `(ctx context.Context, turn Turn) error` | Writes turn as JSONL |
-| `TurnToJSONL` | `(turn Turn) string` | Converts to JSONL line |
+```mermaid
+flowchart TB
+    Start(["TranscriptPath(userID, agentID, sessionID)"]) --> PathJoin["path.Join(userID, agentID, transcripts, sessionID + .jsonl) → path"]
+    PathJoin --> Return(["return path"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### NewWorkspaceLoader
+
+```mermaid
+flowchart TB
+    Start(["NewWorkspaceLoader(client)"]) --> CreateLoader["&WorkspaceLoader{client} → l"]
+    CreateLoader --> Done(["return l"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Done mainFn
+```
+
+### Load
+
+```mermaid
+flowchart TB
+    Start(["Load(ctx, userID, agentID)"]) --> CreateWorkspace["&Workspace{} → workspace"]
+    CreateWorkspace --> LoadSoul["l.loadFile(ctx, userID, agentID, SOUL.md) → soul, err"]
+
+    subgraph SGCheckSoul [" "]
+        LoadSoul --> CheckSoulErr{err?}
+        CheckSoulErr -->|no| SetSoul["workspace.Soul = soul"]
+        SetSoul --> SetLoaded1["workspace.Loaded = true"]
+        CheckSoulErr -->|yes| LoadAgents
+        SetLoaded1 --> LoadAgents
+    end
+
+    LoadAgents --> LoadAgentsFile["l.loadFile(ctx, userID, agentID, AGENTS.md) → agents, err"]
+
+    subgraph SGCheckAgents [" "]
+        LoadAgentsFile --> CheckAgentsErr{err?}
+        CheckAgentsErr -->|no| SetAgents["workspace.Agents = agents"]
+        SetAgents --> SetLoaded2["workspace.Loaded = true"]
+        CheckAgentsErr -->|yes| LoadUser
+        SetLoaded2 --> LoadUser
+    end
+
+    LoadUser --> LoadUserFile["l.loadFile(ctx, userID, agentID, USER.md) → user, err"]
+
+    subgraph SGCheckUser [" "]
+        LoadUserFile --> CheckUserErr{err?}
+        CheckUserErr -->|no| SetUser["workspace.User = user"]
+        SetUser --> SetLoaded3["workspace.Loaded = true"]
+        CheckUserErr -->|yes| LoadIdentity
+        SetLoaded3 --> LoadIdentity
+    end
+
+    LoadIdentity --> LoadIdentityFile["l.loadFile(ctx, userID, agentID, IDENTITY.md) → identity, err"]
+
+    subgraph SGCheckIdentity [" "]
+        LoadIdentityFile --> CheckIdentityErr{err?}
+        CheckIdentityErr -->|no| SetIdentity["workspace.Identity = identity"]
+        SetIdentity --> SetLoaded4["workspace.Loaded = true"]
+        CheckIdentityErr -->|yes| LoadTools
+        SetLoaded4 --> LoadTools
+    end
+
+    LoadTools --> LoadToolsFile["l.loadFile(ctx, userID, agentID, TOOLS.md) → tools, err"]
+
+    subgraph SGCheckTools [" "]
+        LoadToolsFile --> CheckToolsErr{err?}
+        CheckToolsErr -->|no| SetTools["workspace.Tools = tools"]
+        SetTools --> SetLoaded5["workspace.Loaded = true"]
+        CheckToolsErr -->|yes| Return
+        SetLoaded5 --> Return
+    end
+
+    Return(["return workspace, nil"])
+
+    click LoadSoul href "#loadFile"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+
+    class Start,Return mainFn
+    class LoadSoul,LoadAgentsFile,LoadUserFile,LoadIdentityFile,LoadToolsFile localPkgs
+```
+
+### loadFile
+
+```mermaid
+flowchart TB
+    Start(["loadFile(ctx, userID, agentID, filename)"]) --> WorkspacePathCall["WorkspacePath(userID, agentID, filename) → path"]
+    WorkspacePathCall --> GetFile["l.client.Get(ctx, path) → data, err"]
+    GetFile --> CheckErr{err?}
+    CheckErr -->|yes| ReturnErr(["return '', fmt.Errorf(file not found)"])
+    CheckErr -->|no| ToString["string(data) → content"]
+    ToString --> Return(["return content, nil"])
+
+    click WorkspacePathCall href "#WorkspacePath"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,Return mainFn
+    class WorkspacePathCall localPkgs
+    class ReturnErr errorFlow
+```
+
+### FormatSystemPrompt
+
+```mermaid
+flowchart TB
+    Start(["FormatSystemPrompt()"]) --> MakeBuilder["strings.Builder{} → prompt"]
+    MakeBuilder --> CheckSoul{w.Soul?}
+    CheckSoul -->|yes| WriteSoul["prompt.WriteString(w.Soul + \n\n)"]
+    CheckSoul -->|no| CheckAgents
+    WriteSoul --> CheckAgents{w.Agents?}
+    CheckAgents -->|yes| WriteAgents["prompt.WriteString(w.Agents + \n\n)"]
+    CheckAgents -->|no| CheckUser
+    WriteAgents --> CheckUser{w.User?}
+
+    subgraph SGWriteUser [" "]
+        CheckUser -->|yes| WriteUserHeader["prompt.WriteString(## User Information\n\n)"]
+        WriteUserHeader --> WriteUser["prompt.WriteString(w.User + \n\n)"]
+        CheckUser -->|no| CheckIdentity
+        WriteUser --> CheckIdentity
+    end
+
+    CheckIdentity -->|yes| WriteIdentityHeader["prompt.WriteString(## Identity\n\n)"]
+    CheckIdentity -->|no| CheckTools{w.Tools?}
+    WriteIdentityHeader --> WriteIdentity["prompt.WriteString(w.Identity + \n\n)"]
+    WriteIdentity --> CheckTools
+
+    CheckTools -->|yes| WriteToolsHeader["prompt.WriteString(## Tool Guidance\n\n)"]
+    CheckTools -->|no| Return
+    WriteToolsHeader --> WriteTools["prompt.WriteString(w.Tools + \n\n)"]
+    WriteTools --> Return
+
+    Return(["return prompt.String()"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### NewTranscriptWriter
+
+```mermaid
+flowchart TB
+    Start(["NewTranscriptWriter(client)"]) --> CreateWriter["&TranscriptWriter{client} → w"]
+    CreateWriter --> Done(["return w"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Done mainFn
+```
+
+### WriteTurn
+
+```mermaid
+flowchart TB
+    Start(["WriteTurn(ctx, turn)"]) --> TurnToJSONLCall["TurnToJSONL(turn) → line"]
+    TurnToJSONLCall --> TranscriptPathCall["TranscriptPath(turn.UserID, turn.AgentID, turn.SessionID) → path"]
+    TranscriptPathCall --> Append["w.client.Append(ctx, path, []byte(line)) → err"]
+    Append --> Return(["return err"])
+
+    click TurnToJSONLCall href "#TurnToJSONL"
+    click TranscriptPathCall href "#TranscriptPath"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+
+    class Start,Return mainFn
+    class TurnToJSONLCall,TranscriptPathCall localPkgs
+```
+
+### TurnToJSONL
+
+```mermaid
+flowchart TB
+    Start(["TurnToJSONL(turn)"]) --> MakeMessages["make([]map[string]any, len(turn.Messages)) → messages"]
+    MakeMessages --> LoopMessages["for turn.Messages"]
+
+    subgraph SGLoopMessages [" "]
+        LoopMessages --> GetMessage["msg := range"]
+        GetMessage --> MakeMsgMap["map[string]any{role, content, timestamp} → msgMap"]
+        MakeMsgMap --> CheckToolCallID{msg.ToolCallID?}
+        CheckToolCallID -->|yes| SetToolCallID["msgMap[tool_call_id] = msg.ToolCallID"]
+        CheckToolCallID -->|no| CheckToolName
+        SetToolCallID --> CheckToolName{msg.ToolName?}
+        CheckToolName -->|yes| SetToolName["msgMap[tool_name] = msg.ToolName"]
+        CheckToolName -->|no| CheckIsError
+        SetToolName --> CheckIsError{msg.IsError?}
+        CheckIsError -->|yes| SetIsError["msgMap[is_error] = true"]
+        CheckIsError -->|no| SetMessage
+        SetIsError --> SetMessage["messages[i] = msgMap"]
+        CheckIsError -->|no| SetMessage
+        SetMessage --> NextMessage["i++"]
+        NextMessage --> LoopMessages
+    end
+
+    LoopMessages -->|done| MakeTools["make([]map[string]any, len(turn.Tools)) → tools"]
+    MakeTools --> LoopTools["for turn.Tools"]
+
+    subgraph SGLoopTools [" "]
+        LoopTools --> GetTool["tool := range"]
+        GetTool --> MakeToolMap["map[string]any{id, name, args, result, isError} → toolMap"]
+        MakeToolMap --> SetTool["tools[i] = toolMap"]
+        SetTool --> NextTool["i++"]
+        NextTool --> LoopTools
+    end
+
+    LoopTools -->|done| MakeData["map[string]any{turn, session_id, user_id, agent_id, messages, tools, timestamp} → data"]
+    MakeData --> Marshal["json.Marshal(data) → line, err"]
+    Marshal --> CheckErr{err?}
+    CheckErr -->|yes| ReturnErr(["return fmt.Errorf(marshal failed)"])
+    CheckErr -->|no| AddNewline["string(line) + \n → line"]
+    AddNewline --> Return(["return line"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,Return,ReturnErr mainFn
+    class LoopMessages,LoopTools internalFn
+    class ReturnErr errorFlow
+```
 
 ## Design Notes
 

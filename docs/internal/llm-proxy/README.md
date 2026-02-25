@@ -137,6 +137,18 @@ flowchart TB
 | | `ConsecutiveFailures` | `int` | Consecutive failures |
 | | `CircuitOpenUntil` | `time.Time` | Circuit breaker timeout |
 
+### QuotaCheckResult
+
+| Struct | Field | Type | Description |
+|--------|-------|------|-------------|
+| `QuotaCheckResult` | `HasQuota` | `bool` | Has sufficient quota |
+| | `Source` | `string` | "plan" or "addon" |
+| | `PlanPercent` | `int` | Plan usage percent |
+| | `PlanDollars` | `float64` | Plan dollars remaining |
+| | `AddonDollars` | `float64` | Addon dollars remaining |
+| | `UsingAddon` | `bool` | Using addon credits |
+| | `UserContext` | `UserContext` | User context data |
+
 ## Interfaces
 
 ### QuotaChecker

@@ -2,57 +2,6 @@
 
 Core agent runtime framework with state management, event streaming, and tool execution loop.
 
-## Overview
-
-```mermaid
-flowchart TB
-    Start(["NewAgent(opts) → *Agent"]) --> GenID["uuid.New().String() → id"]
-    GenID -->|no id| SetID["id = opts.ID"]
-    GenID -->|default| SetID
-    SetID --> GenUserID["userID = opts.UserID"]
-    GenUserID -->|no userID| SetUserID["userID = 'unknown'"]
-    GenUserID -->|default| SetUserID
-    SetUserID --> GenAgentID["agentID = opts.AgentID"]
-    GenAgentID -->|no agentID| SetAgentID["agentID = id"]
-    GenAgentID -->|default| SetAgentID
-    SetAgentID --> CreateCtx["context.WithCancel(context.Background()) → ctx, cancel"]
-    CreateCtx --> NewState["NewAgentState(opts) → state"]
-    NewState --> ReturnAgent["return &Agent{...}"]
-
-    ReturnAgent --> Ready(["Agent ready"])
-    Ready --> Prompt(["Prompt(ctx, message) → error"])
-    Prompt --> CheckCtx["ctx.Err() → err"]
-    CheckCtx -->|error| ReturnErr1(["return err"])
-    CheckCtx -->|ok| CheckLLM["a.llmClient != nil"]
-    CheckLLM -->|nil| ReturnErr2(["return error"])
-    CheckLLM -->|ok| LockMsg["a.mu.Lock()"]
-    LockMsg --> NewUserMsg["NewTextMessage(RoleUser, message) → userMsg"]
-    NewUserMsg --> AddMsg["a.state.AddMessage(userMsg)"]
-    AddMsg --> UnlockMsg["a.mu.Unlock()"]
-    UnlockMsg --> EmitStart["a.emit(AgentStartEvent{...})"]
-    EmitStart --> SetStream["a.setStreamingState(true, nil)"]
-    SetStream --> NewLoop["NewLoop(a.llmClient) → loop"]
-    NewLoop --> GetMsgs["a.State().Messages → messages"]
-    GetMsgs --> RunLoop["loop.Run(ctx, messages, a.state.Tools...) → result, err"]
-    RunLoop -->|error| ClearStreamErr["a.setStreamingState(false, nil)"]
-    ClearStreamErr --> ReturnErr3(["return err"])
-    RunLoop -->|ok| LockState["a.mu.Lock()"]
-    LockState --> UpdateMsgs["a.state.Messages = result.Messages"]
-    UpdateMsgs --> UnlockState["a.mu.Unlock()"]
-    UnlockState --> GetFinalState["a.State() → finalState"]
-    GetFinalState --> EmitEnd["a.emit(AgentEndEvent{...})"]
-    EmitEnd --> ClearStream["a.setStreamingState(false, nil)"]
-    ClearStream --> ReturnOk(["return nil"])
-
-    click RunLoop href "loop.md"
-
-    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
-
-    class Start,Ready,Prompt,ReturnErr1,ReturnErr2,ReturnErr3,ReturnOk mainFn
-    class RunLoop localPkgs
-```
-
 ## Structs
 
 ### Agent
@@ -97,30 +46,163 @@ flowchart TB
 | | `AgentID` | `string` | Agent ID |
 | | `LLMClient` | `LLMClient` | LLM client |
 
-## Functions
+## NewAgent
 
-### Agent Methods
+```mermaid
+flowchart TB
+    Start(["NewAgent(opts) → *Agent"]) --> CheckID{opts.ID empty}
+    CheckID -->|yes| GenID["uuid.New().String() → id"]
+    CheckID -->|no| SetID["id = opts.ID"]
+    GenID --> CheckUserID
+    SetID --> CheckUserID{opts.UserID empty}
+    CheckUserID -->|yes| SetUserID["userID = 'unknown'"]
+    CheckUserID -->|no| SetUserID1["userID = opts.UserID"]
+    SetUserID --> CheckAgentID
+    SetUserID1 --> CheckAgentID{opts.AgentID empty}
+    CheckAgentID -->|yes| SetAgentID["agentID = id"]
+    CheckAgentID -->|no| SetAgentID1["agentID = opts.AgentID"]
+    SetAgentID --> NewCtx
+    SetAgentID1 --> NewCtx["context.WithCancel(context.Background()) → ctx, cancel"]
+    NewCtx --> NewState["NewAgentState(opts) → state"]
+    NewState --> ReturnAgent(["return &Agent{id, userID, agentID, state, ctx, cancel, opts.LLMClient}"])
 
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `NewAgent` | `(opts AgentOptions) *Agent` | Creates new agent |
-| `Subscribe` | `() (string, chan AgentEvent)` | Subscribe to events |
-| `Unsubscribe` | `(id string)` | Unsubscribe from events |
-| `State` | `() AgentState` | Gets current state (copy) |
-| `Prompt` | `(ctx context.Context, message string) error` | Sends user message |
-| `AddTools` | `(tools ...Tool)` | Add tools to agent |
-| `RemoveTools` | `(prefix string)` | Remove tools by prefix |
+    click NewState href "types.md"
 
-### State Methods
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
 
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `NewAgentState` | `(opts AgentStateOptions) AgentState` | Creates state |
-| `AddMessage` | `(msg AgentMessage)` | Adds message to history |
-| `SetStreaming` | `(streaming bool, msg *AgentMessage)` | Sets streaming state |
-| `AddPendingToolCall` | `(id string)` | Marks tool call as pending |
-| `RemovePendingToolCall` | `(id string)` | Removes pending tool call |
-| `HasPendingToolCall` | `(id string) bool` | Checks if tool call pending |
+    class Start,ReturnAgent mainFn
+    class NewState localPkgs
+```
+
+## Subscribe
+
+```mermaid
+flowchart TB
+    Start(["Subscribe() → (string, chan AgentEvent)"]) --> GenID["uuid.New().String() → subID"]
+    GenID --> MakeCh["make(chan AgentEvent, 100) → ch"]
+    MakeCh --> Lock["a.subscribersMu.Lock()"]
+    Lock --> AddMap["a.subscribers[subID] = ch"]
+    AddMap --> Unlock["a.subscribersMu.Unlock()"]
+    Unlock --> Return(["return subID, ch"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+## Unsubscribe
+
+```mermaid
+flowchart TB
+    Start(["Unsubscribe(id string)"]) --> Lock["a.subscribersMu.Lock()"]
+    Lock --> CheckExists{ch exists}
+    CheckExists -->|yes| CloseCh["close(ch)"]
+    CloseCh --> DeleteMap["delete(a.subscribers, id)"]
+    DeleteExists --> Unlock["a.subscribersMu.Unlock()"]
+    CheckExists -->|no| DeleteExists
+    Unlock --> Return(["return"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+## State
+
+```mermaid
+flowchart TB
+    Start(["State() → AgentState"]) --> Lock["a.mu.RLock()"]
+    Lock --> CopyMsgs["make([]AgentMessage, len(a.state.Messages)) → messages"]
+    CopyMsgs --> CopyMsgData["copy(messages, a.state.Messages)"]
+    CopyMsgData --> CopyPending["make(map[string]bool, len(a.state.PendingToolCalls)) → pendingToolCalls"]
+    CopyPending --> CopyPendingLoop["for k, v in a.state.PendingToolCalls: pendingToolCalls[k] = v"]
+    CopyPendingLoop --> CopyTools["make([]Tool, len(a.state.Tools)) → tools"]
+    CopyTools --> CopyToolsData["copy(tools, a.state.Tools)"]
+    CopyToolsData --> Unlock["a.mu.RUnlock()"]
+    Unlock --> Return(["return AgentState{SystemPrompt, Model, ThinkingLevel, Tools, Messages, IsStreaming, StreamMessage, PendingToolCalls, Error, SessionID, UserID, AgentID}"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+## Prompt
+
+```mermaid
+flowchart TB
+    Start(["Prompt(ctx, message) → error"]) --> CheckCtx["ctx.Err() → err"]
+    CheckCtx -->|error| Err1(["return err"])
+    CheckCtx -->|ok| CheckLLM{a.llmClient nil}
+    CheckLLM -->|yes| Err2(["return error: LLM client not configured"])
+    CheckLLM -->|no| Lock["a.mu.Lock()"]
+    Lock --> NewUserMsg["NewTextMessage(RoleUser, message) → userMsg"]
+    NewUserMsg --> AddMsg["a.state.AddMessage(userMsg)"]
+    AddMsg --> Unlock["a.mu.Unlock()"]
+    Unlock --> EmitStart["a.emit(AgentStartEvent{Timestamp: userMsg.Timestamp})"]
+    EmitStart --> SetStream["a.setStreamingState(true, nil)"]
+    SetStream --> NewLoop["NewLoop(a.llmClient) → loop"]
+    NewLoop --> GetMsgs["a.State() → finalState"]
+    GetMsgs --> ExtractMsgs["finalState.Messages → messages"]
+    ExtractMsgs --> RunLoop["loop.Run(ctx, messages, a.state.Tools...) → result, err"]
+    RunLoop -->|error| ClearStreamErr["a.setStreamingState(false, nil)"]
+    ClearStreamErr --> Err3(["return err"])
+    RunLoop -->|ok| LockState["a.mu.Lock()"]
+    LockState --> UpdateMsgs["a.state.Messages = result.Messages"]
+    UpdateMsgs --> UnlockState["a.mu.Unlock()"]
+    UnlockState --> GetFinalState["a.State() → finalState"]
+    GetFinalState --> EmitEnd["a.emit(AgentEndEvent{Timestamp: finalState.Messages[len-1].Timestamp, Messages: finalState.Messages})"]
+    EmitEnd --> ClearStream["a.setStreamingState(false, nil)"]
+    ClearStream --> Return(["return nil"])
+
+    click NewTextMessage href "types.md"
+    click NewLoop href "loop.md"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,Return mainFn
+    class NewTextMessage,NewLoop localPkgs
+    class Err1,Err2,Err3 errorFlow
+```
+
+## AddTools
+
+```mermaid
+flowchart TB
+    Start(["AddTools(tools ...Tool)"]) --> Lock["a.mu.Lock()"]
+    Lock --> Append["a.state.Tools = append(a.state.Tools, tools...)"]
+    Append --> Unlock["a.mu.Unlock()"]
+    Unlock --> Return(["return"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+## RemoveTools
+
+```mermaid
+flowchart TB
+    Start(["RemoveTools(prefix string)"]) --> Lock["a.mu.Lock()"]
+    Lock --> MakeUpdated["make([]Tool, 0) → updated"]
+    MakeUpdated --> ForTools["for tool in a.state.Tools"]
+    ForTools --> CheckPrefix{"tool.Name starts with prefix"}
+    CheckPrefix -->|no| AppendUpdated["updated = append(updated, tool)"]
+    CheckPrefix -->|yes| LoopTools
+    AppendUpdated --> LoopTools
+    LoopTools --> ForTools
+    ForTools -->|done| SetUpdated["a.state.Tools = updated"]
+    SetUpdated --> Unlock["a.mu.Unlock()"]
+    Unlock --> Return(["return"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
 
 ## Design Notes
 

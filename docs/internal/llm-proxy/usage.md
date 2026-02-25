@@ -2,7 +2,23 @@
 
 Usage tracking with buffered batch writes and Redis fallback.
 
-## Overview
+### NewUsageWriter
+
+```mermaid
+flowchart TB
+    Start(["NewUsageWriter(db, redis)"]) --> HCreate
+
+    subgraph SGCreate [" "]
+        HCreate["**Create UsageWriter with defaults**"]
+        HCreate --> Return(["return &UsageWriter"])
+    end
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+### Track
 
 ```mermaid
 flowchart TB
@@ -10,7 +26,7 @@ flowchart TB
 
     subgraph SGSelect [" "]
         HSelect["**select w.eventChan <- event**"]
-        HSelect -->|success| Done(["return nil"])
+        HSelect -->|success| Return(["return nil"])
         HSelect -->|full| HPushToRedis
     end
 
@@ -31,10 +47,80 @@ flowchart TB
     subgraph SGLPush [" "]
         HLPush["**client.LPush(ctx, key, data).Err() → err**"]
         HLPush -->|error| E3["return &UsageError"]
-        HLPush --> Done
+        HLPush --> Return
     end
 
-    StartFlush(["flush()"]) --> HLock
+    SelectCase["select w.eventChan <- event"]
+    TypeAssertRedis["client, ok := w.redis.(*redis.Client)"]
+    MarshalJSON["json.Marshal(event) → data, err"]
+    LPushRedis["client.LPush(ctx, key, data).Err() → err"]
+
+    click SelectCase href "https://pkg.go.dev/github.com/nevaria-ai/gateway/internal/llm-proxy/usage#UsageWriter.Track"
+    click TypeAssertRedis href "https://pkg.go.dev/github.com/redis/go-redis/v9#Client"
+    click MarshalJSON href "https://pkg.go.dev/encoding/json#Marshal"
+    click LPushRedis href "https://pkg.go.dev/github.com/redis/go-redis/v9#Client.LPush"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,Return mainFn
+    class SelectCase,TypeAssertRedis,MarshalJSON,LPushRedis localPkgs
+    class E1,E2,E3 errorFlow
+```
+
+### pushToRedis
+
+```mermaid
+flowchart TB
+    Start(["pushToRedis(event)"]) --> HCheckNil
+
+    subgraph SGCheckNil [" "]
+        HCheckNil["**w.redis == nil**"]
+        HCheckNil -->|true| E1["return ErrRedisNotConfigured"]
+        HCheckNil --> HTypeAssert
+    end
+
+    subgraph SGTypeAssert [" "]
+        HTypeAssert["**client, ok := w.redis.(*redis.Client)**"]
+        HTypeAssert -->|!ok| E2["return ErrRedisNotConfigured"]
+        HTypeAssert --> HMarshal
+    end
+
+    subgraph SGMarshal [" "]
+        HMarshal["**json.Marshal(event) → data, err**"]
+        HMarshal -->|error| E3["return &UsageError"]
+        HMarshal --> HLPush
+    end
+
+    subgraph SGLPush [" "]
+        HLPush["**client.LPush(ctx, key, data).Err() → err**"]
+        HLPush -->|error| E4["return &UsageError"]
+        HLPush --> Return(["return nil"])
+    end
+
+    TypeAssertRedis["client, ok := w.redis.(*redis.Client)"]
+    MarshalJSON["json.Marshal(event) → data, err"]
+    LPushRedis["client.LPush(ctx, key, data).Err() → err"]
+
+    click TypeAssertRedis href "https://pkg.go.dev/github.com/redis/go-redis/v9#Client"
+    click MarshalJSON href "https://pkg.go.dev/encoding/json#Marshal"
+    click LPushRedis href "https://pkg.go.dev/github.com/redis/go-redis/v9#Client.LPush"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,Return mainFn
+    class TypeAssertRedis,MarshalJSON,LPushRedis localPkgs
+    class E1,E2,E3,E4 errorFlow
+```
+
+### flush
+
+```mermaid
+flowchart TB
+    Start(["flush()"]) --> HLock
 
     subgraph SGLock [" "]
         HLock["**w.bufferMu.Lock()**"]
@@ -44,14 +130,13 @@ flowchart TB
     subgraph SGCheckBuffer [" "]
         HCheckBuffer["**len(w.buffer) == 0**"]
         HCheckBuffer -->|true| HUnlockEmpty
+        HCheckBuffer -->|false| HCopyBuffer
     end
 
     subgraph SGUnlockEmpty [" "]
         HUnlockEmpty["**w.bufferMu.Unlock()**"]
-        HUnlockEmpty --> DoneFlush(["return nil"])
+        HUnlockEmpty --> Return(["return nil"])
     end
-
-    HCheckBuffer --> HCopyBuffer
 
     subgraph SGCopyBuffer [" "]
         HCopyBuffer["**toFlush := make([]UsageEvent, len(w.buffer))**"]
@@ -65,14 +150,15 @@ flowchart TB
 
     subgraph SGUnlockFlush [" "]
         HUnlockFlush["**w.bufferMu.Unlock()**"]
-        HUnlockFlush --> HDBInsert
+        HUnlockFlush --> HDBInsertCall
     end
 
-    HDBInsert --> HDBInsertCall
+    HDBInsertCall --> HDBInsert
 
-    subgraph SGDBInsertCall [" "]
-        HDBInsertCall["**w.dbInsert(toFlush) → err**"]
-        HDBInsertCall -->|error| HSetHealthyFalse
+    subgraph SGDBInsert [" "]
+        HDBInsert["**w.dbInsert(toFlush) → err**"]
+        HDBInsert -->|error| HSetHealthyFalse
+        HDBInsert -->|success| HSetHealthyTrue
     end
 
     subgraph SGSetHealthyFalse [" "]
@@ -82,39 +168,174 @@ flowchart TB
 
     subgraph SGRedisFallback [" "]
         HRedisFallback["**for _, e := range toFlush: w.pushToRedis(e)**"]
-        HRedisFallback --> DoneFlushError(["return err"])
+        HRedisFallback --> ReturnError(["return err"])
     end
-
-    HDBInsertCall -->|success| HSetHealthyTrue
 
     subgraph SGSetHealthyTrue [" "]
         HSetHealthyTrue["**w.dbHealthy.Store(true)**"]
-        HSetHealthyTrue --> DoneFlushSuccess(["return nil"])
+        HSetHealthyTrue --> Return(["return nil"])
     end
 
-    Select["select w.eventChan <- event"]
-    TypeAssertRedis["client, ok := w.redis.(*redis.Client)"]
-    MarshalJSON["json.Marshal(event) → data, err"]
-    LPushRedis["client.LPush(ctx, key, data).Err() → err"]
-    Prepare["tx.Prepare(sql) → stmt, err"]
-    ExecStmt["stmt.Exec(...)"]
-    Commit["tx.Commit()"]
+    Lock["w.bufferMu.Lock()"]
+    Unlock["w.bufferMu.Unlock()"]
+    StoreFalse["w.dbHealthy.Store(false)"]
+    StoreTrue["w.dbHealthy.Store(true)"]
 
-    click Select href "https://pkg.go.dev/github.com/nevaria-ai/gateway/internal/llm-proxy/usage#UsageWriter.Track"
-    click TypeAssertRedis href "https://pkg.go.dev/github.com/redis/go-redis/v9#Client"
-    click MarshalJSON href "https://pkg.go.dev/encoding/json#Marshal"
-    click LPushRedis href "https://pkg.go.dev/github.com/redis/go-redis/v9#Client.LPush"
-    click Prepare href "https://pkg.go.dev/database/sql#Tx.Prepare"
-    click ExecStmt href "https://pkg.go.dev/database/sql#Stmt.Exec"
-    click Commit href "https://pkg.go.dev/database/sql#Tx.Commit"
+    click Lock href "https://pkg.go.dev/sync#Mutex.Lock"
+    click Unlock href "https://pkg.go.dev/sync#Mutex.Unlock"
+    click StoreFalse href "https://pkg.go.dev/sync/atomic#Bool.Store"
+    click StoreTrue href "https://pkg.go.dev/sync/atomic#Bool.Store"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
-    class Start,Done,StartFlush,DoneFlush,DoneFlushSuccess mainFn
-    class Select,TypeAssertRedis,MarshalJSON,LPushRedis,Prepare,ExecStmt,Commit localPkgs
-    class E1,E2,E3,DoneFlushError errorFlow
+    class Start,Return,ReturnError mainFn
+    class Lock,Unlock,StoreFalse,StoreTrue localPkgs
+```
+
+### dbInsert
+
+```mermaid
+flowchart TB
+    Start(["dbInsert(events)"]) --> HTypeAssert
+
+    subgraph SGTypeAssert [" "]
+        HTypeAssert["**db, ok := w.db.(*sql.DB)**"]
+        HTypeAssert -->|!ok| E1["return error"]
+        HTypeAssert --> HBegin
+    end
+
+    subgraph SGBegin [" "]
+        HBegin["**tx, err := db.Begin()**"]
+        HBegin -->|error| E2["return err"]
+        HBegin --> HPrepare
+    end
+
+    subgraph SGPrepare [" "]
+        HPrepare["**stmt, err := tx.Prepare(sql) → stmt, err**"]
+        HPrepare -->|error| E3["return err"]
+        HPrepare --> HIterate
+    end
+
+    subgraph SGIterate [" "]
+        HIterate["**for _, event := range events**"]
+        HIterate --> HExec
+    end
+
+    subgraph SGExec [" "]
+        HExec["**stmt.Exec(event fields...) → _, err**"]
+        HExec -->|error| HIterate
+        HExec -->|success| HIterate
+        HIterate --> HCommit
+    end
+
+    subgraph SGCommit [" "]
+        HCommit["**tx.Commit() → err**"]
+        HCommit -->|error| E4["return err"]
+        HCommit --> Return(["return nil"])
+    end
+
+    TypeAssertDB["db, ok := w.db.(*sql.DB)"]
+    BeginTx["tx, err := db.Begin()"]
+    PrepareStmt["tx.Prepare(sql) → stmt, err"]
+    ExecStmt["stmt.Exec(event fields...)"]
+    CommitTx["tx.Commit()"]
+
+    click TypeAssertDB href "https://pkg.go.dev/database/sql"
+    click BeginTx href "https://pkg.go.dev/database/sql#DB.Begin"
+    click PrepareStmt href "https://pkg.go.dev/database/sql#Tx.Prepare"
+    click ExecStmt href "https://pkg.go.dev/database/sql#Stmt.Exec"
+    click CommitTx href "https://pkg.go.dev/database/sql#Tx.Commit"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,Return mainFn
+    class TypeAssertDB,BeginTx,PrepareStmt,ExecStmt,CommitTx localPkgs
+    class E1,E2,E3,E4 errorFlow
+```
+
+### Start
+
+```mermaid
+flowchart TB
+    Start(["Start(ctx)"]) --> HLoop
+
+    subgraph SGLoop [" "]
+        HLoop["**for**"]
+        HLoop --> RecvChan
+    end
+
+    RecvChan["**event := <-w.eventChan**"] --> HAppend
+
+    subgraph SGAppend [" "]
+        HAppend["**w.buffer = append(w.buffer, event)**"]
+        HAppend --> HCheckLen
+    end
+
+    subgraph SGCheckLen [" "]
+        HCheckLen["**len(w.buffer) >= w.batchSize**"]
+        HCheckLen -->|true| HFlushBatch
+        HCheckLen -->|false| RecvTicker
+    end
+
+    subgraph SGFlushBatch [" "]
+        HFlushBatch["**w.flush()**"]
+        HFlushBatch --> RecvTicker
+    end
+
+    RecvTicker["**<-w.ticker.C**"] --> HFlushTicker
+
+    subgraph SGFlushTicker [" "]
+        HFlushTicker["**w.flush()**"]
+        HFlushTicker --> RecvDone
+    end
+
+    RecvDone["**<-ctx.Done()**"] --> HFinalFlush
+
+    subgraph SGFinalFlush [" "]
+        HFinalFlush["**w.flush()**"]
+        HFinalFlush --> HStop
+    end
+
+    subgraph SGStop [" "]
+        HStop["**w.ticker.Stop()**"]
+        HStop --> Return(["return"])
+    end
+
+    StopTicker["w.ticker.Stop()"]
+
+    click StopTicker href "https://pkg.go.dev/time#Ticker.Stop"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+
+    class Start,Return mainFn
+    class StopTicker localPkgs
+```
+
+### TrackUsage
+
+```mermaid
+flowchart TB
+    Start(["TrackUsage(ctx, event)"]) --> HLog
+
+    subgraph SGLog [" "]
+        HLog["**Log usage event**"]
+        HLog --> Return(["return nil"])
+    end
+
+    LogInfo["log.Info().Str(...).Msg('Usage tracked')"]
+
+    click LogInfo href "https://github.com/rs/zerolog"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+
+    class Start,Return mainFn
+    class LogInfo localPkgs
 ```
 
 ## Structs
@@ -152,18 +373,6 @@ flowchart TB
 | `defaultBatchSize` | `int` | `1000` | Default batch size |
 | `defaultFlushInterval` | `time.Duration` | `30s` | Default flush interval |
 | `defaultMaxBufferSize` | `int` | `10000` | Default max buffer size |
-
-## Functions
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `NewUsageWriter` | `(db, redis any) *UsageWriter` | Creates usage writer |
-| `Track` | `(event UsageEvent) error` | Queues usage event |
-| `pushToRedis` | `(event UsageEvent) error` | Pushes event to Redis |
-| `flush` | `() error` | Flushes buffer to DB |
-| `dbInsert` | `(events []UsageEvent) error` | Inserts events into DB |
-| `Start` | `(ctx context.Context)` | Starts event processing |
-| `TrackUsage` | `(ctx context.Context, event UsageEvent) error` | Convenience function |
 
 ## Database Schema
 
