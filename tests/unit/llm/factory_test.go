@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	llm "github.com/nevaria-ai/gateway/internal/llm"
 	"github.com/nevaria-ai/gateway/internal/agent"
+	llm "github.com/nevaria-ai/gateway/internal/llm"
 )
 
 // TestProviderConstants verifies provider constants are properly defined.
@@ -467,11 +467,11 @@ func TestClientStreamCancellation(t *testing.T) {
 // TestGetProviderClient tests getting the specific provider client.
 func TestGetProviderClient(t *testing.T) {
 	tests := []struct {
-		name          string
-		config        llm.Config
-		model         agent.Model
-		wantProvider  llm.Provider
-		wantErr       bool
+		name         string
+		config       llm.Config
+		model        agent.Model
+		wantProvider llm.Provider
+		wantErr      bool
 	}{
 		{
 			name: "OpenAI client has OpenAI provider",

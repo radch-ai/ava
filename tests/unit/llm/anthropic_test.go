@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	llm "github.com/nevaria-ai/gateway/internal/llm"
 	"github.com/nevaria-ai/gateway/internal/agent"
+	llm "github.com/nevaria-ai/gateway/internal/llm"
 )
 
 // TestAnthropicClient_Stream_TextOnly tests streaming a simple text response using the SDK.

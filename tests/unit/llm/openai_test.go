@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	llm "github.com/nevaria-ai/gateway/internal/llm"
 	"github.com/nevaria-ai/gateway/internal/agent"
+	llm "github.com/nevaria-ai/gateway/internal/llm"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 )

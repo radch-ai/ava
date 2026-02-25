@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	llm "github.com/nevaria-ai/gateway/internal/llm"
 	"github.com/nevaria-ai/gateway/internal/agent"
+	llm "github.com/nevaria-ai/gateway/internal/llm"
 )
 
 // Test helper to create a sample tool for testing

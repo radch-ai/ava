@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	llm "github.com/nevaria-ai/gateway/internal/llm"
 	"github.com/nevaria-ai/gateway/internal/agent"
+	llm "github.com/nevaria-ai/gateway/internal/llm"
 )
 
 // TestGoogleClient_Stream_TextOnly tests streaming a simple text response.
