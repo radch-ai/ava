@@ -11,13 +11,14 @@ import (
 
 // A Config holds the application configuration.
 type Config struct {
-	ServerAddr     string
-	LogLevel       string
-	AllowedOrigins []string
-	MaxConns       int
-	Auth           AuthConfig
-	RedisAddr      string
-	RedisPassword  string
+	ServerAddr      string
+	LogLevel        string
+	AllowedOrigins  []string
+	MaxConns        int
+	ZetidalURL      string
+	RedisAddr       string
+	RedisPassword   string
+	ModelConfigPath string
 }
 
 // getEnv returns the environment variable value or a default.
@@ -73,16 +74,18 @@ func Load() (*Config, error) {
 	redisAddr := os.Getenv("REDIS_ADDR")
 	redisPassword := os.Getenv("REDIS_PASSWORD")
 
+	// Model configuration path
+	modelConfigPath := getEnv("GATEWAY_MODEL_CONFIG", "config/models.yaml")
+
 	return &Config{
-		ServerAddr:     addr,
-		LogLevel:       logLevel,
-		AllowedOrigins: origins,
-		MaxConns:       maxConns,
-		Auth: AuthConfig{
-			URL: zetidalURL,
-		},
-		RedisAddr:     redisAddr,
-		RedisPassword: redisPassword,
+		ServerAddr:      addr,
+		LogLevel:        logLevel,
+		AllowedOrigins:  origins,
+		MaxConns:        maxConns,
+		ZetidalURL:      zetidalURL,
+		RedisAddr:       redisAddr,
+		RedisPassword:   redisPassword,
+		ModelConfigPath: modelConfigPath,
 	}, nil
 }
 
@@ -100,8 +103,8 @@ func (c *Config) Validate() error {
 	}
 
 	// Validate zetidal URL format - must have http or https scheme
-	if c.Auth.URL != "" {
-		parsedURL, err := url.Parse(c.Auth.URL)
+	if c.ZetidalURL != "" {
+		parsedURL, err := url.Parse(c.ZetidalURL)
 		if err != nil || parsedURL.Scheme == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
 			errs = append(errs, "ZETIDAL_URL must be a valid URL with http or https scheme")
 		}

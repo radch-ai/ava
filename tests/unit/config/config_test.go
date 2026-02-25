@@ -210,8 +210,8 @@ func TestZetidalConfigDefaults(t *testing.T) {
 		t.Fatalf("failed to load config: %v", err)
 	}
 
-	if cfg.Auth.URL != "http://localhost:8081" {
-		t.Errorf("expected zetidal URL http://localhost:8081, got %s", cfg.Auth.URL)
+	if cfg.ZetidalURL != "http://localhost:8081" {
+		t.Errorf("expected zetidal URL http://localhost:8081, got %s", cfg.ZetidalURL)
 	}
 }
 
@@ -226,7 +226,7 @@ func TestZetidalConfigFromEnv(t *testing.T) {
 		t.Fatalf("failed to load config: %v", err)
 	}
 
-	if cfg.Auth.URL != "http://zetidal:9090" {
-		t.Errorf("expected zetidal URL http://zetidal:9090, got %s", cfg.Auth.URL)
+	if cfg.ZetidalURL != "http://zetidal:9090" {
+		t.Errorf("expected zetidal URL http://zetidal:9090, got %s", cfg.ZetidalURL)
 	}
 }

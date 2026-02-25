@@ -8,17 +8,26 @@ Centralized environment-based configuration loading for the gateway application.
 
 ```mermaid
 flowchart TB
-    Start([Load]) --> GetAddr["os.Getenv('GATEWAY_ADDR')"]
-    GetAddr --> GetLevel["os.Getenv('GATEWAY_LOG_LEVEL')"]
-    GetLevel --> GetOrigins["os.Getenv('GATEWAY_ALLOWED_ORIGINS')"]
-    GetOrigins --> GetMaxConns["os.Getenv('GATEWAY_MAX_CONNS')"]
-    GetMaxConns --> GetZetidalURL["os.Getenv('ZETIDAL_URL')"]
-    GetZetidalURL --> GetRedis["os.Getenv('REDIS_ADDR')"]
-    GetRedis --> DoneOk("return &Config{}, nil")
+    Start([Load]) --> GetAddr["os.Getenv('GATEWAY_ADDR') → addr"]
+    GetAddr --> GetLevel["os.Getenv('GATEWAY_LOG_LEVEL') → logLevel"]
+    GetLevel --> GetOrigins["os.Getenv('GATEWAY_ALLOWED_ORIGINS') → value"]
+    GetOrigins --> ParseOrigins["parseList(value) → origins"]
+    ParseOrigins --> GetMaxConns["os.Getenv('GATEWAY_MAX_CONNS') → maxConnsStr"]
+    GetMaxConns --> ParseMax["strconv.Atoi(maxConnsStr) → maxConns, err"]
+    ParseMax -->|error| DoneErr("return error")
+    ParseMax --> CheckNeg["maxConns < 0"]
+    CheckNeg -->|true| DoneErr
+    CheckNeg -->|false| GetZetidalURL["os.Getenv('ZETIDAL_URL') → zetidalURL"]
+    GetZetidalURL --> GetRedis["os.Getenv('REDIS_ADDR') → redisAddr"]
+    GetRedis --> GetRedisPwd["os.Getenv('REDIS_PASSWORD') → redisPassword"]
+    GetRedisPwd --> GetModelCfg["os.Getenv('GATEWAY_MODEL_CONFIG') → modelConfigPath"]
+    GetModelCfg --> DoneOk("return &Config{}, nil")
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
     class Start,DoneOk mainFn
+    class ParseMax,DoneErr errorFlow
 ```
 
 ### Validate
@@ -48,17 +57,10 @@ flowchart TB
 | | `LogLevel` | `string` | Log level (debug, info, warn, error) |
 | | `AllowedOrigins` | `[]string` | CORS allowed origins |
 | | `MaxConns` | `int` | Max concurrent WebSocket connections |
-| | `Auth` | `AuthConfig` | Zetidal API configuration |
+| | `ZetidalURL` | `string` | Zetidal API URL for session validation |
 | | `RedisAddr` | `string` | Redis server address |
 | | `RedisPassword` | `string` | Redis password |
-
-### AuthConfig
-
-Defined in [`config/auth.go`](https://github.com/nevaria-ai/gateway/blob/main/config/auth.go).
-
-| Struct | Field | Type | Description |
-|--------|-------|------|-------------|
-| `AuthConfig` | `URL` | `string` | Zetidal API base URL |
+| | `ModelConfigPath` | `string` | Path to model configuration YAML |
 
 ## Environment Variables
 
@@ -72,10 +74,6 @@ Defined in [`config/auth.go`](https://github.com/nevaria-ai/gateway/blob/main/co
 | `ZETIDAL_URL` | No | `http://localhost:8081` | Zetidal API URL for session validation |
 | `REDIS_ADDR` | Yes | - | Redis server address (required) |
 | `REDIS_PASSWORD` | No | - | Redis password |
-| `ENV` | No | - | Production mode flag (set to `production`) |
-| `APP_ENV` | No | - | Alternative production mode flag (set to `prod`) |
-
-\* Required only when `ENV=production` or `APP_ENV=prod`
 
 ## Design Notes
 
@@ -155,7 +153,6 @@ make test ./config
 
 **File Locations:**
 - [`config/config.go`](https://github.com/nevaria-ai/gateway/blob/main/config/config.go) - Main configuration
-- [`config/auth.go`](https://github.com/nevaria-ai/gateway/blob/main/config/auth.go) - Zetidal configuration
 
 ## Related
 

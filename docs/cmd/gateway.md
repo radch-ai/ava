@@ -6,69 +6,45 @@ Gateway application entry point. Initializes configuration, logger, model regist
 
 ```mermaid
 flowchart TB
-    Start([main]) --> LoadCfg["config.Load() → *Config"]
-    LoadCfg --> ValidateCfg["cfg.Validate() → error"]
-    ValidateCfg -->|error| Exit1("Exit 1")
-    ValidateCfg -->|ok| ParseLevel["zerolog.ParseLevel()"]
+    Start([main]) --> LoadCfg["config.Load() → cfg, err"]
+    LoadCfg -->|error| Exit1("Exit 1")
+    LoadCfg -->|ok| ValidateCfg["cfg.Validate() → err"]
+    ValidateCfg -->|error| Exit1
+    ValidateCfg -->|ok| ParseLevel["zerolog.ParseLevel(cfg.LogLevel) → logLevel, err"]
     ParseLevel -->|error| Exit2("Exit 1")
-    ParseLevel -->|ok| CreateLogger["zerolog.New()"]
-    CreateLogger --> LoadModels["registry.LoadFromYAML()"]
-    LoadModels --> InitRedis["redis.NewClient()"]
-    InitRedis --> CreateCache["NewRedisCache()"]
-    CreateCache --> CreateAuthMW["NewAuthMiddleware()"]
-    CreateAuthMW --> CreateWS["websocket.NewHandler()"]
-    CreateWS --> CreateServer["server.New()"]
-    CreateServer --> StartServer["srv.Start()"]
+    ParseLevel -->|ok| SetLevel["zerolog.SetGlobalLevel(logLevel)"]
+    SetLevel --> CreateLogger["zerolog.New(os.Stderr) → logger"]
+    CreateLogger --> GetRegistry["models.Get() → registry"]
+    GetRegistry --> LoadModels["registry.LoadFromYAML(cfg.ModelConfigPath) → err"]
+    LoadModels -->|error| ExitModel("Exit 1")
+    LoadModels --> GetRouter["registry.GetRouterModel() → routerModel"]
+    GetRouter --> InitRedis["redis.NewClient(&redis.Options{Addr: cfg.RedisAddr, Password: cfg.RedisPassword}) → redisClient"]
+    InitRedis --> CreateCache["server.NewRedisCache(redisClient) → cache"]
+    CreateCache --> CreateAuthMW["server.NewAuthMiddleware(cfg.ZetidalURL, cache, 5*time.Minute) → authMW"]
+    CreateAuthMW --> CreateWS["websocket.NewHandler(logger, allowedOrigins, maxConns) → wsHandler"]
+    CreateWS --> CreateServer["server.New(cfg.ServerAddr, logger, wsHandler, authMW) → srv"]
+    CreateServer --> StartServer["srv.Start() → err"]
     StartServer -->|error| Exit3("Exit 1")
     StartServer -->|ok| Running("Server Running")
 
     click LoadCfg href "../config/README.md"
     click ValidateCfg href "../config/README.md"
+    click GetRegistry href "../internal/llm-proxy/models.md"
     click LoadModels href "../internal/llm-proxy/models.md"
+    click GetRouter href "../internal/llm-proxy/models.md"
     click CreateCache href "../internal/server/README.md"
     click CreateAuthMW href "../internal/server/README.md"
     click CreateWS href "../internal/websocket.md"
+    click CreateServer href "../internal/server/README.md"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
     classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
     class Start,Running mainFn
-    class Exit1,Exit2,Exit3 errorFlow
-    class LoadCfg,ValidateCfg,LoadModels,CreateCache,CreateAuthMW,CreateWS localPkgs
-    class ParseLevel,CreateLogger,InitRedis,CreateServer,StartServer internalFn
+    class Exit1,Exit2,Exit3,ExitModel errorFlow
+    class LoadCfg,ValidateCfg,GetRegistry,LoadModels,GetRouter,CreateCache,CreateAuthMW,CreateWS,CreateServer,StartServer localPkgs
 ```
-
-## Variables
-
-| Variable | Type | Description |
-|----------|------|-------------|
-| `cfg` | `*config.Config` | Loaded configuration |
-| `logger` | `zerolog.Logger` | Configured logger |
-| `registry` | `*models.Registry` | LLM model registry |
-| `redisClient` | `*redis.Client` | Redis client (required) |
-| `cache` | `server.Cache` | Session cache adapter |
-| `authMW` | `*server.AuthMiddleware` | Auth middleware |
-| `wsHandler` | `*websocket.Handler` | WebSocket handler |
-| `srv` | `*server.Server` | HTTP server |
-
-## Error Handling
-
-| Error Type | Handler | Exit Code / Behavior |
-|------------|---------|---------------------|
-| Config load error | `fmt.Fprintf(os.Stderr)` | Exit 1 |
-| Config validation error | `fmt.Fprintf(os.Stderr)` | Exit 1 |
-| Invalid log level | `fmt.Fprintf(os.Stderr)` | Exit 1 |
-| Server start error | `logger.Error()` | Exit 1 |
-
-## Environment Variables
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `GATEWAY_MODEL_CONFIG` | No | `config/models.yaml` | Model config path |
-
-See [Config README](../config/README.md) for full environment variable list.
 
 ## Design Notes
 

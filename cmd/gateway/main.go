@@ -38,17 +38,12 @@ func main() {
 
 	// Initialize model registry
 	registry := models.Get()
-	modelConfigPath := os.Getenv("GATEWAY_MODEL_CONFIG")
-	if modelConfigPath == "" {
-		modelConfigPath = "config/models.yaml"
+	if err := registry.LoadFromYAML(cfg.ModelConfigPath); err != nil {
+		logger.Error().Err(err).Str("path", cfg.ModelConfigPath).Msg("failed to load model configuration")
+		os.Exit(1)
 	}
-
-	if err := registry.LoadFromYAML(modelConfigPath); err != nil {
-		logger.Warn().Err(err).Str("path", modelConfigPath).Msg("failed to load model configuration")
-	} else {
-		routerModel := registry.GetRouterModel()
-		logger.Info().Str("router_model", routerModel).Msg("model registry initialized")
-	}
+	routerModel := registry.GetRouterModel()
+	logger.Info().Str("router_model", routerModel).Msg("model registry initialized")
 
 	// For development, allow all origins if none specified.
 	// In production, always set GATEWAY_ALLOWED_ORIGINS environment variable.
@@ -77,7 +72,7 @@ func main() {
 
 	// Create auth middleware with cache support
 	// Default cache TTL to 5 minutes if not specified
-	authMW := server.NewAuthMiddleware(cfg.Auth.URL, cache, 5*time.Minute)
+	authMW := server.NewAuthMiddleware(cfg.ZetidalURL, cache, 5*time.Minute)
 
 	// Create WebSocket handler with config
 	wsHandler := websocket.NewHandler(logger, allowedOrigins, maxConns)
