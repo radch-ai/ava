@@ -138,13 +138,9 @@ flowchart TB
     class HGetByTier internalFn
 ```
 
-## Environment Variables
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `GATEWAY_MODEL_CONFIG` | No | `config/models.yaml` | Path to model config YAML |
-
 ## Design Notes
+
+### YAML-Based Configuration## Design Notes
 
 ### YAML-Based Configuration
 

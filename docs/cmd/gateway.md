@@ -14,8 +14,8 @@ flowchart TB
     ParseLevel -->|error| Exit2("Exit 1")
     ParseLevel -->|ok| SetLevel["zerolog.SetGlobalLevel(logLevel)"]
     SetLevel --> CreateLogger["zerolog.New(os.Stderr) → logger"]
-    CreateLogger --> GetRegistry["models.Get() → registry"]
-    GetRegistry --> LoadModels["registry.LoadFromYAML(cfg.ModelConfigPath) → err"]
+     CreateLogger --> GetRegistry["models.Get() → registry"]
+     GetRegistry --> LoadModels["registry.LoadFromYAML(config.GetModelsConfigPath()) → err"]
     LoadModels -->|error| ExitModel("Exit 1")
     LoadModels --> GetRouter["registry.GetRouterModel() → routerModel"]
     GetRouter --> InitRedis["redis.NewClient(&redis.Options{Addr: cfg.RedisAddr, Password: cfg.RedisPassword}) → redisClient"]
@@ -29,9 +29,9 @@ flowchart TB
 
     click LoadCfg href "../config/README.md"
     click ValidateCfg href "../config/README.md"
-    click GetRegistry href "../internal/llm-proxy/models.md"
-    click LoadModels href "../internal/llm-proxy/models.md"
-    click GetRouter href "../internal/llm-proxy/models.md"
+    click GetRegistry href "https://github.com/nevaria-ai/llm-proxy-sdk"
+    click LoadModels href "https://github.com/nevaria-ai/llm-proxy-sdk"
+    click GetRouter href "https://github.com/nevaria-ai/llm-proxy-sdk"
     click CreateCache href "../internal/server/README.md"
     click CreateAuthMW href "../internal/server/README.md"
     click CreateWS href "../internal/websocket.md"
@@ -91,7 +91,7 @@ This package has no unit tests. Integration tests cover the server startup.
 | `github.com/rs/zerolog` | Structured logging |
 | `github.com/redis/go-redis/v9` | Redis client |
 | `github.com/nevaria-ai/gateway/config` | Configuration |
-| `github.com/nevaria-ai/gateway/internal/llm-proxy/models` | Model registry |
+| `github.com/nevaria-ai/llm-proxy-sdk/pkg/models` | Model registry |
 | `github.com/nevaria-ai/gateway/internal/server` | HTTP server |
 | `github.com/nevaria-ai/gateway/internal/websocket` | WebSocket handler |
 
