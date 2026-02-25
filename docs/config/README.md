@@ -1,6 +1,6 @@
 # Config
 
-Centralized environment-based configuration loading for the gateway application. Provides typed configuration structs with environment variable binding, validation, and logger initialization.
+Environment-based configuration for the gateway application. Reads environment variables and provides the Config struct for use throughout the application.
 
 ## Overview
 
