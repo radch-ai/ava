@@ -18,17 +18,16 @@ var Version = "dev"
 
 // A Server manages the HTTP server and WebSocket handlers.
 type Server struct {
-	httpServer     *http.Server
-	logger         zerolog.Logger
-	wsHandler      *websocket.Handler
-	authMW         *AuthMiddleware // Authentication middleware
-	internalRouter http.Handler    // Internal router mounted at /_internal/
-	shutdownCh     chan struct{}   // Closed when shutdown is requested
+	httpServer *http.Server
+	logger     zerolog.Logger
+	wsHandler  *websocket.Handler
+	authMW     *AuthMiddleware // Authentication middleware
+	shutdownCh chan struct{}   // Closed when shutdown is requested
 }
 
-// New creates a new Server with the given address, logger, WebSocket handler, auth middleware, and internal router.
+// New creates a new Server with the given address, logger, WebSocket handler, and auth middleware.
 // If authMW is nil, the WebSocket endpoint will not require authentication (for backward compatibility).
-func New(addr string, logger zerolog.Logger, wsHandler *websocket.Handler, authMW *AuthMiddleware, internalRouter http.Handler) *Server {
+func New(addr string, logger zerolog.Logger, wsHandler *websocket.Handler, authMW *AuthMiddleware) *Server {
 
 	mux := http.NewServeMux()
 
@@ -52,11 +51,6 @@ func New(addr string, logger zerolog.Logger, wsHandler *websocket.Handler, authM
 		mux.Handle("/ws", wsHandlerFunc)
 	}
 
-	// Mount internal router at /_internal/
-	if internalRouter != nil {
-		mux.Handle("/_internal/", http.StripPrefix("/_internal/", internalRouter))
-	}
-
 	return &Server{
 		httpServer: &http.Server{
 			Addr:         addr,
@@ -65,11 +59,10 @@ func New(addr string, logger zerolog.Logger, wsHandler *websocket.Handler, authM
 			WriteTimeout: 15 * time.Second,
 			IdleTimeout:  60 * time.Second,
 		},
-		logger:         logger,
-		wsHandler:      wsHandler,
-		authMW:         authMW,
-		internalRouter: internalRouter,
-		shutdownCh:     make(chan struct{}),
+		logger:     logger,
+		wsHandler:  wsHandler,
+		authMW:     authMW,
+		shutdownCh: make(chan struct{}),
 	}
 }
 

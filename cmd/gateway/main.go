@@ -82,12 +82,8 @@ func main() {
 	// Create WebSocket handler with config
 	wsHandler := websocket.NewHandler(logger, allowedOrigins, maxConns)
 
-	// Create internal router for auth service webhooks with cache support
-	// Uses gateway's own INTERNAL_SECRET to protect endpoints
-	internalRouter := server.NewInternalRouter(cfg.Auth.InternalSecret, cache)
-
 	// Create and start server with auth middleware
-	srv := server.New(cfg.ServerAddr, logger, wsHandler, authMW, internalRouter)
+	srv := server.New(cfg.ServerAddr, logger, wsHandler, authMW)
 	if err := srv.Start(); err != nil {
 		logger.Error().Err(err).Msg("server failed")
 		os.Exit(1)

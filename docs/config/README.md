@@ -64,7 +64,6 @@ flowchart TB
 |--------|-------|------|-------------|
 | `AuthConfig` | `URL` | `string` | Zetidal API base URL |
 | | `Timeout` | `time.Duration` | Auth request timeout |
-| | `InternalSecret` | `string` | Gateway's internal secret for /_internal/* |
 
 ## Environment Variables
 
@@ -77,7 +76,6 @@ flowchart TB
 | `GATEWAY_MODEL_CONFIG` | No | `config/models.yaml` | Path to model configuration YAML |
 | `AUTH_SERVICE_URL` | No | `http://localhost:8081` | Zetidal API URL |
 | `AUTH_TIMEOUT` | No | `2s` | Auth request timeout |
-| `INTERNAL_SECRET` | Prod* | - | Gateway internal secret (/_internal/*) |
 | `REDIS_ADDR` | Yes | - | Redis server address (required) |
 | `REDIS_PASSWORD` | No | - | Redis password |
 | `ENV` | No | - | Production mode flag (set to `production`) |
@@ -89,11 +87,10 @@ flowchart TB
 
 | Error Type | Handler | Exit Code / Behavior |
 |------------|---------|---------------------|
-| Production without secrets | Returns error from `Validate()` | Caller handles (typically fatal) |
+| Redis not configured | Returns error from `Validate()` | Caller handles (typically fatal) |
 | Invalid `GATEWAY_ADDR` | Returns error from `Validate()` | Caller handles (typically fatal) |
 | Invalid `AUTH_SERVICE_URL` | Returns error from `Validate()` | Caller handles (typically fatal) |
 | Invalid `AUTH_TIMEOUT` | Returns error from `Load()` | Caller handles (typically fatal) |
-| Secret < 16 characters | Returns error from `Validate()` | Caller handles (typically fatal) |
 
 ## Design Notes
 

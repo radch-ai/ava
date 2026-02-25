@@ -44,11 +44,6 @@ func parseList(value string) []string {
 	return result
 }
 
-// isProduction checks if the application is running in production mode.
-func isProduction() bool {
-	return os.Getenv("ENV") == "production" || os.Getenv("APP_ENV") == "prod"
-}
-
 // Load reads configuration from environment variables and returns a Config.
 func Load() (*Config, error) {
 	addr := getEnv("GATEWAY_ADDR", ":8080")
@@ -85,8 +80,6 @@ func Load() (*Config, error) {
 		}
 	}
 
-	gatewayInternalSecret := os.Getenv("INTERNAL_SECRET")
-
 	// Redis configuration (required)
 	redisAddr := os.Getenv("REDIS_ADDR")
 	redisPassword := os.Getenv("REDIS_PASSWORD")
@@ -97,9 +90,8 @@ func Load() (*Config, error) {
 		AllowedOrigins: origins,
 		MaxConns:       maxConns,
 		Auth: AuthConfig{
-			URL:            authURL,
-			Timeout:        authTimeout,
-			InternalSecret: gatewayInternalSecret,
+			URL:     authURL,
+			Timeout: authTimeout,
 		},
 		RedisAddr:     redisAddr,
 		RedisPassword: redisPassword,
@@ -117,16 +109,6 @@ func (c *Config) Validate() error {
 	// Redis is required
 	if c.RedisAddr == "" {
 		errs = append(errs, "REDIS_ADDR is required")
-	}
-
-	// In production, require internal secret
-	if isProduction() && c.Auth.InternalSecret == "" {
-		errs = append(errs, "INTERNAL_SECRET required in production")
-	}
-
-	// Internal secret must be at least 16 characters if set
-	if c.Auth.InternalSecret != "" && len(c.Auth.InternalSecret) < 16 {
-		errs = append(errs, "INTERNAL_SECRET must be at least 16 characters")
 	}
 
 	// Validate auth URL format - must have http or https scheme

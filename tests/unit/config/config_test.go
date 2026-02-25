@@ -206,7 +206,6 @@ func TestAuthConfigDefaults(t *testing.T) {
 	// Clear auth-related env vars
 	_ = os.Unsetenv("AUTH_SERVICE_URL")
 	_ = os.Unsetenv("AUTH_TIMEOUT")
-	_ = os.Unsetenv("INTERNAL_SECRET")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -220,20 +219,14 @@ func TestAuthConfigDefaults(t *testing.T) {
 	if cfg.Auth.Timeout != 2*time.Second {
 		t.Errorf("expected auth timeout 2s, got %v", cfg.Auth.Timeout)
 	}
-
-	if cfg.Auth.InternalSecret != "" {
-		t.Errorf("expected empty internal secret, got %s", cfg.Auth.InternalSecret)
-	}
 }
 
 func TestAuthConfigFromEnv(t *testing.T) {
 	_ = os.Setenv("AUTH_SERVICE_URL", "http://zetidal:9090")
 	_ = os.Setenv("AUTH_TIMEOUT", "5s")
-	_ = os.Setenv("INTERNAL_SECRET", "gateway-secret")
 	defer func() {
 		_ = os.Unsetenv("AUTH_SERVICE_URL")
 		_ = os.Unsetenv("AUTH_TIMEOUT")
-		_ = os.Unsetenv("INTERNAL_SECRET")
 	}()
 
 	cfg, err := config.Load()
@@ -247,9 +240,5 @@ func TestAuthConfigFromEnv(t *testing.T) {
 
 	if cfg.Auth.Timeout != 5*time.Second {
 		t.Errorf("expected auth timeout 5s, got %v", cfg.Auth.Timeout)
-	}
-
-	if cfg.Auth.InternalSecret != "gateway-secret" {
-		t.Errorf("expected internal secret gateway-secret, got %s", cfg.Auth.InternalSecret)
 	}
 }

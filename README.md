@@ -29,7 +29,6 @@ All configuration is via environment variables.
 |----------|---------|-------------|
 | `AUTH_SERVICE_URL` | `http://localhost:8081` | Zetidal API URL for session validation |
 | `AUTH_TIMEOUT` | `2s` | Auth request timeout |
-| `INTERNAL_SECRET` | (required) | Gateway secret for /_internal/* endpoints (min 16 chars) |
 
 ### Redis (Required)
 
@@ -56,7 +55,6 @@ export GATEWAY_ALLOWED_ORIGINS="https://app.example.com"
 export GATEWAY_MAX_CONNS="10000"
 
 export AUTH_SERVICE_URL="http://zetidal:8081"
-export INTERNAL_SECRET="${RANDOM_SECRET_MIN_16_CHARS}"
 
 export REDIS_ADDR="redis:6379"
 export OPENAI_API_KEY="sk-..."
@@ -69,7 +67,6 @@ export ANTHROPIC_API_KEY="sk-..."
 |------|--------|------|-------------|
 | `/health` | GET, HEAD | None | Health check |
 | `/ws` | GET | Session cookie | WebSocket connection |
-| `/_internal/*` | * | Bearer token | Internal service endpoints |
 
 ## Development
 
