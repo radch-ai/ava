@@ -38,8 +38,9 @@ func main() {
 
 	// Initialize model registry
 	registry := models.Get()
-	if err := registry.LoadFromYAML(cfg.ModelConfigPath); err != nil {
-		logger.Error().Err(err).Str("path", cfg.ModelConfigPath).Msg("failed to load model configuration")
+	modelConfigPath := "llm-proxy-models.yaml"
+	if err := registry.LoadFromYAML(modelConfigPath); err != nil {
+		logger.Error().Err(err).Str("path", modelConfigPath).Msg("failed to load model configuration")
 		os.Exit(1)
 	}
 	routerModel := registry.GetRouterModel()

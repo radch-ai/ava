@@ -11,14 +11,13 @@ import (
 
 // A Config holds the application configuration.
 type Config struct {
-	ServerAddr      string
-	LogLevel        string
-	AllowedOrigins  []string
-	MaxConns        int
-	ZetidalURL      string
-	RedisAddr       string
-	RedisPassword   string
-	ModelConfigPath string
+	ServerAddr     string
+	LogLevel       string
+	AllowedOrigins []string
+	MaxConns       int
+	ZetidalURL     string
+	RedisAddr      string
+	RedisPassword  string
 }
 
 // getEnv returns the environment variable value or a default.
@@ -74,18 +73,14 @@ func Load() (*Config, error) {
 	redisAddr := os.Getenv("REDIS_ADDR")
 	redisPassword := os.Getenv("REDIS_PASSWORD")
 
-	// Model configuration path
-	modelConfigPath := getEnv("GATEWAY_MODEL_CONFIG", "config/models.yaml")
-
 	return &Config{
-		ServerAddr:      addr,
-		LogLevel:        logLevel,
-		AllowedOrigins:  origins,
-		MaxConns:        maxConns,
-		ZetidalURL:      zetidalURL,
-		RedisAddr:       redisAddr,
-		RedisPassword:   redisPassword,
-		ModelConfigPath: modelConfigPath,
+		ServerAddr:     addr,
+		LogLevel:       logLevel,
+		AllowedOrigins: origins,
+		MaxConns:       maxConns,
+		ZetidalURL:     zetidalURL,
+		RedisAddr:      redisAddr,
+		RedisPassword:  redisPassword,
 	}, nil
 }
 
