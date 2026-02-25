@@ -4,11 +4,11 @@ import (
 	"sync"
 
 	"github.com/nevaria-ai/gateway/internal/agent"
-	llmproxy "github.com/nevaria-ai/llm-proxy-sdk"
+	"github.com/nevaria-ai/llm-proxy-sdk/pkg/handler"
 	"github.com/rs/zerolog"
 )
 
-// AgentKey is the composite key for agent lookup: (userID, agentID)
+// AgentKey is a composite key for agent lookup: (userID, agentID)
 type AgentKey struct {
 	UserID  string
 	AgentID string
@@ -16,7 +16,7 @@ type AgentKey struct {
 
 // AgentManagerOptions configures a new AgentManager.
 type AgentManagerOptions struct {
-	LLMProxyHandler *llmproxy.Handler
+	LLMProxyHandler *handler.Handler
 }
 
 // AgentManager manages per-user agents with thread-safe access.
@@ -25,12 +25,12 @@ type AgentManager struct {
 	mu       sync.RWMutex
 	agents   map[AgentKey]*agent.Agent
 	logger   zerolog.Logger
-	llmProxy *llmproxy.Handler
+	llmProxy *handler.Handler
 }
 
 // NewAgentManager creates a new AgentManager.
 func NewAgentManager(logger zerolog.Logger, opts *AgentManagerOptions) *AgentManager {
-	var llmProxy *llmproxy.Handler
+	var llmProxy *handler.Handler
 	if opts != nil {
 		llmProxy = opts.LLMProxyHandler
 	}
@@ -42,7 +42,7 @@ func NewAgentManager(logger zerolog.Logger, opts *AgentManagerOptions) *AgentMan
 	}
 }
 
-// GetOrCreateAgentForUser returns an existing agent for the (userID, agentID) pair or creates a new one.
+// GetOrCreateAgentForUser returns an existing agent for (userID, agentID) pair or creates a new one.
 func (m *AgentManager) GetOrCreateAgentForUser(userID, agentID string) *agent.Agent {
 	key := AgentKey{UserID: userID, AgentID: agentID}
 
@@ -69,7 +69,7 @@ func (m *AgentManager) GetOrCreateAgentForUser(userID, agentID string) *agent.Ag
 	return newAgent
 }
 
-// createAgent creates a new agent with the appropriate LLM client.
+// createAgent creates a new agent with appropriate LLM client.
 func (m *AgentManager) createAgent(userID, agentID string) *agent.Agent {
 	opts := agent.AgentOptions{
 		ID:        agentID,
@@ -88,7 +88,7 @@ func (m *AgentManager) createAgent(userID, agentID string) *agent.Agent {
 	return agent.NewAgent(opts)
 }
 
-// RemoveAgentForUser removes the agent for the given (userID, agentID) pair.
+// RemoveAgentForUser removes agent for given (userID, agentID) pair.
 func (m *AgentManager) RemoveAgentForUser(userID, agentID string) {
 	key := AgentKey{UserID: userID, AgentID: agentID}
 
@@ -107,7 +107,7 @@ func (m *AgentManager) GetOrCreateAgent(sessionID string, userID string) *agent.
 }
 
 // RemoveAgent is deprecated - use RemoveAgentForUser instead.
-// For backward compatibility, this removes any agent matching the sessionID as agentID.
+// For backward compatibility, this removes any agent matching to sessionID as agentID.
 func (m *AgentManager) RemoveAgent(sessionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

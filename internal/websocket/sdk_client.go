@@ -4,17 +4,18 @@ import (
 	"context"
 
 	"github.com/nevaria-ai/gateway/internal/agent"
-	llmproxy "github.com/nevaria-ai/llm-proxy-sdk"
+	"github.com/nevaria-ai/llm-proxy-sdk/pkg/handler"
+	"github.com/nevaria-ai/llm-proxy-sdk/pkg/types"
 )
 
 // SDKClient implements agent.LLMClient using the SDK handler.
 type SDKClient struct {
-	handler *llmproxy.Handler
+	handler *handler.Handler
 	userID  string
 }
 
 // NewSDKClient creates a new SDK client for a specific user.
-func NewSDKClient(handler *llmproxy.Handler, userID string) *SDKClient {
+func NewSDKClient(handler *handler.Handler, userID string) *SDKClient {
 	return &SDKClient{
 		handler: handler,
 		userID:  userID,
@@ -39,7 +40,7 @@ func (c *SDKClient) Stream(ctx context.Context, messages []agent.AgentMessage, t
 	}
 
 	// Convert SDK message pointers to values for SDK handler
-	messagesSlice := make([]llmproxy.Message, len(sdkMessages))
+	messagesSlice := make([]types.Message, len(sdkMessages))
 	for i, m := range sdkMessages {
 		if m != nil {
 			messagesSlice[i] = *m
@@ -47,7 +48,7 @@ func (c *SDKClient) Stream(ctx context.Context, messages []agent.AgentMessage, t
 	}
 
 	// Build SDK proxy request
-	req := llmproxy.ProxyRequest{
+	req := handler.ProxyRequest{
 		UserID:    c.userID,
 		SessionID: c.userID + ":session",
 		Query:     query,
@@ -70,23 +71,23 @@ func (c *SDKClient) Stream(ctx context.Context, messages []agent.AgentMessage, t
 		for event := range resp.Stream {
 			// Convert SDK event to agent event
 			switch e := event.(type) {
-			case llmproxy.MessageStartEvent:
+			case types.MessageStartEvent:
 				// Convert SDK message to agent message
 				agentMsg := agent.MessageFromSDK(&e.Message)
 				agentEventCh <- agent.MessageStartEvent{Timestamp: e.Timestamp, Message: agentMsg}
-			case llmproxy.MessageUpdateEvent:
+			case types.MessageUpdateEvent:
 				// Convert SDK message to agent message
 				agentMsg := agent.MessageFromSDK(&e.Message)
 				agentEventCh <- agent.MessageUpdateEvent{Timestamp: e.Timestamp, Message: agentMsg, Delta: e.Delta}
-			case llmproxy.MessageEndEvent:
+			case types.MessageEndEvent:
 				// Convert SDK message to agent message
 				agentMsg := agent.MessageFromSDK(&e.Message)
 				agentEventCh <- agent.MessageEndEvent{Timestamp: e.Timestamp, Message: agentMsg}
-			case llmproxy.TokenUsageEvent:
+			case types.TokenUsageEvent:
 				agentEventCh <- agent.TokenUsageEvent{Timestamp: e.Timestamp, TokensInput: int64(e.TokensInput), TokensOutput: int64(e.TokensOutput)}
-			case llmproxy.DoneEvent:
+			case types.DoneEvent:
 				return
-			case llmproxy.ErrorEvent:
+			case types.ErrorEvent:
 				// For errors, we'll emit a tool execution error event to indicate failure
 				// This is a simplification - in practice you might want different error handling
 				toolErrEvent := agent.ToolExecutionEndEvent{

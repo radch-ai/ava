@@ -37,9 +37,7 @@ func main() {
 	logger := zerolog.New(os.Stderr).With().Timestamp().Str("service", "nevaria-gateway").Logger()
 
 	// Initialize LLM proxy handler
-	llmProxy, err := llmproxy.New(&llmproxy.Config{
-		ModelsPath: "llm-proxy-models.yaml",
-	})
+	llmProxy, err := llmproxy.New(&llmproxy.Config{})
 	if err != nil {
 		logger.Error().Err(err).Msg("failed to initialize LLM proxy handler")
 		os.Exit(1)
