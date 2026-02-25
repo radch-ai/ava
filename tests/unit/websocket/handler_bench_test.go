@@ -13,7 +13,7 @@ import (
 
 func BenchmarkWebSocketEcho(b *testing.B) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 10000)
+	handler := websocket.NewHandler(logger, []string{"*"}, 10000, nil)
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -47,7 +47,7 @@ func BenchmarkWebSocketEcho(b *testing.B) {
 
 func BenchmarkWebSocketSmallMessages(b *testing.B) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 10000)
+	handler := websocket.NewHandler(logger, []string{"*"}, 10000, nil)
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -75,7 +75,7 @@ func BenchmarkWebSocketSmallMessages(b *testing.B) {
 
 func BenchmarkWebSocketMediumMessages(b *testing.B) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 10000)
+	handler := websocket.NewHandler(logger, []string{"*"}, 10000, nil)
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -103,7 +103,7 @@ func BenchmarkWebSocketMediumMessages(b *testing.B) {
 
 func BenchmarkWebSocketLargeMessages(b *testing.B) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 10000)
+	handler := websocket.NewHandler(logger, []string{"*"}, 10000, nil)
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -131,7 +131,7 @@ func BenchmarkWebSocketLargeMessages(b *testing.B) {
 
 func BenchmarkActiveConns(b *testing.B) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 10000)
+	handler := websocket.NewHandler(logger, []string{"*"}, 10000, nil)
 
 	b.ResetTimer()
 

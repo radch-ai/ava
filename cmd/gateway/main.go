@@ -8,7 +8,7 @@ import (
 	"github.com/nevaria-ai/gateway/config"
 	"github.com/nevaria-ai/gateway/internal/server"
 	"github.com/nevaria-ai/gateway/internal/websocket"
-	"github.com/nevaria-ai/llm-proxy-sdk/pkg/models"
+	"github.com/nevaria-ai/llm-proxy-sdk/pkg/handler"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 )
@@ -36,15 +36,15 @@ func main() {
 	// Create logger
 	logger := zerolog.New(os.Stderr).With().Timestamp().Str("service", "nevaria-gateway").Logger()
 
-	// Initialize model registry
-	registry := models.Get()
-	modelConfigPath := "llm-proxy-models.yaml"
-	if err := registry.LoadFromYAML(modelConfigPath); err != nil {
-		logger.Error().Err(err).Str("path", modelConfigPath).Msg("failed to load model configuration")
+	// Initialize LLM proxy handler
+	llmProxy, err := handler.New(&handler.Config{
+		ModelsPath: "llm-proxy-models.yaml",
+	})
+	if err != nil {
+		logger.Error().Err(err).Msg("failed to initialize LLM proxy handler")
 		os.Exit(1)
 	}
-	routerModel := registry.GetRouterModel()
-	logger.Info().Str("router_model", routerModel).Msg("model registry initialized")
+	logger.Info().Msg("LLM proxy handler initialized")
 
 	// For development, allow all origins if none specified.
 	// In production, always set GATEWAY_ALLOWED_ORIGINS environment variable.
@@ -75,8 +75,10 @@ func main() {
 	// Default cache TTL to 5 minutes if not specified
 	authMW := server.NewAuthMiddleware(cfg.ZetidalURL, cache, 5*time.Minute)
 
-	// Create WebSocket handler with config
-	wsHandler := websocket.NewHandler(logger, allowedOrigins, maxConns)
+	// Create WebSocket handler with config and LLM proxy
+	wsHandler := websocket.NewHandler(logger, allowedOrigins, maxConns, &websocket.AgentManagerOptions{
+		LLMProxyHandler: llmProxy,
+	})
 
 	// Create and start server with auth middleware
 	srv := server.New(cfg.ServerAddr, logger, wsHandler, authMW)

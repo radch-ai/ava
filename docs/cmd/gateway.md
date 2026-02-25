@@ -1,6 +1,6 @@
 # Gateway Command
 
-Gateway application entry point. Initializes configuration, logger, model registry, Redis client, and starts the HTTP/WebSocket server.
+Gateway application entry point. Initializes configuration, logger, LLM proxy handler, Redis client, and starts the HTTP/WebSocket server.
 
 ## Overview
 
@@ -14,14 +14,12 @@ flowchart TB
     ParseLevel -->|error| Exit2("Exit 1")
     ParseLevel -->|ok| SetLevel["zerolog.SetGlobalLevel(logLevel)"]
      SetLevel --> CreateLogger["zerolog.New(os.Stderr) → logger"]
-      CreateLogger --> GetRegistry["models.Get() → registry"]
-      GetRegistry --> LoadModels["registry.LoadFromYAML('llm-proxy-models.yaml') → err"]
-     LoadModels -->|error| ExitModel("Exit 1")
-    LoadModels --> GetRouter["registry.GetRouterModel() → routerModel"]
-    GetRouter --> InitRedis["redis.NewClient(&redis.Options{Addr: cfg.RedisAddr, Password: cfg.RedisPassword}) → redisClient"]
+      CreateLogger --> InitProxy["handler.New(&handler.Config{ModelsPath: 'llm-proxy-models.yaml'}) → llmProxy, err"]
+      InitProxy -->|error| ExitProxy("Exit 1")
+     InitProxy --> InitRedis["redis.NewClient(&redis.Options{Addr: cfg.RedisAddr, Password: cfg.RedisPassword}) → redisClient"]
     InitRedis --> CreateCache["server.NewRedisCache(redisClient) → cache"]
     CreateCache --> CreateAuthMW["server.NewAuthMiddleware(cfg.ZetidalURL, cache, 5*time.Minute) → authMW"]
-    CreateAuthMW --> CreateWS["websocket.NewHandler(logger, allowedOrigins, maxConns) → wsHandler"]
+    CreateAuthMW --> CreateWS["websocket.NewHandler(logger, allowedOrigins, maxConns, &websocket.AgentManagerOptions{LLMProxyHandler: llmProxy}) → wsHandler"]
     CreateWS --> CreateServer["server.New(cfg.ServerAddr, logger, wsHandler, authMW) → srv"]
     CreateServer --> StartServer["srv.Start() → err"]
     StartServer -->|error| Exit3("Exit 1")
@@ -29,9 +27,7 @@ flowchart TB
 
     click LoadCfg href "../config/README.md"
     click ValidateCfg href "../config/README.md"
-    click GetRegistry href "https://github.com/nevaria-ai/llm-proxy-sdk"
-    click LoadModels href "https://github.com/nevaria-ai/llm-proxy-sdk"
-    click GetRouter href "https://github.com/nevaria-ai/llm-proxy-sdk"
+    click InitProxy href "https://github.com/nevaria-ai/llm-proxy-sdk"
     click CreateCache href "../internal/server/README.md"
     click CreateAuthMW href "../internal/server/README.md"
     click CreateWS href "../internal/websocket.md"
@@ -42,8 +38,8 @@ flowchart TB
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
     class Start,Running mainFn
-    class Exit1,Exit2,Exit3,ExitModel errorFlow
-    class LoadCfg,ValidateCfg,GetRegistry,LoadModels,GetRouter,CreateCache,CreateAuthMW,CreateWS,CreateServer,StartServer localPkgs
+    class Exit1,Exit2,Exit3,ExitProxy errorFlow
+    class LoadCfg,ValidateCfg,InitProxy,CreateCache,CreateAuthMW,CreateWS,CreateServer,StartServer localPkgs
 ```
 
 ## Design Notes
@@ -91,7 +87,7 @@ This package has no unit tests. Integration tests cover the server startup.
 | `github.com/rs/zerolog` | Structured logging |
 | `github.com/redis/go-redis/v9` | Redis client |
 | `github.com/nevaria-ai/gateway/config` | Configuration |
-| `github.com/nevaria-ai/llm-proxy-sdk/pkg/models` | Model registry |
+| `github.com/nevaria-ai/llm-proxy-sdk/pkg/handler` | LLM proxy handler with model registry |
 | `github.com/nevaria-ai/gateway/internal/server` | HTTP server |
 | `github.com/nevaria-ai/gateway/internal/websocket` | WebSocket handler |
 
