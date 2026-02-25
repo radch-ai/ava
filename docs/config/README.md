@@ -46,31 +46,19 @@ flowchart TB
     class DoneErr errorFlow
 ```
 
-## Structs
+## Structs and Environment Variables
 
-### Config
+| Config Struct | Field | Env Variable | Type | Default | Required | Description |
+|---------------|-------|--------------|------|---------|----------|-------------|
+| **Config** | `ServerAddr` | `GATEWAY_ADDR` | `string` | `:8080` | No | Server bind address |
+| | `LogLevel` | `GATEWAY_LOG_LEVEL` | `string` | `info` | No | Log level (debug, info, warn, error) |
+| | `AllowedOrigins` | `GATEWAY_ALLOWED_ORIGINS` | `[]string` | - | No* | Comma-separated CORS allowed origins |
+| | `MaxConns` | `GATEWAY_MAX_CONNS` | `int` | `0` | No | Max concurrent WebSocket connections (0 = unlimited) |
+| | `ZetidalURL` | `ZETIDAL_URL` | `string` | `http://localhost:8081` | No | Zetidal API URL for session validation |
+| | `RedisAddr` | `REDIS_ADDR` | `string` | - | Yes | Redis server address |
+| | `RedisPassword` | `REDIS_PASSWORD` | `string` | - | No | Redis password |
 
-| Struct | Field | Type | Description |
-|--------|-------|------|-------------|
-| `Config` | `ServerAddr` | `string` | Server bind address |
-| | `LogLevel` | `string` | Log level (debug, info, warn, error) |
-| | `AllowedOrigins` | `[]string` | CORS allowed origins |
-| | `MaxConns` | `int` | Max concurrent WebSocket connections |
-| | `ZetidalURL` | `string` | Zetidal API URL for session validation |
-| | `RedisAddr` | `string` | Redis server address |
-| | `RedisPassword` | `string` | Redis password |
-
-## Environment Variables
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `GATEWAY_ADDR` | No | `:8080` | Server bind address |
-| `GATEWAY_LOG_LEVEL` | No | `info` | Log level (debug, info, warn, error) |
-| `GATEWAY_ALLOWED_ORIGINS` | No | - | Comma-separated CORS allowed origins |
-| `GATEWAY_MAX_CONNS` | No | `0` (unlimited) | Max concurrent WebSocket connections |
-| `ZETIDAL_URL` | No | `http://localhost:8081` | Zetidal API URL for session validation |
-| `REDIS_ADDR` | Yes | - | Redis server address (required) |
-| `REDIS_PASSWORD` | No | - | Redis password |
+\* Empty origins denies all requests - use `"*"` for development only.
 
 ## Design Notes
 
