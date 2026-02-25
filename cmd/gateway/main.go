@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/nevaria-ai/gateway/config"
-	"github.com/nevaria-ai/gateway/internal/llm-proxy/models"
 	"github.com/nevaria-ai/gateway/internal/server"
 	"github.com/nevaria-ai/gateway/internal/websocket"
+	"github.com/nevaria-ai/llm-proxy-sdk/pkg/models"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 )
