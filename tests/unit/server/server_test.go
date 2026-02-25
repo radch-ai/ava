@@ -19,7 +19,7 @@ import (
 
 func TestServerStarts(t *testing.T) {
 	logger := zerolog.Nop()
-	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100)
+	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
 
 	srv := server.New(":8081", logger, wsHandler, nil)
 	go func() {
@@ -44,7 +44,7 @@ func TestServerStarts(t *testing.T) {
 
 func TestServerHealthEndpoint(t *testing.T) {
 	logger := zerolog.Nop()
-	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100)
+	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
 
 	srv := server.New(":8081", logger, wsHandler, nil)
 	go func() {
@@ -105,7 +105,7 @@ func TestServerHealthEndpoint(t *testing.T) {
 
 func TestServerWebSocketEndpoint(t *testing.T) {
 	logger := zerolog.Nop()
-	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100)
+	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
 
 	srv := server.New(":8081", logger, wsHandler, nil)
 	go func() {
@@ -163,7 +163,7 @@ func TestServerWebSocketEndpoint(t *testing.T) {
 
 func TestServerGracefulShutdown(t *testing.T) {
 	logger := zerolog.Nop()
-	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100)
+	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
 
 	srv := server.New(":8081", logger, wsHandler, nil)
 
@@ -203,7 +203,7 @@ func TestServerGracefulShutdown(t *testing.T) {
 
 func TestServerStartupFailure(t *testing.T) {
 	logger := zerolog.Nop()
-	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100)
+	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
 
 	// Try to bind to an address that requires root (will fail)
 	srv := server.New(":80", logger, wsHandler, nil)
@@ -217,7 +217,7 @@ func TestServerStartupFailure(t *testing.T) {
 
 func TestServerWithCustomTimeouts(t *testing.T) {
 	logger := zerolog.Nop()
-	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100)
+	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
 
 	// Start server with short timeouts
 	srv := server.New(":8081", logger, wsHandler, nil)
@@ -252,7 +252,7 @@ func TestServerWithCustomTimeouts(t *testing.T) {
 
 func TestNewServer(t *testing.T) {
 	logger := zerolog.Nop()
-	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100)
+	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
 
 	srv := server.New(":8081", logger, wsHandler, nil)
 
@@ -288,7 +288,7 @@ func TestNewServer(t *testing.T) {
 
 func TestServerInvalidPath(t *testing.T) {
 	logger := zerolog.Nop()
-	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100)
+	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
 
 	srv := server.New(":8081", logger, wsHandler, nil)
 	go func() {
@@ -317,7 +317,7 @@ func TestServerInvalidPath(t *testing.T) {
 func TestServerWithRealHTTPClient(t *testing.T) {
 	// Integration test using httptest instead of real port
 	logger := zerolog.Nop()
-	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100)
+	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
 
 	// Create test server using the handler's mux internally
 	mux := http.NewServeMux()
@@ -395,7 +395,7 @@ func TestServerWithRealHTTPClient(t *testing.T) {
 
 func TestServerGracefulShutdownWithWebSocket(t *testing.T) {
 	logger := zerolog.Nop()
-	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100)
+	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
 
 	srv := server.New(":8081", logger, wsHandler, nil)
 

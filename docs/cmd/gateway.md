@@ -1,6 +1,6 @@
 # Gateway Command
 
-Gateway application entry point. Initializes configuration, logger, LLM proxy handler, Redis client, and starts the HTTP/WebSocket server.
+Gateway application entry point. Initializes configuration, logger, LLM proxy handler, Redis client, and starts HTTP/WebSocket server.
 
 ## Overview
 
@@ -14,7 +14,7 @@ flowchart TB
     ParseLevel -->|error| Exit2("Exit 1")
     ParseLevel -->|ok| SetLevel["zerolog.SetGlobalLevel(logLevel)"]
      SetLevel --> CreateLogger["zerolog.New(os.Stderr) → logger"]
-      CreateLogger --> InitProxy["handler.New(&handler.Config{ModelsPath: 'llm-proxy-models.yaml'}) → llmProxy, err"]
+      CreateLogger --> InitProxy["llmproxy.New(&llmproxy.Config{ModelsPath: 'llm-proxy-models.yaml'}) → llmProxy, err"]
       InitProxy -->|error| ExitProxy("Exit 1")
      InitProxy --> InitRedis["redis.NewClient(&redis.Options{Addr: cfg.RedisAddr, Password: cfg.RedisPassword}) → redisClient"]
     InitRedis --> CreateCache["server.NewRedisCache(redisClient) → cache"]
@@ -87,7 +87,7 @@ This package has no unit tests. Integration tests cover the server startup.
 | `github.com/rs/zerolog` | Structured logging |
 | `github.com/redis/go-redis/v9` | Redis client |
 | `github.com/nevaria-ai/gateway/config` | Configuration |
-| `github.com/nevaria-ai/llm-proxy-sdk/pkg/handler` | LLM proxy handler with model registry |
+| `github.com/nevaria-ai/llm-proxy-sdk` | LLM proxy SDK with model registry |
 | `github.com/nevaria-ai/gateway/internal/server` | HTTP server |
 | `github.com/nevaria-ai/gateway/internal/websocket` | WebSocket handler |
 

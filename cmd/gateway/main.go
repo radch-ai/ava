@@ -8,7 +8,7 @@ import (
 	"github.com/nevaria-ai/gateway/config"
 	"github.com/nevaria-ai/gateway/internal/server"
 	"github.com/nevaria-ai/gateway/internal/websocket"
-	"github.com/nevaria-ai/llm-proxy-sdk/pkg/handler"
+	llmproxy "github.com/nevaria-ai/llm-proxy-sdk"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 )
@@ -37,7 +37,7 @@ func main() {
 	logger := zerolog.New(os.Stderr).With().Timestamp().Str("service", "nevaria-gateway").Logger()
 
 	// Initialize LLM proxy handler
-	llmProxy, err := handler.New(&handler.Config{
+	llmProxy, err := llmproxy.New(&llmproxy.Config{
 		ModelsPath: "llm-proxy-models.yaml",
 	})
 	if err != nil {
