@@ -6,28 +6,33 @@ RevenueCat webhook handling, quota management, and database migrations for subsc
 
 ```mermaid
 flowchart TB
-    subgraph WebhookFlow ["Webhook Flow"]
-        Webhook("RevenueCat Webhook") --> Verify["VerifyWebhookSignature()"]
-        Verify -->|invalid| Reject("Reject")
-        Verify -->|valid| Process["Process Event"]
-        Process --> UpdateDB["Update users table"]
-        UpdateDB --> OK("200 OK")
+    subgraph SGVerify ["Webhook Verification"]
+        HVStart["**VerifyWebhookSignature(payload, signature, secret) → err**"]
+        HVStart --> CheckSig["signature != \"\""]
+        CheckSig -->|false| ESigEmpty(["return error"])
+        CheckSig --> CheckSecret["secret != \"\""]
+        CheckSecret -->|false| ESecretEmpty(["return error"])
+        CheckSecret --> NewMAC["mac ← hmac.New(sha256.New, []byte(secret))"]
+        NewMAC --> Write["mac.Write(payload)"]
+        Write --> Expected["expectedSig ← hex.EncodeToString(mac.Sum(nil))"]
+        Expected --> Equal["hmac.Equal(signature, expectedSig)"]
+        Equal -->|false| EInvalid(["return error"])
+        Equal -->|true| VOK(["return nil"])
     end
 
-    subgraph QuotaFlow ["Quota Flow"]
-        Check("CheckQuota()") --> QueryDB["Query credits_remaining"]
-        QueryDB --> CheckPeriod["Check 6-hour period"]
-        CheckPeriod -->|exceeded| QuotaErr("Quota Exceeded")
-        CheckPeriod -->|ok| Allow("Allow Request")
-    end
+    click NewMAC href "https://pkg.go.dev/crypto/hmac#New"
+    click Write href "https://pkg.go.dev/hash#Hash.Write"
+    click Expected href "https://pkg.go.dev/encoding/hex#EncodeToString"
+    click Equal href "https://pkg.go.dev/crypto/hmac#Equal"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
-    class Webhook,Check mainFn
-    class Reject,QuotaErr errorFlow
-    class Verify,Process,UpdateDB,QueryDB,CheckPeriod internalFn
+    class HVStart internalFn
+    class NewMAC,Write,Expected,Equal localPkgs
+    class ESigEmpty,ESecretEmpty,EInvalid,VOK errorFlow
 ```
 
 ## Structs
@@ -123,14 +128,6 @@ erDiagram
 | `DeductCredit` | `(ctx context.Context, userID, agentID string, tokensUsed int, creditCost float64) error` | Deducts credits |
 | `RunMigrations` | `(ctx context.Context, dbURL string) error` | Runs all migrations |
 | `CheckMigrations` | `(ctx context.Context, dbURL string) ([]MigrationResult, error)` | Checks migration status |
-
-## Error Handling
-
-| Error Type | Handler | Behavior |
-|------------|---------|----------|
-| Invalid signature | Returns error | Webhook rejected |
-| Insufficient credits | Returns error | Request denied |
-| Period limit exceeded | Returns error | Request denied |
 
 ## Design Notes
 

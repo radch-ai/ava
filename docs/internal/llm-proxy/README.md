@@ -6,31 +6,67 @@ LLM proxy with intelligent routing, quota management, health monitoring, and usa
 
 ```mermaid
 flowchart TB
-    Start("Handle(ctx, request)") --> CheckQuota["quota.CheckQuota()"]
-    CheckQuota -->|no quota| ErrQuota("ErrQuotaExceeded")
-    CheckQuota -->|has quota| Router["router.SelectModel()"]
-    Router -->|error| ErrRouter("ErrRouterFailed")
-    Router -->|ok| Health["health.IsHealthy()"]
-    Health -->|unhealthy| Fallback["use fallback model"]
-    Health -->|healthy| Reserve["quota.ReserveQuota()"]
-    Fallback --> Reserve
-    Reserve --> LLM["llmClient.Stream()"]
-    LLM --> Track["trackUsage()"]
-    Track --> Response("return ProxyResponse")
+    Start(["Handle(ctx, req)"]) --> HCheckQuota
+
+    subgraph SGCheckQuota [" "]
+        HCheckQuota["**quota.CheckQuota(ctx, req.UserID, estimatedCost) → result, err**"]
+        HCheckQuota -->|error| E1["return error"]
+        HCheckQuota -->|!result.HasQuota| E2["return ErrQuotaExceeded"]
+        HCheckQuota --> HSelectModel
+    end
+
+    HSelectModel --> HRouter
+
+    subgraph SGRouter [" "]
+        HRouter["**router.SelectModel(ctx, routerReq) → routerResp, err**"]
+        HRouter -->|error| E3["return error"]
+        HRouter --> HHealth
+    end
+
+    HHealth --> HIsHealthy
+
+    subgraph SGHealth [" "]
+        HIsHealthy["**health.IsHealthy(ctx, '', selectedModel) → healthy, err**"]
+        HIsHealthy -->|!healthy| Fallback["selectedModel = routerResp.FallbackOptions[0]"]
+        HIsHealthy --> HReserve
+    end
+
+    Fallback --> HReserve
+
+    subgraph SGReserve [" "]
+        HReserve["**quota.ReserveQuota(ctx, req.UserID, estimatedCost, source) → err**"]
+        HReserve -->|error| E4["return error"]
+        HReserve --> HStream
+    end
+
+    HStream --> HLLMStream
+
+    subgraph SGLLM [" "]
+        HLLMStream["**llmClient.Stream(ctx, req.Messages, req.Tools) → eventCh, err**"]
+        HLLMStream -->|error| E5["return error"]
+        HLLMStream --> Track["trackUsage()"]
+        Track --> Done(["return &ProxyResponse"])
+    end
+
+    CheckQuota["quota.CheckQuota(ctx, req.UserID, estimatedCost) → result, err"]
+    SelectModel["router.SelectModel(ctx, routerReq) → routerResp, err"]
+    IsHealthy["health.IsHealthy(ctx, '', selectedModel) → healthy, err"]
+    ReserveQuota["quota.ReserveQuota(ctx, req.UserID, estimatedCost, source) → err"]
+    Stream["llmClient.Stream(ctx, req.Messages, req.Tools) → eventCh, err"]
 
     click CheckQuota href "quota.md"
-    click Router href "router.md"
-    click Health href "health.md"
-    click LLM href "../llm.md"
+    click SelectModel href "router.md"
+    click IsHealthy href "health.md"
+    click ReserveQuota href "quota.md"
+    click Stream href "../llm.md"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
     classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
-    class Start,Response mainFn
-    class CheckQuota,Router,Health,Fallback,Reserve,LLM,Track internalFn
-    class ErrQuota,ErrRouter errorFlow
+    class Start,Done mainFn
+    class CheckQuota,SelectModel,IsHealthy,ReserveQuota,Stream localPkgs
+    class E1,E2,E3,E4,E5 errorFlow
 ```
 
 ## Structs

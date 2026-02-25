@@ -6,24 +6,38 @@ HTTP server, middleware, and routing for the gateway.
 
 ```mermaid
 flowchart TB
-    Start("Request") --> Mux["http.ServeMux"]
-    Mux -->|health| Health["HealthHandler()"]
-    Mux -->|ws| AuthMW["AuthMiddleware.Authenticate()"]
+    Start([Request]) --> NewMux["http.NewServeMux() → mux"]
+    NewMux --> HandleHealth["mux.HandleFunc(health)"]
+    NewMux --> HandleWS["mux.Handle(ws, wsHandlerFunc)"]
+    HandleWS --> CheckAuth{authMW?}
+    CheckAuth -->|yes| AuthFunc["authMW.Authenticate(wsHandlerFunc) → http.Handler"]
+    CheckAuth -->|no| UseHandler["wsHandlerFunc"]
+    AuthFunc --> CheckCookie{session cookie?}
+    CheckCookie -->|missing| AuthErr(["write 401"])
+    CheckCookie -->|found| CheckCache{cache?}
+    CheckCache -->|yes| GetCache["cache.Get(sessionToken) → userID"]
+    GetCache -->|no userID| Validate["authClient.ValidateSession(sessionToken) → sessionInfo"]
+    GetCache -->|userID set| WithUserID["ctx.WithUserID(userID) → ctx"]
+    CheckCache -->|no| Validate
+    Validate -->|error| ServiceErr(["write 503"])
+    Validate -->|ok| WithUserID
+    WithUserID --> SetCookie{setCookie?}
+    SetCookie -->|yes| SetWrap["http.SetCookie(wrapper, setCookie)"]
+    SetCookie -->|no| Next["next.ServeHTTP(wrapper, r.WithContext(ctx))"]
+    SetWrap --> Next
+    UseHandler --> Next
+    Next --> Done([Handler Called])
 
-    AuthMW -->|valid| WSHandler["WebSocket Handler"]
-    AuthMW -->|invalid| AuthErr("401 Unauthorized")
-
-    click WSHandler href "../websocket.md"
+    click Validate href "auth.md"
+    click GetCache href "auth.md"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
     classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
-    class Start mainFn
-    class Mux,Health,AuthMW internalFn
-    class WSHandler localPkgs
-    class AuthErr errorFlow
+    class Start,Done mainFn
+    class Validate,GetCache localPkgs
+    class AuthErr,ServiceErr errorFlow
 ```
 
 ## Structs
@@ -91,14 +105,6 @@ type Cache interface {
 | `Get` | `(ctx context.Context, key string) (string, error)` | Gets value |
 | `Set` | `(ctx context.Context, key string, value string, ttl time.Duration) error` | Sets value |
 | `Delete` | `(ctx context.Context, key string) error` | Deletes value |
-
-## Error Handling
-
-| Error Type | Handler | Behavior |
-|------------|---------|----------|
-| Missing session cookie | 401 | `authentication_required` |
-| Invalid session | 401 | `authentication_required` |
-| Auth unavailable | 503 | Service unavailable |
 
 ## Design Notes
 

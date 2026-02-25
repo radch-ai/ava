@@ -6,39 +6,57 @@ S3-compatible storage for agent workspaces and conversation transcripts.
 
 ```mermaid
 flowchart TB
-    subgraph Storage ["Storage Operations"]
-        Put["Put(ctx, key, data)"]
-        Get["Get(ctx, key) → []byte"]
-        Append["Append(ctx, key, data)"]
-        Delete["Delete(ctx, key)"]
-    end
+    StartLoad([Load]) --> NewWorkspace["workspace = &Workspace{}"]
+    NewWorkspace --> LoadSoul["l.loadFile(SOUL.md) → soul, err"]
+    LoadSoul -->|error| LoadAgents["l.loadFile(AGENTS.md)"]
+    LoadSoul -->|ok| SetSoul["workspace.Soul = soul"]
+    SetSoul --> LoadAgents
+    LoadAgents -->|error| LoadUser["l.loadFile(USER.md)"]
+    LoadAgents -->|ok| SetAgents["workspace.Agents = agents"]
+    SetAgents --> LoadUser
+    LoadUser -->|error| LoadIdentity["l.loadFile(IDENTITY.md)"]
+    LoadUser -->|ok| SetUser["workspace.User = user"]
+    SetUser --> LoadIdentity
+    LoadIdentity -->|error| LoadTools["l.loadFile(TOOLS.md)"]
+    LoadIdentity -->|ok| SetIdentity["workspace.Identity = identity"]
+    SetIdentity --> LoadTools
+    LoadTools -->|error| DoneLoad(["return workspace"])
+    LoadTools -->|ok| SetTools["workspace.Tools = tools"]
+    SetTools --> DoneLoad
 
-    subgraph Workspace ["Workspace Loader"]
-        LoadFiles["Load(userID, agentID)"]
-        SOUL["SOUL.md"]
-        AGENTS["AGENTS.md"]
-        USER["USER.md"]
-        IDENTITY["IDENTITY.md"]
-        TOOLS["TOOLS.md"]
-        LoadFiles --> SOUL & AGENTS & USER & IDENTITY & TOOLS
-    end
+    StartLoadFile([loadFile]) --> BuildPath["WorkspacePath(userID, agentID, filename) → path"]
+    BuildPath --> GetFile["l.client.Get(ctx, path) → data, err"]
+    GetFile -->|error| ErrFile(["return empty, error"])
+    GetFile -->|ok| ToString["string(data)"]
+    ToString --> DoneFile(["return content, nil"])
 
-    subgraph Transcript ["Transcript Writer"]
-        WriteTurn["WriteTurn(ctx, turn)"]
-        JSONL["JSONL append"]
-        WriteTurn --> JSONL
-    end
+    StartWriteTurn([WriteTurn]) --> TurnToJSONL["TurnToJSONL(turn) → line"]
+    TurnToJSONL --> BuildPath2["TranscriptPath(userID, agentID, sessionID) → path"]
+    BuildPath2 --> Append["w.client.Append(ctx, path, []byte(line))"]
+    Append --> DoneWrite(["return err"])
 
-    Storage --> S3["S3 Bucket"]
-    Workspace --> Storage
-    Transcript --> Storage
+    StartTurnToJSONL([TurnToJSONL]) --> BuildMessages["build messages"]
+    BuildMessages --> BuildTools["build tools"]
+    BuildTools --> Marshal["json.Marshal(data) → line, err"]
+    Marshal -->|error| ErrMarshal(["return error JSONL"])
+    Marshal -->|ok| AddNewline["line + newline"]
+    AddNewline --> DoneJSONL(["return string"])
+
+    click LoadSoul href "#Storage"
+    click LoadAgents href "#Storage"
+    click LoadUser href "#Storage"
+    click LoadIdentity href "#Storage"
+    click LoadTools href "#Storage"
+    click GetFile href "#Storage"
+    click Append href "#Storage"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
     classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
-    class Put,Get,Append,Delete,LoadFiles,WriteTurn internalFn
-    class S3 localPkgs
+    class StartLoad,DoneLoad,StartLoadFile,DoneFile,StartWriteTurn,DoneWrite,StartTurnToJSONL,DoneJSONL mainFn
+    class LoadSoul,LoadAgents,LoadUser,LoadIdentity,LoadTools,GetFile,Append localPkgs
+    class ErrFile,ErrMarshal errorFlow
 ```
 
 ## Structs
@@ -125,13 +143,6 @@ type Client interface {
 | `NewTranscriptWriter` | `(client Client) *TranscriptWriter` | Creates writer |
 | `WriteTurn` | `(ctx context.Context, turn Turn) error` | Writes turn as JSONL |
 | `TurnToJSONL` | `(turn Turn) string` | Converts to JSONL line |
-
-## Error Handling
-
-| Error Type | Handler | Behavior |
-|------------|---------|----------|
-| File not found | Returns empty string | Workspace files optional |
-| S3 error | Returns error | Operation fails |
 
 ## Design Notes
 

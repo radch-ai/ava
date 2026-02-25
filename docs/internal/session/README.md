@@ -6,24 +6,19 @@ Session management with timeout support and activity tracking.
 
 ```mermaid
 flowchart TB
-    Start("Request") --> GetOrCreate["GetOrCreateSession"]
-    GetOrCreate --> SearchExisting{"active session?"}
-    SearchExisting -->|yes| UpdateActivity["UpdateActivity"]
-    SearchExisting -->|no| CreateNew["NewSession"]
-    CreateNew --> StoreMap["store in map"]
-    UpdateActivity --> Return("return Session")
-    StoreMap --> Return
-    Return -.-> CleanupStart["Background Cleanup"]
-    CleanupStart --> CleanupExpired["CleanupExpired"]
-    CleanupExpired --> CheckExpiry{"IsExpired?"}
-    CheckExpiry -->|yes| DeleteSession["delete from map"]
-    CheckExpiry -->|no| Skip["skip"]
+    Start([GetOrCreateSession]) --> Lock["m.mu.Lock()"]
+    Lock --> CheckExisting{matching session?}
+    CheckExisting -->|yes| UpdateActivity["s.UpdateActivity()"]
+    UpdateActivity --> Unlock["m.mu.Unlock()"]
+    Unlock --> ReturnFound(["return s"])
+    CheckExisting -->|no| NewSession["NewSession(ctx, userID, agentID) → newSession"]
+    NewSession --> Store["m.sessions[newSession.SessionID()] = newSession"]
+    Store --> Unlock2["m.mu.Unlock()"]
+    Unlock2 --> ReturnNew(["return newSession"])
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
 
-    class Start,Return mainFn
-    class GetOrCreate,SearchExisting,UpdateActivity,CreateNew,StoreMap,CleanupStart,CleanupExpired,CheckExpiry,DeleteSession,Skip internalFn
+    class Start,ReturnFound,ReturnNew mainFn
 ```
 
 ## Structs

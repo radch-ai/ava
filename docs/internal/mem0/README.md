@@ -6,25 +6,66 @@ Mem0 API client for long-term memory storage and retrieval.
 
 ```mermaid
 flowchart TB
-    subgraph Operations ["Memory Operations"]
-        Add["Add(ctx, userID, content, runID)"]
-        Search["Search(ctx, userID, query) → []string"]
-        SearchSession["SearchInSession(ctx, userID, runID, query)"]
-        Create["CreateSession(ctx, userID) → runID"]
-        Delete["DeleteSession(ctx, userID, runID)"]
-    end
+    StartAdd([Add]) --> Lock["m.mu.Lock()"]
+    Lock --> NewUUID["uuid.New().String() → id"]
+    NewUUID --> BuildMem["build Memory"]
+    BuildMem --> StoreMem["m.memories[id] = memory"]
+    StoreMem --> AppendUser["m.byUser[userID] = append(...)"]
+    AppendUser --> CheckRun{runID?}
+    CheckRun -->|yes| AppendRun["m.byRun[runID] = append(...)"]
+    CheckRun -->|no| UnlockAdd["m.mu.Unlock()"]
+    AppendRun --> UnlockAdd
+    UnlockAdd --> DoneAdd(["return nil"])
 
-    Add --> Memory["Memory Store"]
-    Search --> Memory
-    SearchSession --> Memory
-    Create --> SessionID("Session ID")
-    Delete --> Clear("Clear Session")
+    StartSearch([Search]) --> LockRead["m.mu.RLock()"]
+    LockRead --> GetByUser["m.byUser[userID] → userMemories"]
+    GetByUser --> CheckExists{exists?}
+    CheckExists -->|no| UnlockSearch1["m.mu.RUnlock()"]
+    UnlockSearch1 --> ReturnEmpty(["return []string, nil"])
+    CheckExists -->|yes| LoopUser["for userMemories"]
+    LoopUser --> CheckRunEmpty{mem.RunID?}
+    CheckRunEmpty -->|set| SkipMem(["continue"])
+    CheckRunEmpty -->|empty| CheckContains{strings.Contains?}
+    CheckContains -->|yes| AppendResults["results = append(...)"]
+    CheckContains -->|no| SkipMem
+    AppendResults --> LoopUser
+    LoopUser -->|done| UnlockSearch2["m.mu.RUnlock()"]
+    UnlockSearch2 --> ReturnResults(["return results, nil"])
+
+    StartSearchSession([SearchInSession]) --> LockRead3["m.mu.RLock()"]
+    LockRead3 --> GetByRun["m.byRun[runID] → runMemories"]
+    GetByRun --> CheckExists3{exists?}
+    CheckExists3 -->|no| UnlockSearch3["m.mu.RUnlock()"]
+    UnlockSearch3 --> ReturnEmpty3(["return []string, nil"])
+    CheckExists3 -->|yes| LoopRun["for runMemories"]
+    LoopRun --> CheckUserID{mem.UserID==userID?}
+    CheckUserID -->|no| SkipRun(["continue"])
+    CheckUserID -->|yes| CheckContains3{strings.Contains?}
+    CheckContains3 -->|yes| AppendResults3["results = append(...)"]
+    CheckContains3 -->|no| SkipRun
+    AppendResults3 --> LoopRun
+    LoopRun -->|done| UnlockSearch4["m.mu.RUnlock()"]
+    UnlockSearch4 --> ReturnResults3(["return results, nil"])
+
+    StartCreate([CreateSession]) --> NewUUID2["uuid.New().String() → runID"]
+    NewUUID2 --> DoneCreate(["return runID, nil"])
+
+    StartDelete([DeleteSession]) --> Lock4["m.mu.Lock()"]
+    Lock4 --> GetByRun4["m.byRun[runID] → runMemories"]
+    GetByRun4 --> CheckExists4{exists?}
+    CheckExists4 -->|no| UnlockDelete["m.mu.Unlock()"]
+    UnlockDelete --> DoneDelete(["return nil"])
+    CheckExists4 -->|yes| LoopDelete["for runMemories"]
+    LoopDelete --> DeleteMem["delete(m.memories, mem.ID)"]
+    DeleteMem --> LoopDelete
+    LoopDelete -->|done| DeleteRun["delete(m.byRun, runID)"]
+    DeleteRun --> FilterUser["filter byUser[userID]"]
+    FilterUser --> UnlockDelete2["m.mu.Unlock()"]
+    UnlockDelete2 --> DoneDelete
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
 
-    class Add,Search,SearchSession,Create,Delete internalFn
-    class SessionID,Clear mainFn
+    class StartAdd,DoneAdd,StartSearch,ReturnEmpty,ReturnResults,StartSearchSession,ReturnEmpty3,ReturnResults3,StartCreate,DoneCreate,StartDelete,DoneDelete,SkipMem,SkipRun mainFn
 ```
 
 ## Structs

@@ -6,27 +6,36 @@ Mock implementations for testing the agent runtime.
 
 ```mermaid
 flowchart TB
-    Start("MockLLMClient.Stream()") --> HStream
-
-    subgraph SGMock [" "]
-        HStream["**Stream() → <-chan AgentEvent**"]
-        HStream --> CheckResponses{has responses?}
-        CheckResponses -->|no| CloseCh["close empty channel"]
-        CheckResponses -->|yes| GetResp["get next response"]
-        GetResp --> CheckBlock{BlockUntil?}
-        CheckBlock -->|yes| Wait["<-BlockUntil"]
-        CheckBlock -->|no| EmitEvents
-        Wait --> EmitEvents["emit MessageStart/Update/End"]
-    end
-
-    CloseCh --> Return("return channel")
-    EmitEvents --> Return
+    Start(["Stream(ctx, messages, tools)"]) --> CheckLen{no responses}
+    CheckLen -->|yes| CreateEmptyCh["make empty channel"]
+    CreateEmptyCh --> CloseEmpty["close channel"]
+    CloseEmpty --> ReturnEmpty(["return channel"])
+    CheckLen -->|no| GetResp["get next response"]
+    GetResp --> IncIndex["increment index"]
+    IncIndex --> CheckBlock{BlockUntil set}
+    CheckBlock -->|yes| Wait["wait for block"]
+    CheckBlock -->|no| CreateCh["make channel"]
+    Wait --> CreateCh
+    CreateCh --> Goroutine["go func"]
+    Goroutine --> CheckCtx1["select"]
+    CheckCtx1 -->|ctx.Done| Return1["return"]
+    CheckCtx1 -->|default| GetTime["get timestamp"]
+    GetTime --> EmitStart["emit MessageStartEvent"]
+    EmitStart --> CheckText{has content}
+    CheckText -->|yes| TypeAssert["type assert Text"]
+    CheckText -->|no| SetDelta["set empty delta"]
+    TypeAssert -->|ok| SetDelta1["set delta text"]
+    TypeAssert -->|not ok| SetDelta
+    SetDelta1 --> EmitUpdate["emit MessageUpdateEvent"]
+    SetDelta --> EmitUpdate
+    EmitUpdate --> EmitEnd["emit MessageEndEvent"]
+    EmitEnd --> CloseCh["close channel"]
+    CloseCh --> Return2["return"]
+    Goroutine --> ReturnCh(["return channel"])
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
 
-    class Start,Return mainFn
-    class HStream internalFn
+    class Start,ReturnEmpty,ReturnCh mainFn
 ```
 
 ## Structs

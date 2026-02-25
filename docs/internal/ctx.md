@@ -6,19 +6,18 @@ Context utilities for propagating user ID and agent ID through request lifecycle
 
 ```mermaid
 flowchart TB
-    Start("Request") --> WithUserID["ctx = WithUserID(ctx, userID)"]
-    WithUserID --> WithAgentID["ctx = WithAgentID(ctx, agentID)"]
-    WithAgentID --> ToolExec["Tool.Execute(ctx, args)"]
-    ToolExec --> GetUserID["GetUserIDFromContext(ctx)"]
-    GetUserID --> GetAgentID["GetAgentIDFromContext(ctx)"]
-    GetAgentID --> Done("Context values available")
+    Start([Request]) --> SetUserID["ctx.WithUserID(ctx, userID) → ctx"]
+    SetUserID --> SetAgentID["ctx.WithAgentID(ctx, agentID) → ctx"]
+    SetAgentID --> UseCtx["Tool.Execute(ctx, args)"]
+    UseCtx --> GetUserID["ctx.GetUserIDFromContext(ctx) → userID"]
+    GetUserID --> GetAgentID["ctx.GetAgentIDFromContext(ctx) → agentID"]
+    GetAgentID --> Done(["values available"])
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
     classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
 
     class Start,Done mainFn
-    class WithUserID,WithAgentID,ToolExec,GetUserID,GetAgentID internalFn
+    class SetUserID,SetAgentID,GetUserID,GetAgentID localPkgs
 ```
 
 ## Constants

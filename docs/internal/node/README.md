@@ -6,31 +6,65 @@ Distributed node execution for running tools on remote devices and managed serve
 
 ```mermaid
 flowchart TB
-    subgraph NodeConnection ["Node Connection"]
-        Register["RegisterConnection(ctx, conn, nodeID, userID, platform, tools)"]
-        Unregister["UnregisterConnection(ctx, nodeID, userID)"]
+    subgraph SGRegister ["Register Connection"]
+        HRegStart["**RegisterConnection(ctx, conn, nodeID, userID, platform, toolSpecs) → err**"]
+        HRegStart --> HConvert["toolNames ← []string from toolSpecs"]
+        HConvert --> HRegNode["registry.RegisterNode(ctx, userID, nodeID, platform, toolNames, conn) → err"]
+        HRegNode -->|error| EReg["return err"]
+        HRegNode --> HCreateConn["nodeConn ← &NodeConnection"]
+        HCreateConn --> HRegConn["registry.RegisterConnection(nodeConn)"]
+        HRegConn --> HNodeInfo["nodeInfo ← &NodeInfo"]
+        HNodeInfo --> GetAgent["agentProvider.GetAgentForUser(userID) → agent, err"]
+        GetAgent -->|error| EGetAgent["return err"]
+        GetAgent --> HCreateTools["agentTools ← createNodeToolsFromSpecs(nodeInfo, toolSpecs)"]
+        HCreateTools --> AddTools["agent.AddTools(agentTools...)"]
+        AddTools --> Listen["executor.listenForResults(ctx, nodeConn)"]
+        Listen --> RegOK["return nil"]
     end
 
-    subgraph ToolExecution ["Tool Execution"]
-        Execute["ExecuteOnNode(ctx, nodeID, toolName, args)"]
-        SendMsg["Send ExecuteMessage"]
-        WaitResult["Wait for ToolResultMessage"]
+    subgraph SGExecute ["Execute Tool"]
+        HExecStart["**ExecuteOnNode(ctx, nodeID, toolName, args) → result, err**"]
+        HExecStart --> HGetConn["registry.GetConnection(nodeID) → node, exists"]
+        HGetConn -->|!exists| EOffline["return nil, ErrNodeOffline"]
+        HGetConn --> HGenID["callID ← generateCallID()"]
+        HGenID --> HCreateCh["resultCh, errCh ← make channels"]
+        HCreateCh --> HRegExec["registerPendingExecution(execKey, resultCh, errCh)"]
+        HRegExec --> HCreateMsg["execMsg ← &ExecuteMessage"]
+        HCreateMsg --> Marshal["json.Marshal(execMsg) → msgData"]
+        Marshal -->|error| EMarshal["return nil, err"]
+        Marshal --> WriteMsg["node.Conn.WriteMessage(TextMessage, msgData) → err"]
+        WriteMsg -->|error| EWrite["return nil, err"]
+        WriteMsg --> HTimeout["ctx, cancel ← context.WithTimeout(ctx, timeout)"]
+        HTimeout --> Select["select resultCh, errCh, ctx.Done()"]
+        Select -->|result| OKResult["return result, nil"]
+        Select -->|error| EExec["return nil, err"]
+        Select -->|timeout| ETimeout["return nil, ctx.Err()"]
     end
 
-    subgraph Registry ["Node Registry"]
-        RegisterNode["RegisterNode(ctx, userID, nodeID, platform, tools, conn)"]
-        GetNode["GetNode(nodeID) → NodeInfo"]
-        UnregisterNode["UnregisterNode(ctx, nodeID)"]
+    subgraph SGLoop ["Result Listener"]
+        HLoop["**listenForResultsLoop(ctx, node) → **"]
+        HLoop --> CheckCtx["←ctx.Done()?"]
+        CheckCtx -->|done| LoopReturn["return"]
+        CheckCtx -->|continue| ReadMsg["node.Conn.ReadMessage() → msgType, data, err"]
+        ReadMsg -->|error| Continue["continue"]
+        ReadMsg -->|!TextMessage| Continue
+        ReadMsg --> Unmarshal["json.Unmarshal(data, &resultMsg) → err"]
+        Unmarshal -->|error| Continue
+        Unmarshal --> HDeliver["execKey ← fmt.Sprintf('%s:%s', nodeID, callID)"]
+        HDeliver --> Deliver["deliverResult(execKey, &resultMsg)"]
+        Deliver --> CheckCtx
     end
 
-    Register --> Registry
-    Execute --> SendMsg --> WaitResult
-    Unregister --> Registry
+    click GetAgent href "../agent/README.md"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
-    class Register,Unregister,Execute,SendMsg,WaitResult,RegisterNode,GetNode,UnregisterNode internalFn
+    class HRegStart,HExecStart,HLoop internalFn
+    class GetAgent localPkgs
+    class EReg,EGetAgent,EOffline,EMarshal,EWrite,EExec,ETimeout,LoopReturn errorFlow
 ```
 
 ## Constants
@@ -137,14 +171,6 @@ flowchart TB
 | `GenerateToolName` | `(platform, nodeID, toolName string, isOnHost bool) string` | Generates full tool name |
 | `ToolIdentifier` | `(toolName string) (platform, nodeID, baseTool string, isOnHost bool)` | Parses tool name |
 | `IsNodeTool` | `(toolName string) bool` | Checks if node tool |
-
-## Error Handling
-
-| Error Type | Handler | Behavior |
-|------------|---------|----------|
-| Node not found | Returns error | Tool execution fails |
-| Execution timeout | Returns error | 30 second default timeout |
-| Connection lost | Unregister node | Tools removed from agent |
 
 ## Design Notes
 

@@ -6,24 +6,21 @@ Core type definitions for the agent runtime: messages, content blocks, roles, an
 
 ```mermaid
 flowchart TB
-    Start("Create Message") --> NewText["NewTextMessage(role, text)"]
-    Start --> NewToolCall["NewToolCallMessage(id, name, args)"]
-    Start --> NewResult["NewToolResultMessage(id, name, result, isError)"]
-    
-    NewText --> Msg["AgentMessage"]
-    NewToolCall --> Msg
-    NewResult --> Msg
-    
-    Msg --> Content["ContentBlock"]
-    Content --> Text["TextContent"]
-    Content --> Image["ImageContent"]
-    Content --> ToolCall["ToolCallContent"]
+    Start(["Create Message"]) --> NewText(["NewTextMessage(role, text) → AgentMessage"])
+    Start --> NewToolCall(["NewToolCallMessage(id, name, args) → AgentMessage"])
+    Start --> NewResult(["NewToolResultMessage(toolCallID, toolName, result, isError) → AgentMessage"])
+
+    NewText --> ReturnText["return AgentMessage{Role: role, Content: []ContentBlock{TextContent{Text: text}}, Timestamp: time.Now().Unix()}"]
+    NewToolCall --> ReturnCall["return AgentMessage{Role: RoleAssistant, Content: []ContentBlock{ToolCallContent{ID: id, Name: name, Arguments: args}}, Timestamp: time.Now().Unix()}"]
+    NewResult --> ReturnResult["return AgentMessage{Role: RoleToolResult, Content: []ContentBlock{TextContent{Text: result}}, Timestamp: time.Now().Unix(), ToolCallID: toolCallID, ToolName: toolName, IsError: isError}"]
+
+    ReturnText --> TextStruct["TextContent{Text: text}"]
+    ReturnCall --> CallStruct["ToolCallContent{ID: id, Name: name, Arguments: args}"]
+    ReturnResult --> ResultStruct["TextContent{Text: result}"]
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
 
-    class Start mainFn
-    class NewText,NewToolCall,NewResult,Msg,Content,Text,Image,ToolCall internalFn
+    class Start,NewText,NewToolCall,NewResult mainFn
 ```
 
 ## Constants

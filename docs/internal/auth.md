@@ -6,31 +6,36 @@ Zetidal API client for session validation. Validates session tokens via HTTP cal
 
 ```mermaid
 flowchart TB
-    Start("ValidateSession(ctx, token)") --> BuildURL["url.Parse(baseURL + /auth/session)"]
-    BuildURL --> CreateReq["http.NewRequestWithContext()"]
-    CreateReq --> AddCookie["req.AddCookie(session=token)"]
-    AddCookie --> DoReq["http.Client.Do(req)"]
-    DoReq -->|error| CheckErr{context error?}
-    CheckErr -->|canceled| ErrCanceled["return ErrContextCanceled"]
-    CheckErr -->|timeout| ErrUnavailable["return ErrZetidalUnavailable"]
-    CheckErr -->|other| ErrOther["return ErrZetidalUnavailable"]
-    DoReq -->|ok| CheckStatus{status code?}
-    CheckStatus -->|200| DecodeResp["json.Decode(response)"]
-    CheckStatus -->|401| ErrInvalid["return ErrSessionInvalid"]
-    CheckStatus -->|503| ErrUnavailable2["return ErrZetidalUnavailable"]
-    CheckStatus -->|other| ErrUnexpected["return ErrZetidalUnavailable"]
-    DecodeResp --> CheckAuth{authenticated?}
-    CheckAuth -->|no| ErrInvalid2["return ErrSessionInvalid"]
-    CheckAuth -->|yes| ExtractCookie["extract Set-Cookie"]
-    ExtractCookie --> Done("return SessionInfo")
+    Start([ValidateSession]) --> ParseURL["url.Parse(baseURL + /auth/session) → reqURL, err"]
+    ParseURL -->|error| ParseErr(["return ErrZetidalUnavailable"])
+    ParseURL -->|ok| NewReq["http.NewRequestWithContext(ctx, GET, reqURL) → req, err"]
+    NewReq -->|error| ReqErr(["return ErrZetidalUnavailable"])
+    NewReq -->|ok| AddCookie["req.AddCookie(session, sessionToken)"]
+    AddCookie --> DoReq["c.Client.Do(req) → resp, err"]
+    DoReq -->|error| CheckErr{err?}
+    CheckErr -->|canceled| CanceledErr(["return ErrContextCanceled"])
+    CheckErr -->|timeout| TimeoutErr(["return ErrZetidalUnavailable"])
+    CheckErr -->|other| DoErr(["return ErrZetidalUnavailable"])
+    DoReq -->|ok| CheckStatus{resp.StatusCode?}
+    CheckStatus -->|200| DecodeBody["json.Decode(resp.Body, &result)"]
+    CheckStatus -->|401| InvalidErr(["return ErrSessionInvalid"])
+    CheckStatus -->|503| UnavailableErr(["return ErrZetidalUnavailable"])
+    CheckStatus -->|other| UnexpectedErr(["return ErrZetidalUnavailable"])
+    DecodeBody -->|error| DecodeErr(["return ErrInvalidResponse"])
+    DecodeBody -->|ok| CheckAuth{result.Authenticated?}
+    CheckAuth -->|no| NotAuthErr(["return ErrSessionInvalid"])
+    CheckAuth -->|yes| LoopCookies["for resp.Cookies()"]
+    LoopCookies --> CheckCookie{cookie.Name==session?}
+    CheckCookie -->|yes| ExtractCookie["setCookie = cookie"]
+    CheckCookie -->|no| Continue(["continue"])
+    ExtractCookie --> BuildInfo["build SessionInfo"]
+    BuildInfo --> Done(["return SessionInfo"])
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
-    class Start,Done mainFn
-    class ErrCanceled,ErrUnavailable,ErrOther,ErrInvalid,ErrUnavailable2,ErrUnexpected,ErrInvalid2 errorFlow
-    class BuildURL,CreateReq,AddCookie,DoReq,DecodeResp,ExtractCookie internalFn
+    class Start,Done,Continue mainFn
+    class ParseErr,ReqErr,CanceledErr,TimeoutErr,DoErr,UnavailableErr,UnexpectedErr,DecodeErr,NotAuthErr errorFlow
 ```
 
 ## Constants
@@ -57,16 +62,6 @@ flowchart TB
 | `SessionInfo` | `UserID` | `string` | Validated user ID |
 | | `ExpiresAt` | `time.Time` | Session expiration time |
 | | `SetCookie` | `*http.Cookie` | Cookie for sliding expiration |
-
-## Error Handling
-
-| Error Type | Handler | Behavior |
-|------------|---------|----------|
-| `ErrSessionInvalid` | 401 response | Session not valid |
-| `ErrSessionExpired` | (unused) | Session has expired |
-| `ErrZetidalUnavailable` | Network/503 error | Zetidal API unreachable |
-| `ErrInvalidResponse` | JSON decode error | Malformed response |
-| `ErrContextCanceled` | Context canceled | Request cancelled |
 
 ## Design Notes
 

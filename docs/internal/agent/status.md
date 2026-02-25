@@ -6,12 +6,13 @@ Agent status enumeration for tracking agent lifecycle state.
 
 ```mermaid
 flowchart TB
-    Idle["AgentStatusIdle"] -->|Prompt| Active["AgentStatusActive"]
+    Idle(["AgentStatusIdle"]) -->|Prompt| Active(["AgentStatusActive"])
     Active -->|Success| Idle
-    Active -->|Error| ErrorState["AgentStatusError"]
+    Active -->|Error| ErrorState(["AgentStatusError"])
     ErrorState -->|Prompt| Active
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
     class Idle,Active,ErrorState mainFn
 ```
 

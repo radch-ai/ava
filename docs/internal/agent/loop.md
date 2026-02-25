@@ -6,37 +6,39 @@ Tool calling execution loop. Handles LLM streaming, tool call extraction, and re
 
 ```mermaid
 flowchart TB
-    Start("Run(ctx, messages, tools)") --> HRun
-
-    subgraph SGRun [" "]
-        HRun["**Run() → *RunResult**"]
-        HRun --> CopyMsgs["copy messages"]
-        CopyMsgs --> LoopStart{loop}
-        LoopStart --> Stream["client.Stream()"]
-        Stream -->|error| ErrStream["return error"]
-        Stream -->|ok| CollectEvents["collect MessageEndEvent"]
-        CollectEvents --> CheckMsg{got message?}
-        CheckMsg -->|no| Break["break loop"]
-        CheckMsg -->|yes| AppendMsg["append assistant message"]
-        AppendMsg --> ExtractTools["ExtractToolCalls()"]
-        ExtractTools --> CheckTools{tool calls?}
-        CheckTools -->|no| Break2["break loop"]
-        CheckTools -->|yes| ExecuteTools["executeTools()"]
-        ExecuteTools --> AddResults["AddToolResults()"]
-        AddResults --> LoopStart
-    end
-
-    Break --> ReturnResult("return RunResult")
-    Break2 --> ReturnResult
-    ErrStream --> Err("return error")
+    Start(["Run(ctx, messages, tools...)"]) --> SetTools["l.tools = tools"]
+    SetTools --> CopyMsgs["make messages copy"]
+    CopyMsgs --> Copy["copy messages"]
+    Copy --> LoopStart{for loop}
+    LoopStart --> SelectCtx["select"]
+    SelectCtx -->|ctx.Done| ReturnCtxErr(["return nil, error"])
+    SelectCtx -->|default| StreamCh["client.Stream()"]
+    StreamCh -->|error| ReturnStreamErr(["return error"])
+    StreamCh -->|ok| InitAssistant["assistantMsg init"]
+    InitAssistant --> ForEvents["for event range"]
+    ForEvents --> CheckEvent{event type}
+    CheckEvent -->|MessageEndEvent| SetAssistant["set message"]
+    CheckEvent -->|other| Ignore["ignore"]
+    SetAssistant --> MoreEvents["continue"]
+    Ignore --> MoreEvents
+    MoreEvents --> ForEvents
+    ForEvents -->|closed| CheckNilMsg{assistantMsg nil}
+    CheckNilMsg -->|yes| BreakLoop["break"]
+    CheckNilMsg -->|no| AppendMsg["append message"]
+    AppendMsg --> ExtractCalls["extract tool calls"]
+    ExtractCalls --> CheckCalls{no tool calls}
+    CheckCalls -->|yes| BreakLoop2["break"]
+    CheckCalls -->|no| ExecuteTools["execute tools"]
+    ExecuteTools --> AddResults["add tool results"]
+    AddResults --> LoopStart
+    BreakLoop --> ReturnResult(["return result, nil"])
+    BreakLoop2 --> ReturnResult
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
-    class Start,ReturnResult mainFn
-    class HRun internalFn
-    class ErrStream,Err errorFlow
+    class Start,ReturnCtxErr,ReturnStreamErr,ReturnResult mainFn
+    class ReturnCtxErr,ReturnStreamErr errorFlow
 ```
 
 ## Structs
@@ -72,15 +74,6 @@ flowchart TB
 | `Run` | `(ctx context.Context, messages []AgentMessage, tools ...Tool) (*RunResult, error)` | Executes loop |
 | `ExtractToolCalls` | `(msg AgentMessage) []ToolCallContent` | Extracts tool calls from message |
 | `AddToolResults` | `(messages []AgentMessage, results []ToolExecutionResult) []AgentMessage` | Adds tool results to history |
-
-## Error Handling
-
-| Error Type | Handler | Behavior |
-|------------|---------|----------|
-| Context canceled | Returns `ctx.Err()` | Loop aborts |
-| LLM stream error | Returns wrapped error | Loop fails |
-| Tool not found | Creates error result | Continues with error result |
-| Tool execution error | Creates error result | Continues with error result |
 
 ## Design Notes
 

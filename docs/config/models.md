@@ -6,18 +6,29 @@ YAML-based LLM model and router configuration. Provides model cost definitions, 
 
 ```mermaid
 flowchart TB
-    Start("LoadFromYAML(path)") --> ReadFile["os.ReadFile(path)"]
-    ReadFile --> ParseYAML["yaml.Unmarshal(data)"]
-    ParseYAML --> ValidateRouter["validate Router.Model exists"]
-    ValidateRouter -->|ok| Done("return *ModelsConfig")
-    ValidateRouter -->|error| Err("return error")
+    subgraph SGMain [" "]
+        HStart["**LoadModelsConfig(path) → config, err**"]
+        HStart --> ReadFile["os.ReadFile(path) → data"]
+        ReadFile -->|error| ERead["return nil, err"]
+        ReadFile --> ParseYAML["yaml.Unmarshal(data, &config)"]
+        ParseYAML -->|error| EParse["return nil, err"]
+        ParseYAML --> Validate["config.Router.Model != \"\""]
+        Validate -->|false| Success["return &config, nil"]
+        Validate -->|true| Lookup["config.Models[config.Router.Model]"]
+        Lookup -->|not found| ELookup["return nil, err"]
+        Lookup -->|found| Success
+    end
 
-    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    click ReadFile href "https://pkg.go.dev/os#ReadFile"
+    click ParseYAML href "https://pkg.go.dev/gopkg.in/yaml.v3#Unmarshal"
+
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
-    class Start,Done mainFn
-    class Err errorFlow
+    class HStart internalFn
+    class ReadFile,ParseYAML localPkgs
+    class ERead,EParse,ELookup,Success errorFlow
 ```
 
 ## Structs
@@ -56,14 +67,6 @@ flowchart TB
 | `GetAllModels` | `(c *ModelsConfig) []string` | Returns all model names |
 | `GetModelsByProvider` | `(c *ModelsConfig, provider string) []*ModelConfig` | Returns models for provider |
 | `GetModelsByTier` | `(c *ModelsConfig, tier string) []*ModelConfig` | Returns models in tier |
-
-## Error Handling
-
-| Error Type | Handler | Behavior |
-|------------|---------|----------|
-| File not found | Returns wrapped error | `failed to read config file` |
-| Invalid YAML | Returns wrapped error | `failed to parse config` |
-| Router model missing | Returns error | `router model "X" not found in models` |
 
 ## Environment Variables
 

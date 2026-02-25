@@ -6,36 +6,50 @@ Core agent runtime framework with state management, event streaming, and tool ex
 
 ```mermaid
 flowchart TB
-    Start("NewAgent(opts)") --> HInit
+    Start(["NewAgent(opts) → *Agent"]) --> GenID["uuid.New().String() → id"]
+    GenID -->|no id| SetID["id = opts.ID"]
+    GenID -->|default| SetID
+    SetID --> GenUserID["userID = opts.UserID"]
+    GenUserID -->|no userID| SetUserID["userID = 'unknown'"]
+    GenUserID -->|default| SetUserID
+    SetUserID --> GenAgentID["agentID = opts.AgentID"]
+    GenAgentID -->|no agentID| SetAgentID["agentID = id"]
+    GenAgentID -->|default| SetAgentID
+    SetAgentID --> CreateCtx["context.WithCancel(context.Background()) → ctx, cancel"]
+    CreateCtx --> NewState["NewAgentState(opts) → state"]
+    NewState --> ReturnAgent["return &Agent{...}"]
 
-    subgraph SGInit [" "]
-        HInit["**initAgent() → *Agent**"]
-        HInit --> GenID["uuid.New() if no ID"]
-        GenID --> CreateCtx["context.WithCancel()"]
-        CreateCtx --> NewState["NewAgentState()"]
-    end
-
-    HInit --> AgentReady("Agent ready")
-    AgentReady --> Prompt("Prompt(ctx, message)")
-    Prompt --> HPrompt
-
-    subgraph SGPrompt [" "]
-        HPrompt["**runPrompt() → error**"]
-        HPrompt --> AddMsg["Add user message"]
-        AddMsg --> EmitStart["emit AgentStartEvent"]
-        EmitStart --> RunLoop["loop.Run()"]
-        RunLoop --> UpdateState["Update state.Messages"]
-        UpdateState --> EmitEnd["emit AgentEndEvent"]
-    end
+    ReturnAgent --> Ready(["Agent ready"])
+    Ready --> Prompt(["Prompt(ctx, message) → error"])
+    Prompt --> CheckCtx["ctx.Err() → err"]
+    CheckCtx -->|error| ReturnErr1(["return err"])
+    CheckCtx -->|ok| CheckLLM["a.llmClient != nil"]
+    CheckLLM -->|nil| ReturnErr2(["return error"])
+    CheckLLM -->|ok| LockMsg["a.mu.Lock()"]
+    LockMsg --> NewUserMsg["NewTextMessage(RoleUser, message) → userMsg"]
+    NewUserMsg --> AddMsg["a.state.AddMessage(userMsg)"]
+    AddMsg --> UnlockMsg["a.mu.Unlock()"]
+    UnlockMsg --> EmitStart["a.emit(AgentStartEvent{...})"]
+    EmitStart --> SetStream["a.setStreamingState(true, nil)"]
+    SetStream --> NewLoop["NewLoop(a.llmClient) → loop"]
+    NewLoop --> GetMsgs["a.State().Messages → messages"]
+    GetMsgs --> RunLoop["loop.Run(ctx, messages, a.state.Tools...) → result, err"]
+    RunLoop -->|error| ClearStreamErr["a.setStreamingState(false, nil)"]
+    ClearStreamErr --> ReturnErr3(["return err"])
+    RunLoop -->|ok| LockState["a.mu.Lock()"]
+    LockState --> UpdateMsgs["a.state.Messages = result.Messages"]
+    UpdateMsgs --> UnlockState["a.mu.Unlock()"]
+    UnlockState --> GetFinalState["a.State() → finalState"]
+    GetFinalState --> EmitEnd["a.emit(AgentEndEvent{...})"]
+    EmitEnd --> ClearStream["a.setStreamingState(false, nil)"]
+    ClearStream --> ReturnOk(["return nil"])
 
     click RunLoop href "loop.md"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
     classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
 
-    class Start,AgentReady,Prompt mainFn
-    class HInit,HPrompt internalFn
+    class Start,Ready,Prompt,ReturnErr1,ReturnErr2,ReturnErr3,ReturnOk mainFn
     class RunLoop localPkgs
 ```
 
@@ -107,14 +121,6 @@ flowchart TB
 | `AddPendingToolCall` | `(id string)` | Marks tool call as pending |
 | `RemovePendingToolCall` | `(id string)` | Removes pending tool call |
 | `HasPendingToolCall` | `(id string) bool` | Checks if tool call pending |
-
-## Error Handling
-
-| Error Type | Handler | Behavior |
-|------------|---------|----------|
-| Context canceled | Returns `ctx.Err()` | Prompt aborts |
-| No LLM client | Returns error | Prompt fails with message |
-| LLM stream error | Returns wrapped error | Prompt fails |
 
 ## Design Notes
 

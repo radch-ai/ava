@@ -6,33 +6,46 @@ WebSocket connection handler with multi-agent routing and connection management.
 
 ```mermaid
 flowchart TB
-    Start("WebSocket Request") --> Upgrade["upgrader.Upgrade()"]
-    Upgrade -->|error| UpgradeErr("Upgrade Failed")
-    Upgrade -->|ok| CheckLimit{connection limit?}
-    CheckLimit -->|at capacity| LimitErr("503")
-    CheckLimit -->|ok| GetUserID["GetUserIDFromContext()"]
-    GetUserID --> SendConnected["send connected event"]
-    SendConnected --> MsgLoop{message loop}
-    MsgLoop -->|text| HandleText["handleTextMessage()"]
-    MsgLoop -->|close| Close("Close Connection")
-    HandleText --> GetAgent["agentManager.GetOrCreateAgentForUser()"]
-    GetAgent --> Subscribe["agent.Subscribe()"]
-    Subscribe --> ForwardEvents["forwardAgentEvents()"]
-    ForwardEvents --> Prompt["agent.Prompt()"]
-    Prompt --> MsgLoop
+    Start([WebSocket Request]) --> CheckSem{connSem?}
+    CheckSem -->|yes| Acquire["select h.connSem"]
+    CheckSem -->|no| UpgradeConn
+    Acquire -->|full| LimitErr(["write 503"])
+    Acquire -->|slot| UpgradeConn["h.upgrader.Upgrade(w, r, nil) → conn, err"]
+    UpgradeConn -->|error| UpgradeErr(["return"])
+    UpgradeConn -->|ok| IncActive["atomic.AddInt32(&activeConns, 1)"]
+    IncActive --> GetUserID["ctx.GetUserIDFromContext(r.Context()) → userID"]
+    GetUserID --> CheckUser{userID?}
+    CheckUser -->|yes| SetSession["sessionID = userID"]
+    CheckUser -->|no| NewUUID["uuid.New().String() → sessionID"]
+    SetSession --> NewUUID
+    NewUUID --> CreateCtx["context.WithCancel() → ctx, cancel"]
+    CreateCtx --> MakeWriteCh["make(chan *wsMessage, 8) → writeCh"]
+    MakeWriteCh --> SendEvent["marshalEvent(connectedEvent) → msg"]
+    SendEvent --> WriteCh["writeCh ← msg"]
+    WriteCh --> MsgLoop{message loop}
+    MsgLoop -->|text| HandleText["h.handleTextMessage(ctx, message, userID, writeCh)"]
+    MsgLoop -->|close| Cancel(["cancel()"])
+    HandleText --> Unmarshal["json.Unmarshal(data, &msg)"]
+    Unmarshal --> CheckType{msg.Type?}
+    CheckType -->|prompt| ValidatePrompt{agentID? text?}
+    ValidatePrompt -->|missing| Skip(["return"])
+    ValidatePrompt -->|valid| GetAgent["h.agentManager.GetOrCreateAgentForUser(userID, msg.AgentID) → agentInstance"]
+    GetAgent --> Subscribe["agentInstance.Subscribe() → subID, eventCh"]
+    Subscribe --> ForwardEvents["h.forwardAgentEvents(ctx, eventCh, writeCh, logger, msg.AgentID)"]
+    ForwardEvents --> AgentPrompt["agentInstance.Prompt(ctx, msg.Text)"]
+    AgentPrompt --> MsgLoop
 
     click GetUserID href "ctx.md"
     click GetAgent href "agent/README.md"
-    click Prompt href "agent/README.md"
+    click AgentPrompt href "agent/README.md"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
     classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
-    class Start,Close mainFn
-    class Upgrade,CheckLimit,GetUserID,SendConnected,HandleText,GetAgent,Subscribe,ForwardEvents,Prompt internalFn
-    class UpgradeErr,LimitErr errorFlow
+    class Start,Cancel,Skip mainFn
+    class GetUserID,GetAgent,AgentPrompt localPkgs
+    class LimitErr,UpgradeErr errorFlow
 ```
 
 ## Constants
@@ -106,16 +119,6 @@ flowchart TB
 | `NewAgentManager` | `(logger zerolog.Logger, opts *AgentManagerOptions) *AgentManager` | Creates manager |
 | `GetOrCreateAgentForUser` | `(userID, agentID string) *agent.Agent` | Gets or creates agent |
 | `RemoveAgentForUser` | `(userID, agentID string)` | Removes agent |
-
-## Error Handling
-
-| Error Type | Handler | Behavior |
-|------------|---------|----------|
-| Upgrade failure | Log and return | Connection not established |
-| Connection limit | HTTP 503 | Server at capacity |
-| Read timeout | Close connection | No response within timeout |
-| Write timeout | Close connection | Write blocked |
-| Invalid message | Log and skip | Malformed JSON |
 
 ## Design Notes
 

@@ -6,30 +6,29 @@ Tool execution framework for the agent runtime.
 
 ```mermaid
 flowchart TB
-    Start("ExecuteToolCall(ctx, state, toolCall)") --> HFind
-
-    subgraph SGExecute [" "]
-        HFind["**FindToolByName() → *Tool**"]
-        HFind -->|nil| ErrNotFound["return ToolExecutionError"]
-        HFind -->|found| CheckExecute{Execute != nil?}
-        CheckExecute -->|no| ErrNilExecute["return ToolExecutionError"]
-        CheckExecute -->|yes| DoExecute["tool.Execute(ctx, args)"]
-        DoExecute -->|error| ErrExecute["return error result"]
-        DoExecute -->|ok| BuildResult["build AgentMessage"]
-    end
-
-    ErrNotFound --> ErrReturn("return error")
-    ErrNilExecute --> ErrReturn
-    ErrExecute --> ErrMsgReturn("return error message")
-    BuildResult --> Success("return result message")
+    Start(["ExecuteToolCall(ctx, state, toolCall)"]) --> FindTool["FindToolByName()"]
+    FindTool -->|nil| CreateErr1["create not found error"]
+    FindTool -->|found| CheckExecute{Execute nil}
+    CheckExecute -->|yes| CreateErr2["create nil error"]
+    CheckExecute -->|no| CallExecute["tool.Execute()"]
+    CreateErr1 --> ErrorResult1["error result"]
+    CreateErr2 --> ErrorResult2["error result"]
+    CallExecute -->|error| CreateToolErr["create tool error"]
+    CallExecute -->|ok| CheckContent{content empty}
+    CreateToolErr --> ErrorResult3["error result"]
+    CheckContent -->|yes| SetEmpty["set empty content"]
+    CheckContent -->|no| SetContent["set result content"]
+    SetEmpty --> ReturnOk(["return success message"])
+    SetContent --> ReturnOk
+    ErrorResult1 --> ReturnErr1(["return error"])
+    ErrorResult2 --> ReturnErr2
+    ErrorResult3 --> ReturnErr3
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
-    class Start,Success,ErrMsgReturn mainFn
-    class HFind,DoExecute,BuildResult internalFn
-    class ErrNotFound,ErrNilExecute,ErrExecute,ErrReturn errorFlow
+    class Start,ReturnOk,ReturnErr1,ReturnErr2,ReturnErr3 mainFn
+    class ReturnErr1,ReturnErr2,ReturnErr3 errorFlow
 ```
 
 ## Functions
@@ -38,14 +37,6 @@ flowchart TB
 |----------|-----------|-------------|
 | `ExecuteToolCall` | `(ctx context.Context, state *AgentState, toolCall ToolCallContent) (AgentMessage, error)` | Executes a tool call |
 | `FindToolByName` | `(state *AgentState, name string) *Tool` | Finds tool by name |
-
-## Error Handling
-
-| Error Type | Handler | Behavior |
-|------------|---------|----------|
-| Tool not found | Returns error message | `IsError: true` in result |
-| Nil Execute function | Returns error message | `IsError: true` in result |
-| Tool execution error | Returns error message | `IsError: true` in result |
 
 ## Design Notes
 

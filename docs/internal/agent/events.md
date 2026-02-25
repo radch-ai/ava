@@ -6,27 +6,23 @@ Agent event system for real-time broadcasting of agent lifecycle, message genera
 
 ```mermaid
 flowchart TB
-    Start("Agent.Prompt()") --> EmitStart["emit AgentStartEvent"]
-    EmitStart --> EmitTurnStart["emit TurnStartEvent"]
-    EmitTurnStart --> StreamLoop{streaming}
-    StreamLoop -->|delta| EmitUpdate["emit MessageUpdateEvent"]
-    EmitUpdate --> StreamLoop
-    StreamLoop -->|done| EmitEnd["emit MessageEndEvent"]
-    EmitEnd --> CheckTools{tool calls?}
-    CheckTools -->|yes| EmitToolStart["emit ToolExecutionStartEvent"]
-    EmitToolStart --> EmitToolEnd["emit ToolExecutionEndEvent"]
-    EmitToolEnd --> EmitTurnEnd["emit TurnEndEvent"]
-    EmitTurnEnd --> CheckMore{more turns?}
-    CheckMore -->|yes| EmitTurnStart
-    CheckMore -->|no| EmitAgentEnd["emit AgentEndEvent"]
-    CheckTools -->|no| EmitAgentEnd
-    EmitAgentEnd --> Done("Done")
+    Start(["Agent.Prompt()"]) --> NewUserMsg["NewTextMessage(RoleUser, message) → userMsg"]
+    NewUserMsg --> AddMsg["a.state.AddMessage(userMsg)"]
+    AddMsg --> EmitStart["a.emit(AgentStartEvent{Timestamp: userMsg.Timestamp})"]
+    EmitStart --> SetStream["a.setStreamingState(true, nil)"]
+    SetStream --> NewLoop["NewLoop(a.llmClient) → loop"]
+    NewLoop --> RunLoop["loop.Run(ctx, messages, tools...) → result, err"]
+    RunLoop -->|error| ClearStreamErr["a.setStreamingState(false, nil)"]
+    ClearStreamErr --> ReturnErr(["return err"])
+    RunLoop -->|ok| UpdateState["a.state.Messages = result.Messages"]
+    UpdateState --> GetFinalState["a.State() → finalState"]
+    GetFinalState --> EmitEnd["a.emit(AgentEndEvent{Timestamp: finalState.Messages[len(finalState.Messages)-1].Timestamp, Messages: finalState.Messages})"]
+    EmitEnd --> ClearStream["a.setStreamingState(false, nil)"]
+    ClearStream --> ReturnOk(["return nil"])
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
 
-    class Start,Done mainFn
-    class EmitStart,EmitTurnStart,EmitUpdate,EmitEnd,EmitToolStart,EmitToolEnd,EmitTurnEnd,EmitAgentEnd internalFn
+    class Start,ReturnErr,ReturnOk mainFn
 ```
 
 ## Interface

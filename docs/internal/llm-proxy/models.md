@@ -6,21 +6,68 @@ Model registry with cost calculation and metadata.
 
 ```mermaid
 flowchart TB
-    Start("Get()") --> Registry["singleton Registry"]
-    Registry --> LoadYAML["LoadFromYAML(path)"]
-    LoadYAML --> Parse["parse models.yaml"]
-    Parse --> Register["registerModel()"]
-    Register --> CalcCost["calculateCost()"]
+    StartGet(["Get()"]) --> HOnce
 
-    Request("GetCost(model, tokens)") --> Lookup["lookup model"]
-    Lookup --> Cost["calculate cost"]
-    Cost --> Return("return CostInfo")
+    subgraph SGOnce [" "]
+        HOnce["**sync.Once.Do(func)**"]
+        HOnce --> HNewRegistry
+    end
+
+    subgraph SGNewRegistry [" "]
+        HNewRegistry["**NewRegistry() → r**"]
+        HNewRegistry --> DoneGet(["return r"])
+    end
+
+    StartLoad(["LoadFromYAML(path)"]) --> HReadFile
+
+    subgraph SGReadFile [" "]
+        HReadFile["**os.ReadFile(path) → data, err**"]
+        HReadFile -->|error| E1["return err"]
+        HReadFile --> HUnmarshal
+    end
+
+    subgraph SGUnmarshal [" "]
+        HUnmarshal["**yaml.Unmarshal(data, &config) → err**"]
+        HUnmarshal -->|error| E2["return err"]
+        HUnmarshal --> HStoreModels
+    end
+
+    subgraph SGStoreModels [" "]
+        HStoreModels["**r.models[name] = cfg**"]
+        HStoreModels --> HStoreRouter
+    end
+
+    subgraph SGStoreRouter [" "]
+        HStoreRouter["**r.router = config.Router**"]
+        HStoreRouter --> DoneLoad(["return nil"])
+    end
+
+    StartCost(["GetCost(name, inputTokens, outputTokens)"]) --> HGetModel
+
+    subgraph SGGetModel [" "]
+        HGetModel["**GetModel(name) → cfg, ok**"]
+        HGetModel -->|!ok| E3["return error"]
+        HGetModel --> HCalculate
+    end
+
+    subgraph SGCalculate [" "]
+        HCalculate["**CalculateCost(cfg, inputTokens, outputTokens) → cost**"]
+        HCalculate --> DoneCost(["return cost"])
+    end
+
+    ReadFile["os.ReadFile(path) → data, err"]
+    Unmarshal["yaml.Unmarshal(data, &config) → err"]
+
+    click ReadFile href "https://pkg.go.dev/os#ReadFile"
+    click Unmarshal href "https://pkg.go.dev/gopkg.in/yaml.v3#Unmarshal"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
-    class Start,Request,Return mainFn
-    class Registry,LoadYAML,Parse,Register,CalcCost,Lookup,Cost internalFn
+    class StartGet,DoneGet,StartLoad,DoneLoad,StartCost,DoneCost mainFn
+    class ReadFile,Unmarshal localPkgs
+    class E1,E2,E3 errorFlow
 ```
 
 ## Structs
@@ -29,33 +76,50 @@ flowchart TB
 
 | Struct | Field | Type | Description |
 |--------|-------|------|-------------|
-| `Registry` | `models` | `map[string]*Model` | Model storage |
-| | `routerModel` | `string` | Model for routing |
-| | `mu` | `sync.RWMutex` | Thread-safe lock |
+| `Registry` | `mu` | `sync.RWMutex` | Thread-safe lock |
+| | `models` | `map[string]*ModelConfig` | Model storage |
+| | `router` | `RouterConfig` | Router configuration |
 
-### Model
+### RouterConfig
 
 | Struct | Field | Type | Description |
 |--------|-------|------|-------------|
-| `Model` | `Name` | `string` | Model name |
+| `RouterConfig` | `Model` | `string` | Model for routing |
+| | `Timeout` | `string` | Timeout duration |
+
+### ModelConfig
+
+| Struct | Field | Type | Description |
+|--------|-------|------|-------------|
+| `ModelConfig` | `Name` | `string` | Model name |
 | | `Provider` | `string` | Provider name |
 | | `InputCostPerMillion` | `float64` | Input token cost |
 | | `OutputCostPerMillion` | `float64` | Output token cost |
 | | `MaxTokens` | `int` | Maximum context |
-| | `Tier` | `string` | Pricing tier |
+| | `Tier` | `ModelTier` | Pricing tier |
+
+### ModelTier
+
+| Constant | Type | Value | Description |
+|----------|------|-------|-------------|
+| `TierEconomy` | `ModelTier` | `"economy"` | Economy tier |
+| `TierPremium` | `ModelTier` | `"premium"` | Premium tier |
+| `TierUltra` | `ModelTier` | `"ultra"` | Ultra tier |
 
 ## Functions
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `Get` | `() *Registry` | Returns singleton registry |
+| `NewRegistry` | `() *Registry` | Creates new registry |
 | `LoadFromYAML` | `(path string) error` | Loads models from YAML |
-| `GetModel` | `(name string) (*Model, bool)` | Gets model by name |
+| `GetModel` | `(name string) (*ModelConfig, bool)` | Gets model by name |
 | `GetRouterModel` | `() string` | Returns router model |
-| `GetCost` | `(model string, inputTokens, outputTokens int) (*CostInfo, error)` | Calculates cost |
 | `GetAllModels` | `() []string` | Returns all model names |
-| `GetModelsByProvider` | `(provider string) []*Model` | Returns provider's models |
-| `GetModelsByTier` | `(tier string) []*Model` | Returns tier's models |
+| `GetModelsByProvider` | `(provider string) []*ModelConfig` | Returns provider's models |
+| `GetModelsByTier` | `(tier ModelTier) []*ModelConfig` | Returns tier's models |
+| `CalculateCost` | `(cfg *ModelConfig, inputTokens, outputTokens int) float64` | Calculates cost |
+| `EstimateCost` | `(cfg *ModelConfig, estimate *TokenEstimate) *CostEstimate` | Estimates cost from token estimate |
 
 ## Design Notes
 

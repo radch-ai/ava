@@ -6,29 +6,74 @@ Built-in agent tools and tool registry for the agent runtime.
 
 ```mermaid
 flowchart TB
-    subgraph Tools ["Built-in Tools"]
-        Echo["ExampleEchoTool()"]
-        Math["ExampleMathTool()"]
-        Time["ExampleTimeTool()"]
-        Delay["ExampleDelayTool()"]
-        Files["ReadAgentFileTool()"]
-        Mem0["Mem0SearchTool()"]
-        Node["NodeToolRegistry"]
-    end
-    
-    Registry["NewRegistry()"]
+    Start(["Tools Subpackage"]) --> NewRegistry(["NewRegistry()"])
+    Start --> DefaultTools(["DefaultTools()"])
+    Start --> Echo(["ExampleEchoTool()"])
+    Start --> Math(["ExampleMathTool()"])
+    Start --> Time(["ExampleTimeTool()"])
+    Start --> Delay(["ExampleDelayTool()"])
 
-    Echo --> Registry
-    Math --> Registry
-    Time --> Registry
-    Delay --> Registry
-    Files --> Registry
-    Mem0 --> Registry
-    Node --> Registry
+    NewRegistry --> MakeMap["make tools map"]
+    MakeMap --> ForTools["for tools"]
+    ForTools --> AddToMap["add tool to map"]
+    AddToMap --> ReturnRegistry(["return registry"])
 
-    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
-    
-    class Echo,Math,Time,Delay,Files,Mem0,Node,Registry localPkgs
+    DefaultTools --> ReturnSlice(["return tool slice"])
+
+    Echo --> EchoExecute["Execute func"]
+    EchoExecute --> GetText["get text arg"]
+    GetText --> CheckText{valid text}
+    CheckText -->|no| ReturnEchoErr(["return error"])
+    CheckText -->|yes| ReturnEchoOk(["return success"])
+
+    Math --> MathExecute["Execute func"]
+    MathExecute --> GetOp["get operation arg"]
+    GetOp -->|no| ReturnMathErr1(["return error"])
+    GetOp -->|ok| GetA["get a arg"]
+    GetA -->|no| ReturnMathErr2
+    GetA -->|ok| GetB["get b arg"]
+    GetB -->|no| ReturnMathErr3
+    GetB -->|ok| SwitchOp["switch operation"]
+    SwitchOp -->|add| AddOp["add"]
+    SwitchOp -->|subtract| SubOp["subtract"]
+    SwitchOp -->|multiply| MulOp["multiply"]
+    SwitchOp -->|divide| CheckZero{b zero}
+    SwitchOp -->|default| ReturnMathErr4
+    CheckZero -->|yes| ReturnMathErr5(["return error"])
+    CheckZero -->|no| DivOp["divide"]
+    AddOp --> FormatMath["format result"]
+    SubOp --> FormatMath
+    MulOp --> FormatMath
+    DivOp --> FormatMath
+    FormatMath --> ReturnMathOk(["return success"])
+
+    Time --> TimeExecute["Execute func"]
+    TimeExecute --> SelectTime["select"]
+    SelectTime -->|ctx.Done| ReturnTimeErr(["return error"])
+    SelectTime -->|default| GetNow["get time"]
+    GetNow --> ReturnTimeOk(["return success"])
+
+    Delay --> DelayExecute["Execute func"]
+    DelayExecute --> GetDuration["get duration arg"]
+    GetDuration -->|no| CheckInt["check int type"]
+    GetDuration -->|ok| CheckNegative{negative}
+    CheckInt -->|no| ReturnDelayErr1(["return error"])
+    CheckInt -->|ok| ConvertFloat["convert to float"]
+    ConvertFloat --> CheckNegative
+    CheckNegative -->|yes| ReturnDelayErr2(["return error"])
+    CheckNegative -->|no| CalcDuration["calc duration"]
+    CalcDuration --> NewTimer["new timer"]
+    NewTimer --> DeferTimer["defer stop"]
+    DeferTimer --> SelectDelay["select"]
+    SelectDelay -->|ctx.Done| ReturnDelayErr3(["return error"])
+    SelectDelay -->|timer| FormatDelay["format result"]
+    FormatDelay --> ReturnDelayOk(["return success"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,NewRegistry,DefaultTools,Echo,Math,Time,Delay,ReturnRegistry,ReturnSlice,ReturnEchoOk,ReturnMathOk,ReturnTimeOk,ReturnDelayOk mainFn
+    class ReturnEchoErr,ReturnMathErr1,ReturnMathErr2,ReturnMathErr3,ReturnMathErr4,ReturnMathErr5,ReturnTimeErr,ReturnDelayErr1,ReturnDelayErr2,ReturnDelayErr3 errorFlow
 ```
 
 ## Files
