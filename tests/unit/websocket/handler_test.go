@@ -2,6 +2,7 @@ package websocket_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -50,6 +51,7 @@ func TestWebSocketUpgrade(t *testing.T) {
 
 	// Verify connection by sending a valid prompt message with agent_id
 	promptMsg := map[string]string{
+		"id":       "test-msg-1",
 		"type":     "prompt",
 		"agent_id": "test-agent",
 		"text":     "hello",
@@ -475,6 +477,7 @@ func TestWebSocketConcurrentMessages(t *testing.T) {
 	agentID := "test-agent-concurrent"
 	for i := 0; i < msgCount; i++ {
 		promptMsg := map[string]string{
+			"id":       fmt.Sprintf("msg-%d", i),
 			"type":     "prompt",
 			"agent_id": agentID,
 			"text":     "test message",
@@ -569,7 +572,7 @@ func TestWebSocketMessageRequiresAgentID(t *testing.T) {
 	}
 
 	// Send prompt message WITHOUT agent_id - should be rejected
-	promptMsg := map[string]string{"type": "prompt", "text": "hello"}
+	promptMsg := map[string]string{"id": "test-msg", "type": "prompt", "text": "hello"}
 	data, _ := json.Marshal(promptMsg)
 	if err := ws.WriteMessage(gorillaws.TextMessage, data); err != nil {
 		t.Fatalf("failed to write message: %v", err)
@@ -617,6 +620,7 @@ func TestWebSocketMessageWithAgentID(t *testing.T) {
 	// Send prompt message WITH agent_id
 	agentID := "test-agent-123"
 	promptMsg := map[string]string{
+		"id":       "test-msg-2",
 		"type":     "prompt",
 		"agent_id": agentID,
 		"text":     "hello",
@@ -722,6 +726,7 @@ func TestWebSocketMultipleAgentsPerConnection(t *testing.T) {
 	agents := []string{"agent-1", "agent-2", "agent-3"}
 	for i, agentID := range agents {
 		promptMsg := map[string]string{
+			"id":       fmt.Sprintf("msg-%d-%s", i, agentID),
 			"type":     "prompt",
 			"agent_id": agentID,
 			"text":     "hello from " + agentID,
