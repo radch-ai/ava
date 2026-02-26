@@ -3,8 +3,12 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
+
+// ErrSteered is returned when the loop is steered by an external signal.
+var ErrSteered = errors.New("loop steered")
 
 // ToolExecutionResult represents the result of executing a tool.
 type ToolExecutionResult struct {
@@ -78,6 +82,85 @@ func (l *Loop) Run(ctx context.Context, messages []AgentMessage, tools ...Tool) 
 		// If no tool calls, we're done
 		if len(toolCalls) == 0 {
 			break
+		}
+
+		// Execute tools
+		results := l.executeTools(ctx, toolCalls)
+
+		// Add tool results to history
+		currentMessages = l.AddToolResults(currentMessages, results)
+	}
+
+	return &RunResult{
+		Messages: currentMessages,
+	}, nil
+}
+
+// RunWithSteer executes the agent loop with steer channel checking at tool boundaries.
+func (l *Loop) RunWithSteer(ctx context.Context, messages []AgentMessage, tools []Tool, lane *Lane, steerCh <-chan struct{}) (*RunResult, error) {
+	l.tools = tools
+	currentMessages := make([]AgentMessage, len(messages))
+	copy(currentMessages, messages)
+
+	for {
+		// Check context
+		select {
+		case <-ctx.Done():
+			return nil, ErrSteered
+		case <-steerCh:
+			return nil, ErrSteered
+		default:
+		}
+
+		// Stream from LLM
+		eventCh, err := l.client.Stream(ctx, currentMessages, l.tools)
+		if err != nil {
+			return nil, fmt.Errorf("LLM stream failed: %w", err)
+		}
+
+		// Collect the final message from events
+		var assistantMsg *AgentMessage
+		for event := range eventCh {
+			switch e := event.(type) {
+			case MessageEndEvent:
+				assistantMsg = &e.Message
+			case TurnStartEvent, TurnEndEvent, MessageStartEvent, MessageUpdateEvent:
+				// Ignore other events for now
+			default:
+				// Ignore unknown events
+			}
+		}
+
+		if assistantMsg == nil {
+			// No message received, exit
+			break
+		}
+
+		// Add assistant message to history
+		currentMessages = append(currentMessages, *assistantMsg)
+
+		// Extract tool calls
+		toolCalls := l.ExtractToolCalls(*assistantMsg)
+
+		// If no tool calls, we're done
+		if len(toolCalls) == 0 {
+			break
+		}
+
+		// Check steer channel again before tool execution
+		select {
+		case <-ctx.Done():
+			return nil, ErrSteered
+		case <-steerCh:
+			return nil, ErrSteered
+		default:
+		}
+
+		// Drain pending messages if any
+		drainedMessages := lane.DrainPending()
+		if len(drainedMessages) > 0 {
+			currentMessages = append(currentMessages, drainedMessages...)
+			continue
 		}
 
 		// Execute tools

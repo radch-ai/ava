@@ -228,6 +228,63 @@ func TestLoopToolExecutionError(t *testing.T) {
 	})
 }
 
+func TestLoop_SteerAtToolBoundary(t *testing.T) {
+	t.Run("stops loop on steerCh signal", func(t *testing.T) {
+		ctx := context.Background()
+
+		// Mock LLM returns a tool call
+		mock := &agent.MockLLMClient{
+			Responses: []agent.MockResponse{
+				{
+					Message: agent.AgentMessage{
+						Role:      agent.RoleAssistant,
+						Timestamp: time.Now().Unix(),
+						Content: []agent.ContentBlock{
+							agent.ToolCallContent{
+								ID:   "call_123",
+								Name: "echo",
+								Arguments: map[string]any{
+									"input": "test",
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		loop := agent.NewLoop(mock)
+		echoTool := agent.MockEchoTool("echo")
+
+		initialMessages := []agent.AgentMessage{
+			agent.NewTextMessage(agent.RoleUser, "Use echo tool"),
+		}
+
+		// Create lane and steer channel
+		lane := agent.NewLane()
+		steerCh := make(chan struct{})
+
+		// Start the goroutine to signal steer after a short delay
+		go func() {
+			time.Sleep(10 * time.Millisecond)
+			close(steerCh)
+		}()
+
+		// RunWithSteer should return ErrSteered
+		result, err := loop.RunWithSteer(ctx, initialMessages, []agent.Tool{echoTool}, lane, steerCh)
+
+		// Should return ErrSteered
+		if err != agent.ErrSteered {
+			t.Errorf("expected ErrSteered, got %v", err)
+		}
+
+		// Result should be nil when steered
+		if result != nil {
+			t.Errorf("expected nil result, got %v", result)
+		}
+	})
+}
+
 func TestExtractToolCalls(t *testing.T) {
 	t.Run("extracts tool calls from message", func(t *testing.T) {
 		mock := &agent.MockLLMClient{}
