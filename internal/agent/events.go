@@ -121,3 +121,35 @@ type TokenUsageEvent struct {
 }
 
 func (TokenUsageEvent) isAgentEvent() {}
+
+// TaskQueuedEvent is emitted when a task is queued in a lane.
+type TaskQueuedEvent struct {
+	MessageID string
+	Position  int
+}
+
+func (TaskQueuedEvent) isAgentEvent() {}
+
+// TaskProcessingEvent is emitted when a task starts being processed.
+type TaskProcessingEvent struct {
+	MessageID string
+	RunID     string
+	SessionID string
+}
+
+func (TaskProcessingEvent) isAgentEvent() {}
+
+// TaskCondensedEvent is emitted when multiple tasks are condensed into one.
+type TaskCondensedEvent struct {
+	OriginalCount  int
+	CondensedCount int
+}
+
+func (TaskCondensedEvent) isAgentEvent() {}
+
+// TaskSteeredEvent is emitted when tasks are cancelled due to steering.
+type TaskSteeredEvent struct {
+	CancelledCount int
+}
+
+func (TaskSteeredEvent) isAgentEvent() {}

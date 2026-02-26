@@ -58,6 +58,22 @@ func TestEventInterface(t *testing.T) {
 			name:  "TokenUsageEvent",
 			event: agent.TokenUsageEvent{},
 		},
+		{
+			name:  "TaskQueuedEvent",
+			event: agent.TaskQueuedEvent{},
+		},
+		{
+			name:  "TaskProcessingEvent",
+			event: agent.TaskProcessingEvent{},
+		},
+		{
+			name:  "TaskCondensedEvent",
+			event: agent.TaskCondensedEvent{},
+		},
+		{
+			name:  "TaskSteeredEvent",
+			event: agent.TaskSteeredEvent{},
+		},
 	}
 
 	for _, tt := range tests {
@@ -108,5 +124,65 @@ func TestAgentEndEventMessages(t *testing.T) {
 
 	if len(evt.Messages) != 1 {
 		t.Errorf("expected 1 message, got %d", len(evt.Messages))
+	}
+}
+
+// TestTaskQueuedEvent verifies TaskQueuedEvent has MessageID and Position fields.
+func TestTaskQueuedEvent(t *testing.T) {
+	evt := agent.TaskQueuedEvent{
+		MessageID: "msg-123",
+		Position:  5,
+	}
+
+	if evt.MessageID != "msg-123" {
+		t.Errorf("expected MessageID 'msg-123', got %s", evt.MessageID)
+	}
+	if evt.Position != 5 {
+		t.Errorf("expected Position 5, got %d", evt.Position)
+	}
+}
+
+// TestTaskProcessingEvent verifies TaskProcessingEvent has MessageID, RunID, and SessionID fields.
+func TestTaskProcessingEvent(t *testing.T) {
+	evt := agent.TaskProcessingEvent{
+		MessageID: "msg-456",
+		RunID:     "run-789",
+		SessionID: "session-abc",
+	}
+
+	if evt.MessageID != "msg-456" {
+		t.Errorf("expected MessageID 'msg-456', got %s", evt.MessageID)
+	}
+	if evt.RunID != "run-789" {
+		t.Errorf("expected RunID 'run-789', got %s", evt.RunID)
+	}
+	if evt.SessionID != "session-abc" {
+		t.Errorf("expected SessionID 'session-abc', got %s", evt.SessionID)
+	}
+}
+
+// TestTaskCondensedEvent verifies TaskCondensedEvent has OriginalCount and CondensedCount fields.
+func TestTaskCondensedEvent(t *testing.T) {
+	evt := agent.TaskCondensedEvent{
+		OriginalCount:  10,
+		CondensedCount: 3,
+	}
+
+	if evt.OriginalCount != 10 {
+		t.Errorf("expected OriginalCount 10, got %d", evt.OriginalCount)
+	}
+	if evt.CondensedCount != 3 {
+		t.Errorf("expected CondensedCount 3, got %d", evt.CondensedCount)
+	}
+}
+
+// TestTaskSteeredEvent verifies TaskSteeredEvent has CancelledCount field.
+func TestTaskSteeredEvent(t *testing.T) {
+	evt := agent.TaskSteeredEvent{
+		CancelledCount: 7,
+	}
+
+	if evt.CancelledCount != 7 {
+		t.Errorf("expected CancelledCount 7, got %d", evt.CancelledCount)
 	}
 }
