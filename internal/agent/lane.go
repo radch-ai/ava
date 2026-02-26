@@ -69,3 +69,35 @@ func (l *Lane) Steer() int {
 
 	return count
 }
+
+type LaneStatus struct {
+	QueueDepth int   `json:"queue_depth"`
+	Running    *Task `json:"running,omitempty"`
+}
+
+func (l *Lane) Status() LaneStatus {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	var running *Task
+	if len(l.pending) > 0 {
+		running = l.pending[0]
+	}
+
+	return LaneStatus{
+		QueueDepth: len(l.pending),
+		Running:    running,
+	}
+}
+
+func (l *Lane) DrainPending() []AgentMessage {
+	l.mu.Lock()
+	messages := make([]AgentMessage, len(l.pending))
+	for i, task := range l.pending {
+		messages[i] = NewTextMessage(RoleUser, task.Message)
+	}
+	l.pending = nil
+	l.mu.Unlock()
+
+	return messages
+}

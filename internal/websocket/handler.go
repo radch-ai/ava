@@ -432,6 +432,7 @@ func (h *Handler) forwardAgentEvents(ctx context.Context, eventCh <-chan agent.A
 // handleTextMessage handles incoming text messages from the WebSocket client.
 func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID string, writeCh chan<- *wsMessage, logger zerolog.Logger) {
 	var msg struct {
+		ID      string `json:"id"`
 		Type    string `json:"type"`
 		AgentID string `json:"agent_id"` // Required field - which agent to route to
 		Text    string `json:"text,omitempty"`
@@ -446,6 +447,10 @@ func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID str
 	switch msg.Type {
 	case "prompt":
 		// Validate required fields
+		if msg.ID == "" {
+			logger.Debug().Msg("prompt message missing id field")
+			return
+		}
 		if msg.AgentID == "" {
 			logger.Debug().Msg("prompt message missing agent_id field")
 			return
@@ -468,6 +473,39 @@ func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID str
 		// Send prompt to agent
 		if err := agentInstance.Prompt(ctx, msg.Text); err != nil {
 			logger.Error().Err(err).Str("agent_id", msg.AgentID).Msg("agent prompt failed")
+		}
+	case "steer":
+		if msg.AgentID == "" {
+			logger.Debug().Msg("steer message missing agent_id field")
+			return
+		}
+
+		agentInstance := h.agentManager.GetOrCreateAgentForUser(userID, msg.AgentID)
+		cancelled := agentInstance.Lane().Steer()
+		logger.Debug().Int("cancelled", cancelled).Msg("steer cancelled pending tasks")
+	case "status":
+		if msg.AgentID == "" {
+			logger.Debug().Msg("status message missing agent_id field")
+			return
+		}
+
+		agentInstance := h.agentManager.GetOrCreateAgentForUser(userID, msg.AgentID)
+		status := agentInstance.Lane().Status()
+
+		statusEvent := wsEvent{
+			Type:    "lane_status",
+			AgentID: msg.AgentID,
+			Data:    status,
+		}
+
+		msg := wsMsgPool.Get().(*wsMessage)
+		msg.messageType = websocket.TextMessage
+		msg.data = marshalEvent(statusEvent)
+		select {
+		case writeCh <- msg:
+		case <-time.After(100 * time.Millisecond):
+			wsMsgPool.Put(msg)
+			logger.Debug().Msg("failed to send status event")
 		}
 	default:
 		logger.Debug().Str("msg_type", msg.Type).Msg("unknown message type")
