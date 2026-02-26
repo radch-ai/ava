@@ -1,27 +1,49 @@
 package lane
 
 import (
+	"time"
+
 	"github.com/dgraph-io/ristretto"
 )
 
-type DedupCache struct {
-	local *ristretto.Cache
-	redis any
+type CachedResponse struct {
+	MessageID  string
+	RunID      string
+	SessionID  string
+	Content    []byte
+	FinishedAt time.Time
 }
 
-func NewDedupCache(redisClient any) *DedupCache {
+type Dedup struct {
+	local *ristretto.Cache
+	redis any //nolint:unused // TODO: Redis integration for persistent cache
+}
+
+func NewDedup() *Dedup {
 	cache, _ := ristretto.NewCache(&ristretto.Config{
 		NumCounters: 1e7,
 		MaxCost:     1 << 30,
 		BufferItems: 64,
 	})
 
-	return &DedupCache{
+	return &Dedup{
 		local: cache,
-		redis: redisClient,
 	}
 }
 
-func (d *DedupCache) Local() *ristretto.Cache {
-	return d.local
+func (d *Dedup) StoreResponse(sessionID, messageID string, response []byte) error {
+	key := sessionID + ":" + messageID
+	d.local.Set(key, response, int64(len(response)))
+	d.local.Wait()
+	return nil
+}
+
+func (d *Dedup) GetResponse(sessionID, messageID string) []byte {
+	key := sessionID + ":" + messageID
+	if value, found := d.local.Get(key); found {
+		if response, ok := value.([]byte); ok {
+			return response
+		}
+	}
+	return nil
 }

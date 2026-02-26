@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/nevaria-ai/gateway/internal/websocket"
-	llmproxy "github.com/nevaria-ai/llm-proxy-sdk"
 	"github.com/nevaria-ai/llm-proxy-sdk/pkg/handler"
 	"github.com/rs/zerolog"
 )

@@ -6,16 +6,24 @@ import (
 	"github.com/nevaria-ai/gateway/internal/lane"
 )
 
-func TestDedupCache_New(t *testing.T) {
-	t.Run("creates cache with local field initialized", func(t *testing.T) {
-		dedupCache := lane.NewDedupCache(nil)
+func TestDedupCache_ResponseCache(t *testing.T) {
+	sessionID := "test-session-123"
+	messageID := "msg-456"
+	responseData := []byte(`{"content":"test response","finished":true}`)
 
-		if dedupCache == nil {
-			t.Fatal("NewDedupCache() returned nil")
-		}
+	dedup := lane.NewDedup()
 
-		if dedupCache.Local() == nil {
-			t.Error("Local() returned nil cache")
-		}
-	})
+	err := dedup.StoreResponse(sessionID, messageID, responseData)
+	if err != nil {
+		t.Fatalf("StoreResponse failed: %v", err)
+	}
+
+	retrieved := dedup.GetResponse(sessionID, messageID)
+	if retrieved == nil {
+		t.Fatal("GetResponse returned nil for cached data")
+	}
+
+	if string(retrieved) != string(responseData) {
+		t.Errorf("GetResponse returned different data: got %s, want %s", string(retrieved), string(responseData))
+	}
 }
