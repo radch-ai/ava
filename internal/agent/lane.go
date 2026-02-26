@@ -60,3 +60,12 @@ func (l *Lane) Submit(message string) string {
 	l.SignalSteer()
 	return id
 }
+
+func (l *Lane) Steer() int {
+	l.mu.Lock()
+	count := len(l.pending)
+	l.pending = nil
+	l.mu.Unlock()
+
+	return count
+}

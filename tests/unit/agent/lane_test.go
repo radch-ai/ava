@@ -58,3 +58,24 @@ func TestLane_Submit(t *testing.T) {
 		}
 	})
 }
+
+func TestLane_Steer(t *testing.T) {
+	t.Run("cancels pending tasks and returns count", func(t *testing.T) {
+		lane := agent.NewLane()
+
+		for i := 0; i < 3; i++ {
+			lane.Submit("test message")
+		}
+
+		cancelled := lane.Steer()
+
+		if cancelled != 3 {
+			t.Errorf("expected Steer to return 3, got %d", cancelled)
+		}
+
+		pending := lane.Pending()
+		if len(pending) != 0 {
+			t.Errorf("expected pending to be empty after Steer, got %d tasks", len(pending))
+		}
+	})
+}
