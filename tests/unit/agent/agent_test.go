@@ -180,3 +180,18 @@ func TestStateAccess(t *testing.T) {
 
 	wg.Wait()
 }
+
+// TestAgent_HasLane verifies that Agent has a non-nil Lane.
+func TestAgent_HasLane(t *testing.T) {
+	opts := agent.AgentOptions{
+		ID:           "test-agent-lane",
+		SystemPrompt: "You are a helpful assistant",
+		SessionID:    "session-lane",
+	}
+
+	a := agent.NewAgent(opts)
+
+	if a.Lane() == nil {
+		t.Fatal("Agent.Lane() returned nil")
+	}
+}

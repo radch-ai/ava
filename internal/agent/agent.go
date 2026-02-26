@@ -84,6 +84,7 @@ type Agent struct {
 	subscribersMu sync.Mutex
 	ctx           context.Context
 	cancel        context.CancelFunc
+	lane          *Lane
 	llmClient     LLMClient // Optional LLM client for tool calling
 }
 
@@ -124,6 +125,7 @@ func NewAgent(opts AgentOptions) *Agent {
 		subscribers: make(map[string]chan AgentEvent),
 		ctx:         ctx,
 		cancel:      cancel,
+		lane:        NewLane(),
 		llmClient:   opts.LLMClient,
 	}
 }
@@ -195,6 +197,11 @@ func (a *Agent) State() AgentState {
 		UserID:           a.state.UserID,
 		AgentID:          a.state.AgentID,
 	}
+}
+
+// Lane returns the agent's message queue lane.
+func (a *Agent) Lane() *Lane {
+	return a.lane
 }
 
 // Prompt sends a user message to the agent and runs the tool calling loop.
