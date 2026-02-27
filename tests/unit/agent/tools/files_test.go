@@ -3,6 +3,7 @@ package agent_test
 
 import (
 	"context"
+	"path"
 	"strings"
 	"testing"
 
@@ -11,6 +12,10 @@ import (
 	"github.com/nevaria-ai/gateway/internal/storage"
 )
 
+func workspacePath(userID, agentID, filename string) string {
+	return path.Join(userID, agentID, "workspace", filename)
+}
+
 func TestReadAgentFileTool(t *testing.T) {
 	client := storage.NewMockS3Client()
 	userID := "user-123"
@@ -18,7 +23,7 @@ func TestReadAgentFileTool(t *testing.T) {
 
 	// Pre-populate a file
 	bgCtx := context.Background()
-	_ = client.Put(bgCtx, storage.WorkspacePath(userID, agentID, "SOUL.md"), []byte("Test content"))
+	_ = client.Put(bgCtx, workspacePath(userID, agentID, "SOUL.md"), []byte("Test content"))
 
 	// Create context with userID and agentID
 	requestCtx := ctx.WithUserID(bgCtx, userID)
@@ -61,7 +66,7 @@ func TestWriteAgentFileTool(t *testing.T) {
 	}
 
 	// Verify file was written
-	data, err := client.Get(bgCtx, storage.WorkspacePath(userID, agentID, "CUSTOM.md"))
+	data, err := client.Get(bgCtx, workspacePath(userID, agentID, "CUSTOM.md"))
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}

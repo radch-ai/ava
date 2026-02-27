@@ -4,6 +4,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"path"
 
 	"github.com/nevaria-ai/gateway/internal/agent"
 	ctxpkg "github.com/nevaria-ai/gateway/internal/ctx"
@@ -27,15 +28,15 @@ func ReadAgentFileTool(client storage.Client) agent.Tool {
 			}
 
 			// Extract path
-			path, ok := args["path"].(string)
-			if !ok || path == "" {
+			filePath, ok := args["path"].(string)
+			if !ok || filePath == "" {
 				return &agent.ToolResult{
 					Content: []agent.ContentBlock{agent.TextContent{Text: "Error: 'path' parameter is required"}},
 				}, fmt.Errorf("missing path parameter")
 			}
 
 			// Build S3 path with enforced scope
-			s3Path := storage.WorkspacePath(userID, agentID, path)
+			s3Path := path.Join(userID, agentID, "workspace", filePath)
 
 			// Read file
 			data, err := client.Get(ctx, s3Path)
@@ -69,8 +70,8 @@ func WriteAgentFileTool(client storage.Client) agent.Tool {
 			}
 
 			// Extract parameters
-			path, ok := args["path"].(string)
-			if !ok || path == "" {
+			filePath, ok := args["path"].(string)
+			if !ok || filePath == "" {
 				return &agent.ToolResult{
 					Content: []agent.ContentBlock{agent.TextContent{Text: "Error: 'path' parameter is required"}},
 				}, fmt.Errorf("missing path parameter")
@@ -84,7 +85,7 @@ func WriteAgentFileTool(client storage.Client) agent.Tool {
 			}
 
 			// Build S3 path with enforced scope
-			s3Path := storage.WorkspacePath(userID, agentID, path)
+			s3Path := path.Join(userID, agentID, "workspace", filePath)
 
 			// Write file
 			err := client.Put(ctx, s3Path, []byte(content))
@@ -95,7 +96,7 @@ func WriteAgentFileTool(client storage.Client) agent.Tool {
 			}
 
 			return &agent.ToolResult{
-				Content: []agent.ContentBlock{agent.TextContent{Text: fmt.Sprintf("Successfully wrote %s", path)}},
+				Content: []agent.ContentBlock{agent.TextContent{Text: fmt.Sprintf("Successfully wrote %s", filePath)}},
 			}, nil
 		},
 	}

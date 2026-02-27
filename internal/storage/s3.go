@@ -16,11 +16,6 @@ type Client interface {
 	Delete(ctx context.Context, key string) error
 }
 
-// WorkspacePath returns the S3 path for a workspace file.
-func WorkspacePath(userID, agentID, filename string) string {
-	return path.Join(userID, agentID, "workspace", filename)
-}
-
 // TranscriptPath returns the S3 path for a transcript file.
 func TranscriptPath(userID, agentID, sessionID string) string {
 	return path.Join(userID, agentID, "transcripts", sessionID+".jsonl")

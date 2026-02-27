@@ -5,6 +5,7 @@ package integration_test
 
 import (
 	"context"
+	"path"
 	"testing"
 	"time"
 
@@ -16,6 +17,10 @@ import (
 	"github.com/nevaria-ai/gateway/internal/websocket"
 	"github.com/rs/zerolog"
 )
+
+func workspacePath(userID, agentID, filename string) string {
+	return path.Join(userID, agentID, "workspace", filename)
+}
 
 // TestMultiAgentPerUser verifies multiple agents can be created for a single user.
 func TestMultiAgentPerUser(t *testing.T) {
@@ -116,11 +121,11 @@ func TestStorageIsolation(t *testing.T) {
 	agentID := "agent-456"
 
 	// Write a file for this user/agent
-	path := storage.WorkspacePath(userID, agentID, "SOUL.md")
-	_ = client.Put(ctx, path, []byte("Agent personality"))
+	filePath := workspacePath(userID, agentID, "SOUL.md")
+	_ = client.Put(ctx, filePath, []byte("Agent personality"))
 
 	// Try to read with correct path
-	data, err := client.Get(ctx, path)
+	data, err := client.Get(ctx, filePath)
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
@@ -130,7 +135,7 @@ func TestStorageIsolation(t *testing.T) {
 	}
 
 	// Verify different user/agent can't access (different path)
-	differentPath := storage.WorkspacePath("other-user", "other-agent", "SOUL.md")
+	differentPath := workspacePath("other-user", "other-agent", "SOUL.md")
 	_, err = client.Get(ctx, differentPath)
 	if err == nil {
 		t.Error("expected error when accessing different user's file")
@@ -190,18 +195,24 @@ func TestSessionTimeout(t *testing.T) {
 	}
 }
 
-// TestWorkspaceLoaderWithStorage verifies workspace loading from S3.
-func TestWorkspaceLoaderWithStorage(t *testing.T) {
+// TestWorkspaceLoaderWithAgentStore verifies workspace loading from AgentStore.
+func TestWorkspaceLoaderWithAgentStore(t *testing.T) {
 	ctx := context.Background()
-	client := storage.NewMockS3Client()
-	loader := storage.NewWorkspaceLoader(client)
+	store := storage.NewMockAgentStore()
+	loader := storage.NewWorkspaceLoaderFromAgentStore(store)
 
 	userID := "user-123"
 	agentID := "agent-456"
 
-	// Pre-populate workspace files
-	_ = client.Put(ctx, storage.WorkspacePath(userID, agentID, "SOUL.md"), []byte("# Soul\nYou are helpful."))
-	_ = client.Put(ctx, storage.WorkspacePath(userID, agentID, "AGENTS.md"), []byte("# Instructions\nBe concise."))
+	// Pre-populate agent config
+	config := &storage.AgentConfig{
+		AgentID:  agentID,
+		UserID:   userID,
+		Name:     "TestAgent",
+		SoulMd:   "# Soul\nYou are helpful.",
+		AgentsMd: "# Instructions\nBe concise.",
+	}
+	_ = store.Upsert(ctx, config)
 
 	// Load workspace
 	workspace, err := loader.Load(ctx, userID, agentID)

@@ -8,50 +8,68 @@ import (
 	"github.com/nevaria-ai/gateway/internal/storage"
 )
 
-func TestLoadWorkspace(t *testing.T) {
-	client := storage.NewMockS3Client()
+func TestLoadWorkspaceFromAgentStore(t *testing.T) {
+	store := storage.NewMockAgentStore()
 	ctx := context.Background()
 
 	userID := "user-123"
 	agentID := "agent-456"
 
-	// Pre-populate workspace files
-	_ = client.Put(ctx, storage.WorkspacePath(userID, agentID, "SOUL.md"), []byte("# Soul\nYou are helpful."))
-	_ = client.Put(ctx, storage.WorkspacePath(userID, agentID, "AGENTS.md"), []byte("# Instructions\nBe concise."))
+	config := &storage.AgentConfig{
+		AgentID:    agentID,
+		UserID:     userID,
+		Name:       "TestAgent",
+		SoulMd:     "# Soul\nYou are helpful.",
+		AgentsMd:   "# Instructions\nBe concise.",
+		UserMd:     "User is a developer.",
+		IdentityMd: "Name: TestBot",
+		ToolsMd:    "Use tools wisely.",
+	}
+	_ = store.Upsert(ctx, config)
 
-	loader := storage.NewWorkspaceLoader(client)
+	loader := storage.NewWorkspaceLoaderFromAgentStore(store)
 
 	workspace, err := loader.Load(ctx, userID, agentID)
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
 
-	if workspace.Soul == "" {
-		t.Error("expected non-empty Soul")
+	if workspace.Soul != config.SoulMd {
+		t.Errorf("expected Soul %q, got %q", config.SoulMd, workspace.Soul)
 	}
-	if !strings.Contains(workspace.Soul, "helpful") {
-		t.Errorf("expected Soul to contain 'helpful', got %s", workspace.Soul)
+	if workspace.Agents != config.AgentsMd {
+		t.Errorf("expected Agents %q, got %q", config.AgentsMd, workspace.Agents)
 	}
-
-	if workspace.Agents == "" {
-		t.Error("expected non-empty Agents")
+	if workspace.User != config.UserMd {
+		t.Errorf("expected User %q, got %q", config.UserMd, workspace.User)
+	}
+	if workspace.Identity != config.IdentityMd {
+		t.Errorf("expected Identity %q, got %q", config.IdentityMd, workspace.Identity)
+	}
+	if workspace.Tools != config.ToolsMd {
+		t.Errorf("expected Tools %q, got %q", config.ToolsMd, workspace.Tools)
+	}
+	if !workspace.Loaded {
+		t.Error("expected Loaded to be true")
 	}
 }
 
-func TestLoadWorkspaceEmpty(t *testing.T) {
-	client := storage.NewMockS3Client()
+func TestLoadWorkspaceFromAgentStoreNotFound(t *testing.T) {
+	store := storage.NewMockAgentStore()
 	ctx := context.Background()
 
-	loader := storage.NewWorkspaceLoader(client)
+	loader := storage.NewWorkspaceLoaderFromAgentStore(store)
 
 	workspace, err := loader.Load(ctx, "user-123", "agent-456")
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
 
-	// Should return empty workspace without error
 	if workspace.Soul != "" {
-		t.Error("expected empty Soul for non-existent workspace")
+		t.Error("expected empty Soul for non-existent agent")
+	}
+	if workspace.Loaded {
+		t.Error("expected Loaded to be false for non-existent agent")
 	}
 }
 
