@@ -97,6 +97,32 @@ var migrations = []Migration{
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 		`,
 	},
+	{
+		Name: "create_agents_table",
+		SQL: `
+			CREATE TABLE IF NOT EXISTS agents (
+				agent_id     TEXT PRIMARY KEY,
+				user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+				name         TEXT,
+				soul_md      TEXT,
+				agents_md    TEXT,
+				user_md      TEXT,
+				identity_md  TEXT,
+				tools_md     TEXT,
+				heartbeat_md TEXT,
+				config       JSONB,
+				created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			)
+		`,
+	},
+	{
+		Name: "create_agents_indexes",
+		SQL: `
+			CREATE INDEX IF NOT EXISTS idx_agents_user_id ON agents(user_id);
+			CREATE INDEX IF NOT EXISTS idx_agents_updated_at ON agents(updated_at);
+		`,
+	},
 }
 
 // RunMigrations runs all database migrations for the billing package.
@@ -244,6 +270,10 @@ func checkExistenceSQL(migration Migration) string {
 		return `SELECT EXISTS (SELECT FROM pg_indexes WHERE indexname = 'idx_processed_webhooks_processed_at')`
 	case "create_usage_logs_foreign_key":
 		return `SELECT EXISTS (SELECT FROM information_schema.table_constraints WHERE constraint_name = 'usage_logs_user_id_fkey')`
+	case "create_agents_table":
+		return `SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'agents')`
+	case "create_agents_indexes":
+		return `SELECT EXISTS (SELECT FROM pg_indexes WHERE indexname = 'idx_agents_user_id')`
 	default:
 		return "SELECT false"
 	}
