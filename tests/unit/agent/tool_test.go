@@ -36,7 +36,6 @@ func TestExecuteToolCall_Success(t *testing.T) {
 		}
 
 		result, err := agent.ExecuteToolCall(ctx, &state, toolCall)
-
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}

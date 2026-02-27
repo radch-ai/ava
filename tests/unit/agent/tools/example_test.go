@@ -19,7 +19,6 @@ func TestExampleEchoTool(t *testing.T) {
 
 		args := map[string]any{"input": "hello world"}
 		result, err := tool.Execute(ctx, args)
-
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
@@ -67,7 +66,6 @@ func TestExampleTimeTool(t *testing.T) {
 
 		ctx := context.Background()
 		result, err := tool.Execute(ctx, nil)
-
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
@@ -104,7 +102,6 @@ func TestExampleWeatherTool(t *testing.T) {
 		ctx := context.Background()
 		args := map[string]any{"location": "San Francisco"}
 		result, err := tool.Execute(ctx, args)
-
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}

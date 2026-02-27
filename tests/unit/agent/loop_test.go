@@ -34,7 +34,6 @@ func TestLoopWithNoToolCalls(t *testing.T) {
 		}
 
 		result, err := loop.Run(ctx, initialMessages)
-
 		// Should complete without error
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
@@ -96,7 +95,6 @@ func TestLoopWithToolCall(t *testing.T) {
 		}
 
 		result, err := loop.Run(ctx, initialMessages, echoTool)
-
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
@@ -162,7 +160,6 @@ func TestLoopWithMultipleToolCalls(t *testing.T) {
 		}
 
 		result, err := loop.Run(ctx, initialMessages, echoTool)
-
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
@@ -214,7 +211,6 @@ func TestLoopToolExecutionError(t *testing.T) {
 		}
 
 		result, err := loop.Run(ctx, initialMessages, failingTool)
-
 		// Loop should still complete despite tool error
 		if err != nil {
 			t.Fatalf("expected no error from loop, got %v", err)

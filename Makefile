@@ -14,23 +14,22 @@ run:
 	@echo "Running $(BINARY_NAME)..."
 	go run ./cmd/gateway/main.go
 
-## test: Run unit tests with race and coverage
-## Usage (optional): make test TEST_PATH=./internal/service
+ ## test: Run unit tests with race and coverage
 test:
 	@if [ -z "$(TEST_PATH)" ]; then \
 		echo "Running unit tests for all packages..."; \
-		go test -race -coverprofile=coverage.out -v ./...; \
+		CGO_ENABLED=1 go test -race -coverprofile=coverage.out -v ./...; \
 	else \
 		echo "Running unit tests for $(TEST_PATH)..."; \
-		go test -race -coverprofile=coverage.out -v $(TEST_PATH); \
+		CGO_ENABLED=1 go test -race -coverprofile=coverage.out -v $(TEST_PATH); \
 	fi
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
-## test-unit: Run unit tests only
+ ## test-unit: Run unit tests only
 test-unit:
 	@echo "Running unit tests..."
-	go test -race -v ./tests/unit/...
+	CGO_ENABLED=1 go test -race -v ./tests/unit/...
 
 ## test-integration: Run integration tests with Docker compose (auto cleanup)
 ## Usage (optional): make test-integration TEST_PATH=./tests/integration

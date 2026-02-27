@@ -77,7 +77,6 @@ func TestAuthClientValidateSession_Success(t *testing.T) {
 	ctx := context.Background()
 
 	sessionInfo, err := client.ValidateSession(ctx, "valid-session-token")
-
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -253,7 +252,6 @@ func TestAuthClientValidateSession_SuccessWithoutSetCookie(t *testing.T) {
 	ctx := context.Background()
 
 	sessionInfo, err := client.ValidateSession(ctx, "valid-session")
-
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}

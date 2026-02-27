@@ -3,21 +3,21 @@ package websocket_test
 import (
 	"testing"
 
+	"github.com/nevaria-ai/gateway/internal/agent"
 	"github.com/nevaria-ai/gateway/internal/websocket"
-	"github.com/nevaria-ai/llm-proxy-sdk/pkg/handler"
 	"github.com/rs/zerolog"
 )
 
-// TestAgentManagerWithLLMProxy verifies that AgentManager can be created with LLM proxy options.
-func TestAgentManagerWithLLMProxy(t *testing.T) {
+// TestAgentManagerWithLLMClient verifies that AgentManager can be created with LLM client options.
+func TestAgentManagerWithLLMClient(t *testing.T) {
 	logger := zerolog.Nop()
 
-	// Create mock handler
-	handler := handler.NewHandler(handler.HandlerOptions{})
+	// Create mock LLM client
+	llmClient := &agent.MockLLMClient{}
 
-	// Create agent manager with LLM proxy handler
+	// Create agent manager with LLM client
 	mgr := websocket.NewAgentManager(logger, &websocket.AgentManagerOptions{
-		LLMProxyHandler: handler,
+		LLMClient: llmClient,
 	})
 
 	if mgr == nil {
@@ -25,16 +25,16 @@ func TestAgentManagerWithLLMProxy(t *testing.T) {
 	}
 }
 
-// TestGetOrCreateAgentWithLLMProxy verifies that agent creation uses LLM proxy client.
-func TestGetOrCreateAgentWithLLMProxy(t *testing.T) {
+// TestGetOrCreateAgentWithLLMClient verifies that agent creation uses LLM client.
+func TestGetOrCreateAgentWithLLMClient(t *testing.T) {
 	logger := zerolog.Nop()
 
-	// Create mock handler
-	handler := handler.NewHandler(handler.HandlerOptions{})
+	// Create mock LLM client
+	llmClient := &agent.MockLLMClient{}
 
-	// Create agent manager with LLM proxy handler
+	// Create agent manager with LLM client
 	mgr := websocket.NewAgentManager(logger, &websocket.AgentManagerOptions{
-		LLMProxyHandler: handler,
+		LLMClient: llmClient,
 	})
 
 	userID := "test-user-123"
@@ -53,13 +53,13 @@ func TestGetOrCreateAgentWithLLMProxy(t *testing.T) {
 	}
 }
 
-// TestAgentManagerRemoveAgentWithLLMProxy verifies agent removal with LLM proxy.
-func TestAgentManagerRemoveAgentWithLLMProxy(t *testing.T) {
+// TestAgentManagerRemoveAgentWithLLMClient verifies agent removal with LLM client.
+func TestAgentManagerRemoveAgentWithLLMClient(t *testing.T) {
 	logger := zerolog.Nop()
 
-	handler := handler.NewHandler(handler.HandlerOptions{})
+	llmClient := &agent.MockLLMClient{}
 	mgr := websocket.NewAgentManager(logger, &websocket.AgentManagerOptions{
-		LLMProxyHandler: handler,
+		LLMClient: llmClient,
 	})
 
 	sessionID := "test-session-789"
@@ -81,11 +81,11 @@ func TestAgentManagerRemoveAgentWithLLMProxy(t *testing.T) {
 	}
 }
 
-// TestAgentManagerNilLLMProxy verifies behavior when LLM proxy handler is nil.
-func TestAgentManagerNilLLMProxy(t *testing.T) {
+// TestAgentManagerNilLLMClient verifies behavior when LLM client is nil.
+func TestAgentManagerNilLLMClient(t *testing.T) {
 	logger := zerolog.Nop()
 
-	// Create agent manager without LLM proxy handler (backward compatibility)
+	// Create agent manager without LLM client (backward compatibility)
 	mgr := websocket.NewAgentManager(logger, nil)
 
 	sessionID := "test-session-nil"

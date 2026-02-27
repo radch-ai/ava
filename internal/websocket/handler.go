@@ -71,7 +71,6 @@ func marshalEvent(event wsEvent) []byte {
 
 // NewHandler creates a new WebSocket handler with connection limiting.
 func NewHandler(logger zerolog.Logger, allowedOrigins []string, maxConns int, agentOpts *AgentManagerOptions) *Handler {
-
 	// Create upgrader with origin checking
 	handlerUpgrader := upgrader // Copy package default
 	handlerUpgrader.CheckOrigin = func(r *http.Request) bool {

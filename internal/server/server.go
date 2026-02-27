@@ -28,7 +28,6 @@ type Server struct {
 // New creates a new Server with the given address, logger, WebSocket handler, and auth middleware.
 // If authMW is nil, the WebSocket endpoint will not require authentication (for backward compatibility).
 func New(addr string, logger zerolog.Logger, wsHandler *websocket.Handler, authMW *AuthMiddleware) *Server {
-
 	mux := http.NewServeMux()
 
 	// Health check endpoint

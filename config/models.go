@@ -1,36 +1,41 @@
-// Package config provides configuration loading for the gateway.
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
-
-	"gopkg.in/yaml.v3"
 )
 
-// ModelConfig holds configuration for a single LLM model
 type ModelConfig struct {
-	Provider             string  `yaml:"provider"`
-	InputCostPerMillion  float64 `yaml:"input_cost_per_million"`
-	OutputCostPerMillion float64 `yaml:"output_cost_per_million"`
-	MaxTokens            int     `yaml:"max_tokens"`
-	Tier                 string  `yaml:"tier"`
+	InputCostPerMillion  float64 `json:"input_cost_per_million"`
+	OutputCostPerMillion float64 `json:"output_cost_per_million"`
+	MaxTokens            int     `json:"max_tokens"`
+	Tier                 string  `json:"tier"`
 }
 
-// RouterConfig holds router configuration
+type ProviderConfig struct {
+	APIKeyEnv string                  `json:"api_key_env"`
+	BaseURL   string                  `json:"base_url,omitempty"`
+	Models    map[string]*ModelConfig `json:"models"`
+}
+
+type NotDiamondConfig struct {
+	APIKeyEnv string `json:"api_key_env"`
+	BaseURL   string `json:"base_url"`
+}
+
 type RouterConfig struct {
-	Model      string `yaml:"model"`
-	Timeout    string `yaml:"timeout"`
-	MaxRetries int    `yaml:"max_retries"`
+	Model      string `json:"model"`
+	Timeout    string `json:"timeout"`
+	MaxRetries int    `json:"max_retries"`
 }
 
-// ModelsConfig holds the LLM models and router configuration
 type ModelsConfig struct {
-	Models map[string]*ModelConfig `yaml:"models"`
-	Router RouterConfig            `yaml:"router"`
+	Providers  map[string]*ProviderConfig `json:"providers"`
+	NotDiamond *NotDiamondConfig          `json:"not_diamond"`
+	Router     RouterConfig               `json:"router"`
 }
 
-// LoadModelsConfig loads model and router configuration from a YAML file
 func LoadModelsConfig(path string) (*ModelsConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -38,13 +43,12 @@ func LoadModelsConfig(path string) (*ModelsConfig, error) {
 	}
 
 	var config ModelsConfig
-	if err := yaml.Unmarshal(data, &config); err != nil {
+	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
-	// Validate router model exists
 	if config.Router.Model != "" {
-		if _, exists := config.Models[config.Router.Model]; !exists {
+		if _, exists := config.GetModel(config.Router.Model); !exists {
 			return nil, fmt.Errorf("router model %q not found in models", config.Router.Model)
 		}
 	}
@@ -52,38 +56,47 @@ func LoadModelsConfig(path string) (*ModelsConfig, error) {
 	return &config, nil
 }
 
-// GetModel returns a model configuration by name
 func (c *ModelsConfig) GetModel(name string) (*ModelConfig, bool) {
-	cfg, exists := c.Models[name]
-	return cfg, exists
+	for _, provider := range c.Providers {
+		if model, exists := provider.Models[name]; exists {
+			return model, true
+		}
+	}
+	return nil, false
 }
 
-// GetAllModels returns all model names
 func (c *ModelsConfig) GetAllModels() []string {
-	names := make([]string, 0, len(c.Models))
-	for name := range c.Models {
-		names = append(names, name)
+	names := make([]string, 0)
+	for _, provider := range c.Providers {
+		for name := range provider.Models {
+			names = append(names, name)
+		}
 	}
 	return names
 }
 
-// GetModelsByProvider returns all models for a specific provider
-func (c *ModelsConfig) GetModelsByProvider(provider string) []*ModelConfig {
+func (c *ModelsConfig) GetProvider(name string) (*ProviderConfig, bool) {
+	provider, exists := c.Providers[name]
+	return provider, exists
+}
+
+func (c *ModelsConfig) GetModelsForProvider(providerName string) []*ModelConfig {
 	var models []*ModelConfig
-	for _, cfg := range c.Models {
-		if cfg.Provider == provider {
-			models = append(models, cfg)
+	if provider, exists := c.Providers[providerName]; exists {
+		for _, model := range provider.Models {
+			models = append(models, model)
 		}
 	}
 	return models
 }
 
-// GetModelsByTier returns all models in a specific tier
 func (c *ModelsConfig) GetModelsByTier(tier string) []*ModelConfig {
 	var models []*ModelConfig
-	for _, cfg := range c.Models {
-		if cfg.Tier == tier {
-			models = append(models, cfg)
+	for _, provider := range c.Providers {
+		for _, model := range provider.Models {
+			if model.Tier == tier {
+				models = append(models, model)
+			}
 		}
 	}
 	return models
