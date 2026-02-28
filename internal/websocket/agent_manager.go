@@ -7,6 +7,11 @@ import (
 	"github.com/rs/zerolog"
 )
 
+type Agent interface {
+	Submit(task agent.Task)
+	Stop()
+}
+
 // AgentKey is a composite key for agent lookup: (userID, agentID)
 type AgentKey struct {
 	UserID  string
@@ -15,29 +20,21 @@ type AgentKey struct {
 
 // AgentManagerOptions configures a new AgentManager.
 type AgentManagerOptions struct {
-	LLMClient agent.LLMClient
 }
 
 // AgentManager manages per-user agents with thread-safe access.
 // Agents are keyed by composite (userID, agentID) to support multiple agents per user.
 type AgentManager struct {
-	mu        sync.RWMutex
-	agents    map[AgentKey]*agent.Agent
-	logger    zerolog.Logger
-	llmClient agent.LLMClient
+	mu     sync.RWMutex
+	agents map[AgentKey]*agent.Agent
+	logger zerolog.Logger
 }
 
 // NewAgentManager creates a new AgentManager.
 func NewAgentManager(logger zerolog.Logger, opts *AgentManagerOptions) *AgentManager {
-	var llmClient agent.LLMClient
-	if opts != nil && opts.LLMClient != nil {
-		llmClient = opts.LLMClient
-	}
-
 	return &AgentManager{
-		agents:    make(map[AgentKey]*agent.Agent),
-		logger:    logger,
-		llmClient: llmClient,
+		agents: make(map[AgentKey]*agent.Agent),
+		logger: logger,
 	}
 }
 
@@ -68,18 +65,42 @@ func (m *AgentManager) GetOrCreateAgentForUser(userID, agentID string) *agent.Ag
 	return newAgent
 }
 
-// createAgent creates a new agent with appropriate LLM client.
+// GetAgent returns an Agent interface for the given (userID, agentID) pair.
+// If conn is provided, it wraps it for thread-safe writes through the writeCh.
+func (m *AgentManager) GetAgent(userID, agentID string, conn *WSConnWrapper) Agent {
+	ag := m.GetOrCreateAgentForUser(userID, agentID)
+	return &agentAdapter{agent: ag, conn: conn, agentID: agentID}
+}
+
+type agentAdapter struct {
+	agent   *agent.Agent
+	conn    *WSConnWrapper
+	agentID string
+}
+
+func (a *agentAdapter) Submit(task agent.Task) {
+	if a.conn != nil {
+		_ = a.conn.WriteJSON(map[string]interface{}{
+			"type":     "agent_start",
+			"agent_id": a.agentID,
+		})
+
+		_ = a.conn.WriteJSON(map[string]interface{}{
+			"type":     "agent_end",
+			"agent_id": a.agentID,
+		})
+	}
+	a.agent.Lane().Submit(task.Message)
+}
+
+func (a *agentAdapter) Stop() {
+}
+
+// createAgent creates a new agent.
 func (m *AgentManager) createAgent(userID, agentID string) *agent.Agent {
 	opts := agent.AgentOptions{
 		ID:        agentID,
 		SessionID: userID + ":" + agentID,
-	}
-
-	// Use configured LLM client or mock client for backward compatibility/testing
-	if m.llmClient != nil {
-		opts.LLMClient = m.llmClient
-	} else {
-		opts.LLMClient = &agent.MockLLMClient{}
 	}
 
 	return agent.NewAgent(opts)

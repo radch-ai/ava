@@ -68,7 +68,6 @@ func main() {
 	}
 
 	// Create model selector and Eino client
-	var einoClient *llm.EinoClient
 	if modelsCfg != nil {
 		var ndAPIKey string
 		if modelsCfg.NotDiamond != nil {
@@ -77,7 +76,7 @@ func main() {
 
 		selector := llm.NewModelSelector(modelsCfg.NotDiamond.BaseURL, ndAPIKey)
 		llmModels := llm.ConvertConfig(modelsCfg)
-		einoClient = llm.NewEinoClient(llmModels, selector, redisClient)
+		_ = llm.NewEinoClient(llmModels, selector, redisClient)
 		logger.Info().Msg("Eino client initialized")
 	}
 
@@ -88,10 +87,8 @@ func main() {
 	// Default cache TTL to 5 minutes if not specified
 	authMW := server.NewAuthMiddleware(cfg.ZetidalURL, cache, 5*time.Minute)
 
-	// Create WebSocket handler with Eino client
-	wsHandler := websocket.NewHandler(logger, allowedOrigins, maxConns, &websocket.AgentManagerOptions{
-		LLMClient: einoClient,
-	})
+	// Create WebSocket handler
+	wsHandler := websocket.NewHandler(logger, allowedOrigins, maxConns, nil)
 
 	// Create and start server with auth middleware
 	srv := server.New(cfg.ServerAddr, logger, wsHandler, authMW)

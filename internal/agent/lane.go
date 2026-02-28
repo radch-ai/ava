@@ -10,6 +10,8 @@ type Task struct {
 	ID        string
 	Message   string
 	CreatedAt int64
+	Conn      WSConn
+	MsgID     string
 }
 
 type Lane struct {

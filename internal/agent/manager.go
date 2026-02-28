@@ -18,7 +18,6 @@ type AgentDB interface {
 type AgentManager struct {
 	agents map[string]*Agent
 	db     AgentDB
-	llm    LLMClient
 	mu     sync.RWMutex
 }
 
@@ -26,7 +25,6 @@ func NewAgentManager(db AgentDB, llm LLMClient, quota interface{}, mem0 interfac
 	return &AgentManager{
 		agents: make(map[string]*Agent),
 		db:     db,
-		llm:    llm,
 	}
 }
 
@@ -55,7 +53,6 @@ func (m *AgentManager) GetAgent(userID, agentID string) *Agent {
 		UserID:       userID,
 		AgentID:      config.AgentID,
 		SystemPrompt: config.SystemPrompt,
-		LLMClient:    m.llm,
 	})
 
 	m.agents[agentID] = agent

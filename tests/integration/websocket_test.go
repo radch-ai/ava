@@ -507,25 +507,3 @@ func TestConcurrentAgentAccess(t *testing.T) {
 		t.Error("expected valid agent after concurrent access")
 	}
 }
-
-// TestAgentPromptContextCancellation tests that prompt respects context cancellation.
-func TestAgentPromptContextCancellation(t *testing.T) {
-	logger := zerolog.New(os.Stderr)
-	manager := wspkg.NewAgentManager(logger, nil)
-
-	sessionID := "cancel-session"
-	agent := manager.GetOrCreateAgent(sessionID, sessionID)
-	if agent == nil {
-		t.Fatal("expected non-nil agent")
-	}
-
-	// Create a context that's already cancelled
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	// Prompt with cancelled context should return error
-	err := agent.Prompt(ctx, "test")
-	if err == nil {
-		t.Error("expected error when prompting with cancelled context")
-	}
-}

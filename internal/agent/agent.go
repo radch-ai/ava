@@ -41,21 +41,9 @@
 //	    // ... other event types
 //	    }
 //	}
-//
-// # Prompting the Agent
-//
-// Send a user message to the agent:
-//
-//	ctx := context.Background()
-//	err := agent.Prompt(ctx, "Hello, how are you?")
-//	if err != nil {
-//	    log.Fatal(err)
-//	}
 package agent
 
 import (
-	"context"
-	"fmt"
 	"sync"
 
 	"github.com/google/uuid"
@@ -70,7 +58,6 @@ type AgentOptions struct {
 	SessionID    string
 	UserID       string
 	AgentID      string
-	LLMClient    LLMClient // Optional LLM client for tool calling loop
 }
 
 // Agent manages agent state with thread-safe access and event broadcasting.
@@ -82,10 +69,7 @@ type Agent struct {
 	agentID       string
 	subscribers   map[string]chan AgentEvent
 	subscribersMu sync.Mutex
-	ctx           context.Context
-	cancel        context.CancelFunc
 	lane          *Lane
-	llmClient     LLMClient // Optional LLM client for tool calling
 }
 
 // NewAgent creates a new Agent with the given options.
@@ -108,8 +92,6 @@ func NewAgent(opts AgentOptions) *Agent {
 		agentID = id
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
 	state := NewAgentState(AgentStateOptions{
 		SystemPrompt: opts.SystemPrompt,
 		SessionID:    opts.SessionID,
@@ -123,10 +105,7 @@ func NewAgent(opts AgentOptions) *Agent {
 		agentID:     agentID,
 		state:       state,
 		subscribers: make(map[string]chan AgentEvent),
-		ctx:         ctx,
-		cancel:      cancel,
 		lane:        NewLane(),
-		llmClient:   opts.LLMClient,
 	}
 }
 
@@ -150,20 +129,6 @@ func (a *Agent) Unsubscribe(id string) {
 		delete(a.subscribers, id)
 	}
 	a.subscribersMu.Unlock()
-}
-
-// emit broadcasts an event to all subscribers.
-func (a *Agent) emit(event AgentEvent) {
-	a.subscribersMu.Lock()
-	defer a.subscribersMu.Unlock()
-
-	for _, ch := range a.subscribers {
-		select {
-		case ch <- event:
-		default:
-			// Channel full, skip this subscriber
-		}
-	}
 }
 
 // State returns a copy of the current agent state.
@@ -202,69 +167,6 @@ func (a *Agent) State() AgentState {
 // Lane returns the agent's message queue lane.
 func (a *Agent) Lane() *Lane {
 	return a.lane
-}
-
-// Prompt sends a user message to the agent and runs the tool calling loop.
-// This uses the Loop for actual LLM integration with streaming and tool execution.
-func (a *Agent) Prompt(ctx context.Context, message string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	// Check if LLM client is configured
-	if a.llmClient == nil {
-		return fmt.Errorf("LLM client not configured")
-	}
-
-	// 1. Lock and add user message to state.Messages
-	a.mu.Lock()
-	userMsg := NewTextMessage(RoleUser, message)
-	a.state.AddMessage(userMsg)
-	a.mu.Unlock()
-
-	// 2. Emit AgentStartEvent
-	a.emit(AgentStartEvent{Timestamp: userMsg.Timestamp})
-
-	// 3. Set streaming state
-	a.setStreamingState(true, nil)
-
-	// 4. Run tool calling loop using Loop with actual LLM integration
-	// This replaces the old placeholder with real streaming + tool execution
-	loop := NewLoop(a.llmClient)
-
-	// Get current messages as starting point
-	messages := a.State().Messages
-
-	// Run loop - handles LLM streaming and tool execution
-	result, err := loop.Run(ctx, messages, a.state.Tools...)
-	if err != nil {
-		a.setStreamingState(false, nil)
-		return err
-	}
-
-	// 5. Update state with final messages from loop
-	a.mu.Lock()
-	a.state.Messages = result.Messages
-	a.mu.Unlock()
-
-	// 6. Emit AgentEndEvent
-	finalState := a.State()
-	a.emit(AgentEndEvent{
-		Timestamp: finalState.Messages[len(finalState.Messages)-1].Timestamp,
-		Messages:  finalState.Messages,
-	})
-
-	// 7. Clear streaming state
-	a.setStreamingState(false, nil)
-
-	return nil
-}
-
-// setStreamingState updates the streaming state under lock.
-func (a *Agent) setStreamingState(streaming bool, msg *AgentMessage) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.state.SetStreaming(streaming, msg)
 }
 
 // AddTools adds tools to the agent's tool list in a thread-safe manner.

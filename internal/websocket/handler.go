@@ -378,57 +378,23 @@ func (h *Handler) pingLoop(ctx context.Context, writeCh chan<- *wsMessage, logge
 	}
 }
 
-// forwardAgentEvents forwards agent events to the WebSocket client.
-func (h *Handler) forwardAgentEvents(ctx context.Context, eventCh <-chan agent.AgentEvent, writeCh chan<- *wsMessage, logger zerolog.Logger, agentID string) {
-	defer func() {
-		// Recover from panic on closed channel during shutdown
-		if r := recover(); r != nil {
-			logger.Debug().Msgf("forwardAgentEvents recovered: %v", r)
-		}
-	}()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case event, ok := <-eventCh:
-			if !ok {
-				return
-			}
-			wsEvt := h.agentEventToWSEvent(event, agentID)
-			if wsEvt == nil {
-				continue
-			}
-			msg := wsMsgPool.Get().(*wsMessage)
-			msg.messageType = websocket.TextMessage
-			msg.data = marshalEvent(*wsEvt)
-
-			// Try to send with timeout, using a select that catches channel close
-			sendTimer := time.NewTimer(100 * time.Millisecond)
-			select {
-			case writeCh <- msg:
-				sendTimer.Stop()
-				// Writer will handle pool return
-			case <-ctx.Done():
-				sendTimer.Stop()
-				// Context cancelled - return msg to pool and exit
-				msg.messageType = 0
-				msg.data = nil
-				wsMsgPool.Put(msg)
-				return
-			case <-sendTimer.C:
-				sendTimer.Stop()
-				// Timeout, skip this event
-				msg.messageType = 0
-				msg.data = nil
-				wsMsgPool.Put(msg)
-				logger.Debug().Msg("agent event forward timeout")
-			}
-		}
+func messageTypeToString(t int) string {
+	switch t {
+	case websocket.TextMessage:
+		return "text"
+	case websocket.BinaryMessage:
+		return "binary"
+	case websocket.CloseMessage:
+		return "close"
+	case websocket.PingMessage:
+		return "ping"
+	case websocket.PongMessage:
+		return "pong"
+	default:
+		return "unknown"
 	}
 }
 
-// handleTextMessage handles incoming text messages from the WebSocket client.
 func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID string, writeCh chan<- *wsMessage, logger zerolog.Logger) {
 	var msg struct {
 		ID      string `json:"id"`
@@ -445,7 +411,6 @@ func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID str
 
 	switch msg.Type {
 	case "prompt":
-		// Validate required fields
 		if msg.ID == "" {
 			logger.Debug().Msg("prompt message missing id field")
 			return
@@ -459,29 +424,31 @@ func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID str
 			return
 		}
 
-		// Get or create agent for this user/agent pair
-		agentInstance := h.agentManager.GetOrCreateAgentForUser(userID, msg.AgentID)
-
-		// Subscribe to agent events for this specific agent
-		subID, eventCh := agentInstance.Subscribe()
-		defer agentInstance.Unsubscribe(subID)
-
-		// Start goroutine to forward this agent's events to WebSocket
-		go h.forwardAgentEvents(ctx, eventCh, writeCh, logger, msg.AgentID)
-
-		// Send prompt to agent
-		if err := agentInstance.Prompt(ctx, msg.Text); err != nil {
-			logger.Error().Err(err).Str("agent_id", msg.AgentID).Msg("agent prompt failed")
+		connWrapper := NewWSConnWrapper(writeCh)
+		ag := h.agentManager.GetAgent(userID, msg.AgentID, connWrapper)
+		if ag == nil {
+			logger.Debug().Msg("failed to get agent")
+			return
 		}
+
+		task := agent.Task{
+			Message: msg.Text,
+			Conn:    connWrapper,
+			MsgID:   msg.ID,
+		}
+		ag.Submit(task)
 	case "steer":
 		if msg.AgentID == "" {
 			logger.Debug().Msg("steer message missing agent_id field")
 			return
 		}
 
-		agentInstance := h.agentManager.GetOrCreateAgentForUser(userID, msg.AgentID)
-		cancelled := agentInstance.Lane().Steer()
-		logger.Debug().Int("cancelled", cancelled).Msg("steer cancelled pending tasks")
+		ag := h.agentManager.GetAgent(userID, msg.AgentID, nil)
+		if ag == nil {
+			logger.Debug().Msg("failed to get agent for steer")
+			return
+		}
+		ag.Stop()
 	case "status":
 		if msg.AgentID == "" {
 			logger.Debug().Msg("status message missing agent_id field")
@@ -508,128 +475,6 @@ func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID str
 		}
 	default:
 		logger.Debug().Str("msg_type", msg.Type).Msg("unknown message type")
-	}
-}
-
-// agentEventToWSEvent converts an agent event to a WebSocket event.
-func (h *Handler) agentEventToWSEvent(event agent.AgentEvent, agentID string) *wsEvent {
-	switch e := event.(type) {
-	case agent.AgentStartEvent:
-		return &wsEvent{
-			Type:    "agent_start",
-			AgentID: agentID,
-			Data: map[string]any{
-				"timestamp": e.Timestamp,
-			},
-		}
-	case agent.AgentEndEvent:
-		return &wsEvent{
-			Type:    "agent_end",
-			AgentID: agentID,
-			Data: map[string]any{
-				"timestamp": e.Timestamp,
-				"messages":  e.Messages,
-			},
-		}
-	case agent.TurnStartEvent:
-		return &wsEvent{
-			Type:    "turn_start",
-			AgentID: agentID,
-			Data: map[string]any{
-				"timestamp": e.Timestamp,
-			},
-		}
-	case agent.TurnEndEvent:
-		return &wsEvent{
-			Type:    "turn_end",
-			AgentID: agentID,
-			Data: map[string]any{
-				"timestamp":   e.Timestamp,
-				"message":     e.Message,
-				"toolResults": e.ToolResults,
-			},
-		}
-	case agent.MessageStartEvent:
-		return &wsEvent{
-			Type:    "message_start",
-			AgentID: agentID,
-			Data: map[string]any{
-				"timestamp": e.Timestamp,
-				"message":   e.Message,
-			},
-		}
-	case agent.MessageUpdateEvent:
-		return &wsEvent{
-			Type:    "message_update",
-			AgentID: agentID,
-			Data: map[string]any{
-				"timestamp": e.Timestamp,
-				"message":   e.Message,
-				"delta":     e.Delta,
-			},
-		}
-	case agent.MessageEndEvent:
-		return &wsEvent{
-			Type:    "message_end",
-			AgentID: agentID,
-			Data: map[string]any{
-				"timestamp": e.Timestamp,
-				"message":   e.Message,
-			},
-		}
-	case agent.ToolExecutionStartEvent:
-		return &wsEvent{
-			Type:    "tool_start",
-			AgentID: agentID,
-			Data: map[string]any{
-				"timestamp":    e.Timestamp,
-				"tool_call_id": e.ToolCallID,
-				"tool_name":    e.ToolName,
-				"args":         e.Args,
-			},
-		}
-	case agent.ToolExecutionUpdateEvent:
-		return &wsEvent{
-			Type:    "tool_update",
-			AgentID: agentID,
-			Data: map[string]any{
-				"timestamp":      e.Timestamp,
-				"tool_call_id":   e.ToolCallID,
-				"tool_name":      e.ToolName,
-				"partial_result": e.PartialResult,
-			},
-		}
-	case agent.ToolExecutionEndEvent:
-		return &wsEvent{
-			Type:    "tool_end",
-			AgentID: agentID,
-			Data: map[string]any{
-				"timestamp":    e.Timestamp,
-				"tool_call_id": e.ToolCallID,
-				"tool_name":    e.ToolName,
-				"result":       e.Result,
-				"is_error":     e.IsError,
-			},
-		}
-	default:
-		return nil
-	}
-}
-
-func messageTypeToString(t int) string {
-	switch t {
-	case websocket.TextMessage:
-		return "text"
-	case websocket.BinaryMessage:
-		return "binary"
-	case websocket.CloseMessage:
-		return "close"
-	case websocket.PingMessage:
-		return "ping"
-	case websocket.PongMessage:
-		return "pong"
-	default:
-		return "unknown"
 	}
 }
 
