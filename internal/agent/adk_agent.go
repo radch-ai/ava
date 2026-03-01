@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	duckduckgo "github.com/cloudwego/eino-ext/components/tool/duckduckgo"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -124,7 +125,12 @@ func buildInstruction(systemPrompt string, memories []string) string {
 }
 
 func GetGlobalTools() []tool.BaseTool {
-	return []tool.BaseTool{}
+	ctx := context.Background()
+	ddgTool, err := duckduckgo.NewTool(ctx, &duckduckgo.Config{}) //nolint:staticcheck // NewTextSearchTool not yet available
+	if err != nil {
+		return []tool.BaseTool{}
+	}
+	return []tool.BaseTool{ddgTool}
 }
 
 func (a *ADKAgent) loop() {
