@@ -166,3 +166,50 @@ func TestADKAgent_DrainMessages(t *testing.T) {
 
 	assert.GreaterOrEqual(t, len(tasks), 1)
 }
+
+func TestBuildInstruction_WithMemories(t *testing.T) {
+	systemPrompt := "You are a helpful assistant."
+	memories := []string{"User likes Go programming"}
+
+	result := buildInstruction(systemPrompt, memories)
+
+	assert.Equal(t, "You are a helpful assistant.\n\nContext about the user:\n- User likes Go programming\n", result)
+}
+
+func TestBuildInstruction_NoMemories(t *testing.T) {
+	systemPrompt := "You are a helpful assistant."
+	memories := []string{}
+
+	result := buildInstruction(systemPrompt, memories)
+
+	assert.Equal(t, "You are a helpful assistant.", result)
+}
+
+func TestBuildInstruction_EmptySystemPrompt(t *testing.T) {
+	systemPrompt := ""
+	memories := []string{"User prefers dark mode"}
+
+	result := buildInstruction(systemPrompt, memories)
+
+	assert.Equal(t, "\n\nContext about the user:\n- User prefers dark mode\n", result)
+}
+
+func TestBuildInstruction_MultipleMemories(t *testing.T) {
+	systemPrompt := "You are a helpful assistant."
+	memories := []string{
+		"User likes Go programming",
+		"User prefers concise responses",
+		"User works at Acme Corp",
+	}
+
+	result := buildInstruction(systemPrompt, memories)
+
+	expected := "You are a helpful assistant.\n\nContext about the user:\n- User likes Go programming\n- User prefers concise responses\n- User works at Acme Corp\n"
+	assert.Equal(t, expected, result)
+}
+
+func TestGetGlobalTools_ReturnsTools(t *testing.T) {
+	tools := GetGlobalTools()
+
+	assert.NotEmpty(t, tools, "GetGlobalTools should return at least one tool")
+}
