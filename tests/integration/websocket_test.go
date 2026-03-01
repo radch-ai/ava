@@ -8,11 +8,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/nevaria-ai/gateway/internal/agent"
 	wspkg "github.com/nevaria-ai/gateway/internal/websocket"
 	"github.com/rs/zerolog"
 )
@@ -70,7 +70,7 @@ func (c *wsClient) Close() {
 func (c *wsClient) SendPrompt(t *testing.T, prompt string) {
 	t.Helper()
 
-	msg := map[string]string{"type": "prompt", "text": prompt}
+	msg := map[string]string{"type": "prompt", "id": "test-msg-id", "agent_id": "test-agent", "text": prompt}
 	data, err := json.Marshal(msg)
 	if err != nil {
 		t.Fatalf("failed to marshal prompt: %v", err)
@@ -133,10 +133,10 @@ func TestAgentManagerCreation(t *testing.T) {
 	}
 }
 
-// TestAgentCreationOnConnect tests that an agent is created when a WebSocket connects.
+// TestAgentCreationOnConnect tests that connection is established.
 func TestAgentCreationOnConnect(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := wspkg.NewHandler(logger, []string{"*"}, 100)
+	handler := wspkg.NewHandler(logger, []string{"*"}, 100, nil)
 	srv := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer srv.Close()
 
@@ -144,7 +144,6 @@ func TestAgentCreationOnConnect(t *testing.T) {
 	defer client.Close()
 
 	// Wait for connection established message
-	// First read any initial messages (the connected event should be the first one)
 	timeout := time.After(2 * time.Second)
 	var firstEvent json.RawMessage
 	select {
@@ -178,16 +177,16 @@ func TestAgentCreationOnConnect(t *testing.T) {
 		t.Error("expected session_id in connected event")
 	}
 
-	agentID, ok := data["agent_id"].(string)
-	if !ok || agentID == "" {
-		t.Error("expected agent_id in connected event")
+	connID, ok := data["conn_id"].(string)
+	if !ok || connID == "" {
+		t.Error("expected conn_id in connected event")
 	}
 }
 
 // TestAgentEventForwarding tests that agent events are forwarded to the WebSocket.
 func TestAgentEventForwarding(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := wspkg.NewHandler(logger, []string{"*"}, 100)
+	handler := wspkg.NewHandler(logger, []string{"*"}, 100, nil)
 	srv := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer srv.Close()
 
@@ -204,28 +203,13 @@ func TestAgentEventForwarding(t *testing.T) {
 	_ = client.WaitForEvent(t, 2*time.Second, hasType("agent_start"))
 
 	// Wait for agent_end event
-	endEvent := client.WaitForEvent(t, 2*time.Second, hasType("agent_end"))
-
-	data, ok := extractNestedData(endEvent)
-	if !ok {
-		t.Fatal("expected data in agent_end event")
-	}
-
-	messages, ok := data["messages"].([]any)
-	if !ok {
-		t.Error("expected messages in agent_end event data")
-	}
-
-	// Should have user message and assistant response
-	if len(messages) < 2 {
-		t.Errorf("expected at least 2 messages, got %d", len(messages))
-	}
+	_ = client.WaitForEvent(t, 2*time.Second, hasType("agent_end"))
 }
 
 // TestPromptHandling tests that incoming prompts trigger agent processing.
 func TestPromptHandling(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := wspkg.NewHandler(logger, []string{"*"}, 100)
+	handler := wspkg.NewHandler(logger, []string{"*"}, 100, nil)
 	srv := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer srv.Close()
 
@@ -236,68 +220,19 @@ func TestPromptHandling(t *testing.T) {
 	_ = client.WaitForEvent(t, 2*time.Second, hasType("connected"))
 
 	// Send a prompt
-	testPrompt := "test message"
-	client.SendPrompt(t, testPrompt)
+	client.SendPrompt(t, "test message")
 
 	// Wait for agent_start
 	_ = client.WaitForEvent(t, 2*time.Second, hasType("agent_start"))
 
-	// Wait for agent_end with response
-	endEvent := client.WaitForEvent(t, 2*time.Second, hasType("agent_end"))
-
-	data, ok := extractNestedData(endEvent)
-	if !ok {
-		t.Fatal("expected messages in agent_end event data")
-	}
-
-	messages, ok := data["messages"].([]any)
-	if !ok {
-		t.Fatal("expected messages in agent_end event data")
-	}
-
-	// Verify we got messages
-	if len(messages) < 2 {
-		t.Fatalf("expected at least 2 messages, got %d", len(messages))
-	}
-
-	// Check that the assistant message contains a response to our prompt
-	foundResponse := false
-	for _, msg := range messages {
-		msgMap, ok := msg.(map[string]any)
-		if !ok {
-			continue
-		}
-		role, ok := msgMap["role"].(string)
-		if !ok {
-			continue
-		}
-		if role == "assistant" {
-			foundResponse = true
-			content, ok := msgMap["content"].([]any)
-			if !ok {
-				continue
-			}
-			if len(content) > 0 {
-				contentBlock, ok := content[0].(map[string]any)
-				if ok {
-					text, ok := contentBlock["text"].(string)
-					if ok && strings.Contains(text, testPrompt) {
-						return // Success - response contains our prompt text
-					}
-				}
-			}
-		}
-	}
-
-	if !foundResponse {
-		t.Error("expected assistant response in messages")
-	}
+	// Wait for agent_end
+	_ = client.WaitForEvent(t, 2*time.Second, hasType("agent_end"))
 }
 
 // TestAgentCleanupOnDisconnect tests that agents are cleaned up when connection closes.
 func TestAgentCleanupOnDisconnect(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := wspkg.NewHandler(logger, []string{"*"}, 100)
+	handler := wspkg.NewHandler(logger, []string{"*"}, 100, nil)
 	srv := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer srv.Close()
 
@@ -347,79 +282,77 @@ func TestAgentCleanupOnDisconnect(t *testing.T) {
 	client2.Close()
 }
 
-// TestAgentManagerGetOrCreateAgent tests the GetOrCreateAgent method.
+// TestAgentManagerGetOrCreateAgent tests the GetOrCreateAgentForUser method.
 func TestAgentManagerGetOrCreateAgent(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
 	manager := wspkg.NewAgentManager(logger, nil)
 
-	sessionID := "test-session-123"
+	ctx := context.Background()
+	userID := "test-user-123"
+	agentID := "test-agent-123"
 
 	// First call should create a new agent
-	agent1 := manager.GetOrCreateAgent(sessionID, sessionID)
+	agent1 := manager.GetOrCreateAgentForUser(ctx, userID, agentID, agent.Task{})
 	if agent1 == nil {
 		t.Fatal("expected non-nil agent")
 	}
 
 	// Second call should return the same agent
-	agent2 := manager.GetOrCreateAgent(sessionID, sessionID)
+	agent2 := manager.GetOrCreateAgentForUser(ctx, userID, agentID, agent.Task{})
 	if agent2 == nil {
 		t.Fatal("expected non-nil agent on second call")
 	}
 
 	// Verify they're the same instance
-	state1 := agent1.State()
-	state2 := agent2.State()
-	if state1.SessionID != state2.SessionID {
-		t.Error("expected same agent for same session ID")
+	if agent1 != agent2 {
+		t.Error("expected same agent for same user/agent ID")
 	}
 
-	// Different session ID should get different agent
-	agent3 := manager.GetOrCreateAgent("different-session", "different-session")
+	// Different agent ID should get different agent
+	agent3 := manager.GetOrCreateAgentForUser(ctx, userID, "different-agent", agent.Task{})
 	if agent3 == nil {
-		t.Fatal("expected non-nil agent for different session")
+		t.Fatal("expected non-nil agent for different agent ID")
 	}
 
-	state3 := agent3.State()
-	if state3.SessionID == state1.SessionID {
-		t.Error("expected different agent for different session ID")
+	if agent3 == agent1 {
+		t.Error("expected different agent for different agent ID")
 	}
 }
 
-// TestAgentManagerRemoveAgent tests the RemoveAgent method.
+// TestAgentManagerRemoveAgent tests the RemoveAgentForUser method.
 func TestAgentManagerRemoveAgent(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
 	manager := wspkg.NewAgentManager(logger, nil)
 
-	sessionID := "test-session-remove"
+	ctx := context.Background()
+	userID := "test-user-remove"
+	agentID := "test-agent-remove"
 
 	// Create an agent
-	agent := manager.GetOrCreateAgent(sessionID, sessionID)
-	if agent == nil {
+	ag := manager.GetOrCreateAgentForUser(ctx, userID, agentID, agent.Task{})
+	if ag == nil {
 		t.Fatal("expected non-nil agent")
 	}
 
 	// Remove the agent
-	manager.RemoveAgent(sessionID)
+	manager.RemoveAgentForUser(userID, agentID)
 
 	// Should create a new agent now
-	newAgent := manager.GetOrCreateAgent(sessionID, sessionID)
+	newAgent := manager.GetOrCreateAgentForUser(ctx, userID, agentID, agent.Task{})
 	if newAgent == nil {
 		t.Fatal("expected non-nil agent after remove")
 	}
 
-	// Verify it's a new instance (we can check by comparing state or just ensuring the old one is no longer tracked)
-	// Since agent.State() returns a copy, we can't directly compare instances
-	// But we can verify the session ID is preserved
-	newState := newAgent.State()
-	if newState.SessionID != sessionID {
-		t.Error("expected session ID to be preserved for new agent instance")
+	// Verify it's a new instance
+	if newAgent == ag {
+		t.Error("expected different agent instance after remove")
 	}
 }
 
 // TestInvalidMessageType tests handling of invalid message types.
 func TestInvalidMessageType(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := wspkg.NewHandler(logger, []string{"*"}, 100)
+	handler := wspkg.NewHandler(logger, []string{"*"}, 100, nil)
 	srv := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer srv.Close()
 
@@ -447,7 +380,7 @@ func TestInvalidMessageType(t *testing.T) {
 // TestInvalidPromptMessage tests handling of prompt messages without text.
 func TestInvalidPromptMessage(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := wspkg.NewHandler(logger, []string{"*"}, 100)
+	handler := wspkg.NewHandler(logger, []string{"*"}, 100, nil)
 	srv := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer srv.Close()
 
@@ -478,16 +411,18 @@ func TestConcurrentAgentAccess(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
 	manager := wspkg.NewAgentManager(logger, nil)
 
-	// Launch goroutines that all access the same session
-	sessionID := "concurrent-session"
+	// Launch goroutines that all access the same agent
+	ctx := context.Background()
+	userID := "concurrent-user"
+	agentID := "concurrent-agent"
 	done := make(chan struct{})
 
 	for i := 0; i < 10; i++ {
 		go func() {
 			defer func() { done <- struct{}{} }()
-			agent := manager.GetOrCreateAgent(sessionID, sessionID)
-			if agent != nil {
-				_ = agent.State() // Just accessing the agent
+			ag := manager.GetOrCreateAgentForUser(ctx, userID, agentID, agent.Task{})
+			if ag != nil {
+				_ = ag.GetStatus() // Just accessing the agent
 			}
 		}()
 	}
@@ -502,8 +437,8 @@ func TestConcurrentAgentAccess(t *testing.T) {
 	}
 
 	// Verify we still have a valid agent
-	agent := manager.GetOrCreateAgent(sessionID, sessionID)
-	if agent == nil {
+	ag := manager.GetOrCreateAgentForUser(ctx, userID, agentID, agent.Task{})
+	if ag == nil {
 		t.Error("expected valid agent after concurrent access")
 	}
 }

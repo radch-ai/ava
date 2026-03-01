@@ -24,15 +24,16 @@ func workspacePath(userID, agentID, filename string) string {
 
 // TestMultiAgentPerUser verifies multiple agents can be created for a single user.
 func TestMultiAgentPerUser(t *testing.T) {
+	ctx := context.Background()
 	logger := zerolog.Nop()
 	mgr := websocket.NewAgentManager(logger, nil)
 
 	userID := "user-123"
 
 	// Create three different agents for the same user
-	agent1 := mgr.GetOrCreateAgentForUser(userID, "agent-1")
-	agent2 := mgr.GetOrCreateAgentForUser(userID, "agent-2")
-	agent3 := mgr.GetOrCreateAgentForUser(userID, "agent-3")
+	agent1 := mgr.GetOrCreateAgentForUser(ctx, userID, "agent-1", agent.Task{})
+	agent2 := mgr.GetOrCreateAgentForUser(ctx, userID, "agent-2", agent.Task{})
+	agent3 := mgr.GetOrCreateAgentForUser(ctx, userID, "agent-3", agent.Task{})
 
 	// Verify they are different
 	if agent1 == agent2 {
@@ -43,14 +44,14 @@ func TestMultiAgentPerUser(t *testing.T) {
 	}
 
 	// Verify state has correct agent IDs
-	state1 := agent1.State()
-	if state1.AgentID != "agent-1" {
-		t.Errorf("expected agent-1, got %s", state1.AgentID)
+	state1 := agent1.GetStatus()
+	if state1["agent_id"] != "agent-1" {
+		t.Errorf("expected agent-1, got %s", state1["agent_id"])
 	}
 
-	state2 := agent2.State()
-	if state2.AgentID != "agent-2" {
-		t.Errorf("expected agent-2, got %s", state2.AgentID)
+	state2 := agent2.GetStatus()
+	if state2["agent_id"] != "agent-2" {
+		t.Errorf("expected agent-2, got %s", state2["agent_id"])
 	}
 }
 

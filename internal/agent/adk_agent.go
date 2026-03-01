@@ -18,6 +18,11 @@ const (
 	defaultLaneQueueSize = 100
 )
 
+type Task struct {
+	Message string
+	MsgID   string
+}
+
 type QuotaChatModelInterface interface {
 	GetInnerModel() model.ToolCallingChatModel
 }
@@ -237,21 +242,13 @@ func (a *ADKAgent) processTasks(tasks []Task) {
 		}
 	}
 
-	conn := a.connRef.Get()
-	_ = BuildProgressHandler(conn)
-
 	if a.einoRunner != nil {
 		_ = a.einoRunner.Query(a.ctx, input.String())
 	}
 
-	a.saveToSession(msgID, input.String())
-
 	if !a.connRef.IsSet() {
 		a.notifyUser(msgID, input.String())
 	}
-}
-
-func (a *ADKAgent) saveToSession(msgID, content string) {
 }
 
 func (a *ADKAgent) GetStatus() map[string]interface{} {

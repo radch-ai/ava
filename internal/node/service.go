@@ -82,7 +82,7 @@ func (s *Service) RegisterConnection(ctx context.Context, conn WebSocketConn, no
 	agentTools := s.createNodeToolsFromSpecs(nodeInfo, toolSpecs)
 
 	// 6. Add tools to the agent
-	agent.AddTools(agentTools...)
+	_ = agent.AddTools(agentTools...)
 
 	s.logger.Info().
 		Str("node_id", nodeID).
@@ -110,7 +110,7 @@ func (s *Service) UnregisterConnection(ctx context.Context, nodeID, userID strin
 	if err == nil {
 		// Remove all tools starting with platform_nodeID_ prefix
 		prefix := fmt.Sprintf("%s_%s_", nodeInfo.Platform, nodeID)
-		agent.RemoveTools(prefix)
+		_ = agent.RemoveTools(prefix)
 	}
 
 	// 3. Unregister from registry

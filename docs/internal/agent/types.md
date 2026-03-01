@@ -154,6 +154,28 @@ flowchart TB
 | | `UserID` | `string` | User identifier |
 | | `AgentID` | `string` | Agent identifier |
 
+### Agent (Legacy Stub)
+
+Legacy type kept for node service compatibility. Node tool migration is pending.
+
+| Struct | Field | Type | Description |
+|--------|-------|------|-------------|
+| `Agent` | `ID` | `string` | Agent ID |
+| | `userID` | `string` | User identifier (private) |
+| | `agentID` | `string` | Agent identifier (private) |
+| | `tools` | `[]Tool` | Available tools (private) |
+
+### AgentOptions (Legacy)
+
+Legacy type for node test compatibility.
+
+| Struct | Field | Type | Description |
+|--------|-------|------|-------------|
+| `AgentOptions` | `SystemPrompt` | `string` | System prompt |
+| | `SessionID` | `string` | Session ID |
+| | `UserID` | `string` | User ID |
+| | `AgentID` | `string` | Agent ID |
+
 ## Functions
 
 | Function | Description |
@@ -168,6 +190,7 @@ flowchart TB
 | `ThinkingLevel.IsOff()` | Checks if thinking disabled |
 | `ThinkingLevel.IsEnabled()` | Checks if thinking enabled |
 | `ToolExecutionError.Error()` | Returns error message |
+| `NewAgent` | Creates legacy Agent for node test compatibility |
 
 ## Design Notes
 
@@ -203,6 +226,22 @@ flowchart TB
 - Consistent with provider APIs
 - Allows backward-compatible additions
 
+### Legacy Agent Stub
+
+**Q: Why keep Agent stub when ADKAgent is the primary implementation?**
+
+| Aspect | Description |
+|--------|-------------|
+| Context | Node tool system compatibility |
+| Options considered | Remove and break tests, keep stub, full migration |
+| Rationale | Node tool migration is deferred |
+
+**Current approach is recommended because:**
+- Node tests still compile
+- Incremental migration path
+- Clear documentation of legacy status
+- Will be removed after node migration
+
 ## Test Coverage
 
 ### Unit Tests (`types_test.go`)
@@ -235,5 +274,4 @@ make test ./internal/agent
 ## Related
 
 - [Agent README](README.md) - Main agent package
-- [Events](events.md) - Event types using AgentMessage
-- [Loop](loop.md) - Message processing
+- [WebSocket Handler](../websocket.md) - Agent lifecycle management

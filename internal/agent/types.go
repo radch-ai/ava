@@ -34,6 +34,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -378,4 +379,55 @@ func (s *AgentState) RemovePendingToolCall(id string) {
 // HasPendingToolCall returns true if the tool call is still pending.
 func (s *AgentState) HasPendingToolCall(id string) bool {
 	return s.PendingToolCalls[id]
+}
+
+// Agent is a legacy type kept for node service compatibility.
+// Node tool migration is pending - this stub allows compilation.
+type Agent struct {
+	ID      string
+	userID  string
+	agentID string
+	tools   []Tool
+}
+
+func (a *Agent) AddTools(tools ...Tool) error {
+	a.tools = append(a.tools, tools...)
+	return nil
+}
+
+func (a *Agent) RemoveTools(prefix string) error {
+	filtered := make([]Tool, 0)
+	for _, t := range a.tools {
+		if !strings.HasPrefix(t.Name, prefix) {
+			filtered = append(filtered, t)
+		}
+	}
+	a.tools = filtered
+	return nil
+}
+
+func (a *Agent) State() *AgentState {
+	return &AgentState{
+		UserID:  a.userID,
+		AgentID: a.agentID,
+		Tools:   a.tools,
+	}
+}
+
+// AgentOptions is a legacy type for node test compatibility.
+type AgentOptions struct {
+	SystemPrompt string
+	SessionID    string
+	UserID       string
+	AgentID      string
+}
+
+// NewAgent creates a legacy Agent for node test compatibility.
+func NewAgent(opts AgentOptions) *Agent {
+	return &Agent{
+		ID:      opts.SessionID,
+		userID:  opts.UserID,
+		agentID: opts.AgentID,
+		tools:   make([]Tool, 0),
+	}
 }

@@ -29,22 +29,19 @@ flowchart TB
     Unmarshal --> CheckType{msg.Type?}
     CheckType -->|prompt| ValidatePrompt{agentID? text?}
     ValidatePrompt -->|missing| Skip(["return"])
-    ValidatePrompt -->|valid| GetAgent["h.agentManager.GetOrCreateAgentForUser(userID, msg.AgentID) → agentInstance"]
-    GetAgent --> Subscribe["agentInstance.Subscribe() → subID, eventCh"]
-    Subscribe --> ForwardEvents["h.forwardAgentEvents(ctx, eventCh, writeCh, logger, msg.AgentID)"]
-    ForwardEvents --> AgentPrompt["agentInstance.Prompt(ctx, msg.Text)"]
-    AgentPrompt --> MsgLoop
+    ValidatePrompt -->|valid| GetAgent["h.agentManager.GetAgent(ctx, userID, msg.AgentID, connWrapper, task) → agentInstance"]
+    GetAgent --> SubmitTask["agentInstance.Submit(task)"]
+    SubmitTask --> MsgLoop
 
     click GetUserID href "ctx.md"
-    click GetAgent href "agent/README.md"
-    click AgentPrompt href "agent/README.md"
+    click GetAgent href "#GetAgent"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
     class Start,Cancel,Skip mainFn
-    class GetUserID,GetAgent,AgentPrompt localPkgs
+    class GetUserID,GetAgent localPkgs
     class LimitErr,UpgradeErr errorFlow
 ```
 
@@ -97,10 +94,16 @@ flowchart TB
 
 | Struct | Field | Type | Description |
 |--------|-------|------|-------------|
-| `AgentManager` | `mu` | `sync.RWMutex` | Thread-safe lock |
-| | `agents` | `map[AgentKey]*agent.Agent` | Agent instances |
+| `AgentManager` | `mu` | `sync.Mutex` | Thread-safe lock |
+| | `agents` | `map[AgentKey]*agent.ADKAgent` | Agent instances |
 | | `logger` | `zerolog.Logger` | Logger |
-| | `llmProxy` | `*proxy.Handler` | LLM proxy handler |
+| | `quotaChatModel` | `agent.QuotaChatModelInterface` | LLM client with quota |
+
+### AgentManagerOptions
+
+| Struct | Field | Type | Description |
+|--------|-------|------|-------------|
+| `AgentManagerOptions` | `QuotaChatModel` | `agent.QuotaChatModelInterface` | LLM client with quota |
 
 ## Functions
 
@@ -108,7 +111,7 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    Start(["NewHandler(logger, allowedOrigins, maxConns)"]) --> CopyUpgrader["handlerUpgrader = upgrader"]
+    Start(["NewHandler(logger, allowedOrigins, maxConns, agentOpts)"]) --> CopyUpgrader["handlerUpgrader = upgrader"]
     CopyUpgrader --> SetOrigin["handlerUpgrader.CheckOrigin = checkOrigin"]
 
     subgraph SGCheckOrigin [" "]
@@ -317,84 +320,60 @@ flowchart TB
     CheckUnmarshalErr -->|no| SwitchType{msg.Type?}
 
     subgraph SGPrompt [" "]
-        SwitchType -->|prompt| CheckAgentID{msg.AgentID?}
+        SwitchType -->|prompt| CheckID{msg.ID?}
+        CheckID -->|empty| LogDebug0["logger.Debug()"]
+        LogDebug0 --> Return0(["return"])
+        CheckID -->|set| CheckAgentID{msg.AgentID?}
         CheckAgentID -->|empty| LogDebug1["logger.Debug()"]
         LogDebug1 --> Return1(["return"])
         CheckAgentID -->|set| CheckText{msg.Text?}
         CheckText -->|empty| LogDebug2["logger.Debug()"]
         LogDebug2 --> Return1
-        CheckText -->|set| GetAgent["h.agentManager.GetOrCreateAgentForUser(userID, msg.AgentID) → agentInstance"]
+        CheckText -->|set| CreateWrapper["NewWSConnWrapper(writeCh) → connWrapper"]
+        CreateWrapper --> CreateTask["agent.Task{Message: msg.Text, MsgID: msg.ID} → task"]
+        CreateTask --> GetAgent["h.agentManager.GetAgent(ctx, userID, msg.AgentID, connWrapper, task) → ag"]
     end
 
-    subgraph SGSubscribe [" "]
-        GetAgent --> Subscribe["agentInstance.Subscribe() → subID, eventCh"]
-        Subscribe --> GoForward["go h.forwardAgentEvents(ctx, eventCh, writeCh, logger, msg.AgentID)"]
-    end
+    GetAgent --> CheckAgent{ag nil?}
+    CheckAgent -->|yes| LogDebug3["logger.Debug()"]
+    LogDebug3 --> Return2(["return"])
+    CheckAgent -->|no| CreateTask2["agent.Task{Message: msg.Text, MsgID: msg.ID} → task"]
+    CreateTask2 --> SubmitTask["ag.Submit(task)"]
+    SubmitTask --> Return2
 
-    GoForward --> PromptAgent["agentInstance.Prompt(ctx, msg.Text) → err"]
-    PromptAgent --> CheckPromptErr{err?}
-    CheckPromptErr -->|yes| LogError["logger.Error()"]
-    CheckPromptErr -->|no| Return2(["return"])
-    LogError --> Return2
+    SwitchType -->|steer| CheckSteerID{msg.AgentID?}
+    CheckSteerID -->|empty| LogDebug4["logger.Debug()"]
+    LogDebug4 --> Return3(["return"])
+    CheckSteerID -->|set| GetSteerAgent["h.agentManager.GetAgent(ctx, userID, msg.AgentID, nil, task) → ag"]
+    GetSteerAgent --> CheckSteerAgent{ag nil?}
+    CheckSteerAgent -->|yes| LogDebug5["logger.Debug()"]
+    LogDebug5 --> Return3
+    CheckSteerAgent -->|no| StopAgent["ag.Stop()"]
+    StopAgent --> Return3
 
-    SwitchType -->|other| LogDebug3["logger.Debug()"]
-    LogDebug3 --> Return2
+    SwitchType -->|status| CheckStatusID{msg.AgentID?}
+    CheckStatusID -->|empty| LogDebug6["logger.Debug()"]
+    LogDebug6 --> Return4(["return"])
+    CheckStatusID -->|set| GetStatusAgent["h.agentManager.GetOrCreateAgentForUser(ctx, userID, msg.AgentID, task) → agentInstance"]
+    GetStatusAgent --> GetStatus["agentInstance.GetStatus() → status"]
+    GetStatus --> MarshalStatus["marshalEvent(wsEvent{Type: lane_status, AgentID, Data: status}) → msg"]
+    MarshalStatus --> SendStatus["writeCh ← msg"]
+    SendStatus --> Return4
 
-    click GetAgent href "#GetOrCreateAgentForUser"
-    click PromptAgent href "../agent/README.md#Prompt"
+    SwitchType -->|other| LogDebug7["logger.Debug()"]
+    LogDebug7 --> Return5(["return"])
+
+    click GetAgent href "#GetAgent"
+    click GetOrCreateAgentForUser href "#GetOrCreateAgentForUser"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
     classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
-    class Start,Return,Return1,Return2 mainFn
-    class GetAgent,PromptAgent localPkgs
-    class Subscribe,GoForward internalFn
-```
-
-### forwardAgentEvents
-
-```mermaid
-flowchart TB
-    Start(["forwardAgentEvents(ctx, eventCh, writeCh, logger, agentID)"]) --> Loop["for"]
-    Loop --> SelectLoop["select"]
-
-    subgraph SGSelectLoop [" "]
-        SelectLoop -->|ctx.Done| Return(["return"])
-        SelectLoop -->|eventCh| ReceiveEvent["event := <-eventCh"]
-        ReceiveEvent --> CheckEvent{event?}
-        CheckEvent -->|closed| Return
-        CheckEvent -->|set| ConvertEvent["h.agentEventToWSEvent(event, agentID) → wsEvt"]
-    end
-
-    ConvertEvent --> CheckWsEvt{wsEvt?}
-    CheckWsEvt -->|nil| Loop
-    CheckWsEvt -->|set| GetMsg["wsMsgPool.Get() → msg"]
-    GetMsg --> SetMsgData["msg.messageType = TextMessage, msg.data = marshalEvent(*wsEvt)"]
-    SetMsgData --> NewSendTimer["time.NewTimer(100ms) → sendTimer"]
-    NewSendTimer --> SelectSend["select send"]
-
-    subgraph SGSelectSend [" "]
-        SelectSend -->|writeCh| StopTimer["sendTimer.Stop()"]
-        StopTimer --> Loop
-        SelectSend -->|ctx.Done| StopTimer2["sendTimer.Stop()"]
-        StopTimer2 --> ResetPutPool["msg.messageType = 0, msg.data = nil"]
-        ResetPutPool --> PutPool["wsMsgPool.Put(msg)"]
-        PutPool --> ReturnSend(["return"])
-        SelectSend -->|timer.C| StopTimer3["sendTimer.Stop()"]
-        StopTimer3 --> ResetPutPool2["msg.messageType = 0, msg.data = nil"]
-        ResetPutPool2 --> PutPool2["wsMsgPool.Put(msg)"]
-        PutPool2 --> LogDebug["logger.Debug()"]
-        LogDebug --> Loop
-    end
-
-    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
-    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
-
-    class Start,Return,ReturnSend mainFn
-    class Loop,SelectLoop,ReceiveEvent,ConvertEvent,SetMsgData,SelectSend internalFn
+    class Start,Return,Return0,Return1,Return2,Return3,Return4,Return5 mainFn
+    class GetAgent,GetOrCreateAgentForUser localPkgs
+    class CreateWrapper,CreateTask,SubmitTask internalFn
 ```
 
 ### ActiveConns
@@ -414,12 +393,12 @@ flowchart TB
 ```mermaid
 flowchart TB
     Start(["NewAgentManager(logger, opts)"]) --> CheckOpts{opts?}
-    CheckOpts -->|yes| GetLLMProxy["opts.LLMProxyHandler → llmProxy"]
-    CheckOpts -->|no| NoProxy["llmProxy = nil"]
+    CheckOpts -->|yes| GetModel["opts.QuotaChatModel → quotaChatModel"]
+    CheckOpts -->|no| NoModel["quotaChatModel = nil"]
 
     subgraph SGCreateManager [" "]
-        GetLLMProxy --> CreateManager["&AgentManager{agents, logger, llmProxy} → m"]
-        NoProxy --> CreateManager
+        GetModel --> CreateManager["&AgentManager{agents, logger, quotaChatModel} → m"]
+        NoModel --> CreateManager
         CreateManager --> Done(["return m"])
     end
 
@@ -434,60 +413,67 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    Start(["GetOrCreateAgentForUser(userID, agentID)"]) --> MakeKey["AgentKey{userID, agentID} → key"]
-    MakeKey --> RLock["m.mu.RLock()"]
-    RLock --> GetExisting["m.agents[key] → existingAgent"]
+    Start(["GetOrCreateAgentForUser(ctx, userID, agentID, firstTask)"]) --> MakeKey["AgentKey{userID, agentID} → key"]
+    MakeKey --> Lock["m.mu.Lock()"]
+    Lock --> GetExisting["m.agents[key] → existingAgent"]
     GetExisting --> CheckExists{exists?}
-    CheckExists -->|yes| RUnlock["m.mu.RUnlock()"]
-    RUnlock --> ReturnExisting(["return existingAgent"])
-    CheckExists -->|no| Lock["m.mu.Lock()"]
+    CheckExists -->|yes| Unlock["m.mu.Unlock()"]
+    Unlock --> ReturnExisting(["return existingAgent"])
+    CheckExists -->|no| CreateAgent
 
-    subgraph SGDoubleCheck [" "]
-        Lock --> DoubleCheck["m.agents[key] → existingAgent"]
-        DoubleCheck --> CheckDouble{exists?}
-        CheckDouble -->|yes| Unlock2["m.mu.Unlock()"]
-        Unlock2 --> ReturnDouble(["return existingAgent"])
-        CheckDouble -->|no| CreateAgent["m.createAgent(userID, agentID) → newAgent"]
+    subgraph SGCreateAgent [" "]
+        CreateAgent --> NewAgent["agent.NewADKAgent(ctx, firstTask, opts) → newAgent"]
+        NewAgent --> StoreAgent["m.agents[key] = newAgent"]
+        StoreAgent --> Unlock2["m.mu.Unlock()"]
     end
 
-    CreateAgent --> StoreAgent["m.agents[key] = newAgent"]
-    StoreAgent --> Unlock3["m.mu.Unlock()"]
-    Unlock3 --> ReturnNew(["return newAgent"])
+    Unlock2 --> LoadConfig["m.loadAgentConfig(userID, agentID) → config"]
+    LoadConfig --> StartModel["newAgent.StartWithModel(opts)"]
+    StartModel --> ReturnNew(["return newAgent"])
 
-    click CreateAgent href "#createAgent"
+    click NewAgent href "../agent/README.md#NewADKAgent"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
     classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
 
-    class Start,ReturnExisting,ReturnDouble,ReturnNew mainFn
-    class CreateAgent localPkgs
+    class Start,ReturnExisting,ReturnNew mainFn
+    class NewAgent localPkgs
+    class CreateAgent,StoreAgent internalFn
 ```
 
-### createAgent
+### GetAgent
 
 ```mermaid
 flowchart TB
-    Start(["createAgent(userID, agentID)"]) --> MakeOpts["AgentOptions{id: agentID, sessionID: userID:agentID} → opts"]
-    MakeOpts --> CheckLLMProxy{m.llmProxy?}
-    CheckLLMProxy -->|yes| NewProxyClient["proxy.NewClient(m.llmProxy, userID) → proxyClient"]
-    NewProxyClient --> SetProxyClient["opts.LLMClient = proxyClient"]
-    CheckLLMProxy -->|no| SetMock["opts.LLMClient = &MockLLMClient{}"]
+    Start(["GetAgent(ctx, userID, agentID, conn, task)"]) --> MakeKey["AgentKey{userID, agentID} → key"]
+    MakeKey --> Lock["m.mu.Lock()"]
+    Lock --> GetExisting["m.agents[key] → existingAgent"]
+    GetExisting --> CheckExists{exists?}
+    CheckExists -->|yes| SubmitTask["existingAgent.Submit(task)"]
+    SubmitTask --> Unlock["m.mu.Unlock()"]
+    Unlock --> ReturnAdapter(["return &adkAgentAdapter{agent, conn, agentID}"])
+    CheckExists -->|no| CreateAgent
 
     subgraph SGCreateAgent [" "]
-        SetProxyClient --> NewAgent["agent.NewAgent(opts) → newAgent"]
-        SetMock --> NewAgent
-        NewAgent --> Done(["return newAgent"])
+        CreateAgent --> NewAgent["agent.NewADKAgent(ctx, task, opts) → newAgent"]
+        NewAgent --> StoreAgent["m.agents[key] = newAgent"]
+        StoreAgent --> Unlock2["m.mu.Unlock()"]
     end
 
-    click NewAgent href "../agent/README.md#NewAgent"
+    Unlock2 --> LoadConfig["m.loadAgentConfig(userID, agentID) → config"]
+    LoadConfig --> StartModel["newAgent.StartWithModel(opts)"]
+    StartModel --> ReturnAdapter2(["return &adkAgentAdapter{agent, conn, agentID}"])
+
+    click NewAgent href "../agent/README.md#NewADKAgent"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
     classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
 
-    class Start,Done mainFn
-    class NewAgent,NewProxyClient localPkgs
+    class Start,ReturnAdapter,ReturnAdapter2 mainFn
+    class NewAgent localPkgs
+    class CreateAgent,StoreAgent internalFn
 ```
 
 ### RemoveAgentForUser
@@ -500,8 +486,8 @@ flowchart TB
     GetAgent --> CheckExists{exists?}
     CheckExists -->|no| Unlock["m.mu.Unlock()"]
     Unlock --> Return(["return"])
-    CheckExists -->|yes| Unsubscribe["existingAgent.Unsubscribe(key.UserID)"]
-    Unsubscribe --> DeleteAgent["delete(m.agents, key)"]
+    CheckExists -->|yes| StopAgent["existingAgent.Stop()"]
+    StopAgent --> DeleteAgent["delete(m.agents, key)"]
     DeleteAgent --> Unlock2["m.mu.Unlock()"]
     Unlock2 --> ReturnDone(["return"])
 
@@ -558,7 +544,7 @@ flowchart TB
 - Better UX - conversation continues
 - State (workspace, memory) preserved
 - Supports mobile app backgrounding
-- Can add cleanup policy later
+- Agents have idle timeout for cleanup
 
 ### Composite Key for Multi-Agent
 
@@ -576,6 +562,22 @@ flowchart TB
 - Efficient map lookup
 - Natural multi-tenancy
 
+### ADKAgent Integration
+
+**Q: Why use ADKAgent instead of custom Agent implementation?**
+
+| Aspect | Description |
+|--------|-------------|
+| Context | Agent implementation |
+| Options considered | Custom Agent, ADKAgent, other frameworks |
+| Rationale | Eino ADK provides battle-tested patterns |
+
+**Current approach is recommended because:**
+- Standard tool calling patterns
+- Built-in message handling
+- Easier to maintain and upgrade
+- Consistent with Eino ecosystem
+
 ## Test Coverage
 
 ### Unit Tests
@@ -587,7 +589,7 @@ flowchart TB
 | `TestCheckOrigin` | Origin validation |
 | `TestAgentManager` | Agent lifecycle |
 | `TestGetOrCreateAgentForUser` | Agent creation |
-| `TestForwardAgentEvents` | Event forwarding |
+| `TestGetAgent` | Agent retrieval |
 
 **Running:**
 ```bash
@@ -603,7 +605,6 @@ make test ./internal/websocket
 | `github.com/rs/zerolog` | Logging |
 | `internal/agent` | Agent runtime |
 | `internal/ctx` | Context utilities |
-| `internal/llm-proxy` | LLM proxy client |
 
 **File Locations:**
 - [`internal/websocket/handler.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/websocket/handler.go) - WebSocket handler
@@ -613,4 +614,3 @@ make test ./internal/websocket
 
 - [Agent](../agent/README.md) - Agent runtime
 - [Server](../server/README.md) - HTTP server
-- [LLM Proxy](../llm-proxy/README.md) - LLM integration

@@ -1,271 +1,311 @@
 # Agent
 
-Core agent runtime framework with state management, event streaming, and tool execution loop.
+ADK-based agent runtime using Eino ADK's ChatModelAgent and Runner for LLM integration with tool execution.
+
+## Overview
+
+```mermaid
+flowchart TB
+    Start([NewADKAgent]) --> CreateCtx["context.WithCancel(ctx) → ctx, cancel"]
+    CreateCtx --> InitAgent["&ADKAgent{agentID, userID, ctx, cancel, laneCh, connRef} → a"]
+    InitAgent --> QueueTask["laneCh ← firstTask"]
+    QueueTask --> StartWithModel["StartWithModel(opts)"]
+
+    subgraph SGStartWithModel [" "]
+        StartWithModel --> CheckModel{QuotaChatModel?}
+        CheckModel -->|nil| GoLoop1["go a.loop()"]
+        CheckModel -->|set| GetInner["opts.QuotaChatModel.GetInnerModel() → chatModel"]
+        GetInner --> GetTools["GetGlobalTools() → tools"]
+        GetTools --> NewAgent["adk.NewChatModelAgent(ctx, config) → einoAgent"]
+        NewAgent --> NewRunner["adk.NewRunner(ctx, config) → einoRunner"]
+        NewRunner --> GoLoop2["go a.loop()"]
+    end
+
+    GoLoop1 --> Done(["return nil"])
+    GoLoop2 --> Done
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+
+    class Start,Done mainFn
+    class CreateCtx,InitAgent,QueueTask,CheckModel,GetInner,GetTools,NewAgent,NewRunner,GoLoop1,GoLoop2 internalFn
+```
 
 ## Structs
 
-### Agent
+### ADKAgent
 
 | Struct | Field | Type | Description |
 |--------|-------|------|-------------|
-| `Agent` | `mu` | `sync.RWMutex` | State mutex |
-| | `state` | `AgentState` | Current agent state |
-| | `id` | `string` | Unique agent instance ID |
+| `ADKAgent` | `agentID` | `string` | Unique agent instance ID |
 | | `userID` | `string` | User identifier (multi-agent isolation) |
-| | `agentID` | `string` | Agent identifier (multi-agent routing) |
-| | `subscribers` | `map[string]chan AgentEvent` | Event subscribers |
 | | `ctx` | `context.Context` | Agent context |
 | | `cancel` | `context.CancelFunc` | Context cancel function |
-| | `llmClient` | `LLMClient` | LLM client for tool calling |
+| | `laneCh` | `chan Task` | Task queue channel |
+| | `mu` | `sync.Mutex` | State mutex |
+| | `connRef` | `*WSConnRef` | Swappable WebSocket connection |
+| | `einoAgent` | `*adk.ChatModelAgent` | Eino ADK agent |
+| | `einoRunner` | `*adk.Runner` | Eino ADK runner |
+| | `idleTimeout` | `time.Duration` | Idle timeout before exit |
 
-### AgentState
-
-| Struct | Field | Type | Description |
-|--------|-------|------|-------------|
-| `AgentState` | `SystemPrompt` | `string` | System prompt for LLM |
-| | `Model` | `Model` | Model configuration |
-| | `ThinkingLevel` | `ThinkingLevel` | Thinking intensity |
-| | `Tools` | `[]Tool` | Available tools |
-| | `Messages` | `[]AgentMessage` | Conversation history |
-| | `IsStreaming` | `bool` | Currently streaming |
-| | `StreamMessage` | `*AgentMessage` | Current streaming message |
-| | `PendingToolCalls` | `map[string]bool` | Pending tool call IDs |
-| | `Error` | `string` | Error state |
-| | `SessionID` | `string` | Session identifier |
-| | `UserID` | `string` | User identifier |
-| | `AgentID` | `string` | Agent identifier |
-
-### AgentOptions
+### ADKAgentOptions
 
 | Struct | Field | Type | Description |
 |--------|-------|------|-------------|
-| `AgentOptions` | `ID` | `string` | Custom agent ID |
-| | `SystemPrompt` | `string` | System prompt |
-| | `SessionID` | `string` | Session ID |
+| `ADKAgentOptions` | `AgentID` | `string` | Agent identifier |
 | | `UserID` | `string` | User ID |
-| | `AgentID` | `string` | Agent ID |
-| | `LLMClient` | `LLMClient` | LLM client |
+| | `Description` | `string` | Agent description |
+| | `SystemPrompt` | `string` | System prompt for LLM |
+| | `QuotaChatModel` | `QuotaChatModelInterface` | LLM client with quota |
+| | `Memories` | `[]string` | User memories for context |
+| | `IdleTimeout` | `time.Duration` | Idle timeout |
 
-## NewAgent
+### Task
 
-```mermaid
-flowchart TB
-    Start(["NewAgent(opts) → *Agent"]) --> CheckID{opts.ID empty}
-    CheckID -->|yes| GenID["uuid.New().String() → id"]
-    CheckID -->|no| SetID["id = opts.ID"]
-    GenID --> CheckUserID
-    SetID --> CheckUserID{opts.UserID empty}
-    CheckUserID -->|yes| SetUserID["userID = 'unknown'"]
-    CheckUserID -->|no| SetUserID1["userID = opts.UserID"]
-    SetUserID --> CheckAgentID
-    SetUserID1 --> CheckAgentID{opts.AgentID empty}
-    CheckAgentID -->|yes| SetAgentID["agentID = id"]
-    CheckAgentID -->|no| SetAgentID1["agentID = opts.AgentID"]
-    SetAgentID --> NewCtx
-    SetAgentID1 --> NewCtx["context.WithCancel(context.Background()) → ctx, cancel"]
-    NewCtx --> NewState["NewAgentState(opts) → state"]
-    NewState --> ReturnAgent(["return &Agent{id, userID, agentID, state, ctx, cancel, opts.LLMClient}"])
+| Struct | Field | Type | Description |
+|--------|-------|------|-------------|
+| `Task` | `Message` | `string` | Task message content |
+| | `MsgID` | `string` | Message identifier |
 
-    click NewState href "types.md"
-
-    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
-    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
-
-    class Start,ReturnAgent mainFn
-    class NewState localPkgs
-```
-
-## Subscribe
+## NewADKAgent
 
 ```mermaid
 flowchart TB
-    Start(["Subscribe() → (string, chan AgentEvent)"]) --> GenID["uuid.New().String() → subID"]
-    GenID --> MakeCh["make(chan AgentEvent, 100) → ch"]
-    MakeCh --> Lock["a.subscribersMu.Lock()"]
-    Lock --> AddMap["a.subscribers[subID] = ch"]
-    AddMap --> Unlock["a.subscribersMu.Unlock()"]
-    Unlock --> Return(["return subID, ch"])
+    Start(["NewADKAgent(ctx, firstTask, opts) → *ADKAgent"]) --> CreateCtx["context.WithCancel(ctx) → ctx, cancel"]
+    CreateCtx --> InitAgent["&ADKAgent{agentID, userID, ctx, cancel, laneCh, connRef} → a"]
+    InitAgent --> CheckTimeout{opts.IdleTimeout?}
+    CheckTimeout -->|zero| SetDefault["a.idleTimeout = defaultIdleTimeout (5m)"]
+    CheckTimeout -->|set| UseProvided["a.idleTimeout = opts.IdleTimeout"]
+    SetDefault --> QueueTask["a.laneCh ← firstTask"]
+    UseProvided --> QueueTask
+    QueueTask --> Return(["return a"])
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
 
     class Start,Return mainFn
 ```
 
-## Unsubscribe
+## StartWithModel
 
 ```mermaid
 flowchart TB
-    Start(["Unsubscribe(id string)"]) --> Lock["a.subscribersMu.Lock()"]
-    Lock --> CheckExists{ch exists}
-    CheckExists -->|yes| CloseCh["close(ch)"]
-    CloseCh --> DeleteMap["delete(a.subscribers, id)"]
-    DeleteExists --> Unlock["a.subscribersMu.Unlock()"]
-    CheckExists -->|no| DeleteExists
-    Unlock --> Return(["return"])
+    Start(["StartWithModel(opts) → error"]) --> CheckModel{opts.QuotaChatModel nil?}
+    CheckModel -->|yes| GoLoopNoModel["go a.loop()"]
+    CheckModel -->|no| GetInner["opts.QuotaChatModel.GetInnerModel() → chatModel"]
+    GetInner --> GetTools["GetGlobalTools() → tools"]
+    GetTools --> BuildInstr["buildInstruction(opts.SystemPrompt, opts.Memories) → instruction"]
+    BuildInstr --> NewAgent["adk.NewChatModelAgent(ctx, config) → einoAgent, err"]
+    NewAgent -->|error| ReturnErr(["return err"])
+    NewAgent -->|ok| NewRunner["adk.NewRunner(ctx, config) → einoRunner"]
+    NewRunner --> GoLoop["go a.loop()"]
+    GoLoop --> ReturnOk(["return nil"])
+    GoLoopNoModel --> ReturnOk
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-
-    class Start,Return mainFn
-```
-
-## State
-
-```mermaid
-flowchart TB
-    Start(["State() → AgentState"]) --> Lock["a.mu.RLock()"]
-    Lock --> CopyMsgs["make([]AgentMessage, len(a.state.Messages)) → messages"]
-    CopyMsgs --> CopyMsgData["copy(messages, a.state.Messages)"]
-    CopyMsgData --> CopyPending["make(map[string]bool, len(a.state.PendingToolCalls)) → pendingToolCalls"]
-    CopyPending --> CopyPendingLoop["for k, v in a.state.PendingToolCalls: pendingToolCalls[k] = v"]
-    CopyPendingLoop --> CopyTools["make([]Tool, len(a.state.Tools)) → tools"]
-    CopyTools --> CopyToolsData["copy(tools, a.state.Tools)"]
-    CopyToolsData --> Unlock["a.mu.RUnlock()"]
-    Unlock --> Return(["return AgentState{SystemPrompt, Model, ThinkingLevel, Tools, Messages, IsStreaming, StreamMessage, PendingToolCalls, Error, SessionID, UserID, AgentID}"])
-
-    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-
-    class Start,Return mainFn
-```
-
-## Prompt
-
-```mermaid
-flowchart TB
-    Start(["Prompt(ctx, message) → error"]) --> CheckCtx["ctx.Err() → err"]
-    CheckCtx -->|error| Err1(["return err"])
-    CheckCtx -->|ok| CheckLLM{a.llmClient nil}
-    CheckLLM -->|yes| Err2(["return error: LLM client not configured"])
-    CheckLLM -->|no| Lock["a.mu.Lock()"]
-    Lock --> NewUserMsg["NewTextMessage(RoleUser, message) → userMsg"]
-    NewUserMsg --> AddMsg["a.state.AddMessage(userMsg)"]
-    AddMsg --> Unlock["a.mu.Unlock()"]
-    Unlock --> EmitStart["a.emit(AgentStartEvent{Timestamp: userMsg.Timestamp})"]
-    EmitStart --> SetStream["a.setStreamingState(true, nil)"]
-    SetStream --> NewLoop["NewLoop(a.llmClient) → loop"]
-    NewLoop --> GetMsgs["a.State() → finalState"]
-    GetMsgs --> ExtractMsgs["finalState.Messages → messages"]
-    ExtractMsgs --> RunLoop["loop.Run(ctx, messages, a.state.Tools...) → result, err"]
-    RunLoop -->|error| ClearStreamErr["a.setStreamingState(false, nil)"]
-    ClearStreamErr --> Err3(["return err"])
-    RunLoop -->|ok| LockState["a.mu.Lock()"]
-    LockState --> UpdateMsgs["a.state.Messages = result.Messages"]
-    UpdateMsgs --> UnlockState["a.mu.Unlock()"]
-    UnlockState --> GetFinalState["a.State() → finalState"]
-    GetFinalState --> EmitEnd["a.emit(AgentEndEvent{Timestamp: finalState.Messages[len-1].Timestamp, Messages: finalState.Messages})"]
-    EmitEnd --> ClearStream["a.setStreamingState(false, nil)"]
-    ClearStream --> Return(["return nil"])
-
-    click NewTextMessage href "types.md"
-    click NewLoop href "loop.md"
-
-    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
-    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
-    class Start,Return mainFn
-    class NewTextMessage,NewLoop localPkgs
-    class Err1,Err2,Err3 errorFlow
+    class Start,ReturnOk mainFn
+    class ReturnErr errorFlow
 ```
 
-## AddTools
+## loop
 
 ```mermaid
 flowchart TB
-    Start(["AddTools(tools ...Tool)"]) --> Lock["a.mu.Lock()"]
-    Lock --> Append["a.state.Tools = append(a.state.Tools, tools...)"]
-    Append --> Unlock["a.mu.Unlock()"]
-    Unlock --> Return(["return"])
+    Start(["loop()"]) --> NewTimer["time.NewTimer(idleTimeout) → idleTimer"]
+    NewTimer --> LoopStart{{"loop"}}
+
+    subgraph SGLoop [" "]
+        LoopStart --> Select["select"]
+        Select -->|laneCh| ReceiveTask["receive task from laneCh"]
+        ReceiveTask --> ResetTimer["idleTimer.Reset(idleTimeout)"]
+        ResetTimer --> DrainMsgs["a.drainMessages(task) → tasks"]
+        DrainMsgs --> CheckFn{{"processTasksFn?"}}
+        CheckFn -->|yes| CallFn["a.processTasksFn(tasks)"]
+        CheckFn -->|no| ProcessTasks["a.processTasks(tasks)"]
+        CallFn --> LoopStart
+        ProcessTasks --> LoopStart
+
+        Select -->|idleTimer.C| CheckQueue{{"laneCh empty?"}}
+        CheckQueue -->|yes| CallExit["a.onExit()"]
+        CallExit --> Return(["return"])
+        CheckQueue -->|no| ResetTimer2["idleTimer.Reset(idleTimeout)"]
+        ResetTimer2 --> LoopStart
+
+        Select -->|ctx.Done| CallExit2["a.onExit()"]
+        CallExit2 --> Return2(["return"])
+    end
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+
+    class Start,Return,Return2 mainFn
+    class LoopStart,Select,ReceiveTask,DrainMsgs,ProcessTasks internalFn
+```
+
+## processTasks
+
+```mermaid
+flowchart TB
+    Start(["processTasks(tasks)"]) --> CheckLen{{"len(tasks) == 0?"}}
+    CheckLen -->|yes| Return(["return"])
+    CheckLen -->|no| BuildInput["strings.Builder → input"]
+    BuildInput --> ForTasks["iterate tasks"]
+    ForTasks --> AppendMsg["input.WriteString(t.Message)"]
+    AppendMsg --> CheckMsgID{{"msgID empty and t.MsgID set?"}}
+    CheckMsgID -->|yes| SetMsgID["msgID = t.MsgID"]
+    CheckMsgID -->|no| LoopNext
+    SetMsgID --> LoopNext["continue loop"]
+    LoopNext --> ForTasks
+    ForTasks -->|done| CheckRunner{{"einoRunner?"}}
+    CheckRunner -->|yes| Query["einoRunner.Query(ctx, input.String())"]
+    CheckRunner -->|no| CheckConn
+    Query --> CheckConn{{"connRef.IsSet()?"}}
+    CheckConn -->|no| NotifyUser["a.notifyUser(msgID, input.String())"]
+    CheckConn -->|yes| Return2(["return"])
+    NotifyUser --> Return2
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+
+    class Start,Return,Return2 mainFn
+    class BuildInput,ForTasks,AppendMsg,Query,NotifyUser internalFn
+```
+
+## WSConnRef
+
+Swappable WebSocket connection reference for thread-safe connection management.
+
+### NewWSConnRef
+
+```mermaid
+flowchart TB
+    Start(["NewWSConnRef() → *WSConnRef"]) --> Return(["return &WSConnRef{}"])
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
 
     class Start,Return mainFn
 ```
 
-## RemoveTools
+### WSConnRef Methods
+
+| Method | Description |
+|--------|-------------|
+| `Get()` | Returns current connection (thread-safe) |
+| `Set(conn)` | Sets new connection (thread-safe) |
+| `Clear()` | Clears connection reference |
+| `IsSet()` | Returns true if connection is set |
+
+## GetGlobalTools
 
 ```mermaid
 flowchart TB
-    Start(["RemoveTools(prefix string)"]) --> Lock["a.mu.Lock()"]
-    Lock --> MakeUpdated["make([]Tool, 0) → updated"]
-    MakeUpdated --> ForTools["for tool in a.state.Tools"]
-    ForTools --> CheckPrefix{"tool.Name starts with prefix"}
-    CheckPrefix -->|no| AppendUpdated["updated = append(updated, tool)"]
-    CheckPrefix -->|yes| LoopTools
-    AppendUpdated --> LoopTools
-    LoopTools --> ForTools
-    ForTools -->|done| SetUpdated["a.state.Tools = updated"]
-    SetUpdated --> Unlock["a.mu.Unlock()"]
-    Unlock --> Return(["return"])
+    Start(["GetGlobalTools() → []tool.BaseTool"]) --> CreateCtx["context.Background() → ctx"]
+    CreateCtx --> NewDdg["duckduckgo.NewTool(ctx, config) → ddgTool, err"]
+    NewDdg -->|error| ReturnEmpty(["return []tool.BaseTool{}"])
+    NewDdg -->|ok| ReturnTools(["return []tool.BaseTool{ddgTool}"])
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
-    class Start,Return mainFn
+    class Start,ReturnEmpty,ReturnTools mainFn
 ```
+
+## Methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Stop` | `()` | Cancels agent context |
+| `GetContext` | `() context.Context` | Returns agent context |
+| `GetAgentID` | `() string` | Returns agent ID |
+| `GetUserID` | `() string` | Returns user ID |
+| `Submit` | `(task Task)` | Submits task to lane queue |
+| `GetConnRef` | `() *WSConnRef` | Returns WebSocket connection reference |
+| `SetProcessTasksFn` | `(fn func([]Task))` | Sets custom task processor |
+| `SetOnExit` | `(fn func())` | Sets exit callback |
+| `Start` | `(opts ADKAgentOptions) error` | Starts agent loop |
+| `StartWithModel` | `(opts ADKAgentOptions) error` | Starts agent with LLM model |
+| `GetStatus` | `() map[string]interface{}` | Returns agent status |
 
 ## Design Notes
 
-### Thread-Safe State Access
+### Eino ADK Integration
 
-**Q: Why return a copy of state from State()?**
-
-| Aspect | Description |
-|--------|-------------|
-| Context | Concurrent access to agent state |
-| Options considered | Return pointer, return copy, lock externally |
-| Rationale | Prevents external mutation of internal state |
-
-**Current approach is recommended because:**
-- Callers can't accidentally mutate state
-- No need for external locking
-- Safe to pass state to goroutines
-- Standard immutable data pattern
-
-### Event Channel Buffer
-
-**Q: Why buffer events at 100?**
+**Q: Why use Eino ADK's ChatModelAgent instead of custom implementation?**
 
 | Aspect | Description |
 |--------|-------------|
-| Context | Event channel capacity |
-| Options considered | 10, 100, 1000, unbuffered |
-| Rationale | 100 handles burst events without blocking |
+| Context | LLM agent implementation |
+| Options considered | Custom implementation, Eino ADK, other frameworks |
+| Rationale | Eino ADK provides battle-tested agent patterns with tool calling |
 
 **Current approach is recommended because:**
-- Handles message streaming bursts
-- Won't block sender on slow receiver
-- Memory-efficient for most cases
-- Subscriber can still fall behind gracefully
+- Standard tool calling patterns
+- Built-in message coalescing
+- Runner handles orchestration
+- Easier to maintain and upgrade
 
-### Skip Full Channels
+### Message Coalescing with drainMessages
 
-**Q: Why skip subscribers with full channels instead of blocking?**
+**Q: Why drain messages instead of processing one at a time?**
 
 | Aspect | Description |
 |--------|-------------|
-| Context | Event broadcasting |
-| Options considered | Block, skip, drop oldest |
-| Rationale | Prevent slow subscribers from blocking agent |
+| Context | High-frequency message handling |
+| Options considered | Process each, batch process, drain |
+| Rationale | Reduces LLM API calls for rapid user input |
 
 **Current approach is recommended because:**
-- Agent never blocks on broadcast
-- Fast subscribers get all events
-- Slow subscribers gracefully degrade
-- Non-blocking pattern for event systems
+- Combines multiple rapid messages
+- Reduces API costs
+- Better user experience
+- Handles mobile network fluctuations
+
+### Idle Timeout Pattern
+
+**Q: Why use idle timeout instead of explicit cleanup?**
+
+| Aspect | Description |
+|--------|-------------|
+| Context | Agent lifecycle management |
+| Options considered | Explicit cleanup, idle timeout, never cleanup |
+| Rationale | Balances resource usage with conversation continuity |
+
+**Current approach is recommended because:**
+- Agents auto-cleanup after inactivity
+- User can reconnect and continue
+- Prevents resource leaks
+- Configurable timeout
+
+### WSConnRef for Connection Swapping
+
+**Q: Why use WSConnRef instead of direct connection?**
+
+| Aspect | Description |
+|--------|-------------|
+| Context | WebSocket reconnection handling |
+| Options considered | Direct connection, connection reference, channel-based |
+| Rationale | Allows connection swapping without agent restart |
+
+**Current approach is recommended because:**
+- Agent survives connection drops
+- User can reconnect seamlessly
+- Thread-safe connection access
+- Clean separation of concerns
 
 ## Test Coverage
 
-### Unit Tests (`agent_test.go`)
+### Unit Tests (`adk_agent_test.go`, `conn_ref_test.go`)
 
 | Test Suite | Coverage |
 |------------|----------|
-| `TestNewAgent` | Agent creation |
-| `TestNewAgent_WithID` | Custom ID |
-| `TestSubscribe` | Event subscription |
-| `TestUnsubscribe` | Event unsubscription |
-| `TestState` | State retrieval |
-| `TestPrompt_NoLLMClient` | Error without LLM client |
+| `TestNewADKAgent` | Agent creation |
+| `TestNewADKAgent_WithCustomTimeout` | Custom timeout |
+| `TestSubmit` | Task submission |
+| `TestStop` | Agent stop |
+| `TestGetStatus` | Status retrieval |
+| `TestWSConnRef` | Connection reference operations |
 
 **Running:**
 ```bash
@@ -276,23 +316,27 @@ make test ./internal/agent
 
 | Package | Purpose |
 |---------|---------|
-| `github.com/google/uuid` | UUID generation |
+| `github.com/cloudwego/eino/adk` | Eino ADK agent framework |
+| `github.com/cloudwego/eino/components/model` | LLM model interface |
+| `github.com/cloudwego/eino/components/tool` | Tool interface |
+| `github.com/cloudwego/eino-ext/components/tool/duckduckgo` | DuckDuckGo search tool |
+| `github.com/gorilla/websocket` | WebSocket connection |
+| `sync` | Thread safety |
 
 **File Locations:**
-- [`internal/agent/agent.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/agent/agent.go) - Main agent implementation
+- [`internal/agent/adk_agent.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/agent/adk_agent.go) - ADKAgent implementation
+- [`internal/agent/conn_ref.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/agent/conn_ref.go) - WSConnRef
+- [`internal/agent/types.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/agent/types.go) - Core types
 
 ## Subpackages
 
 | Package | Description |
 |---------|-------------|
-| [loop.md](loop.md) | Tool calling loop |
-| [tool.md](tool.md) | Tool execution |
-| [events.md](events.md) | Event system |
-| [types.md](types.md) | Core types |
+| [types.md](types.md) | Core types (AgentMessage, Tool, etc.) |
 | [tools.md](tools.md) | Built-in tools |
 
 ## Related
 
-- [WebSocket Handler](../websocket.md) - Multi-agent routing via agent_id
+- [WebSocket Handler](../websocket.md) - Agent lifecycle management
 - [Storage](../storage/README.md) - Workspace persistence
 - [Mem0](../mem0/README.md) - Long-term memory tools

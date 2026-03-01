@@ -428,7 +428,6 @@ func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID str
 		ctx := ctx
 		agentTask := agent.Task{
 			Message: msg.Text,
-			Conn:    connWrapper,
 			MsgID:   msg.ID,
 		}
 		ag := h.agentManager.GetAgent(ctx, userID, msg.AgentID, connWrapper, agentTask)
@@ -439,7 +438,6 @@ func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID str
 
 		task := agent.Task{
 			Message: msg.Text,
-			Conn:    connWrapper,
 			MsgID:   msg.ID,
 		}
 		ag.Submit(task)
