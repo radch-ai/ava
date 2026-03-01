@@ -2,35 +2,12 @@
 
 ADK-based agent runtime using Eino ADK's ChatModelAgent and Runner for LLM integration with tool execution.
 
-## Overview
+## Constants
 
-```mermaid
-flowchart TB
-    Start([NewADKAgent]) --> CreateCtx["context.WithCancel(ctx) → ctx, cancel"]
-    CreateCtx --> InitAgent["&ADKAgent{agentID, userID, ctx, cancel, laneCh, connRef} → a"]
-    InitAgent --> QueueTask["laneCh ← firstTask"]
-    QueueTask --> StartWithModel["StartWithModel(opts)"]
-
-    subgraph SGStartWithModel [" "]
-        StartWithModel --> CheckModel{QuotaChatModel?}
-        CheckModel -->|nil| GoLoop1["go a.loop()"]
-        CheckModel -->|set| GetInner["opts.QuotaChatModel.GetInnerModel() → chatModel"]
-        GetInner --> GetTools["GetGlobalTools() → tools"]
-        GetTools --> NewAgent["adk.NewChatModelAgent(ctx, config) → einoAgent"]
-        NewAgent --> NewRunner["adk.NewRunner(ctx, config) → einoRunner"]
-        NewRunner --> GoLoop2["go a.loop()"]
-    end
-
-    GoLoop1 --> Done(["return nil"])
-    GoLoop2 --> Done
-
-    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
-    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
-
-    class Start,Done mainFn
-    class CreateCtx,InitAgent,QueueTask,CheckModel,GetInner,GetTools,NewAgent,NewRunner,GoLoop1,GoLoop2 internalFn
-```
+| Constant | Type | Value | Description |
+|----------|------|-------|-------------|
+| `defaultIdleTimeout` | `time.Duration` | `5 * time.Minute` | Default idle timeout before agent exits |
+| `defaultLaneQueueSize` | `int` | `100` | Default task queue buffer size |
 
 ## Structs
 
@@ -68,6 +45,22 @@ flowchart TB
 | `Task` | `Message` | `string` | Task message content |
 | | `MsgID` | `string` | Message identifier |
 
+## Methods
+
+Simple getters, setters, and lifecycle methods.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Stop` | `()` | Cancels agent context |
+| `GetContext` | `() context.Context` | Returns agent context |
+| `GetAgentID` | `() string` | Returns agent ID |
+| `GetUserID` | `() string` | Returns user ID |
+| `Submit` | `(task Task)` | Submits task to lane queue |
+| `GetConnRef` | `() *WSConnRef` | Returns WebSocket connection reference |
+| `SetProcessTasksFn` | `(fn func([]Task))` | Sets custom task processor |
+| `SetOnExit` | `(fn func())` | Sets exit callback |
+| `GetStatus` | `() map[string]interface{}` | Returns agent status map with agent_id, user_id, queue_len, active |
+
 ## NewADKAgent
 
 ```mermaid
@@ -80,6 +73,18 @@ flowchart TB
     SetDefault --> QueueTask["a.laneCh ← firstTask"]
     UseProvided --> QueueTask
     QueueTask --> Return(["return a"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+
+    class Start,Return mainFn
+```
+
+## Start
+
+```mermaid
+flowchart TB
+    Start(["Start(opts) → error"]) --> GoLoop["go a.loop()"]
+    GoLoop --> Return(["return nil"])
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
 
@@ -109,7 +114,24 @@ flowchart TB
     class ReturnErr errorFlow
 ```
 
+## GetGlobalTools
+
+```mermaid
+flowchart TB
+    Start(["GetGlobalTools() → []tool.BaseTool"]) --> CreateCtx["context.Background() → ctx"]
+    CreateCtx --> NewDdg["duckduckgo.NewTool(ctx, config) → ddgTool, err"]
+    NewDdg -->|error| ReturnEmpty(["return []tool.BaseTool{}"])
+    NewDdg -->|ok| ReturnTools(["return []tool.BaseTool{ddgTool}"])
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,ReturnEmpty,ReturnTools mainFn
+```
+
 ## loop
+
+Private method that runs the agent's main event loop.
 
 ```mermaid
 flowchart TB
@@ -138,13 +160,13 @@ flowchart TB
     end
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
 
     class Start,Return,Return2 mainFn
-    class LoopStart,Select,ReceiveTask,DrainMsgs,ProcessTasks internalFn
 ```
 
 ## processTasks
+
+Private method that processes accumulated tasks.
 
 ```mermaid
 flowchart TB
@@ -167,15 +189,22 @@ flowchart TB
     NotifyUser --> Return2
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
 
     class Start,Return,Return2 mainFn
-    class BuildInput,ForTasks,AppendMsg,Query,NotifyUser internalFn
 ```
 
 ## WSConnRef
 
 Swappable WebSocket connection reference for thread-safe connection management.
+
+### WSConnRef Methods
+
+| Method | Description |
+|--------|-------------|
+| `Get()` | Returns current connection (thread-safe) |
+| `Set(conn)` | Sets new connection (thread-safe) |
+| `Clear()` | Clears connection reference |
+| `IsSet()` | Returns true if connection is set |
 
 ### NewWSConnRef
 
@@ -187,46 +216,6 @@ flowchart TB
 
     class Start,Return mainFn
 ```
-
-### WSConnRef Methods
-
-| Method | Description |
-|--------|-------------|
-| `Get()` | Returns current connection (thread-safe) |
-| `Set(conn)` | Sets new connection (thread-safe) |
-| `Clear()` | Clears connection reference |
-| `IsSet()` | Returns true if connection is set |
-
-## GetGlobalTools
-
-```mermaid
-flowchart TB
-    Start(["GetGlobalTools() → []tool.BaseTool"]) --> CreateCtx["context.Background() → ctx"]
-    CreateCtx --> NewDdg["duckduckgo.NewTool(ctx, config) → ddgTool, err"]
-    NewDdg -->|error| ReturnEmpty(["return []tool.BaseTool{}"])
-    NewDdg -->|ok| ReturnTools(["return []tool.BaseTool{ddgTool}"])
-
-    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
-
-    class Start,ReturnEmpty,ReturnTools mainFn
-```
-
-## Methods
-
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `Stop` | `()` | Cancels agent context |
-| `GetContext` | `() context.Context` | Returns agent context |
-| `GetAgentID` | `() string` | Returns agent ID |
-| `GetUserID` | `() string` | Returns user ID |
-| `Submit` | `(task Task)` | Submits task to lane queue |
-| `GetConnRef` | `() *WSConnRef` | Returns WebSocket connection reference |
-| `SetProcessTasksFn` | `(fn func([]Task))` | Sets custom task processor |
-| `SetOnExit` | `(fn func())` | Sets exit callback |
-| `Start` | `(opts ADKAgentOptions) error` | Starts agent loop |
-| `StartWithModel` | `(opts ADKAgentOptions) error` | Starts agent with LLM model |
-| `GetStatus` | `() map[string]interface{}` | Returns agent status |
 
 ## Design Notes
 
@@ -300,12 +289,16 @@ flowchart TB
 
 | Test Suite | Coverage |
 |------------|----------|
-| `TestNewADKAgent` | Agent creation |
-| `TestNewADKAgent_WithCustomTimeout` | Custom timeout |
-| `TestSubmit` | Task submission |
-| `TestStop` | Agent stop |
-| `TestGetStatus` | Status retrieval |
-| `TestWSConnRef` | Connection reference operations |
+| `TestNewADKAgent_CreatesLaneCh` | Agent creation with channel |
+| `TestNewADKAgent_QueuesFirstMessage` | First task queued |
+| `TestADKAgent_Stop` | Context cancellation |
+| `TestADKAgent_Loop_DrainsMessages` | Message draining |
+| `TestADKAgent_Loop_IdleExit` | Idle timeout exit |
+| `TestADKAgent_Loop_ContextCancel` | Context cancel exit |
+| `TestBuildInstruction` | Instruction building with memories |
+| `TestGetGlobalTools_ReturnsTools` | Tool retrieval |
+| `TestWSConnRef_GetSetClear` | Connection reference operations |
+| `TestWSConnRef_Concurrent` | Thread safety |
 
 **Running:**
 ```bash

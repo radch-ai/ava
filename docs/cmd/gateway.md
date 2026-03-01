@@ -37,10 +37,9 @@ flowchart TB
 
     class Start,Running mainFn
     class Exit1,Exit2,Exit3,ExitLLM errorFlow
-    class LoadCfg,ValidateCfg,InitLLM,CreateWS,InitRedis,CreateServer localPkgs
+    class LoadCfg,ValidateCfg,InitLLM,CreateWS,CreateServer localPkgs
 ```
 
-**Note:** CheckOrigins and CheckConns are local variable setup from cfg, not package calls.
 
 ## Design Notes
 

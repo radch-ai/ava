@@ -136,7 +136,7 @@ flowchart TB
         HExecute --> Select["select{ctx.Done() default}"]
         Select -->|ctx.Done| ReturnErr(["return nil, ctx.Err()"])
         Select -->|default| GetNow["time.Now().Format(time.RFC3339) → now"]
-        GetNow --> ReturnOk(["return &agent.ToolResult{Content: []agent.AgentMessage{agent.TextContent{Text: now}}, Details: now}, nil"])
+        GetNow --> ReturnOk(["return &agent.ToolResult{Content: []agent.ContentBlock{agent.TextContent{Text: now}}, Details: now}, nil"])
     end
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
@@ -172,7 +172,7 @@ flowchart TB
         DeferTimer --> Select["select{ctx.Done() <-timer.C}"]
         Select -->|ctx.Done| ReturnErr(["return nil, ctx.Err()"])
         Select -->|timer| FormatResult["fmt.Sprintf('waited %d ms', int(durationMsFloat)) → result"]
-        FormatResult --> ReturnOk(["return &agent.ToolResult{Content: []agent.AgentMessage{agent.TextContent{Text: result}}, Details: durationMsFloat}, nil"])
+        FormatResult --> ReturnOk(["return &agent.ToolResult{Content: []agent.ContentBlock{agent.TextContent{Text: result}}, Details: durationMsFloat}, nil"])
     end
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
@@ -199,14 +199,13 @@ flowchart TB
     CheckIDs -->|no| GetPath["args['path'] → path, ok"]
     GetPath --> CheckPath{"ok false or path empty"}
         CheckPath -->|yes| ErrPath(["return &agent.ToolResult{Content: []agent.ContentBlock{agent.TextContent{Text: 'Error'}}, fmt.Errorf('missing path')"])
-        CheckPath -->|no| BuildS3Path["storage.WorkspacePath(userID, agentID, path) → s3Path"]
+        CheckPath -->|no| BuildS3Path["path.Join(userID, agentID, 'workspace', filePath) → s3Path"]
         BuildS3Path --> GetFile["client.Get(ctx, s3Path) → data, err"]
         GetFile -->|error| ErrFile(["return &agent.ToolResult{Content: []agent.ContentBlock{agent.TextContent{Text: 'Error'}}, err"])
         GetFile -->|ok| ReturnOk(["return &agent.ToolResult{Content: []agent.ContentBlock{agent.TextContent{Text: string(data)}}, nil"])
     end
 
-    click ctxpkg href "../../ctx/README.md"
-    click storage href "../../storage/README.md"
+    click GetUserID,GetAgentID href "../../ctx/README.md"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
@@ -215,7 +214,7 @@ flowchart TB
 
     class Start,ReturnTool,ReturnOk mainFn
     class HExecute internalFn
-    class ctxpkg,storage localPkgs
+    class GetUserID,GetAgentID localPkgs
     class ErrIDs,ErrPath,ErrFile errorFlow
 ```
 
@@ -237,14 +236,13 @@ flowchart TB
         CheckPath -->|no| GetContent["args['content'] → content, ok"]
         GetContent --> CheckContent{ok false}
         CheckContent -->|yes| ErrContent(["return &agent.ToolResult{Content: []agent.ContentBlock{agent.TextContent{Text: 'Error'}}, fmt.Errorf('missing content')"])
-        CheckContent -->|no| BuildS3Path["storage.WorkspacePath(userID, agentID, path) → s3Path"]
+        CheckContent -->|no| BuildS3Path["path.Join(userID, agentID, 'workspace', filePath) → s3Path"]
         BuildS3Path --> PutFile["client.Put(ctx, s3Path, []byte(content)) → err"]
         PutFile -->|error| ErrFile(["return &agent.ToolResult{Content: []agent.ContentBlock{agent.TextContent{Text: 'Error'}}, err"])
         PutFile -->|ok| ReturnOk(["return &agent.ToolResult{Content: []agent.ContentBlock{agent.TextContent{Text: 'Success'}}, nil"])
     end
 
-    click ctxpkg href "../../ctx/README.md"
-    click storage href "../../storage/README.md"
+    click GetUserID,GetAgentID href "../../ctx/README.md"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
@@ -253,7 +251,7 @@ flowchart TB
 
     class Start,ReturnTool,ReturnOk mainFn
     class HExecute internalFn
-    class ctxpkg,storage localPkgs
+    class GetUserID,GetAgentID localPkgs
     class ErrIDs,ErrPath,ErrContent,ErrFile errorFlow
 ```
 
@@ -368,6 +366,7 @@ make test ./internal/agent/tools
 |---------|---------|
 | `sync` | Thread safety |
 | `context` | Context handling |
+| `path` | Path joining for S3 keys |
 | `internal/agent` | Agent types |
 | `internal/ctx` | Context utilities |
 | `internal/storage` | S3 client |
