@@ -77,6 +77,24 @@ flowchart TB
     class ERead,EParse,ELookup errorFlow
 ```
 
+### InitLLMModels
+
+```mermaid
+flowchart TB
+    Start([path string]) --> HInit["**InitLLMModels(path) → config, err**"]
+    HInit --> Load["LoadModelsConfig(path) → config, err"]
+    Load -->|error| ELoad["return nil, err"]
+    Load -->|ok| Success["return config, nil"]
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
+
+    class Start,Success mainFn
+    class HInit,Load internalFn
+    class ELoad errorFlow
+```
+
 ### GetModel
 
 ```mermaid

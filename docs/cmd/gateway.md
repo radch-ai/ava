@@ -14,9 +14,10 @@ flowchart TB
     ParseLevel -->|error| Exit2("Exit 1")
     ParseLevel -->|ok| SetLevel["zerolog.SetGlobalLevel(logLevel)"]
     SetLevel --> CreateLogger["zerolog.New(os.Stderr) → logger"]
-    CreateLogger --> LoadModels["llm.InitLLM('models.json') → llmCfg, err"]
+    CreateLogger --> LoadModels["config.InitLLMModels('models.json') → modelsCfg, err"]
     LoadModels -->|error| ExitLLM["Exit 1 - models.json required"]
-    LoadModels -->|ok| CheckOrigins["cfg.AllowedOrigins (warn if empty)"]
+    LoadModels -->|ok| CreateSelector["llm.NewModelSelector(modelsCfg) → modelSelector"]
+    CreateSelector --> CheckOrigins["cfg.AllowedOrigins (warn if empty)"]
     CheckOrigins --> CheckConns["cfg.MaxConns (default 10000)"]
     CheckConns --> CreateWS["websocket.NewHandler(logger, allowedOrigins, maxConns, nil) → wsHandler"]
     CreateWS --> InitRedis["redis.NewClient(&redis.Options{Addr: cfg.RedisAddr, Password: cfg.RedisPassword}) → redisClient"]
@@ -41,7 +42,7 @@ flowchart TB
 
     class Start,Running mainFn
     class Exit1,Exit2,Exit3,ExitLLM errorFlow
-    class LoadCfg,ValidateCfg,LoadModels,CheckOrigins,CheckConns,CreateCache,CreateAuthMW,CreateWS,CreateServer,StartServer localPkgs
+    class LoadCfg,ValidateCfg,LoadModels,CreateSelector,CheckOrigins,CheckConns,CreateCache,CreateAuthMW,CreateWS,CreateServer,StartServer localPkgs
 ```
 
 ## Design Notes

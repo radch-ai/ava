@@ -35,14 +35,17 @@ func main() {
 	// Create logger
 	logger := zerolog.New(os.Stderr).With().Timestamp().Str("service", "nevaria-gateway").Logger()
 
-	// Initialize LLM (models.json is required)
-	llmCfg, err := llm.InitLLM("models.json")
+	// Initialize LLM models config (models.json is required)
+	modelsCfg, err := config.InitLLMModels("models.json")
 	if err != nil {
-		logger.Error().Err(err).Msg("failed to initialize LLM - models.json is required")
+		logger.Error().Err(err).Msg("failed to load models.json")
 		os.Exit(1)
 	}
-	logger.Info().Msg("LLM initialized")
-	_ = llmCfg // TODO: Wire to AgentManager for quota enforcement
+	logger.Info().Msg("LLM models config loaded")
+
+	// Create model selector
+	modelSelector := llm.NewModelSelector(modelsCfg.GetNotDiamondBaseURL(), modelsCfg.GetNotDiamondAPIKey())
+	_ = modelSelector // TODO: Wire to AgentManager for quota enforcement
 
 	// For development, allow all origins if none specified.
 	// In production, always set GATEWAY_ALLOWED_ORIGINS environment variable.

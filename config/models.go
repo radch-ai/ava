@@ -115,3 +115,7 @@ func (c *ModelsConfig) GetNotDiamondBaseURL() string {
 	}
 	return c.NotDiamond.BaseURL
 }
+
+func InitLLMModels(path string) (*ModelsConfig, error) {
+	return LoadModelsConfig(path)
+}

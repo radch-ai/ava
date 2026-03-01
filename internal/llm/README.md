@@ -4,17 +4,6 @@ This package provides LLM provider abstractions and message conversion utilities
 
 ## Files
 
-### init.go
-
-Entry point for LLM initialization. Provides unified initialization functions.
-
-**Functions:**
-- `InitModelsConfig(path)` - Loads models.json configuration
-- `InitNotDiamondModelSelector(cfg)` - Creates NotDiamond model selector
-- `InitLLM(path)` - Full LLM initialization (combines above + provider keys)
-
-**Status:** ✅ Complete
-
 ### config.go
 
 Loads model configuration from models.json.
@@ -73,26 +62,18 @@ func (f *ProviderFactory) createOpenAIModel(ctx context.Context, config *ModelCo
 
 ```go
 import (
+    "github.com/nevaria-ai/gateway/config"
     "github.com/nevaria-ai/gateway/internal/llm"
 )
 
-// Initialize LLM with a single call
-llmCfg, err := llm.InitLLM("models.json")
+// Load models config (from config package)
+modelsCfg, err := config.InitLLMModels("models.json")
 if err != nil {
     log.Fatal(err)
 }
 
-// Access components
-models := llmCfg.Models                    // Model configurations
-selector := llmCfg.ModelSelector           // NotDiamond model selector
-openaiKey := llmCfg.ProviderAPIKey[llm.ProviderOpenAI]  // Provider API keys
-
-// Or initialize components separately
-cfg, err := llm.InitModelsConfig("models.json")
-if err != nil {
-    log.Fatal(err)
-}
-selector := llm.InitNotDiamondModelSelector(cfg)
+// Create model selector
+selector := llm.NewModelSelector(modelsCfg.GetNotDiamondBaseURL(), modelsCfg.GetNotDiamondAPIKey())
 
 // Convert messages
 agentMsgs := []agent.AgentMessage{...}
