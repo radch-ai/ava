@@ -13,6 +13,11 @@ import (
 	"github.com/cloudwego/eino/compose"
 )
 
+const (
+	defaultIdleTimeout   = 5 * time.Minute
+	defaultLaneQueueSize = 100
+)
+
 type QuotaChatModelInterface interface {
 	GetInnerModel() model.ToolCallingChatModel
 }
@@ -103,6 +108,17 @@ func (a *ADKAgent) SetOnExit(fn func()) {
 }
 
 func (a *ADKAgent) Start(opts ADKAgentOptions) error {
+	go a.loop()
+
+	return nil
+}
+
+func (a *ADKAgent) StartWithModel(opts ADKAgentOptions) error {
+	if opts.QuotaChatModel == nil {
+		go a.loop()
+		return nil
+	}
+
 	chatModel := opts.QuotaChatModel.GetInnerModel()
 
 	tools := GetGlobalTools()

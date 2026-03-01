@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"context"
 	"sync"
 
 	"github.com/nevaria-ai/gateway/internal/agent"
@@ -20,65 +21,98 @@ type AgentKey struct {
 
 // AgentManagerOptions configures a new AgentManager.
 type AgentManagerOptions struct {
+	QuotaChatModel agent.QuotaChatModelInterface
 }
 
-// AgentManager manages per-user agents with thread-safe access.
+// AgentManager manages per-user ADKAgents with thread-safe access.
 // Agents are keyed by composite (userID, agentID) to support multiple agents per user.
 type AgentManager struct {
-	mu     sync.RWMutex
-	agents map[AgentKey]*agent.Agent
-	logger zerolog.Logger
+	mu             sync.Mutex
+	agents         map[AgentKey]*agent.ADKAgent
+	logger         zerolog.Logger
+	quotaChatModel agent.QuotaChatModelInterface
 }
 
 // NewAgentManager creates a new AgentManager.
 func NewAgentManager(logger zerolog.Logger, opts *AgentManagerOptions) *AgentManager {
+	var quotaChatModel agent.QuotaChatModelInterface
+	if opts != nil {
+		quotaChatModel = opts.QuotaChatModel
+	}
+
 	return &AgentManager{
-		agents: make(map[AgentKey]*agent.Agent),
-		logger: logger,
+		agents:         make(map[AgentKey]*agent.ADKAgent),
+		logger:         logger,
+		quotaChatModel: quotaChatModel,
 	}
 }
 
 // GetOrCreateAgentForUser returns an existing agent for (userID, agentID) pair or creates a new one.
-func (m *AgentManager) GetOrCreateAgentForUser(userID, agentID string) *agent.Agent {
+func (m *AgentManager) GetOrCreateAgentForUser(ctx context.Context, userID, agentID string, firstTask agent.Task) *agent.ADKAgent {
 	key := AgentKey{UserID: userID, AgentID: agentID}
 
-	m.mu.RLock()
-	existingAgent, exists := m.agents[key]
-	m.mu.RUnlock()
-
-	if exists {
-		return existingAgent
-	}
-
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
-	// Double-check after acquiring write lock
-	if existingAgent, exists := m.agents[key]; exists {
+	existingAgent, exists := m.agents[key]
+	if exists {
+		m.mu.Unlock()
 		return existingAgent
 	}
 
-	// Create new agent with appropriate LLM client
-	newAgent := m.createAgent(userID, agentID)
+	newAgent := agent.NewADKAgent(ctx, firstTask, agent.ADKAgentOptions{
+		AgentID: agentID,
+		UserID:  userID,
+	})
 	m.agents[key] = newAgent
+	m.mu.Unlock()
+
+	config := m.loadAgentConfig(userID, agentID)
+	_ = newAgent.Start(agent.ADKAgentOptions{
+		SystemPrompt:   config.SystemPrompt,
+		QuotaChatModel: m.quotaChatModel,
+		Memories:       m.loadMemories(userID),
+	})
 
 	return newAgent
 }
 
 // GetAgent returns an Agent interface for the given (userID, agentID) pair.
-// If conn is provided, it wraps it for thread-safe writes through the writeCh.
-func (m *AgentManager) GetAgent(userID, agentID string, conn *WSConnWrapper) Agent {
-	ag := m.GetOrCreateAgentForUser(userID, agentID)
-	return &agentAdapter{agent: ag, conn: conn, agentID: agentID}
+func (m *AgentManager) GetAgent(ctx context.Context, userID, agentID string, conn *WSConnWrapper, task agent.Task) Agent {
+	key := AgentKey{UserID: userID, AgentID: agentID}
+
+	m.mu.Lock()
+
+	existingAgent, exists := m.agents[key]
+	if exists {
+		existingAgent.Submit(task)
+		m.mu.Unlock()
+		return &adkAgentAdapter{agent: existingAgent, conn: conn, agentID: agentID}
+	}
+
+	newAgent := agent.NewADKAgent(ctx, task, agent.ADKAgentOptions{
+		AgentID: agentID,
+		UserID:  userID,
+	})
+	m.agents[key] = newAgent
+	m.mu.Unlock()
+
+	config := m.loadAgentConfig(userID, agentID)
+	_ = newAgent.Start(agent.ADKAgentOptions{
+		SystemPrompt:   config.SystemPrompt,
+		QuotaChatModel: m.quotaChatModel,
+		Memories:       m.loadMemories(userID),
+	})
+
+	return &adkAgentAdapter{agent: newAgent, conn: conn, agentID: agentID}
 }
 
-type agentAdapter struct {
-	agent   *agent.Agent
+type adkAgentAdapter struct {
+	agent   *agent.ADKAgent
 	conn    *WSConnWrapper
 	agentID string
 }
 
-func (a *agentAdapter) Submit(task agent.Task) {
+func (a *adkAgentAdapter) Submit(task agent.Task) {
 	if a.conn != nil {
 		_ = a.conn.WriteJSON(map[string]interface{}{
 			"type":     "agent_start",
@@ -90,20 +124,28 @@ func (a *agentAdapter) Submit(task agent.Task) {
 			"agent_id": a.agentID,
 		})
 	}
-	a.agent.Lane().Submit(task.Message)
+	a.agent.Submit(task)
 }
 
-func (a *agentAdapter) Stop() {
+func (a *adkAgentAdapter) Stop() {
+	a.agent.Stop()
 }
 
-// createAgent creates a new agent.
-func (m *AgentManager) createAgent(userID, agentID string) *agent.Agent {
-	opts := agent.AgentOptions{
-		ID:        agentID,
-		SessionID: userID + ":" + agentID,
+// agentConfig holds configuration for an agent
+type agentConfig struct {
+	SystemPrompt string
+}
+
+// loadAgentConfig loads agent configuration
+func (m *AgentManager) loadAgentConfig(userID, agentID string) agentConfig {
+	return agentConfig{
+		SystemPrompt: "You are a helpful assistant.",
 	}
+}
 
-	return agent.NewAgent(opts)
+// loadMemories loads user memories
+func (m *AgentManager) loadMemories(userID string) []string {
+	return []string{}
 }
 
 // RemoveAgentForUser removes agent for given (userID, agentID) pair.
@@ -114,29 +156,31 @@ func (m *AgentManager) RemoveAgentForUser(userID, agentID string) {
 	defer m.mu.Unlock()
 
 	if existingAgent, exists := m.agents[key]; exists {
-		existingAgent.Unsubscribe(key.UserID)
+		existingAgent.Stop()
 		delete(m.agents, key)
 	}
 }
 
-// GetOrCreateAgent is deprecated - use GetOrCreateAgentForUser instead.
-func (m *AgentManager) GetOrCreateAgent(sessionID string, userID string) *agent.Agent {
-	return m.GetOrCreateAgentForUser(userID, sessionID)
+// GetAgentStatus returns the status of an agent if it exists.
+func (m *AgentManager) GetAgentStatus(userID, agentID string) map[string]interface{} {
+	key := AgentKey{UserID: userID, AgentID: agentID}
+
+	m.mu.Lock()
+	ag := m.agents[key]
+	m.mu.Unlock()
+
+	if ag == nil {
+		return map[string]interface{}{"status": "not_found"}
+	}
+	return map[string]interface{}{"status": "active", "agent_id": agentID}
 }
 
-// RemoveAgent is deprecated - use RemoveAgentForUser instead.
-// For backward compatibility, this removes any agent matching to sessionID as agentID.
-func (m *AgentManager) RemoveAgent(sessionID string) {
+// GetExistingAgent returns an existing agent without creating a new one.
+func (m *AgentManager) GetExistingAgent(userID, agentID string) *agent.ADKAgent {
+	key := AgentKey{UserID: userID, AgentID: agentID}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Remove any agent that has this sessionID as its agentID
-	// This maintains backward compatibility with the old single-key system
-	for key, agent := range m.agents {
-		if key.AgentID == sessionID {
-			agent.Unsubscribe(key.UserID)
-			delete(m.agents, key)
-			return // Only remove first match (old behavior)
-		}
-	}
+	return m.agents[key]
 }
