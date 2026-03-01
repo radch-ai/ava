@@ -67,7 +67,7 @@ func (m *AgentManager) GetOrCreateAgentForUser(ctx context.Context, userID, agen
 	m.mu.Unlock()
 
 	config := m.loadAgentConfig(userID, agentID)
-	_ = newAgent.Start(agent.ADKAgentOptions{
+	_ = newAgent.StartWithModel(agent.ADKAgentOptions{
 		SystemPrompt:   config.SystemPrompt,
 		QuotaChatModel: m.quotaChatModel,
 		Memories:       m.loadMemories(userID),
@@ -97,7 +97,7 @@ func (m *AgentManager) GetAgent(ctx context.Context, userID, agentID string, con
 	m.mu.Unlock()
 
 	config := m.loadAgentConfig(userID, agentID)
-	_ = newAgent.Start(agent.ADKAgentOptions{
+	_ = newAgent.StartWithModel(agent.ADKAgentOptions{
 		SystemPrompt:   config.SystemPrompt,
 		QuotaChatModel: m.quotaChatModel,
 		Memories:       m.loadMemories(userID),
