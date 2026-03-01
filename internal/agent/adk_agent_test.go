@@ -213,3 +213,57 @@ func TestGetGlobalTools_ReturnsTools(t *testing.T) {
 
 	assert.NotEmpty(t, tools, "GetGlobalTools should return at least one tool")
 }
+
+func TestADKAgent_ProcessTasks_CombinesInput(t *testing.T) {
+	ctx := context.Background()
+	agent := NewADKAgent(ctx, Task{Message: "first"}, ADKAgentOptions{})
+
+	agent.processTasksFn = nil
+
+	tasks := []Task{
+		{Message: "hello", MsgID: "msg1"},
+		{Message: "world", MsgID: "msg2"},
+		{Message: "test", MsgID: "msg3"},
+	}
+
+	agent.processTasks(tasks)
+}
+
+func TestADKAgent_ProcessTasks_ExtractsMsgID(t *testing.T) {
+	ctx := context.Background()
+	agent := NewADKAgent(ctx, Task{Message: "first"}, ADKAgentOptions{})
+
+	agent.processTasksFn = nil
+
+	tasks := []Task{
+		{Message: "hello", MsgID: "msg-123"},
+		{Message: "world"},
+	}
+
+	agent.processTasks(tasks)
+}
+
+func TestADKAgent_ProcessTasks_WithNilConn(t *testing.T) {
+	ctx := context.Background()
+	agent := NewADKAgent(ctx, Task{Message: "first"}, ADKAgentOptions{})
+
+	agent.processTasksFn = nil
+
+	assert.NotNil(t, agent.connRef)
+	assert.False(t, agent.connRef.IsSet())
+
+	tasks := []Task{
+		{Message: "hello", MsgID: "msg-123"},
+	}
+
+	agent.processTasks(tasks)
+}
+
+func TestADKAgent_ProcessTasks_EmptyTasks(t *testing.T) {
+	ctx := context.Background()
+	agent := NewADKAgent(ctx, Task{Message: "first"}, ADKAgentOptions{})
+
+	agent.processTasksFn = nil
+
+	agent.processTasks([]Task{})
+}

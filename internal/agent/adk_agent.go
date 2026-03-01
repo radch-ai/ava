@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +20,7 @@ type QuotaChatModelInterface interface {
 type ADKAgentOptions struct {
 	AgentID        string
 	UserID         string
+	Description    string
 	SystemPrompt   string
 	QuotaChatModel QuotaChatModelInterface
 	Memories       []string
@@ -84,6 +86,22 @@ func (a *ADKAgent) GetUserID() string {
 	return a.userID
 }
 
+func (a *ADKAgent) Submit(task Task) {
+	a.laneCh <- task
+}
+
+func (a *ADKAgent) GetConnRef() *WSConnRef {
+	return a.connRef
+}
+
+func (a *ADKAgent) SetProcessTasksFn(fn func([]Task)) {
+	a.processTasksFn = fn
+}
+
+func (a *ADKAgent) SetOnExit(fn func()) {
+	a.onExit = fn
+}
+
 func (a *ADKAgent) Start(opts ADKAgentOptions) error {
 	chatModel := opts.QuotaChatModel.GetInnerModel()
 
@@ -92,6 +110,7 @@ func (a *ADKAgent) Start(opts ADKAgentOptions) error {
 	var err error
 	a.einoAgent, err = adk.NewChatModelAgent(a.ctx, &adk.ChatModelAgentConfig{
 		Name:        a.agentID,
+		Description: opts.Description,
 		Instruction: buildInstruction(opts.SystemPrompt, opts.Memories),
 		Model:       chatModel,
 		ToolsConfig: adk.ToolsConfig{
@@ -185,4 +204,39 @@ func (a *ADKAgent) drainMessages(first Task) []Task {
 }
 
 func (a *ADKAgent) processTasks(tasks []Task) {
+	if len(tasks) == 0 {
+		return
+	}
+
+	var input strings.Builder
+	var msgID string
+
+	for i, t := range tasks {
+		if i > 0 {
+			input.WriteString("\n")
+		}
+		input.WriteString(t.Message)
+		if msgID == "" && t.MsgID != "" {
+			msgID = t.MsgID
+		}
+	}
+
+	conn := a.connRef.Get()
+	_ = BuildProgressHandler(conn)
+
+	if a.einoRunner != nil {
+		_ = a.einoRunner.Query(a.ctx, input.String())
+	}
+
+	a.saveToSession(msgID, input.String())
+
+	if !a.connRef.IsSet() {
+		a.notifyUser(msgID, input.String())
+	}
+}
+
+func (a *ADKAgent) saveToSession(msgID, content string) {
+}
+
+func (a *ADKAgent) notifyUser(msgID, content string) {
 }
