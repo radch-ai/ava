@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -87,4 +88,81 @@ func TestADKAgent_LaneCh_AcceptsMessages(t *testing.T) {
 	agent.laneCh <- Task{Message: "third"}
 
 	assert.Equal(t, 3, len(agent.laneCh))
+}
+
+func TestADKAgent_Loop_DrainsMessages(t *testing.T) {
+	ctx := context.Background()
+	agent := NewADKAgent(ctx, Task{Message: "first"}, ADKAgentOptions{})
+
+	agent.laneCh <- Task{Message: "second"}
+	agent.laneCh <- Task{Message: "third"}
+
+	var receivedMessages []string
+	agent.processTasksFn = func(tasks []Task) {
+		for _, t := range tasks {
+			receivedMessages = append(receivedMessages, t.Message)
+		}
+	}
+
+	go agent.loop()
+
+	time.Sleep(100 * time.Millisecond)
+
+	assert.GreaterOrEqual(t, len(receivedMessages), 3)
+	agent.Stop()
+}
+
+func TestADKAgent_Loop_IdleExit(t *testing.T) {
+	ctx := context.Background()
+	agent := NewADKAgent(ctx, Task{Message: "first"}, ADKAgentOptions{
+		IdleTimeout: 50 * time.Millisecond,
+	})
+
+	exited := make(chan bool, 1)
+	agent.onExit = func() {
+		exited <- true
+	}
+
+	go agent.loop()
+
+	select {
+	case <-exited:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected agent to exit on idle")
+	}
+}
+
+func TestADKAgent_Loop_ContextCancel(t *testing.T) {
+	ctx := context.Background()
+	agent := NewADKAgent(ctx, Task{Message: "first"}, ADKAgentOptions{
+		IdleTimeout: 10 * time.Second,
+	})
+
+	exited := make(chan bool, 1)
+	agent.onExit = func() {
+		exited <- true
+	}
+
+	go agent.loop()
+
+	time.Sleep(20 * time.Millisecond)
+	agent.Stop()
+
+	select {
+	case <-exited:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected agent to exit on context cancel")
+	}
+}
+
+func TestADKAgent_DrainMessages(t *testing.T) {
+	ctx := context.Background()
+	agent := NewADKAgent(ctx, Task{Message: "first"}, ADKAgentOptions{})
+
+	agent.laneCh <- Task{Message: "second"}
+	agent.laneCh <- Task{Message: "third"}
+
+	tasks := agent.drainMessages(Task{Message: "new"})
+
+	assert.GreaterOrEqual(t, len(tasks), 1)
 }
