@@ -10,19 +10,27 @@ import (
 	"time"
 
 	"github.com/nevaria-ai/gateway/internal/websocket"
+	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 )
 
 // Version is set at build time via ldflags
 var Version = "dev"
 
-// A Server manages the HTTP server and WebSocket handlers.
+// Server manages the HTTP server and WebSocket handlers.
 type Server struct {
 	httpServer *http.Server
 	logger     zerolog.Logger
 	wsHandler  *websocket.Handler
 	authMW     *AuthMiddleware // Authentication middleware
 	shutdownCh chan struct{}   // Closed when shutdown is requested
+}
+
+// ServerConfig holds server initialization parameters.
+type ServerConfig struct {
+	Addr         string
+	ZetidalURL   string
+	AuthCacheTTL time.Duration
 }
 
 // New creates a new Server with the given address, logger, WebSocket handler, and auth middleware.
@@ -63,6 +71,14 @@ func New(addr string, logger zerolog.Logger, wsHandler *websocket.Handler, authM
 		authMW:     authMW,
 		shutdownCh: make(chan struct{}),
 	}
+}
+
+// NewWithRedis creates a Server with Redis-backed auth middleware.
+// This is the recommended constructor for production use.
+func NewWithRedis(cfg *ServerConfig, logger zerolog.Logger, wsHandler *websocket.Handler, redisClient *redis.Client) *Server {
+	cache := NewRedisCache(redisClient)
+	authMW := NewAuthMiddleware(cfg.ZetidalURL, cache, cfg.AuthCacheTTL)
+	return New(cfg.Addr, logger, wsHandler, authMW)
 }
 
 func (s *Server) Start() error {

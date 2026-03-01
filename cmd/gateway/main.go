@@ -36,7 +36,7 @@ func main() {
 	logger := zerolog.New(os.Stderr).With().Timestamp().Str("service", "nevaria-gateway").Logger()
 
 	// Initialize LLM (models.json is required)
-	llmClient, err := llm.InitLLMModels("models.json")
+	llmClient, err := llm.InitModels("models.json")
 	if err != nil {
 		logger.Error().Err(err).Msg("failed to load models.json")
 		os.Exit(1)
@@ -60,7 +60,7 @@ func main() {
 	}
 
 	// Create WebSocket handler
-	// TODO: Wire llmCfg to AgentManager for quota enforcement
+	// TODO: Wire llmClient to AgentManager for quota enforcement
 	wsHandler := websocket.NewHandler(logger, allowedOrigins, maxConns, nil)
 
 	// Create Redis client (required - for session caching and quota)
@@ -70,14 +70,13 @@ func main() {
 	})
 	logger.Info().Str("addr", cfg.RedisAddr).Msg("Redis client initialized")
 
-	// Create Redis cache adapter
-	cache := server.NewRedisCache(redisClient)
-
-	// Create auth middleware with cache support
-	authMW := server.NewAuthMiddleware(cfg.ZetidalURL, cache, cfg.AuthCacheTTL)
-
-	// Create and start server with auth middleware
-	srv := server.New(cfg.ServerAddr, logger, wsHandler, authMW)
+	// Create and start server (auth middleware created internally)
+	srvCfg := &server.ServerConfig{
+		Addr:         cfg.ServerAddr,
+		ZetidalURL:   cfg.ZetidalURL,
+		AuthCacheTTL: cfg.AuthCacheTTL,
+	}
+	srv := server.NewWithRedis(srvCfg, logger, wsHandler, redisClient)
 	if err := srv.Start(); err != nil {
 		logger.Error().Err(err).Msg("server failed")
 		os.Exit(1)

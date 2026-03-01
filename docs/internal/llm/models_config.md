@@ -79,13 +79,13 @@ flowchart TB
     class ERead,EParse,ELookup errorFlow
 ```
 
-### InitLLMModels
+### InitModels
 
 Entry point for LLM initialization. Returns `*LLM` with both config and model selector.
 
 ```mermaid
 flowchart TB
-    Start([path string]) --> HInit["**InitLLMModels(path) → *LLM, err**"]
+    Start([path string]) --> HInit["**InitModels(path) → *LLM, err**"]
     HInit --> Load["LoadModelsConfig(path) → config, err"]
     Load -->|error| ELoad["return nil, err"]
     Load -->|ok| CreateSelector["NewModelSelector(config) → selector"]

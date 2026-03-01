@@ -141,7 +141,7 @@ type LLM struct {
 	ModelSelector *ModelSelector
 }
 
-func InitLLMModels(path string) (*LLM, error) {
+func InitModels(path string) (*LLM, error) {
 	cfg, err := LoadModelsConfig(path)
 	if err != nil {
 		return nil, err

@@ -14,15 +14,13 @@ flowchart TB
     ParseLevel -->|error| Exit2("Exit 1")
     ParseLevel -->|ok| SetLevel["zerolog.SetGlobalLevel(logLevel)"]
     SetLevel --> CreateLogger["zerolog.New(os.Stderr) → logger"]
-    CreateLogger --> InitLLM["llm.InitLLMModels('models.json') → llmClient, err"]
+    CreateLogger --> InitLLM["llm.InitModels('models.json') → llmClient, err"]
     InitLLM -->|error| ExitLLM["Exit 1 - models.json required"]
     InitLLM -->|ok| CheckOrigins["cfg.AllowedOrigins (warn if empty)"]
     CheckOrigins --> CheckConns["cfg.MaxConns (default 10000)"]
     CheckConns --> CreateWS["websocket.NewHandler(logger, allowedOrigins, maxConns, nil) → wsHandler"]
-    CreateWS --> InitRedis["redis.NewClient(&redis.Options{Addr: cfg.RedisAddr, Password: cfg.RedisPassword}) → redisClient"]
-    InitRedis --> CreateCache["server.NewRedisCache(redisClient) → cache"]
-    CreateCache --> CreateAuthMW["server.NewAuthMiddleware(cfg.ZetidalURL, cache, cfg.AuthCacheTTL) → authMW"]
-    CreateAuthMW --> CreateServer["server.New(cfg.ServerAddr, logger, wsHandler, authMW) → srv"]
+    CreateWS --> InitRedis["redis.NewClient(&redis.Options{...}) → redisClient"]
+    InitRedis --> CreateServer["server.NewWithRedis(cfg, logger, wsHandler, redisClient) → srv"]
     CreateServer --> StartServer["srv.Start() → err"]
     StartServer -->|error| Exit3("Exit 1")
     StartServer -->|ok| Running("Server Running")
@@ -30,8 +28,6 @@ flowchart TB
     click LoadCfg href "../config/README.md"
     click ValidateCfg href "../config/README.md"
     click InitLLM href "../internal/llm/models_config.md"
-    click CreateCache href "../internal/server/README.md"
-    click CreateAuthMW href "../internal/server/README.md"
     click CreateWS href "../internal/websocket.md"
     click CreateServer href "../internal/server/README.md"
 
@@ -41,8 +37,10 @@ flowchart TB
 
     class Start,Running mainFn
     class Exit1,Exit2,Exit3,ExitLLM errorFlow
-    class LoadCfg,ValidateCfg,InitLLM,CheckOrigins,CheckConns,CreateCache,CreateAuthMW,CreateWS,CreateServer,StartServer localPkgs
+    class LoadCfg,ValidateCfg,InitLLM,CreateWS,InitRedis,CreateServer localPkgs
 ```
+
+**Note:** CheckOrigins and CheckConns are local variable setup from cfg, not package calls.
 
 ## Design Notes
 

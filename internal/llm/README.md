@@ -16,7 +16,7 @@ Loads model configuration from models.json. Contains the JSON structure types an
 - `RuntimeModelConfig` - Flattened config for provider factory
 
 **Functions:**
-- `InitLLMModels(path)` - Initialize LLM (returns `*LLM` with Config + ModelSelector)
+- `InitModels(path)` - Initialize LLM (returns `*LLM` with Config + ModelSelector)
 - `LoadModelsConfig(path)` - Low-level JSON loading
 - `GetRuntimeModel(name)` - Get flattened config for provider creation
 - `GetNotDiamondAPIKey/BaseURL()` - Access NotDiamond settings
@@ -69,7 +69,7 @@ NotDiamond model router integration.
 import "github.com/nevaria-ai/gateway/internal/llm"
 
 // Initialize LLM (loads models.json and creates ModelSelector)
-llmClient, err := llm.InitLLMModels("models.json")
+llmClient, err := llm.InitModels("models.json")
 if err != nil {
     log.Fatal(err)
 }
