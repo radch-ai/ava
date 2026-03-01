@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -178,4 +180,190 @@ func TestAgentManager_GetAgent_MultipleAgents(t *testing.T) {
 	assert.NotEqual(t, agentA, agentB, "different agents should be different instances")
 
 	mockDB.AssertExpectations(t)
+}
+
+func TestAgentManager_GetAgent_DBError(t *testing.T) {
+	mockDB := new(MockAgentDB)
+	mockLLM := &MockLLMClient{}
+
+	mgr := NewAgentManager(mockDB, mockLLM, nil, nil)
+
+	dbErr := assert.AnError
+	mockDB.On("GetAgentConfig", "user-1", "agent-error").Return(nil, dbErr).Once()
+
+	agent := mgr.GetAgent("user-1", "agent-error")
+
+	assert.Nil(t, agent)
+	mockDB.AssertExpectations(t)
+}
+
+func TestAgentManager_GetAgent_EvictDuringGetAgent(t *testing.T) {
+	mockDB := new(MockAgentDB)
+	mockLLM := &MockLLMClient{}
+
+	mgr := NewAgentManager(mockDB, mockLLM, nil, nil)
+
+	config := &AgentConfig{
+		AgentID:      "agent-race",
+		UserID:       "user-race",
+		SystemPrompt: "Race test",
+	}
+
+	mockDB.On("GetAgentConfig", "user-race", "agent-race").Return(config, nil)
+
+	agent1 := mgr.GetAgent("user-race", "agent-race")
+	assert.NotNil(t, agent1)
+
+	mgr.Evict("agent-race")
+
+	agent2 := mgr.GetAgent("user-race", "agent-race")
+	assert.NotNil(t, agent2)
+	assert.NotEqual(t, agent1, agent2, "should create new agent after eviction")
+
+	mockDB.AssertNumberOfCalls(t, "GetAgentConfig", 2)
+}
+
+func TestAgentManager_GetAgent_MultipleCallsSameAgent(t *testing.T) {
+	mockDB := new(MockAgentDB)
+	mockLLM := &MockLLMClient{}
+
+	mgr := NewAgentManager(mockDB, mockLLM, nil, nil)
+
+	config := &AgentConfig{
+		AgentID:      "agent-multi",
+		UserID:       "user-multi",
+		SystemPrompt: "Multi call test",
+	}
+	mockDB.On("GetAgentConfig", "user-multi", "agent-multi").Return(config, nil).Once()
+
+	agents := make([]*Agent, 5)
+	for i := 0; i < 5; i++ {
+		agents[i] = mgr.GetAgent("user-multi", "agent-multi")
+		assert.NotNil(t, agents[i])
+	}
+
+	for i := 1; i < 5; i++ {
+		assert.Equal(t, agents[0], agents[i], "all calls should return same agent")
+	}
+
+	mockDB.AssertNumberOfCalls(t, "GetAgentConfig", 1)
+}
+
+func TestAgentManager_Evict_NonExistentDoesNotPanic(t *testing.T) {
+	mockDB := new(MockAgentDB)
+	mockLLM := &MockLLMClient{}
+
+	mgr := NewAgentManager(mockDB, mockLLM, nil, nil)
+
+	assert.NotPanics(t, func() {
+		for i := 0; i < 10; i++ {
+			mgr.Evict("non-existent")
+		}
+	})
+}
+
+func TestAgentManager_GetAgent_NilConfig(t *testing.T) {
+	mockDB := new(MockAgentDB)
+	mockLLM := &MockLLMClient{}
+
+	mgr := NewAgentManager(mockDB, mockLLM, nil, nil)
+
+	mockDB.On("GetAgentConfig", "user-nil", "agent-nil").Return(nil, nil).Once()
+
+	agent := mgr.GetAgent("user-nil", "agent-nil")
+
+	assert.Nil(t, agent)
+	mockDB.AssertExpectations(t)
+}
+
+func TestAgentManager_GetAgent_ConcurrentEvictAndGet(t *testing.T) {
+	mockDB := new(MockAgentDB)
+	mockLLM := &MockLLMClient{}
+
+	mgr := NewAgentManager(mockDB, mockLLM, nil, nil)
+
+	config := &AgentConfig{
+		AgentID:      "agent-concurrent-evict",
+		UserID:       "user-concurrent",
+		SystemPrompt: "Concurrent evict test",
+	}
+	mockDB.On("GetAgentConfig", "user-concurrent", "agent-concurrent-evict").Return(config, nil)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	var getAgent *Agent
+	go func() {
+		defer wg.Done()
+		getAgent = mgr.GetAgent("user-concurrent", "agent-concurrent-evict")
+	}()
+
+	go func() {
+		defer wg.Done()
+		time.Sleep(1 * time.Millisecond)
+		mgr.Evict("agent-concurrent-evict")
+	}()
+
+	wg.Wait()
+
+	assert.NotNil(t, getAgent)
+}
+
+func TestAgentManager_Evict_AllAgents(t *testing.T) {
+	mockDB := new(MockAgentDB)
+	mockLLM := &MockLLMClient{}
+
+	mgr := NewAgentManager(mockDB, mockLLM, nil, nil)
+
+	config := &AgentConfig{
+		AgentID:      "agent-evict-all",
+		UserID:       "user-evict",
+		SystemPrompt: "Evict all test",
+	}
+	mockDB.On("GetAgentConfig", "user-evict", "agent-evict-all").Return(config, nil)
+
+	agent1 := mgr.GetAgent("user-evict", "agent-evict-all")
+	assert.NotNil(t, agent1)
+
+	mgr.Evict("agent-evict-all")
+
+	mockDB.On("GetAgentConfig", "user-evict", "agent-evict-all").Return(config, nil)
+	agent2 := mgr.GetAgent("user-evict", "agent-evict-all")
+	assert.NotNil(t, agent2)
+	assert.NotEqual(t, agent1, agent2)
+
+	mockDB.AssertNumberOfCalls(t, "GetAgentConfig", 2)
+}
+
+func TestAgentManager_NewAgentManager_InitializesEmptyMap(t *testing.T) {
+	mockDB := new(MockAgentDB)
+	mockLLM := &MockLLMClient{}
+
+	mgr := NewAgentManager(mockDB, mockLLM, nil, nil)
+
+	assert.NotNil(t, mgr.agents)
+	assert.Empty(t, mgr.agents)
+}
+
+func TestAgentManager_GetAgent_SameAgentIDDifferentUsers(t *testing.T) {
+	mockDB := new(MockAgentDB)
+	mockLLM := &MockLLMClient{}
+
+	mgr := NewAgentManager(mockDB, mockLLM, nil, nil)
+
+	config := &AgentConfig{
+		AgentID:      "shared-agent",
+		UserID:       "user-1",
+		SystemPrompt: "Shared agent",
+	}
+	mockDB.On("GetAgentConfig", "user-1", "shared-agent").Return(config, nil).Once()
+
+	agent1 := mgr.GetAgent("user-1", "shared-agent")
+	agent2 := mgr.GetAgent("user-2", "shared-agent")
+
+	assert.NotNil(t, agent1)
+	assert.NotNil(t, agent2)
+	assert.Equal(t, agent1, agent2, "same agentID returns cached agent regardless of userID")
+
+	mockDB.AssertNumberOfCalls(t, "GetAgentConfig", 1)
 }
