@@ -4,19 +4,27 @@ This package provides LLM provider abstractions and message conversion utilities
 
 ## Files
 
-### config.go
+### models_config.go
 
-Loads model configuration from models.json.
+Loads model configuration from models.json. Contains the JSON structure types and runtime types.
 
-**Features:**
-- Loads model configurations from JSON file
-- Supports multiple providers (OpenAI, Anthropic, Google, Grok)
-- Provides API key retrieval from environment variables
-- Converts config.ModelsConfig to llm.ModelsConfig
+**Types:**
+- `LLM` - Main entry struct with Config and ModelSelector
+- `ModelsConfig` - JSON structure (Providers, NotDiamond, Router)
+- `ModelConfig` - Per-model pricing/tier info
+- `ProviderConfig` - Provider API settings
+- `RuntimeModelConfig` - Flattened config for provider factory
+
+**Functions:**
+- `InitLLMModels(path)` - Initialize LLM (returns `*LLM` with Config + ModelSelector)
+- `LoadModelsConfig(path)` - Low-level JSON loading
+- `GetRuntimeModel(name)` - Get flattened config for provider creation
+- `GetNotDiamondAPIKey/BaseURL()` - Access NotDiamond settings
 
 **Status:** ✅ Complete and tested
 
 ### converter.go
+
 Converts between agent.AgentMessage and eino schema.Message.
 
 **Features:**
@@ -29,6 +37,7 @@ Converts between agent.AgentMessage and eino schema.Message.
 **Status:** ✅ Implementation complete, tests blocked by eino-ext dependency issues
 
 ### provider_factory.go
+
 Creates eino ChatModel instances with caching.
 
 **Features:**
@@ -43,37 +52,35 @@ Creates eino ChatModel instances with caching.
 
 **Status:** 🚧 Structure complete, implementation blocked by eino-ext dependency issues
 
-**Note:** The provider factory methods (createOpenAIModel, createAnthropicModel, createGeminiModel, createGrokModel) currently return error messages because the required eino-ext packages are not properly set up in the project's go.mod. Once the dependencies are resolved, these methods should be implemented as:
+### model_selector.go
 
-```go
-func (f *ProviderFactory) createOpenAIModel(ctx context.Context, config *ModelConfig, apiKey string) (model.ChatModel, error) {
-    cfg := &openaiclient.Config{
-        APIKey: apiKey,
-        Model:  config.ModelID,
-    }
-    if config.BaseURL != "" {
-        cfg.BaseURL = config.BaseURL
-    }
-    return openaiclient.NewChatModel(ctx, cfg)
-}
-```
+NotDiamond model router integration.
+
+**Features:**
+- Selects optimal model based on message content
+- Uses NotDiamond API for model recommendations
+- Supports provider filtering and tradeoff preferences
+
+**Status:** ✅ Complete
 
 ## Usage
 
 ```go
-import (
-    "github.com/nevaria-ai/gateway/config"
-    "github.com/nevaria-ai/gateway/internal/llm"
-)
+import "github.com/nevaria-ai/gateway/internal/llm"
 
-// Load models config (from config package)
-modelsCfg, err := config.InitLLMModels("models.json")
+// Initialize LLM (loads models.json and creates ModelSelector)
+llmClient, err := llm.InitLLMModels("models.json")
 if err != nil {
     log.Fatal(err)
 }
 
-// Create model selector
-selector := llm.NewModelSelector(modelsCfg.GetNotDiamondBaseURL(), modelsCfg.GetNotDiamondAPIKey())
+// Access components
+config := llmClient.Config           // ModelsConfig
+selector := llmClient.ModelSelector  // NotDiamond router
+
+// Create provider factory for chat model instances
+factory := llm.NewProviderFactory(config)
+chatModel, err := factory.CreateChatModel(ctx, "gpt-4o")
 
 // Convert messages
 agentMsgs := []agent.AgentMessage{...}
@@ -86,40 +93,44 @@ Example models.json:
 
 ```json
 {
-  "models": {
-    "gpt-4o": {
-      "provider": "openai",
-      "model_id": "gpt-4o",
+  "providers": {
+    "openai": {
+      "api_key_env": "OPENAI_API_KEY",
       "base_url": "https://api.openai.com/v1",
-      "api_key_env": "OPENAI_API_KEY"
+      "models": {
+        "gpt-4o": {
+          "input_cost_per_million": 2.50,
+          "output_cost_per_million": 10.00,
+          "max_tokens": 128000,
+          "tier": "standard"
+        }
+      }
     },
-    "claude-3-5-sonnet": {
-      "provider": "anthropic",
-      "model_id": "claude-3-5-sonnet-20241022",
+    "anthropic": {
+      "api_key_env": "ANTHROPIC_API_KEY",
       "base_url": "https://api.anthropic.com",
-      "api_key_env": "ANTHROPIC_API_KEY"
-    },
-    "gemini-2.0-flash": {
-      "provider": "google",
-      "model_id": "gemini-2.0-flash-exp",
-      "base_url": "https://generativelanguage.googleapis.com/v1beta",
-      "api_key_env": "GOOGLE_API_KEY"
-    },
-    "grok-2": {
-      "provider": "grok",
-      "model_id": "grok-2",
-      "base_url": "https://api.x.ai/v1",
-      "api_key_env": "XAI_API_KEY"
+      "models": {
+        "claude-3-5-sonnet": {
+          "input_cost_per_million": 3.00,
+          "output_cost_per_million": 15.00,
+          "max_tokens": 200000,
+          "tier": "standard"
+        }
+      }
     }
+  },
+  "not_diamond": {
+    "api_key_env": "NOT_DIAMOND_API_KEY",
+    "base_url": "https://api.notdiamond.ai"
   }
 }
 ```
 
 ## Tests
 
-Test files are located in `tests/unit/llm/`:
+Test files are located in `tests/unit/config/` and `tests/unit/llm/`:
 
-- `config_test.go` - Tests for configuration loading ✅ Passing
+- `models_test.go` - Tests for configuration loading ✅ Passing
 - `converter_test.go` - Tests for message conversion (blocked by dependencies)
 - `provider_factory_test.go` - Tests for provider factory (blocked by dependencies)
 
@@ -132,12 +143,3 @@ The package requires:
 - `github.com/cloudwego/eino-ext/components/model/gemini` - Google provider
 
 **Note:** The eino-ext packages currently have invalid version strings in the project's go.mod (`v0.0.0-latest`). These need to be resolved before the provider factory can be fully implemented and tested.
-
-## Next Steps
-
-1. Resolve eino-ext dependency issues in go.mod
-2. Implement provider creation methods in provider_factory.go
-3. Run and fix converter and provider_factory tests
-4. Add integration tests with actual LLM providers
-5. Add streaming support
-6. Add error handling and retry logic

@@ -11,13 +11,13 @@ func TestProviderFactory_createOpenAIModel(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		config  *ModelConfig
+		config  *RuntimeModelConfig
 		apiKey  string
 		wantErr bool
 	}{
 		{
 			name: "valid OpenAI model",
-			config: &ModelConfig{
+			config: &RuntimeModelConfig{
 				Provider:  ProviderOpenAI,
 				ModelID:   "gpt-4o",
 				BaseURL:   "https://api.openai.com/v1",
@@ -28,7 +28,7 @@ func TestProviderFactory_createOpenAIModel(t *testing.T) {
 		},
 		{
 			name: "OpenAI with empty API key",
-			config: &ModelConfig{
+			config: &RuntimeModelConfig{
 				Provider:  ProviderOpenAI,
 				ModelID:   "gpt-4o",
 				BaseURL:   "https://api.openai.com/v1",
@@ -39,7 +39,7 @@ func TestProviderFactory_createOpenAIModel(t *testing.T) {
 		},
 		{
 			name: "OpenAI with custom base URL",
-			config: &ModelConfig{
+			config: &RuntimeModelConfig{
 				Provider:  ProviderOpenAI,
 				ModelID:   "gpt-4o",
 				BaseURL:   "https://custom.api.com/v1",
@@ -74,13 +74,13 @@ func TestProviderFactory_createAnthropicModel(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		config  *ModelConfig
+		config  *RuntimeModelConfig
 		apiKey  string
 		wantErr bool
 	}{
 		{
 			name: "valid Anthropic model",
-			config: &ModelConfig{
+			config: &RuntimeModelConfig{
 				Provider:  ProviderAnthropic,
 				ModelID:   "claude-3-5-sonnet-20241022",
 				BaseURL:   "https://api.anthropic.com",
@@ -91,7 +91,7 @@ func TestProviderFactory_createAnthropicModel(t *testing.T) {
 		},
 		{
 			name: "Anthropic with empty API key",
-			config: &ModelConfig{
+			config: &RuntimeModelConfig{
 				Provider:  ProviderAnthropic,
 				ModelID:   "claude-3-5-sonnet-20241022",
 				BaseURL:   "https://api.anthropic.com",
@@ -130,13 +130,13 @@ func TestProviderFactory_createGeminiModel(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		config  *ModelConfig
+		config  *RuntimeModelConfig
 		apiKey  string
 		wantErr bool
 	}{
 		{
 			name: "valid Gemini model",
-			config: &ModelConfig{
+			config: &RuntimeModelConfig{
 				Provider:  ProviderGoogle,
 				ModelID:   "gemini-2.0-flash-exp",
 				BaseURL:   "https://generativelanguage.googleapis.com/v1beta",
@@ -171,13 +171,13 @@ func TestProviderFactory_createGrokModel(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		config  *ModelConfig
+		config  *RuntimeModelConfig
 		apiKey  string
 		wantErr bool
 	}{
 		{
 			name: "valid Grok model",
-			config: &ModelConfig{
+			config: &RuntimeModelConfig{
 				Provider:  ProviderGrok,
 				ModelID:   "grok-2",
 				BaseURL:   "https://api.x.ai/v1",
@@ -188,7 +188,7 @@ func TestProviderFactory_createGrokModel(t *testing.T) {
 		},
 		{
 			name: "Grok with empty API key",
-			config: &ModelConfig{
+			config: &RuntimeModelConfig{
 				Provider:  ProviderGrok,
 				ModelID:   "grok-2",
 				BaseURL:   "https://api.x.ai/v1",

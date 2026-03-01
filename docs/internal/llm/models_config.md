@@ -2,6 +2,8 @@
 
 JSON-based LLM model and provider configuration. Defines model costs, provider settings, and NotDiamond router integration.
 
+**Package:** `github.com/nevaria-ai/gateway/internal/llm`
+
 ## Overview
 
 ## Structs
@@ -79,21 +81,31 @@ flowchart TB
 
 ### InitLLMModels
 
+Entry point for LLM initialization. Returns `*LLM` with both config and model selector.
+
 ```mermaid
 flowchart TB
-    Start([path string]) --> HInit["**InitLLMModels(path) → config, err**"]
+    Start([path string]) --> HInit["**InitLLMModels(path) → *LLM, err**"]
     HInit --> Load["LoadModelsConfig(path) → config, err"]
     Load -->|error| ELoad["return nil, err"]
-    Load -->|ok| Success["return config, nil"]
+    Load -->|ok| CreateSelector["NewModelSelector(config) → selector"]
+    CreateSelector --> Return["return &LLM{Config, ModelSelector}, nil"]
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
-    class Start,Success mainFn
-    class HInit,Load internalFn
+    class Start,Return mainFn
+    class HInit,Load,CreateSelector internalFn
     class ELoad errorFlow
 ```
+
+### LLM
+
+| Struct | Field | Type | Description |
+|--------|-------|------|-------------|
+| `LLM` | `Config` | `*ModelsConfig` | Loaded models configuration |
+| | `ModelSelector` | `*ModelSelector` | NotDiamond model router |
 
 ### GetModel
 
@@ -285,7 +297,7 @@ make test-unit
 | `encoding/json` | JSON parsing |
 | `os` | Environment variable access |
 
-**File Location:** [`config/models.go`](https://github.com/nevaria-ai/gateway/blob/main/config/models.go)
+**File Location:** [`internal/llm/models_config.go`](https://github.com/nevaria-ai/gateway/blob/main/internal/llm/models_config.go)
 
 ## Related
 

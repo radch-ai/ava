@@ -1,9 +1,18 @@
-package config
+package llm
 
 import (
 	"encoding/json"
 	"fmt"
 	"os"
+)
+
+type Provider string
+
+const (
+	ProviderOpenAI    Provider = "openai"
+	ProviderAnthropic Provider = "anthropic"
+	ProviderGoogle    Provider = "google"
+	ProviderGrok      Provider = "grok"
 )
 
 type ModelConfig struct {
@@ -34,6 +43,17 @@ type ModelsConfig struct {
 	Providers  map[string]*ProviderConfig `json:"providers"`
 	NotDiamond *NotDiamondConfig          `json:"not_diamond"`
 	Router     RouterConfig               `json:"router"`
+}
+
+type RuntimeModelConfig struct {
+	Provider  Provider
+	ModelID   string
+	BaseURL   string
+	APIKeyEnv string
+}
+
+func (c *RuntimeModelConfig) GetAPIKey() string {
+	return os.Getenv(c.APIKeyEnv)
 }
 
 func LoadModelsConfig(path string) (*ModelsConfig, error) {
@@ -116,6 +136,35 @@ func (c *ModelsConfig) GetNotDiamondBaseURL() string {
 	return c.NotDiamond.BaseURL
 }
 
-func InitLLMModels(path string) (*ModelsConfig, error) {
-	return LoadModelsConfig(path)
+type LLM struct {
+	Config        *ModelsConfig
+	ModelSelector *ModelSelector
+}
+
+func InitLLMModels(path string) (*LLM, error) {
+	cfg, err := LoadModelsConfig(path)
+	if err != nil {
+		return nil, err
+	}
+
+	selector := NewModelSelector(cfg.GetNotDiamondBaseURL(), cfg.GetNotDiamondAPIKey())
+
+	return &LLM{
+		Config:        cfg,
+		ModelSelector: selector,
+	}, nil
+}
+
+func (c *ModelsConfig) GetRuntimeModel(modelName string) (*RuntimeModelConfig, bool) {
+	for providerName, provider := range c.Providers {
+		if _, exists := provider.Models[modelName]; exists {
+			return &RuntimeModelConfig{
+				Provider:  Provider(providerName),
+				ModelID:   modelName,
+				BaseURL:   provider.BaseURL,
+				APIKeyEnv: provider.APIKeyEnv,
+			}, true
+		}
+	}
+	return nil, false
 }

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/nevaria-ai/gateway/config"
+	"github.com/nevaria-ai/gateway/internal/llm"
 )
 
 func TestLoadModelsConfig(t *testing.T) {
@@ -53,7 +53,7 @@ func TestLoadModelsConfig(t *testing.T) {
 		t.Fatalf("Failed to write config: %v", err)
 	}
 
-	cfg, err := config.LoadModelsConfig(configPath)
+	cfg, err := llm.LoadModelsConfig(configPath)
 	if err != nil {
 		t.Fatalf("LoadModelsConfig failed: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestGetModel(t *testing.T) {
 		t.Fatalf("Failed to write config: %v", err)
 	}
 
-	cfg, err := config.LoadModelsConfig(configPath)
+	cfg, err := llm.LoadModelsConfig(configPath)
 	if err != nil {
 		t.Fatalf("LoadModelsConfig failed: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestGetAllModels(t *testing.T) {
 		t.Fatalf("Failed to write config: %v", err)
 	}
 
-	cfg, err := config.LoadModelsConfig(configPath)
+	cfg, err := llm.LoadModelsConfig(configPath)
 	if err != nil {
 		t.Fatalf("LoadModelsConfig failed: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestGetProviderConfig(t *testing.T) {
 		t.Fatalf("Failed to write config: %v", err)
 	}
 
-	cfg, err := config.LoadModelsConfig(configPath)
+	cfg, err := llm.LoadModelsConfig(configPath)
 	if err != nil {
 		t.Fatalf("LoadModelsConfig failed: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestGetModelsForProvider(t *testing.T) {
 		t.Fatalf("Failed to write config: %v", err)
 	}
 
-	cfg, err := config.LoadModelsConfig(configPath)
+	cfg, err := llm.LoadModelsConfig(configPath)
 	if err != nil {
 		t.Fatalf("LoadModelsConfig failed: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestGetModelsByTier(t *testing.T) {
 		t.Fatalf("Failed to write config: %v", err)
 	}
 
-	cfg, err := config.LoadModelsConfig(configPath)
+	cfg, err := llm.LoadModelsConfig(configPath)
 	if err != nil {
 		t.Fatalf("LoadModelsConfig failed: %v", err)
 	}

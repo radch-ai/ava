@@ -34,7 +34,7 @@ func (f *ProviderFactory) CreateChatModel(ctx context.Context, modelName string)
 		return cached, nil
 	}
 
-	modelConfig, ok := f.config.Models[modelName]
+	modelConfig, ok := f.config.GetRuntimeModel(modelName)
 	if !ok {
 		return nil, fmt.Errorf("model %s not found in config", modelName)
 	}
@@ -71,7 +71,7 @@ func (f *ProviderFactory) CreateChatModel(ctx context.Context, modelName string)
 	return chatModel, nil
 }
 
-func (f *ProviderFactory) createOpenAIModel(ctx context.Context, config *ModelConfig, apiKey string) (model.ToolCallingChatModel, error) {
+func (f *ProviderFactory) createOpenAIModel(ctx context.Context, config *RuntimeModelConfig, apiKey string) (model.ToolCallingChatModel, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("API key is required for OpenAI provider")
 	}
@@ -93,7 +93,7 @@ func (f *ProviderFactory) createOpenAIModel(ctx context.Context, config *ModelCo
 	return chatModel, nil
 }
 
-func (f *ProviderFactory) createAnthropicModel(ctx context.Context, config *ModelConfig, apiKey string) (model.ToolCallingChatModel, error) {
+func (f *ProviderFactory) createAnthropicModel(ctx context.Context, config *RuntimeModelConfig, apiKey string) (model.ToolCallingChatModel, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("API key is required for Anthropic provider")
 	}
@@ -116,7 +116,7 @@ func (f *ProviderFactory) createAnthropicModel(ctx context.Context, config *Mode
 	return chatModel, nil
 }
 
-func (f *ProviderFactory) createGeminiModel(ctx context.Context, config *ModelConfig, apiKey string) (model.ToolCallingChatModel, error) {
+func (f *ProviderFactory) createGeminiModel(ctx context.Context, config *RuntimeModelConfig, apiKey string) (model.ToolCallingChatModel, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("API key is required for Google provider")
 	}
@@ -141,7 +141,7 @@ func (f *ProviderFactory) createGeminiModel(ctx context.Context, config *ModelCo
 	return chatModel, nil
 }
 
-func (f *ProviderFactory) createGrokModel(ctx context.Context, config *ModelConfig, apiKey string) (model.ToolCallingChatModel, error) {
+func (f *ProviderFactory) createGrokModel(ctx context.Context, config *RuntimeModelConfig, apiKey string) (model.ToolCallingChatModel, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("API key is required for Grok provider")
 	}
