@@ -76,6 +76,10 @@ func (q *QuotaChatModel) WithTools(tools []*schema.ToolInfo) (model.ToolCallingC
 	}, nil
 }
 
+func (q *QuotaChatModel) GetInnerModel() model.ToolCallingChatModel {
+	return q.inner
+}
+
 func (q *QuotaChatModel) wrapStreamForQuota(ctx context.Context, stream *schema.StreamReader[*schema.Message]) *schema.StreamReader[*schema.Message] {
 	sr, sw := schema.Pipe[*schema.Message](10)
 
