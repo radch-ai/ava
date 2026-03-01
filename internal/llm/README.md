@@ -4,13 +4,26 @@ This package provides LLM provider abstractions and message conversion utilities
 
 ## Files
 
+### init.go
+
+Entry point for LLM initialization. Provides unified initialization functions.
+
+**Functions:**
+- `InitModelsConfig(path)` - Loads models.json configuration
+- `InitNotDiamondModelSelector(cfg)` - Creates NotDiamond model selector
+- `InitLLM(path)` - Full LLM initialization (combines above + provider keys)
+
+**Status:** ✅ Complete
+
 ### config.go
+
 Loads model configuration from models.json.
 
 **Features:**
 - Loads model configurations from JSON file
 - Supports multiple providers (OpenAI, Anthropic, Google, Grok)
 - Provides API key retrieval from environment variables
+- Converts config.ModelsConfig to llm.ModelsConfig
 
 **Status:** ✅ Complete and tested
 
@@ -63,20 +76,23 @@ import (
     "github.com/nevaria-ai/gateway/internal/llm"
 )
 
-// Load configuration
-config, err := llm.LoadModelConfig("internal/llm/models.json")
+// Initialize LLM with a single call
+llmCfg, err := llm.InitLLM("models.json")
 if err != nil {
     log.Fatal(err)
 }
 
-// Create provider factory
-factory := llm.NewProviderFactory(config)
+// Access components
+models := llmCfg.Models                    // Model configurations
+selector := llmCfg.ModelSelector           // NotDiamond model selector
+openaiKey := llmCfg.ProviderAPIKey[llm.ProviderOpenAI]  // Provider API keys
 
-// Create chat model
-chatModel, err := factory.CreateChatModel(ctx, "gpt-4o")
+// Or initialize components separately
+cfg, err := llm.InitModelsConfig("models.json")
 if err != nil {
     log.Fatal(err)
 }
+selector := llm.InitNotDiamondModelSelector(cfg)
 
 // Convert messages
 agentMsgs := []agent.AgentMessage{...}

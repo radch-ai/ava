@@ -1,6 +1,6 @@
 # Gateway Command
 
-Gateway application entry point. Initializes configuration, logger, LLM proxy handler, Redis client, and starts HTTP/WebSocket server.
+Gateway application entry point. Initializes configuration, logger, LLM model selector, Redis client, and starts HTTP/WebSocket server.
 
 ## Overview
 
@@ -13,21 +13,23 @@ flowchart TB
     ValidateCfg -->|ok| ParseLevel["zerolog.ParseLevel(cfg.LogLevel) → logLevel, err"]
     ParseLevel -->|error| Exit2("Exit 1")
     ParseLevel -->|ok| SetLevel["zerolog.SetGlobalLevel(logLevel)"]
-     SetLevel --> CreateLogger["zerolog.New(os.Stderr) → logger"]
-      CreateLogger --> InitProxy["llmproxy.New(&llmproxy.Config{ModelsPath: 'llm-proxy-models.yaml'}) → llmProxy, err"]
-      InitProxy -->|error| ExitProxy("Exit 1")
-     InitProxy --> InitRedis["redis.NewClient(&redis.Options{Addr: cfg.RedisAddr, Password: cfg.RedisPassword}) → redisClient"]
+    SetLevel --> CreateLogger["zerolog.New(os.Stderr) → logger"]
+    CreateLogger --> LoadModels["llm.InitLLM('models.json') → llmCfg, err"]
+    LoadModels -->|error| ExitLLM["Exit 1 - models.json required"]
+    LoadModels -->|ok| CheckOrigins["cfg.AllowedOrigins (warn if empty)"]
+    CheckOrigins --> CheckConns["cfg.MaxConns (default 10000)"]
+    CheckConns --> CreateWS["websocket.NewHandler(logger, allowedOrigins, maxConns, nil) → wsHandler"]
+    CreateWS --> InitRedis["redis.NewClient(&redis.Options{Addr: cfg.RedisAddr, Password: cfg.RedisPassword}) → redisClient"]
     InitRedis --> CreateCache["server.NewRedisCache(redisClient) → cache"]
-    CreateCache --> CreateAuthMW["server.NewAuthMiddleware(cfg.ZetidalURL, cache, 5*time.Minute) → authMW"]
-    CreateAuthMW --> CreateWS["websocket.NewHandler(logger, allowedOrigins, maxConns, &websocket.AgentManagerOptions{LLMProxyHandler: llmProxy}) → wsHandler"]
-    CreateWS --> CreateServer["server.New(cfg.ServerAddr, logger, wsHandler, authMW) → srv"]
+    CreateCache --> CreateAuthMW["server.NewAuthMiddleware(cfg.ZetidalURL, cache, cfg.AuthCacheTTL) → authMW"]
+    CreateAuthMW --> CreateServer["server.New(cfg.ServerAddr, logger, wsHandler, authMW) → srv"]
     CreateServer --> StartServer["srv.Start() → err"]
     StartServer -->|error| Exit3("Exit 1")
     StartServer -->|ok| Running("Server Running")
 
     click LoadCfg href "../config/README.md"
     click ValidateCfg href "../config/README.md"
-    click InitProxy href "https://github.com/nevaria-ai/llm-proxy-sdk"
+    click LoadModels href "../config/models.md"
     click CreateCache href "../internal/server/README.md"
     click CreateAuthMW href "../internal/server/README.md"
     click CreateWS href "../internal/websocket.md"
@@ -38,8 +40,8 @@ flowchart TB
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
 
     class Start,Running mainFn
-    class Exit1,Exit2,Exit3,ExitProxy errorFlow
-    class LoadCfg,ValidateCfg,InitProxy,CreateCache,CreateAuthMW,CreateWS,CreateServer,StartServer localPkgs
+    class Exit1,Exit2,Exit3,ExitLLM errorFlow
+    class LoadCfg,ValidateCfg,LoadModels,CheckOrigins,CheckConns,CreateCache,CreateAuthMW,CreateWS,CreateServer,StartServer localPkgs
 ```
 
 ## Design Notes
@@ -76,6 +78,38 @@ flowchart TB
 - Consistent with security best practices
 - Easy to fix when warning appears in logs
 
+### Required LLM Configuration
+
+**Q: Why fail if models.json is missing?**
+
+| Aspect | Description |
+|--------|-------------|
+| Context | LLM configuration loading |
+| Options considered | Fail fast, continue without LLM |
+| Rationale | Gateway requires LLM support to function - agents cannot operate without models |
+
+**Current approach is recommended because:**
+- Gateway's primary purpose is LLM agent orchestration
+- Missing models config indicates deployment error
+- Failing fast prevents confusing runtime errors
+- Clear error message helps operators fix the issue
+
+### Nil AgentManagerOptions
+
+**Q: Why pass nil for AgentManagerOptions to WebSocket handler?**
+
+| Aspect | Description |
+|--------|-------------|
+| Context | AgentManager needs QuotaChatModel for LLM quota enforcement |
+| Options considered | Pass nil, Create mock, Wire full LLM client |
+| Rationale | LLM integration incomplete - quota enforcement not yet implemented |
+
+**Current approach is temporary:**
+- AgentManager accepts nil opts and operates without quota enforcement
+- QuotaChatModel will be wired once LLM client integration is complete
+- Agents can still run but without usage tracking
+- TODO: Wire QuotaChatModel from models config when ready
+
 ## Test Coverage
 
 This package has no unit tests. Integration tests cover the server startup.
@@ -87,7 +121,7 @@ This package has no unit tests. Integration tests cover the server startup.
 | `github.com/rs/zerolog` | Structured logging |
 | `github.com/redis/go-redis/v9` | Redis client |
 | `github.com/nevaria-ai/gateway/config` | Configuration |
-| `github.com/nevaria-ai/llm-proxy-sdk` | LLM proxy SDK with model registry |
+| `github.com/nevaria-ai/gateway/internal/llm` | LLM model selector |
 | `github.com/nevaria-ai/gateway/internal/server` | HTTP server |
 | `github.com/nevaria-ai/gateway/internal/websocket` | WebSocket handler |
 

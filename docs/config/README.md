@@ -20,7 +20,9 @@ flowchart TB
     CheckNeg -->|false| GetZetidalURL["os.Getenv('ZETIDAL_URL') → zetidalURL"]
     GetZetidalURL --> GetRedis["os.Getenv('REDIS_ADDR') → redisAddr"]
     GetRedis --> GetRedisPwd["os.Getenv('REDIS_PASSWORD') → redisPassword"]
-    GetRedisPwd --> DoneOk("return &Config{}, nil")
+    GetRedisPwd --> GetAuthTTL["os.Getenv('GATEWAY_AUTH_CACHE_TTL') → ttlStr"]
+    GetAuthTTL --> ParseTTL["strconv.Atoi(ttlStr) → minutes, time.Duration(minutes) * time.Minute"]
+    ParseTTL --> DoneOk("return &Config{}, nil")
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
@@ -57,6 +59,7 @@ flowchart TB
 | | `ZetidalURL` | `ZETIDAL_URL` | `string` | `http://localhost:8081` | No | Zetidal API URL for session validation |
 | | `RedisAddr` | `REDIS_ADDR` | `string` | - | Yes | Redis server address |
 | | `RedisPassword` | `REDIS_PASSWORD` | `string` | - | No | Redis password |
+| | `AuthCacheTTL` | `GATEWAY_AUTH_CACHE_TTL` | `int` | `5` | No | Auth session cache TTL in minutes |
 
 \* Empty origins denies all requests - use `"*"` for development only.
 
@@ -109,6 +112,22 @@ flowchart TB
 - Zetidal manages its own request lifecycle
 - Removes unnecessary configuration complexity
 - Simpler operational model
+
+### Auth Cache TTL
+
+**Q: Why default to 5 minutes for auth cache TTL?**
+
+| Aspect | Description |
+|--------|-------------|
+| Context | Redis-based session caching for auth middleware |
+| Options considered | No cache, 1 minute, 5 minutes, 15 minutes |
+| Rationale | Balance between freshness and API load reduction |
+
+**Current approach is recommended because:**
+- Reduces load on zetidal auth service
+- 5 minutes is short enough for security-sensitive operations
+- Configurable via `GATEWAY_AUTH_CACHE_TTL` (integer minutes)
+- Simple integer format avoids duration string parsing complexity
 
 ## Test Coverage
 

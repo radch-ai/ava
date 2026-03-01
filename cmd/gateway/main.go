@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/nevaria-ai/gateway/config"
 	"github.com/nevaria-ai/gateway/internal/llm"
@@ -36,6 +35,15 @@ func main() {
 	// Create logger
 	logger := zerolog.New(os.Stderr).With().Timestamp().Str("service", "nevaria-gateway").Logger()
 
+	// Initialize LLM (models.json is required)
+	llmCfg, err := llm.InitLLM("models.json")
+	if err != nil {
+		logger.Error().Err(err).Msg("failed to initialize LLM - models.json is required")
+		os.Exit(1)
+	}
+	logger.Info().Msg("LLM initialized")
+	_ = llmCfg // TODO: Wire to AgentManager for quota enforcement
+
 	// For development, allow all origins if none specified.
 	// In production, always set GATEWAY_ALLOWED_ORIGINS environment variable.
 	allowedOrigins := cfg.AllowedOrigins
@@ -51,6 +59,10 @@ func main() {
 		logger.Info().Int("max_conns", maxConns).Msg("using default connection limit")
 	}
 
+	// Create WebSocket handler
+	// TODO: Wire llmCfg to AgentManager for quota enforcement
+	wsHandler := websocket.NewHandler(logger, allowedOrigins, maxConns, nil)
+
 	// Create Redis client (required - for session caching and quota)
 	redisClient := redis.NewClient(&redis.Options{
 		Addr:     cfg.RedisAddr,
@@ -58,37 +70,11 @@ func main() {
 	})
 	logger.Info().Str("addr", cfg.RedisAddr).Msg("Redis client initialized")
 
-	// Load models configuration
-	modelsCfg, err := config.LoadModelsConfig("config/models.json")
-	if err != nil {
-		logger.Warn().Err(err).Msg("failed to load models config, continuing without LLM support")
-		modelsCfg = nil
-	} else {
-		logger.Info().Msg("models configuration loaded")
-	}
-
-	// Create model selector and Eino client
-	if modelsCfg != nil {
-		var ndAPIKey string
-		if modelsCfg.NotDiamond != nil {
-			ndAPIKey = os.Getenv(modelsCfg.NotDiamond.APIKeyEnv)
-		}
-
-		selector := llm.NewModelSelector(modelsCfg.NotDiamond.BaseURL, ndAPIKey)
-		llmModels := llm.ConvertConfig(modelsCfg)
-		_ = llm.NewEinoClient(llmModels, selector, redisClient)
-		logger.Info().Msg("Eino client initialized")
-	}
-
 	// Create Redis cache adapter
 	cache := server.NewRedisCache(redisClient)
 
 	// Create auth middleware with cache support
-	// Default cache TTL to 5 minutes if not specified
-	authMW := server.NewAuthMiddleware(cfg.ZetidalURL, cache, 5*time.Minute)
-
-	// Create WebSocket handler
-	wsHandler := websocket.NewHandler(logger, allowedOrigins, maxConns, nil)
+	authMW := server.NewAuthMiddleware(cfg.ZetidalURL, cache, cfg.AuthCacheTTL)
 
 	// Create and start server with auth middleware
 	srv := server.New(cfg.ServerAddr, logger, wsHandler, authMW)

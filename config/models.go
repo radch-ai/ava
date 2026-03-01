@@ -101,3 +101,17 @@ func (c *ModelsConfig) GetModelsByTier(tier string) []*ModelConfig {
 	}
 	return models
 }
+
+func (c *ModelsConfig) GetNotDiamondAPIKey() string {
+	if c.NotDiamond == nil || c.NotDiamond.APIKeyEnv == "" {
+		return ""
+	}
+	return os.Getenv(c.NotDiamond.APIKeyEnv)
+}
+
+func (c *ModelsConfig) GetNotDiamondBaseURL() string {
+	if c.NotDiamond == nil {
+		return ""
+	}
+	return c.NotDiamond.BaseURL
+}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // A Config holds the application configuration.
@@ -18,6 +19,7 @@ type Config struct {
 	ZetidalURL     string
 	RedisAddr      string
 	RedisPassword  string
+	AuthCacheTTL   time.Duration
 }
 
 // getEnv returns the environment variable value or a default.
@@ -73,6 +75,17 @@ func Load() (*Config, error) {
 	redisAddr := os.Getenv("REDIS_ADDR")
 	redisPassword := os.Getenv("REDIS_PASSWORD")
 
+	// Auth cache TTL in minutes (default 5 minutes)
+	authCacheTTLMinutes := 5
+	if ttlStr := os.Getenv("GATEWAY_AUTH_CACHE_TTL"); ttlStr != "" {
+		var err error
+		authCacheTTLMinutes, err = strconv.Atoi(ttlStr)
+		if err != nil || authCacheTTLMinutes < 0 {
+			return nil, fmt.Errorf("invalid GATEWAY_AUTH_CACHE_TTL: %q (must be non-negative integer minutes)", ttlStr)
+		}
+	}
+	authCacheTTL := time.Duration(authCacheTTLMinutes) * time.Minute
+
 	return &Config{
 		ServerAddr:     addr,
 		LogLevel:       logLevel,
@@ -81,6 +94,7 @@ func Load() (*Config, error) {
 		ZetidalURL:     zetidalURL,
 		RedisAddr:      redisAddr,
 		RedisPassword:  redisPassword,
+		AuthCacheTTL:   authCacheTTL,
 	}, nil
 }
 

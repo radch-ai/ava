@@ -1,10 +1,8 @@
 # Models Configuration
 
-YAML-based LLM model and router configuration. Provides model cost definitions, provider mappings, and router settings.
+JSON-based LLM model and provider configuration. Defines model costs, provider settings, and NotDiamond router integration.
 
 ## Overview
-
-<!-- Overview replaced by individual function flowcharts below -->
 
 ## Structs
 
@@ -12,18 +10,33 @@ YAML-based LLM model and router configuration. Provides model cost definitions, 
 
 | Struct | Field | Type | Description |
 |--------|-------|------|-------------|
-| `ModelsConfig` | `Models` | `map[string]*ModelConfig` | Model name to config mapping |
-| | `Router` | `RouterConfig` | Router configuration |
+| `ModelsConfig` | `Providers` | `map[string]*ProviderConfig` | Provider name to config mapping |
+| | `NotDiamond` | `*NotDiamondConfig` | NotDiamond router settings |
+| | `Router` | `RouterConfig` | Default router configuration |
+
+### ProviderConfig
+
+| Struct | Field | Type | Description |
+|--------|-------|------|-------------|
+| `ProviderConfig` | `APIKeyEnv` | `string` | Environment variable name for API key |
+| | `BaseURL` | `string` | Provider API base URL |
+| | `Models` | `map[string]*ModelConfig` | Model name to config mapping |
 
 ### ModelConfig
 
 | Struct | Field | Type | Description |
 |--------|-------|------|-------------|
-| `ModelConfig` | `Provider` | `string` | Provider name (openai, anthropic, google) |
-| | `InputCostPerMillion` | `float64` | Input token cost per million |
+| `ModelConfig` | `InputCostPerMillion` | `float64` | Input token cost per million |
 | | `OutputCostPerMillion` | `float64` | Output token cost per million |
 | | `MaxTokens` | `int` | Maximum context tokens |
 | | `Tier` | `string` | Pricing tier (economy, standard, premium) |
+
+### NotDiamondConfig
+
+| Struct | Field | Type | Description |
+|--------|-------|------|-------------|
+| `NotDiamondConfig` | `APIKeyEnv` | `string` | Environment variable name for API key |
+| | `BaseURL` | `string` | NotDiamond API base URL |
 
 ### RouterConfig
 
@@ -42,16 +55,16 @@ flowchart TB
     Start([path string]) --> HLoadConfig["**LoadModelsConfig(path) → config, err**"]
     HLoadConfig --> ReadFile["os.ReadFile(path) → data, err"]
     ReadFile -->|error| ERead["return nil, err"]
-    ReadFile --> Unmarshal["yaml.Unmarshal(data, &config) → err"]
+    ReadFile --> Unmarshal["json.Unmarshal(data, &config) → err"]
     Unmarshal -->|error| EParse["return nil, err"]
     Unmarshal --> CheckRouter["config.Router.Model != \"\""]
     CheckRouter -->|false| Success["return &config, nil"]
-    CheckRouter -->|true| Lookup["config.Models[config.Router.Model]"]
+    CheckRouter -->|true| Lookup["config.GetModel(config.Router.Model)"]
     Lookup -->|not found| ELookup["return nil, err"]
     Lookup -->|found| Success
 
     click ReadFile href "https://pkg.go.dev/os#ReadFile"
-    click Unmarshal href "https://pkg.go.dev/gopkg.in/yaml.v3#Unmarshal"
+    click Unmarshal href "https://pkg.go.dev/encoding/json#Unmarshal"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
@@ -69,14 +82,16 @@ flowchart TB
 ```mermaid
 flowchart TB
     Start([c *ModelsConfig, name string]) --> HGetModel["**(c *ModelsConfig).GetModel(name) → cfg, exists**"]
-    HGetModel --> Lookup["c.Models[name]"]
-    Lookup --> Assign["cfg ← value"]
-    Assign --> Return["return cfg, exists"]
+    HGetModel --> Loop["for _, provider ← range c.Providers"]
+    Loop --> Lookup["provider.Models[name]"]
+    Lookup -->|exists| ReturnFound["return cfg, true"]
+    Lookup -->|not found| Loop
+    Loop -->|done| ReturnNotFound["return nil, false"]
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
 
-    class Start,Return mainFn
+    class Start,ReturnFound,ReturnNotFound mainFn
     class HGetModel internalFn
 ```
 
@@ -85,10 +100,12 @@ flowchart TB
 ```mermaid
 flowchart TB
     Start([c *ModelsConfig]) --> HGetAll["**(c *ModelsConfig).GetAllModels() → names**"]
-    HGetAll --> MakeNames["names ← make([]string, 0, len(c.Models))"]
-    MakeNames --> Loop["for name ← range c.Models"]
-    Loop --> Append["names = append(names, name)"]
-    Append --> Loop
+    HGetAll --> MakeNames["names ← make([]string, 0)"]
+    MakeNames --> Loop["for _, provider ← range c.Providers"]
+    Loop --> InnerLoop["for name ← range provider.Models"]
+    InnerLoop --> Append["names = append(names, name)"]
+    Append --> InnerLoop
+    InnerLoop -->|done| Loop
     Loop -->|done| Return["return names"]
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
@@ -98,24 +115,38 @@ flowchart TB
     class HGetAll internalFn
 ```
 
-### GetModelsByProvider
+### GetProvider
 
 ```mermaid
 flowchart TB
-    Start([c *ModelsConfig, provider string]) --> HGetByProvider["**(c *ModelsConfig).GetModelsByProvider(provider) → models**"]
-    HGetByProvider --> MakeModels["models ← make([]*ModelConfig, 0)"]
-    MakeModels --> Loop["for cfg ← range c.Models"]
-    Loop --> CheckProvider["cfg.Provider == provider"]
-    CheckProvider -->|true| Append["models = append(models, cfg)"]
-    Append --> Loop
-    CheckProvider -->|false| Loop
-    Loop -->|done| Return["return models"]
+    Start([c *ModelsConfig, name string]) --> HGetProvider["**(c *ModelsConfig).GetProvider(name) → cfg, exists**"]
+    HGetProvider --> Lookup["c.Providers[name]"]
+    Lookup --> Return["return provider, exists"]
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
 
     class Start,Return mainFn
-    class HGetByProvider internalFn
+    class HGetProvider internalFn
+```
+
+### GetModelsForProvider
+
+```mermaid
+flowchart TB
+    Start([c *ModelsConfig, providerName string]) --> HGetForProvider["**(c *ModelsConfig).GetModelsForProvider(providerName) → models**"]
+    HGetForProvider --> Check["c.Providers[providerName]"]
+    Check -->|not found| ReturnEmpty["return []"]
+    Check -->|found| Loop["for _, model ← range provider.Models"]
+    Loop --> Append["models = append(models, model)"]
+    Append --> Loop
+    Loop -->|done| Return["return models"]
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+
+    class Start,Return,ReturnEmpty mainFn
+    class HGetForProvider internalFn
 ```
 
 ### GetModelsByTier
@@ -124,11 +155,13 @@ flowchart TB
 flowchart TB
     Start([c *ModelsConfig, tier string]) --> HGetByTier["**(c *ModelsConfig).GetModelsByTier(tier) → models**"]
     HGetByTier --> MakeModels["models ← make([]*ModelConfig, 0)"]
-    MakeModels --> Loop["for cfg ← range c.Models"]
-    Loop --> CheckTier["cfg.Tier == tier"]
-    CheckTier -->|true| Append["models = append(models, cfg)"]
-    Append --> Loop
-    CheckTier -->|false| Loop
+    MakeModels --> Loop["for _, provider ← range c.Providers"]
+    Loop --> InnerLoop["for _, model ← range provider.Models"]
+    InnerLoop --> CheckTier["model.Tier == tier"]
+    CheckTier -->|true| Append["models = append(models, model)"]
+    Append --> InnerLoop
+    CheckTier -->|false| InnerLoop
+    InnerLoop -->|done| Loop
     Loop -->|done| Return["return models"]
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
@@ -138,25 +171,76 @@ flowchart TB
     class HGetByTier internalFn
 ```
 
+### GetNotDiamondAPIKey
+
+```mermaid
+flowchart TB
+    Start([c *ModelsConfig]) --> HGetKey["**(c *ModelsConfig).GetNotDiamondAPIKey() → apiKey**"]
+    HGetKey --> Check["c.NotDiamond == nil OR c.NotDiamond.APIKeyEnv == \"\""]
+    Check -->|true| ReturnEmpty["return \"\""]
+    Check -->|false| GetEnv["os.Getenv(c.NotDiamond.APIKeyEnv)"]
+    GetEnv --> Return["return apiKey"]
+
+    click GetEnv href "https://pkg.go.dev/os#Getenv"
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+    classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
+
+    class Start,Return,ReturnEmpty mainFn
+    class HGetKey internalFn
+    class GetEnv localPkgs
+```
+
+### GetNotDiamondBaseURL
+
+```mermaid
+flowchart TB
+    Start([c *ModelsConfig]) --> HGetURL["**(c *ModelsConfig).GetNotDiamondBaseURL() → baseURL**"]
+    HGetURL --> Check["c.NotDiamond == nil"]
+    Check -->|true| ReturnEmpty["return \"\""]
+    Check -->|false| Return["return c.NotDiamond.BaseURL"]
+
+    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
+
+    class Start,Return,ReturnEmpty mainFn
+    class HGetURL internalFn
+```
+
 ## Design Notes
 
-### YAML-Based Configuration## Design Notes
+### JSON-Based Configuration
 
-### YAML-Based Configuration
-
-**Q: Why use YAML for model configuration?**
+**Q: Why use JSON for model configuration?**
 
 | Aspect | Description |
 |--------|-------------|
 | Context | Model costs and providers change frequently |
 | Options considered | Code constants, JSON, YAML, Database |
-| Rationale | YAML is human-readable and easy to update without recompiling |
+| Rationale | JSON is simple, widely supported, and easy to parse |
 
 **Current approach is recommended because:**
 - Easy to add new models without code changes
 - Cost updates don't require deployment
 - Version controlled alongside code
-- Supports comments for documentation
+- Native Go encoding/json support
+
+### Env-Based API Keys
+
+**Q: Why store API key env var names instead of keys directly?**
+
+| Aspect | Description |
+|--------|-------------|
+| Context | API keys are sensitive secrets |
+| Options considered | Store keys in config, env var names, separate secrets file |
+| Rationale | Keeps secrets out of version control while allowing config flexibility |
+
+**Current approach is recommended because:**
+- Config file can be committed to git safely
+- Keys injected at runtime via environment
+- Standard 12-factor app pattern
+- Easy to rotate keys without config changes
 
 ## Test Coverage
 
@@ -164,25 +248,24 @@ flowchart TB
 
 | Test Suite | Coverage |
 |------------|----------|
-| `TestLoadModelsConfig` | Valid YAML loading |
-| `TestLoadModelsConfig_FileNotFound` | Missing file handling |
-| `TestLoadModelsConfig_InvalidYAML` | Parse error handling |
-| `TestLoadModelsConfig_MissingRouterModel` | Validation error |
-| `TestGetModel` | Model retrieval |
+| `TestLoadModelsConfig` | Valid JSON loading |
+| `TestGetModel` | Model retrieval across providers |
 | `TestGetAllModels` | All models list |
-| `TestGetModelsByProvider` | Provider filtering |
+| `TestGetProviderConfig` | Provider retrieval |
+| `TestGetModelsForProvider` | Provider filtering |
 | `TestGetModelsByTier` | Tier filtering |
 
 **Running:**
 ```bash
-make test ./config
+make test-unit
 ```
 
 ## Dependencies and Location
 
 | Package | Purpose |
 |---------|---------|
-| `gopkg.in/yaml.v3` | YAML parsing |
+| `encoding/json` | JSON parsing |
+| `os` | Environment variable access |
 
 **File Location:** [`config/models.go`](https://github.com/nevaria-ai/gateway/blob/main/config/models.go)
 
@@ -190,4 +273,3 @@ make test ./config
 
 - [Config README](README.md) - Main configuration
 - [Plans](plans.md) - Subscription plan definitions
-- [LLM Proxy Models](../internal/llm-proxy/models.md) - Model registry usage
