@@ -425,7 +425,13 @@ func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID str
 		}
 
 		connWrapper := NewWSConnWrapper(writeCh)
-		ag := h.agentManager.GetAgent(userID, msg.AgentID, connWrapper)
+		ctx := ctx
+		agentTask := agent.Task{
+			Message: msg.Text,
+			Conn:    connWrapper,
+			MsgID:   msg.ID,
+		}
+		ag := h.agentManager.GetAgent(ctx, userID, msg.AgentID, connWrapper, agentTask)
 		if ag == nil {
 			logger.Debug().Msg("failed to get agent")
 			return
@@ -443,7 +449,7 @@ func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID str
 			return
 		}
 
-		ag := h.agentManager.GetAgent(userID, msg.AgentID, nil)
+		ag := h.agentManager.GetAgent(ctx, userID, msg.AgentID, nil, agent.Task{})
 		if ag == nil {
 			logger.Debug().Msg("failed to get agent for steer")
 			return
@@ -455,8 +461,8 @@ func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID str
 			return
 		}
 
-		agentInstance := h.agentManager.GetOrCreateAgentForUser(userID, msg.AgentID)
-		status := agentInstance.Lane().Status()
+		agentInstance := h.agentManager.GetOrCreateAgentForUser(ctx, userID, msg.AgentID, agent.Task{})
+		status := agentInstance.GetStatus()
 
 		statusEvent := wsEvent{
 			Type:    "lane_status",

@@ -1,7 +1,10 @@
 package websocket_test
 
 import (
+	"context"
 	"testing"
+
+	agentpkg "github.com/nevaria-ai/gateway/internal/agent"
 
 	"github.com/nevaria-ai/gateway/internal/websocket"
 	"github.com/rs/zerolog"
@@ -25,12 +28,12 @@ func TestGetOrCreateAgentForUser(t *testing.T) {
 	userID := "test-user-123"
 	agentID := "test-agent-456"
 
-	ag := mgr.GetOrCreateAgentForUser(userID, agentID)
+	ag := mgr.GetOrCreateAgentForUser(context.Background(), userID, agentID, agentpkg.Task{})
 	if ag == nil {
 		t.Fatal("GetOrCreateAgentForUser returned nil")
 	}
 
-	ag2 := mgr.GetOrCreateAgentForUser(userID, agentID)
+	ag2 := mgr.GetOrCreateAgentForUser(context.Background(), userID, agentID, agentpkg.Task{})
 	if ag != ag2 {
 		t.Error("Expected same agent instance")
 	}
@@ -44,14 +47,14 @@ func TestRemoveAgentForUser(t *testing.T) {
 	userID := "test-user-123"
 	agentID := "test-agent-456"
 
-	ag := mgr.GetOrCreateAgentForUser(userID, agentID)
+	ag := mgr.GetOrCreateAgentForUser(context.Background(), userID, agentID, agentpkg.Task{})
 	if ag == nil {
 		t.Fatal("GetOrCreateAgentForUser returned nil")
 	}
 
 	mgr.RemoveAgentForUser(userID, agentID)
 
-	ag2 := mgr.GetOrCreateAgentForUser(userID, agentID)
+	ag2 := mgr.GetOrCreateAgentForUser(context.Background(), userID, agentID, agentpkg.Task{})
 	if ag == ag2 {
 		t.Error("Expected different agent instance after removal")
 	}
@@ -65,7 +68,7 @@ func TestGetAgent(t *testing.T) {
 	userID := "test-user-123"
 	agentID := "test-agent-456"
 
-	ag := mgr.GetAgent(userID, agentID, nil)
+	ag := mgr.GetAgent(context.Background(), userID, agentID, nil, agentpkg.Task{})
 	if ag == nil {
 		t.Fatal("GetAgent returned nil")
 	}
@@ -78,22 +81,22 @@ func TestAgentKeyCompositeKey(t *testing.T) {
 	userID := "user-123"
 	agentID := "agent-456"
 
-	ag1 := mgr.GetOrCreateAgentForUser(userID, agentID)
+	ag1 := mgr.GetOrCreateAgentForUser(context.Background(), userID, agentID, agentpkg.Task{})
 	if ag1 == nil {
 		t.Fatal("GetOrCreateAgentForUser returned nil")
 	}
 
-	ag2 := mgr.GetOrCreateAgentForUser(userID, agentID)
+	ag2 := mgr.GetOrCreateAgentForUser(context.Background(), userID, agentID, agentpkg.Task{})
 	if ag1 != ag2 {
 		t.Error("Expected same agent for same (userID, agentID)")
 	}
 
-	ag3 := mgr.GetOrCreateAgentForUser(userID, "agent-789")
+	ag3 := mgr.GetOrCreateAgentForUser(context.Background(), userID, "agent-789", agentpkg.Task{})
 	if ag1 == ag3 {
 		t.Error("Expected different agent for different agentID")
 	}
 
-	ag4 := mgr.GetOrCreateAgentForUser("user-456", agentID)
+	ag4 := mgr.GetOrCreateAgentForUser(context.Background(), "user-456", agentID, agentpkg.Task{})
 	if ag1 == ag4 {
 		t.Error("Expected different agent for different userID")
 	}

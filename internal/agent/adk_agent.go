@@ -254,5 +254,17 @@ func (a *ADKAgent) processTasks(tasks []Task) {
 func (a *ADKAgent) saveToSession(msgID, content string) {
 }
 
+func (a *ADKAgent) GetStatus() map[string]interface{} {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	return map[string]interface{}{
+		"agent_id":  a.agentID,
+		"user_id":   a.userID,
+		"queue_len": len(a.laneCh),
+		"active":    a.ctx.Err() == nil,
+	}
+}
+
 func (a *ADKAgent) notifyUser(msgID, content string) {
 }

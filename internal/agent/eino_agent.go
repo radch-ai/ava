@@ -8,11 +8,6 @@ import (
 	"time"
 )
 
-const (
-	defaultIdleTimeout   = 5 * time.Minute
-	defaultLaneQueueSize = 100
-)
-
 type EinoEventType string
 
 const (
