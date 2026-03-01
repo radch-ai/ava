@@ -1,105 +1,243 @@
-# websocket/agent_manager (internal/websocket)
+# Agent Manager
 
 Agent lifecycle management with ADKAgent and thread-safe multi-user multi-agent support.
 
-## Overview
+## Interfaces
 
-```mermaid
-flowchart TB
-    Start([First User Message]) --> Lock["m.mu.Lock()"]
-    
-    subgraph SGLock ["Lock Coordination"]
-        Lock --> CheckExists["m.agents[key]?"]
-        CheckExists -->|exists| HUnlock1["m.mu.Unlock() → return existing"]
-        CheckExists -->|not exists| NewAgent["agent.NewADKAgent(ctx, firstTask, opts)"]
-    end
+### Agent
 
-    HUnlock1 --> ReturnExisting(["return existingAgent"])
-    
-    subgraph SGNewAgent ["Create New Agent"]
-        NewAgent --> Store["m.agents[key] = newAgent"]
-        Store --> Unlock2["m.mu.Unlock()"]
-        Unlock2 --> StartWithModel["StartWithModel(QuotaChatModel)"]
-    end
-
-    StartWithModel -->|success| LoopStart(["go loop()"])
-    StartWithModel -->|error| Err(["return error"])
-
-    subgraph SGLoop ["Agent Loop"]
-        LoopStart --> QueueFirst["laneCh ← firstTask"]
-        QueueFirst -->|subsequent| SubmitTask["laneCh ← task"]
-        QueueFirst --> Drain["drainMessages(first)"]
-        Drain --> HProcessTasks["processTasks(tasks)"]
-        HProcessTasks --> HSave["saveToSession(msgID, content)"]
-    end
-
-    SubmitTask --> Drain
-    SubmitTask --> Drain
-
-    click NewAgent href "../internal/agent/adk_agent.md"
-    click StartWithModel href "../internal/agent/adk_agent.md"
-    click HProcessTasks href "../internal/agent/adk_agent.md"
-
-    classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    classDef internalFn fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray:6 3
-    classDef errorFlow fill:#ffebee,stroke:#c62828,stroke-width:1px
-
-    class Start,Lock,Unlock2,LoopStart mainFn
-    class CheckExists,NewAgent,Store,StartWithModel,QueueFirst,SubmitTask,Drain,HProcessTasks,HSave internalFn
-    class HUnlock1,Err errorFlow
+```go
+type Agent interface {
+    Submit(task agent.Task)
+    Stop()
+}
 ```
 
-### Variables
+## Structs
 
-| Variable | Type | Description |
-|----------|------|-------------|
-| N/A | - | No package-level variables. |
-
-### Constants
-
-| Constant | Type | Value | Description |
-|----------|------|-------|-------------|
-| N/A | - | No package-level constants. |
-
-### Structs
+### AgentKey
 
 | Struct | Field | Type | Description |
 |--------|-------|------|-------------|
-| `Agent` | `Submit(task)` | `func(task Task)` | Submit task to agent |
-| `Agent` | `Stop()` | `func()` | Stop agent goroutine |
-| `AgentManager` | `mu` | `sync.Mutex` | Lock for agents map |
-| `AgentManager` | `agents` | `map[AgentKey]*agent.ADKAgent` | Thread-safe agent storage |
-| `AgentManager` | `logger` | `zerolog.Logger` | Logger for operations |
-| `AgentManager` | `quotaChatModel` | `agent.QuotaChatModelInterface` | Quota model for Eino initialization |
 | `AgentKey` | `UserID` | `string` | User identifier |
 | `AgentKey` | `AgentID` | `string` | Agent identifier |
+
+### AgentManagerOptions
+
+| Struct | Field | Type | Description |
+|--------|-------|------|-------------|
+| `AgentManagerOptions` | `QuotaChatModel` | `agent.QuotaChatModelInterface` | Quota model for Eino initialization |
+
+### AgentManager
+
+| Struct | Field | Type | Description |
+|--------|-------|------|-------------|
+| `AgentManager` | `mu` | `sync.Mutex` | Lock for agents map |
+| | `agents` | `map[AgentKey]*agent.ADKAgent` | Thread-safe agent storage |
+| | `logger` | `zerolog.Logger` | Logger for operations |
+| | `quotaChatModel` | `agent.QuotaChatModelInterface` | Quota model for Eino initialization |
+
+### adkAgentAdapter
+
+Private struct that wraps ADKAgent with WebSocket connection.
+
+| Struct | Field | Type | Description |
+|--------|-------|------|-------------|
 | `adkAgentAdapter` | `agent` | `*agent.ADKAgent` | Wrapped ADKAgent |
-| `adkAgentAdapter` | `conn` | `*WSConnWrapper` | WebSocket for streaming |
-| `adkAgentAdapter` | `agentID` | `string` | Agent ID for events |
+| | `conn` | `*WSConnWrapper` | WebSocket for streaming |
+| | `agentID` | `string` | Agent ID for events |
 
-### Error Handling
+### agentConfig
 
-| Error Type | Handler | Exit Code / Behavior |
-|------------|---------|---------------------|
-| Agent creation error | Return from `NewADKAgent` | Agent not created |
-| Eino init error | Return from `StartWithModel` | Agent created but not started |
-| Agent not found | Return `nil` | Caller must handle nil return |
+Private struct for agent configuration.
 
-### Embedded Files
+| Struct | Field | Type | Description |
+|--------|-------|------|-------------|
+| `agentConfig` | `SystemPrompt` | `string` | System prompt for agent |
 
-| File | Variable | Description |
-|------|----------|-------------|
-| N/A | - | This package does not embed any files. |
+## NewAgentManager
 
-### Environment Variables
+Creates a new AgentManager.
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| N/A | - | - | This package does not use environment variables directly. |
+```mermaid
+flowchart TB
+    A(["NewAgentManager"]) --> B{"opts != nil?"}
+    B -->|yes| C["get QuotaChatModel"]
+    B -->|no| D["quotaChatModel = nil"]
+    C --> E["make agents map"]
+    D --> E
+    E --> F(["return m"])
+```
+
+## GetOrCreateAgentForUser
+
+Returns an existing agent for (userID, agentID) pair or creates a new one.
+
+```mermaid
+flowchart TB
+    A(["GetOrCreateAgentForUser"]) --> B["make AgentKey"]
+    B --> C["m.mu.Lock"]
+    C --> D["check map"]
+    D --> E{"exists?"}
+    E -->|yes| F["unlock and return existing"]
+    E -->|no| G["NewADKAgent"]
+    G --> H["store in map"]
+    H --> I["unlock"]
+    I --> J["loadAgentConfig"]
+    J --> K["loadMemories"]
+    K --> L["StartWithModel"]
+    L --> M(["return newAgent"])
+```
+
+## GetAgent
+
+Returns an Agent interface for the given (userID, agentID) pair with connection wrapper.
+
+```mermaid
+flowchart TB
+    A(["GetAgent"]) --> B["make AgentKey"]
+    B --> C["m.mu.Lock"]
+    C --> D["check map"]
+    D --> E{"exists?"}
+    E -->|yes| F["Submit task"]
+    E -->|no| G["NewADKAgent"]
+    F --> H["unlock"]
+    G --> I["store in map"]
+    I --> J["unlock"]
+    J --> K["loadAgentConfig"]
+    K --> L["loadMemories"]
+    L --> M["StartWithModel"]
+    M --> N(["return adapter"])
+    H --> N
+```
+
+## adkAgentAdapter.Submit
+
+Submits a task to the wrapped agent with WebSocket event notifications.
+
+```mermaid
+flowchart TB
+    A(["Submit"]) --> B{"conn != nil?"}
+    B -->|no| C["agent.Submit"]
+    B -->|yes| D["WriteJSON agent_start"]
+    D --> E["WriteJSON agent_end"]
+    E --> C
+    C --> F(["return"])
+```
+
+## adkAgentAdapter.Stop
+
+Stops the wrapped agent.
+
+```mermaid
+flowchart LR
+    A(["Stop"]) --> B["agent.Stop"]
+    B --> C(["return"])
+```
+
+## RemoveAgentForUser
+
+Removes agent for given (userID, agentID) pair.
+
+```mermaid
+flowchart TB
+    A(["RemoveAgentForUser"]) --> B["make AgentKey"]
+    B --> C["m.mu.Lock"]
+    C --> D["check map"]
+    D --> E{"exists?"}
+    E -->|no| F(["return"])
+    E -->|yes| G["agent.Stop"]
+    G --> H["delete from map"]
+    H --> F
+```
+
+## GetAgentStatus
+
+Returns the status of an agent if it exists.
+
+```mermaid
+flowchart TB
+    A(["GetAgentStatus"]) --> B["make AgentKey"]
+    B --> C["m.mu.Lock"]
+    C --> D["get from map"]
+    D --> E["unlock"]
+    E --> F{"agent == nil?"}
+    F -->|yes| G(["return not_found"])
+    F -->|no| H["GetStatus"]
+    H --> I(["return status"])
+```
+
+## GetExistingAgent
+
+Returns an existing agent without creating a new one.
+
+```mermaid
+flowchart LR
+    A(["GetExistingAgent"]) --> B["m.mu.Lock"]
+    B --> C(["return map[key]"])
+```
+
+## loadAgentConfig
+
+Private method - loads agent configuration (placeholder implementation).
+
+```mermaid
+flowchart LR
+    A(["loadAgentConfig"]) --> B(["return agentConfig"])
+```
+
+## loadMemories
+
+Private method - loads user memories (placeholder implementation).
+
+```mermaid
+flowchart LR
+    A(["loadMemories"]) --> B(["return empty slice"])
+```
+
+## Design Notes
+
+### Thread-Safe Agent Management
+
+**Q: Why use Mutex instead of sync.Map?**
+
+| Aspect | Description |
+|--------|-------------|
+| Context | Need to protect complex operations (get/create/remove) with consistency |
+| Options considered | sync.Map, Mutex + map, RWMutex |
+| Rationale | Standard mutex provides predictable locking behavior and easier reasoning |
+
+**Q: Why check for existing agent under lock?**
+
+| Aspect | Description |
+|--------|-------------|
+| Context | Prevent race condition between concurrent first messages for same agent |
+| Options considered | Double-checked locking, LoadOrStore, Mutex lock |
+| Rationale | Lock-then-check is simple and ensures only one goroutine creates agent |
+
+**Current approach is recommended because:**
+- Simple and clear locking semantics
+- Easy to add additional coordination if needed
+- Standard Go pattern familiar to most developers
+
+### ADKAgent Adapter Pattern
+
+**Q: Why use adkAgentAdapter instead of ADKAgent directly?**
+
+| Aspect | Description |
+|--------|-------------|
+| Context | Need to add WebSocket streaming behavior to Agent without modifying ADKAgent |
+| Options considered | Modify ADKAgent, Wrapper/adapter, Interface |
+| Rationale | Adapter keeps ADKAgent pure while adding handler-specific behaviors |
+
+**Current approach is recommended because:**
+- Separation of concerns: ADKAgent doesn't know about WebSocket
+- Testability: Can mock adapter in handler tests
+- Single responsibility: ADKAgent handles Eino, adapter handles WebSocket
 
 ## Test Coverage
 
-### Unit Tests (`*_test.go`)
+### Unit Tests
 
 | Test Suite | Coverage |
 |------------|----------|
@@ -115,89 +253,11 @@ flowchart TB
 make test-unit TEST_PATH=./tests/unit/websocket/...
 ```
 
-### Integration Tests
+## Dependencies and Location
 
-| Test Suite | Coverage |
-|------------|----------|
-| N/A | No integration tests for agent_manager directly |
+| Package | Purpose |
+|---------|---------|
+| `github.com/nevaria-ai/gateway/internal/agent` | ADKAgent implementation |
+| `github.com/rs/zerolog` | Structured logging |
 
-**Running:**
-```bash
-make test-integration TEST_PATH=./tests/integration/websocket/...
-```
-
-### Dependencies and Location
-
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `github.com/nevaria-ai/gateway/internal/agent` | latest | ADKAgent implementation |
-| `github.com/rs/zerolog` | latest | Structured logging |
-
-**File Location:** [`internal/websocket/agent_manager.go`](../internal/websocket/agent_manager.go)
-
-## Design Notes
-
-### [Design Topic Name] Thread-Safe Agent Management
-
-**Q: Why use Mutex instead of sync.Map?**
-
-| Aspect | Description |
-|--------|-------------|
-| Context | Need to protect complex operations (get/create/remove) with consistency |
-| Options considered | 1. sync.Map, 2. Mutex + map, 3. RWMutex |
-| Rationale | Standard mutex provides predictable locking behavior and easier reasoning |
-
-**Q: Why check for existing agent under lock?**
-
-| Aspect | Description |
-|--------|-------------|
-| Context | Prevent race condition between concurrent first messages for same agent |
-| Options considered | 1. Double-checked locking, 2. LoadOrStore, 3. Mutex lock |
-| Rationale | Lock-then-check is simple and ensures only one goroutine creates agent |
-
-**Alternative approaches:**
-```go
-// Alternative: sync.Map (not recommended)
-type AgentManager struct {
-    agents sync.Map
-}
-
-func (m *AgentManager) GetOrCreateAgent(...) {
-    if val, ok := m.agents.LoadOrStore(key, newAgent); ok {
-        return val
-    }
-    return newAgent
-}
-```
-
-**Current approach is recommended because:**
-- Simple and clear locking semantics
-- Easy to add additional coordination if needed
-- Standard Go pattern familiar to most developers
-
-### [Design Topic Name] ADKAgent Adapter Pattern
-
-**Q: Why use adkAgentAdapter instead of ADKAgent directly?**
-
-| Aspect | Description |
-|--------|-------------|
-| Context | Need to add WebSocket streaming behavior to Agent without modifying ADKAgent |
-| Options considered | 1. Modify ADKAgent, 2. Wrapper/adapter, 3. Interface |
-| Rationale | Adapter keeps ADKAgent pure while adding handler-specific behaviors |
-
-**Alternative approaches:**
-```go
-// Alternative: Modify ADKAgent directly (not recommended)
-type ADKAgent struct {
-    wsConn *websocket.Conn  // Add direct connection
-}
-
-func (a *ADKAgent) SubmitWithStream(task Task) {
-    // Write WebSocket events
-}
-```
-
-**Current approach is recommended because:**
-- Separation of concerns: ADKAgent doesn't know about WebSocket
-- Testability: Can mock adapter in handler tests
-- Single responsibility: ADKAgent handles Eino, adapter handles WebSocket
+**File Location:** [`internal/websocket/agent_manager.go`](../../internal/websocket/agent_manager.go)
