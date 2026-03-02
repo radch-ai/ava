@@ -14,9 +14,6 @@ import (
 	"github.com/rs/zerolog"
 )
 
-// Version is set at build time via ldflags
-var Version = "dev"
-
 // Server manages the HTTP server and WebSocket handlers.
 type Server struct {
 	httpServer *http.Server
@@ -84,7 +81,6 @@ func NewWithRedis(cfg *ServerConfig, logger zerolog.Logger, wsHandler *websocket
 func (s *Server) Start() error {
 	s.logger.Info().
 		Str("service", "nevaria-gateway").
-		Str("version", Version).
 		Str("addr", s.httpServer.Addr).
 		Msg("server starting")
 

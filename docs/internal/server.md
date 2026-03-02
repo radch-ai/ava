@@ -6,7 +6,6 @@ HTTP server, middleware, and routing for the gateway.
 
 | Variable | Type | Description |
 |----------|------|-------------|
-| `Version` | `string` | Build version (set via ldflags, default "dev") |
 | `ErrSessionInvalid` | `error` | Session invalid error |
 | `ErrSessionExpired` | `error` | Session expired error |
 | `ErrZetidalUnavailable` | `error` | Zetidal API unavailable error |
@@ -94,7 +93,7 @@ flowchart TB
     NewAuth --> CreateMW["&AuthMiddleware{authClient, cache, cacheTTL} → mw"]
     CreateMW --> Done(["return mw"])
 
-    click NewAuth href "../auth/README.md#NewAuthClient"
+    click NewAuth href "auth.md#NewAuthClient"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
@@ -141,7 +140,7 @@ flowchart TB
     UseWrapper --> WithUserID["internalctx.WithUserID(r.Context(), userID) → ctx"]
     WithUserID --> Next(["next.ServeHTTP(wrapper, r.WithContext(ctx))"])
 
-    click Validate href "../auth/README.md#ValidateSession"
+    click Validate href "auth.md#ValidateSession"
 
     classDef mainFn fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     classDef localPkgs fill:#fff8e1,stroke:#f9a825,stroke-width:1.5px,stroke-dasharray:4 2
@@ -396,13 +395,13 @@ make test ./internal/server
 | `internal/websocket` | WebSocket handler |
 
 **File Locations:**
-- [`internal/server/server.go`](../../internal/server/server.go) - HTTP server
-- [`internal/server/middleware.go`](../../internal/server/middleware.go) - Auth middleware
-- [`internal/server/redis_cache.go`](../../internal/server/redis_cache.go) - Redis cache
-- [`internal/server/response.go`](../../internal/server/response.go) - Response utilities
+- [`internal/server/server.go`](../internal/server/server.go) - HTTP server
+- [`internal/server/middleware.go`](../internal/server/middleware.go) - Auth middleware
+- [`internal/server/redis_cache.go`](../internal/server/redis_cache.go) - Redis cache
+- [`internal/server/response.go`](../internal/server/response.go) - Response utilities
 
 ## Related
 
-- [Auth Client](../auth/README.md) - Auth service client
-- [WebSocket Handler](../websocket/README.md) - WebSocket handling
-- [Config](../../config/README.md) - Server configuration
+- [Auth Client](auth.md) - Auth service client
+- [WebSocket Handler](websocket.md) - WebSocket handling
+- [Config](../config/README.md) - Server configuration
