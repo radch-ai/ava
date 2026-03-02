@@ -7,7 +7,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // A Config holds the application configuration.
@@ -16,10 +15,10 @@ type Config struct {
 	LogLevel       string
 	AllowedOrigins []string
 	MaxConns       int
-	ZetidalURL     string
+	ZitadelDomain  string // Zitadel instance URL for OAuth token introspection
+	ZitadelKeyPath string // Path to service account JSON key file for gateway authentication
 	RedisAddr      string
 	RedisPassword  string
-	AuthCacheTTL   time.Duration
 }
 
 // getEnv returns the environment variable value or a default.
@@ -30,7 +29,17 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
+// getEnvRequired returns the environment variable value or an error if not set.
+func getEnvRequired(key string) (string, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return "", fmt.Errorf("%s is required", key)
+	}
+	return value, nil
+}
+
 // parseList parses a comma-separated list into a string slice.
+// Returns nil for empty strings (deny all for origins).
 func parseList(value string) []string {
 	if value == "" {
 		return nil
@@ -46,82 +55,64 @@ func parseList(value string) []string {
 }
 
 // Load reads configuration from environment variables and returns a Config.
+// Returns an error if any required environment variable is missing or invalid.
 func Load() (*Config, error) {
 	addr := getEnv("GATEWAY_ADDR", ":8080")
 	logLevel := getEnv("GATEWAY_LOG_LEVEL", "info")
-	origins := parseList(os.Getenv("GATEWAY_ALLOWED_ORIGINS"))
 
-	// NOTE: Empty origins means deny all - requires explicit configuration for security.
-	// Use GATEWAY_ALLOWED_ORIGINS="*" for development only.
+	// AllowedOrigins: required - specific origins only (empty denies all, "*" allows all but warns)
+	originsRaw, err := getEnvRequired("GATEWAY_ALLOWED_ORIGINS")
+	if err != nil {
+		return nil, err
+	}
+	origins := parseList(originsRaw)
 
-	// Parse max connections (default 0 = unlimited) - validate strictly
+	// Parse max connections (default 0 = unlimited)
 	maxConns := 0
-	maxConnsStr := os.Getenv("GATEWAY_MAX_CONNS")
-	if maxConnsStr != "" {
+	if maxConnsStr := os.Getenv("GATEWAY_MAX_CONNS"); maxConnsStr != "" {
 		var err error
 		maxConns, err = strconv.Atoi(maxConnsStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid GATEWAY_MAX_CONNS: %q", maxConnsStr)
 		}
-	}
-	if maxConns < 0 {
-		return nil, fmt.Errorf("invalid GATEWAY_MAX_CONNS: must be non-negative")
-	}
-
-	// Load zetidal configuration
-	zetidalURL := getEnv("ZETIDAL_URL", "http://localhost:8081")
-
-	// Redis configuration (required)
-	redisAddr := os.Getenv("REDIS_ADDR")
-	redisPassword := os.Getenv("REDIS_PASSWORD")
-
-	// Auth cache TTL in minutes (default 5 minutes)
-	authCacheTTLMinutes := 5
-	if ttlStr := os.Getenv("GATEWAY_AUTH_CACHE_TTL"); ttlStr != "" {
-		var err error
-		authCacheTTLMinutes, err = strconv.Atoi(ttlStr)
-		if err != nil || authCacheTTLMinutes < 0 {
-			return nil, fmt.Errorf("invalid GATEWAY_AUTH_CACHE_TTL: %q (must be non-negative integer minutes)", ttlStr)
+		if maxConns < 0 {
+			return nil, fmt.Errorf("invalid GATEWAY_MAX_CONNS: must be non-negative")
 		}
 	}
-	authCacheTTL := time.Duration(authCacheTTLMinutes) * time.Minute
+
+	// Redis is required for gateway services (user config store, quota system)
+	redisAddr, err := getEnvRequired("REDIS_ADDR")
+	if err != nil {
+		return nil, err
+	}
+	redisPassword, err := getEnvRequired("REDIS_PASSWORD")
+	if err != nil {
+		return nil, err
+	}
+
+	// Zitadel configuration is required for auth
+	zitadelDomain, err := getEnvRequired("ZITADEL_DOMAIN")
+	if err != nil {
+		return nil, err
+	}
+	parsedURL, err := url.Parse(zitadelDomain)
+	if err != nil || parsedURL.Scheme == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+		return nil, fmt.Errorf("ZITADEL_DOMAIN must be a valid URL with http or https scheme")
+	}
+
+	zitadelKeyPath, err := getEnvRequired("ZITADEL_KEY_PATH")
+	if err != nil {
+		return nil, err
+	}
 
 	return &Config{
 		ServerAddr:     addr,
 		LogLevel:       logLevel,
 		AllowedOrigins: origins,
 		MaxConns:       maxConns,
-		ZetidalURL:     zetidalURL,
+		ZitadelDomain:  zitadelDomain,
+		ZitadelKeyPath: zitadelKeyPath,
 		RedisAddr:      redisAddr,
 		RedisPassword:  redisPassword,
-		AuthCacheTTL:   authCacheTTL,
 	}, nil
-}
-
-// Validate checks that the configuration is valid.
-func (c *Config) Validate() error {
-	var errs []string
-
-	if c.ServerAddr == "" {
-		errs = append(errs, "server address cannot be empty")
-	}
-
-	// Redis is required
-	if c.RedisAddr == "" {
-		errs = append(errs, "REDIS_ADDR is required")
-	}
-
-	// Validate zetidal URL format - must have http or https scheme
-	if c.ZetidalURL != "" {
-		parsedURL, err := url.Parse(c.ZetidalURL)
-		if err != nil || parsedURL.Scheme == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
-			errs = append(errs, "ZETIDAL_URL must be a valid URL with http or https scheme")
-		}
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("config validation failed: %s", strings.Join(errs, "; "))
-	}
-
-	return nil
 }

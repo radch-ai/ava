@@ -2,21 +2,39 @@ package unit
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/nevaria-ai/gateway/config"
 )
 
+// Set required env vars for tests that need successful load
+func setRequiredEnv() {
+	_ = os.Setenv("GATEWAY_ALLOWED_ORIGINS", "https://example.com")
+	_ = os.Setenv("REDIS_ADDR", "localhost:6379")
+	_ = os.Setenv("REDIS_PASSWORD", "test-password")
+	_ = os.Setenv("ZITADEL_DOMAIN", "https://example.zitadel.cloud")
+	_ = os.Setenv("ZITADEL_KEY_PATH", "/path/to/key.json")
+}
+
+// Clear all gateway-related env vars
+func clearEnv() {
+	_ = os.Unsetenv("GATEWAY_ADDR")
+	_ = os.Unsetenv("GATEWAY_LOG_LEVEL")
+	_ = os.Unsetenv("GATEWAY_ALLOWED_ORIGINS")
+	_ = os.Unsetenv("GATEWAY_MAX_CONNS")
+	_ = os.Unsetenv("REDIS_ADDR")
+	_ = os.Unsetenv("REDIS_PASSWORD")
+	_ = os.Unsetenv("ZITADEL_DOMAIN")
+	_ = os.Unsetenv("ZITADEL_KEY_PATH")
+}
+
 func TestLoadFromEnv(t *testing.T) {
-	// Set environment variables
+	clearEnv()
+	setRequiredEnv()
 	_ = os.Setenv("GATEWAY_ADDR", ":9000")
 	_ = os.Setenv("GATEWAY_LOG_LEVEL", "debug")
-	defer func() {
-		_ = os.Unsetenv("GATEWAY_ADDR")
-		_ = os.Unsetenv("GATEWAY_LOG_LEVEL")
-		_ = os.Unsetenv("GATEWAY_ALLOWED_ORIGINS")
-		_ = os.Unsetenv("GATEWAY_MAX_CONNS")
-	}()
+	defer clearEnv()
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -33,11 +51,9 @@ func TestLoadFromEnv(t *testing.T) {
 }
 
 func TestDefaultValues(t *testing.T) {
-	// Clear env
-	_ = os.Unsetenv("GATEWAY_ADDR")
-	_ = os.Unsetenv("GATEWAY_LOG_LEVEL")
-	_ = os.Unsetenv("GATEWAY_ALLOWED_ORIGINS")
-	_ = os.Unsetenv("GATEWAY_MAX_CONNS")
+	clearEnv()
+	setRequiredEnv()
+	defer clearEnv()
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -52,25 +68,9 @@ func TestDefaultValues(t *testing.T) {
 		t.Errorf("expected default log level info, got %s", cfg.LogLevel)
 	}
 
-	// Empty origins means deny all (secure default)
-	if len(cfg.AllowedOrigins) != 0 {
-		t.Errorf("expected empty origins, got %v", cfg.AllowedOrigins)
-	}
-
 	// MaxConns default to 0 (unlimited)
 	if cfg.MaxConns != 0 {
 		t.Errorf("expected max conns 0, got %d", cfg.MaxConns)
-	}
-}
-
-func TestValidate(t *testing.T) {
-	cfg := &config.Config{
-		ServerAddr: "",
-		LogLevel:   "info",
-	}
-
-	if err := cfg.Validate(); err == nil {
-		t.Error("expected error for empty addr, got nil")
 	}
 }
 
@@ -104,8 +104,10 @@ func TestLoadAllowedOrigins(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			clearEnv()
+			setRequiredEnv()
 			_ = os.Setenv("GATEWAY_ALLOWED_ORIGINS", tt.env)
-			defer func() { _ = os.Unsetenv("GATEWAY_ALLOWED_ORIGINS") }()
+			defer clearEnv()
 
 			cfg, err := config.Load()
 			if err != nil {
@@ -166,8 +168,10 @@ func TestLoadMaxConns(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			clearEnv()
+			setRequiredEnv()
 			_ = os.Setenv("GATEWAY_MAX_CONNS", tt.env)
-			defer func() { _ = os.Unsetenv("GATEWAY_MAX_CONNS") }()
+			defer clearEnv()
 
 			cfg, err := config.Load()
 			if tt.wantErr {
@@ -187,46 +191,123 @@ func TestLoadMaxConns(t *testing.T) {
 	}
 }
 
-func TestValidateValidConfig(t *testing.T) {
-	cfg := &config.Config{
-		ServerAddr:     ":8080",
-		LogLevel:       "info",
-		AllowedOrigins: []string{"*"},
-		MaxConns:       1000,
-		RedisAddr:      "localhost:6379",
+func TestRequiredFields(t *testing.T) {
+	tests := []struct {
+		name        string
+		setup       func()
+		errContains string
+	}{
+		{
+			name: "missing GATEWAY_ALLOWED_ORIGINS",
+			setup: func() {
+				_ = os.Setenv("REDIS_ADDR", "localhost:6379")
+				_ = os.Setenv("REDIS_PASSWORD", "test-password")
+				_ = os.Setenv("ZITADEL_DOMAIN", "https://example.zitadel.cloud")
+				_ = os.Setenv("ZITADEL_KEY_PATH", "/path/to/key.json")
+			},
+			errContains: "GATEWAY_ALLOWED_ORIGINS is required",
+		},
+		{
+			name: "missing REDIS_ADDR",
+			setup: func() {
+				_ = os.Setenv("GATEWAY_ALLOWED_ORIGINS", "https://example.com")
+				_ = os.Setenv("REDIS_PASSWORD", "test-password")
+				_ = os.Setenv("ZITADEL_DOMAIN", "https://example.zitadel.cloud")
+				_ = os.Setenv("ZITADEL_KEY_PATH", "/path/to/key.json")
+			},
+			errContains: "REDIS_ADDR is required",
+		},
+		{
+			name: "missing REDIS_PASSWORD",
+			setup: func() {
+				_ = os.Setenv("GATEWAY_ALLOWED_ORIGINS", "https://example.com")
+				_ = os.Setenv("REDIS_ADDR", "localhost:6379")
+				_ = os.Setenv("ZITADEL_DOMAIN", "https://example.zitadel.cloud")
+				_ = os.Setenv("ZITADEL_KEY_PATH", "/path/to/key.json")
+			},
+			errContains: "REDIS_PASSWORD is required",
+		},
+		{
+			name: "missing ZITADEL_DOMAIN",
+			setup: func() {
+				_ = os.Setenv("GATEWAY_ALLOWED_ORIGINS", "https://example.com")
+				_ = os.Setenv("REDIS_ADDR", "localhost:6379")
+				_ = os.Setenv("REDIS_PASSWORD", "test-password")
+				_ = os.Setenv("ZITADEL_KEY_PATH", "/path/to/key.json")
+			},
+			errContains: "ZITADEL_DOMAIN is required",
+		},
+		{
+			name: "missing ZITADEL_KEY_PATH",
+			setup: func() {
+				_ = os.Setenv("GATEWAY_ALLOWED_ORIGINS", "https://example.com")
+				_ = os.Setenv("REDIS_ADDR", "localhost:6379")
+				_ = os.Setenv("REDIS_PASSWORD", "test-password")
+				_ = os.Setenv("ZITADEL_DOMAIN", "https://example.zitadel.cloud")
+			},
+			errContains: "ZITADEL_KEY_PATH is required",
+		},
+		{
+			name: "invalid ZITADEL_DOMAIN URL",
+			setup: func() {
+				_ = os.Setenv("GATEWAY_ALLOWED_ORIGINS", "https://example.com")
+				_ = os.Setenv("REDIS_ADDR", "localhost:6379")
+				_ = os.Setenv("REDIS_PASSWORD", "test-password")
+				_ = os.Setenv("ZITADEL_DOMAIN", "not-a-url")
+				_ = os.Setenv("ZITADEL_KEY_PATH", "/path/to/key.json")
+			},
+			errContains: "ZITADEL_DOMAIN must be a valid URL",
+		},
+		{
+			name: "ZITADEL_DOMAIN without scheme",
+			setup: func() {
+				_ = os.Setenv("GATEWAY_ALLOWED_ORIGINS", "https://example.com")
+				_ = os.Setenv("REDIS_ADDR", "localhost:6379")
+				_ = os.Setenv("REDIS_PASSWORD", "test-password")
+				_ = os.Setenv("ZITADEL_DOMAIN", "example.zitadel.cloud")
+				_ = os.Setenv("ZITADEL_KEY_PATH", "/path/to/key.json")
+			},
+			errContains: "ZITADEL_DOMAIN must be a valid URL",
+		},
 	}
 
-	if err := cfg.Validate(); err != nil {
-		t.Errorf("unexpected error: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearEnv()
+			tt.setup()
+			defer clearEnv()
+
+			_, err := config.Load()
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.errContains) {
+				t.Errorf("expected error to contain %q, got %q", tt.errContains, err.Error())
+			}
+		})
 	}
 }
 
-func TestZetidalConfigDefaults(t *testing.T) {
-	// Clear zetidal-related env vars
-	_ = os.Unsetenv("ZETIDAL_URL")
+func TestValidConfig(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+	defer clearEnv()
 
 	cfg, err := config.Load()
 	if err != nil {
-		t.Fatalf("failed to load config: %v", err)
+		t.Fatalf("expected no error, got %v", err)
 	}
 
-	if cfg.ZetidalURL != "http://localhost:8081" {
-		t.Errorf("expected zetidal URL http://localhost:8081, got %s", cfg.ZetidalURL)
+	if cfg.RedisAddr != "localhost:6379" {
+		t.Errorf("expected RedisAddr localhost:6379, got %s", cfg.RedisAddr)
 	}
-}
-
-func TestZetidalConfigFromEnv(t *testing.T) {
-	_ = os.Setenv("ZETIDAL_URL", "http://zetidal:9090")
-	defer func() {
-		_ = os.Unsetenv("ZETIDAL_URL")
-	}()
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("failed to load config: %v", err)
+	if cfg.RedisPassword != "test-password" {
+		t.Errorf("expected RedisPassword test-password, got %s", cfg.RedisPassword)
 	}
-
-	if cfg.ZetidalURL != "http://zetidal:9090" {
-		t.Errorf("expected zetidal URL http://zetidal:9090, got %s", cfg.ZetidalURL)
+	if cfg.ZitadelDomain != "https://example.zitadel.cloud" {
+		t.Errorf("expected ZitadelDomain https://example.zitadel.cloud, got %s", cfg.ZitadelDomain)
+	}
+	if cfg.ZitadelKeyPath != "/path/to/key.json" {
+		t.Errorf("expected ZitadelKeyPath /path/to/key.json, got %s", cfg.ZitadelKeyPath)
 	}
 }

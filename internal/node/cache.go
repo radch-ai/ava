@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-
-	"github.com/nevaria-ai/gateway/internal/server"
 )
 
 const (
@@ -17,15 +15,22 @@ const (
 	cacheKeyPrefix = "user_tools:"
 )
 
+// Cache defines the interface for a key-value cache with TTL support.
+type Cache interface {
+	Get(ctx context.Context, key string) (string, error)
+	Set(ctx context.Context, key string, value string, ttl time.Duration) error
+	Delete(ctx context.Context, key string) error
+}
+
 // ToolCache manages caching of user tool lists.
 type ToolCache struct {
-	cache      server.AuthCache
+	cache      Cache
 	defaultTTL time.Duration
 }
 
 // NewToolCache creates a new ToolCache with the given underlying cache implementation.
 // The default TTL is set to 3 minutes.
-func NewToolCache(cache server.AuthCache) *ToolCache {
+func NewToolCache(cache Cache) *ToolCache {
 	return &ToolCache{
 		cache:      cache,
 		defaultTTL: defaultCacheTTL,

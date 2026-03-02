@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -10,7 +9,6 @@ import (
 	"time"
 
 	"github.com/nevaria-ai/gateway/internal/websocket"
-	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 )
 
@@ -19,20 +17,14 @@ type Server struct {
 	httpServer *http.Server
 	logger     zerolog.Logger
 	wsHandler  *websocket.Handler
-	authMW     *AuthMiddleware // Authentication middleware
-	shutdownCh chan struct{}   // Closed when shutdown is requested
+	shutdownCh chan struct{} // Closed when shutdown is requested
 }
 
-// ServerConfig holds server initialization parameters.
-type ServerConfig struct {
-	Addr         string
-	ZetidalURL   string
-	AuthCacheTTL time.Duration
-}
+// New creates a new Server with auth middleware.
+// The introspector is required for validating session tokens.
+func New(addr string, logger zerolog.Logger, wsHandler *websocket.Handler, introspector *ZitadelIntrospector) *Server {
+	authMW := NewAuthMiddleware(introspector)
 
-// New creates a new Server with the given address, logger, WebSocket handler, and auth middleware.
-// If authMW is nil, the WebSocket endpoint will not require authentication (for backward compatibility).
-func New(addr string, logger zerolog.Logger, wsHandler *websocket.Handler, authMW *AuthMiddleware) *Server {
 	mux := http.NewServeMux()
 
 	// Health check endpoint
@@ -47,13 +39,9 @@ func New(addr string, logger zerolog.Logger, wsHandler *websocket.Handler, authM
 		_, _ = w.Write([]byte("OK"))
 	})
 
-	// WebSocket endpoint - wrap with auth middleware if provided
+	// WebSocket endpoint with auth middleware
 	wsHandlerFunc := http.HandlerFunc(wsHandler.HandleWebSocket)
-	if authMW != nil {
-		mux.Handle("/ws", authMW.Authenticate(wsHandlerFunc))
-	} else {
-		mux.Handle("/ws", wsHandlerFunc)
-	}
+	mux.Handle("/ws", authMW.Authenticate(wsHandlerFunc))
 
 	return &Server{
 		httpServer: &http.Server{
@@ -65,19 +53,16 @@ func New(addr string, logger zerolog.Logger, wsHandler *websocket.Handler, authM
 		},
 		logger:     logger,
 		wsHandler:  wsHandler,
-		authMW:     authMW,
 		shutdownCh: make(chan struct{}),
 	}
 }
 
-// NewWithRedis creates a Server with Redis-backed auth middleware.
-// This is the recommended constructor for production use.
-func NewWithRedis(cfg *ServerConfig, logger zerolog.Logger, wsHandler *websocket.Handler, redisClient *redis.Client) *Server {
-	cache := NewRedisCache(redisClient)
-	authMW := NewAuthMiddleware(cfg.ZetidalURL, cache, cfg.AuthCacheTTL)
-	return New(cfg.Addr, logger, wsHandler, authMW)
-}
-
+// Start starts the HTTP server and handles graceful shutdown.
+//
+// Graceful Shutdown (30 second timeout):
+//   - Allows in-flight requests to complete
+//   - WebSocket connections can close cleanly
+//   - Not so long as to delay deployments
 func (s *Server) Start() error {
 	s.logger.Info().
 		Str("service", "nevaria-gateway").
@@ -89,7 +74,7 @@ func (s *Server) Start() error {
 
 	go func() {
 		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errCh <- fmt.Errorf("server error: %w", err)
+			errCh <- err
 		}
 	}()
 
@@ -112,7 +97,7 @@ func (s *Server) Start() error {
 
 	if err := s.httpServer.Shutdown(ctx); err != nil {
 		s.logger.Error().Err(err).Msg("shutdown error")
-		return fmt.Errorf("shutdown failed: %w", err)
+		return err
 	}
 
 	s.logger.Info().Msg("server stopped gracefully")

@@ -1,39 +1,36 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"time"
 
 	internalctx "github.com/nevaria-ai/gateway/internal/ctx"
 )
 
-// AuthCache defines the interface for session caching.
-type AuthCache interface {
-	Get(ctx context.Context, key string) (string, error)
-	Set(ctx context.Context, key string, value string, ttl time.Duration) error
-	Delete(ctx context.Context, key string) error
-}
-
 // AuthMiddleware handles authentication for incoming requests.
 type AuthMiddleware struct {
-	authClient *AuthClient
-	cache      AuthCache // can be nil
-	cacheTTL   time.Duration
+	introspector *ZitadelIntrospector
 }
 
-// NewAuthMiddleware creates a new authentication middleware.
-func NewAuthMiddleware(authURL string, cache AuthCache, cacheTTL time.Duration) *AuthMiddleware {
+// NewAuthMiddleware creates a new authentication middleware with the given introspector.
+func NewAuthMiddleware(introspector *ZitadelIntrospector) *AuthMiddleware {
 	return &AuthMiddleware{
-		authClient: NewAuthClient(authURL),
-		cache:      cache,
-		cacheTTL:   cacheTTL,
+		introspector: introspector,
 	}
 }
 
-// Authenticate validates the session cookie and adds user_id to context.
+// Authenticate returns a middleware handler that validates the session cookie
+// and adds user_id to context before calling the next handler.
+//
+// Simple Auth Flow (no sliding sessions):
+//   - Gateway only validates session authenticity
+//   - Client handles all token/cookie management via refresh tokens
+//
+// No Auth Cache:
+//   - Auth happens once per WebSocket connection (during HTTP upgrade)
+//   - Self-hosted Zitadel has low latency to gateway
+//   - Real-time revocation checking (no stale cache)
 func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Extract session cookie
@@ -44,38 +41,21 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 		}
 
 		sessionToken := cookie.Value
-		var userID string
 
-		// Check cache first (if available)
-		if m.cache != nil {
-			cachedUserID, err := m.cache.Get(r.Context(), "session:"+sessionToken)
-			if err == nil && cachedUserID != "" {
-				userID = cachedUserID
-			}
-		}
-
-		// Cache miss or no cache - validate with auth service
-		if userID == "" {
-			sessionInfo, err := m.authClient.ValidateSession(r.Context(), sessionToken)
-			if err != nil {
-				if errors.Is(err, ErrSessionInvalid) {
-					m.writeAuthError(w, "authentication_required", "Valid session required. Please login.")
-					return
-				}
-				// Other errors (timeout, unavailable) - return 503
-				http.Error(w, "Auth service unavailable", http.StatusServiceUnavailable)
+		// Validate with Zitadel introspection
+		sessionInfo, err := ValidateSession(r.Context(), m.introspector, sessionToken)
+		if err != nil {
+			if errors.Is(err, ErrSessionInvalid) {
+				m.writeAuthError(w, "authentication_required", "Valid session required. Please login.")
 				return
 			}
-			userID = sessionInfo.UserID
-
-			// Store in cache
-			if m.cache != nil && userID != "" {
-				_ = m.cache.Set(r.Context(), "session:"+sessionToken, userID, m.cacheTTL)
-			}
+			// Other errors (timeout, unavailable) - return 503
+			http.Error(w, "Auth service unavailable", http.StatusServiceUnavailable)
+			return
 		}
 
 		// Add user ID to context and call next handler
-		ctx := internalctx.WithUserID(r.Context(), userID)
+		ctx := internalctx.WithUserID(r.Context(), sessionInfo.UserID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
