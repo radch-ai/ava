@@ -215,36 +215,6 @@ func TestAuthMiddleware_ServiceUnavailable(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
-func TestAuthMiddleware_SetCookieForwarding(t *testing.T) {
-	mockAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Return success with Set-Cookie header (sliding expiration)
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Set-Cookie", "session=new.token; Path=/; HttpOnly; Secure")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"authenticated": true, "user_id": "user-123"}`))
-	}))
-	defer mockAuth.Close()
-
-	mw := server.NewAuthMiddleware(mockAuth.URL, nil, 5*time.Minute)
-
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	handler := mw.Authenticate(next)
-
-	req := httptest.NewRequest("GET", "/ws", nil)
-	req.AddCookie(&http.Cookie{Name: "session", Value: "old.token"})
-	w := httptest.NewRecorder()
-
-	handler.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	// Check that Set-Cookie was forwarded
-	cookies := w.Header().Values("Set-Cookie")
-	assert.NotEmpty(t, cookies, "Set-Cookie header should be forwarded")
-}
-
 func TestAuthMiddleware_EmptyCookieValue(t *testing.T) {
 	mw := server.NewAuthMiddleware("http://localhost:8081", nil, 5*time.Minute)
 

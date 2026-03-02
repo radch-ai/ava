@@ -10,7 +10,7 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
-	"github.com/nevaria-ai/gateway/internal/auth"
+	"github.com/nevaria-ai/gateway/internal/server"
 	"github.com/rs/zerolog"
 )
 
@@ -43,7 +43,7 @@ type Handler struct {
 
 // AuthClient defines the interface for validating sessions.
 type AuthClient interface {
-	ValidateSession(ctx context.Context, token string) (*auth.SessionInfo, error)
+	ValidateSession(ctx context.Context, token string) (*server.SessionInfo, error)
 }
 
 // NewHandler creates a new node WebSocket handler.

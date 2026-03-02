@@ -14,8 +14,8 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/nevaria-ai/gateway/internal/agent"
-	"github.com/nevaria-ai/gateway/internal/auth"
 	"github.com/nevaria-ai/gateway/internal/node"
+	"github.com/nevaria-ai/gateway/internal/server"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -85,9 +85,9 @@ func TestHandler_HandleNodeConnect_ConnectionLimit(t *testing.T) {
 		agentProvider := newMockAgentProvider()
 		service := node.NewService(testLogger(), agentProvider)
 		authClient := &mockAuthClient{
-			session: &auth.SessionInfo{
+			session: &server.SessionInfo{
 				UserID:    "user123",
-				ExpiresAt: time.Now().Add(time.Hour),
+				ExpiresAt: time.Now().Add(time.Hour).Unix(),
 			},
 		}
 		logger := testLogger()
@@ -124,9 +124,9 @@ func TestHandler_HandleNodeConnect_ConnectionLimit(t *testing.T) {
 		agentProvider := newMockAgentProvider()
 		service := node.NewService(testLogger(), agentProvider)
 		authClient := &mockAuthClient{
-			session: &auth.SessionInfo{
+			session: &server.SessionInfo{
 				UserID:    "user123",
-				ExpiresAt: time.Now().Add(time.Hour),
+				ExpiresAt: time.Now().Add(time.Hour).Unix(),
 			},
 		}
 		logger := testLogger()
@@ -149,9 +149,9 @@ func TestHandler_HandleNodeConnect_ConnectionLimit(t *testing.T) {
 		agentProvider := newMockAgentProvider()
 		service := node.NewService(testLogger(), agentProvider)
 		authClient := &mockAuthClient{
-			session: &auth.SessionInfo{
+			session: &server.SessionInfo{
 				UserID:    "user123",
-				ExpiresAt: time.Now().Add(time.Hour),
+				ExpiresAt: time.Now().Add(time.Hour).Unix(),
 			},
 		}
 		logger := testLogger()
@@ -281,9 +281,9 @@ func TestHandler_HandleNodeConnect_ValidToken(t *testing.T) {
 		agentProvider := newMockAgentProvider()
 		service := node.NewService(testLogger(), agentProvider)
 		authClient := &mockAuthClient{
-			session: &auth.SessionInfo{
+			session: &server.SessionInfo{
 				UserID:    "user123",
-				ExpiresAt: time.Now().Add(time.Hour),
+				ExpiresAt: time.Now().Add(time.Hour).Unix(),
 			},
 		}
 		logger := testLogger()
@@ -307,9 +307,9 @@ func TestHandler_HandleNodeConnect_ValidToken(t *testing.T) {
 
 		userID := "test-user-42"
 		authClient := &mockAuthClient{
-			session: &auth.SessionInfo{
+			session: &server.SessionInfo{
 				UserID:    userID,
-				ExpiresAt: time.Now().Add(time.Hour),
+				ExpiresAt: time.Now().Add(time.Hour).Unix(),
 			},
 		}
 		logger := testLogger()
@@ -364,9 +364,9 @@ func TestHandler_ActiveConns(t *testing.T) {
 		agentProvider := newMockAgentProvider()
 		service := node.NewService(testLogger(), agentProvider)
 		authClient := &mockAuthClient{
-			session: &auth.SessionInfo{
+			session: &server.SessionInfo{
 				UserID:    "user123",
-				ExpiresAt: time.Now().Add(time.Hour),
+				ExpiresAt: time.Now().Add(time.Hour).Unix(),
 			},
 		}
 		logger := testLogger()
@@ -1294,9 +1294,9 @@ func TestHandler_ConnectionLifecycle(t *testing.T) {
 		agentProvider := newMockAgentProvider()
 		service := node.NewService(testLogger(), agentProvider)
 		authClient := &mockAuthClient{
-			session: &auth.SessionInfo{
+			session: &server.SessionInfo{
 				UserID:    "user123",
-				ExpiresAt: time.Now().Add(time.Hour),
+				ExpiresAt: time.Now().Add(time.Hour).Unix(),
 			},
 		}
 		logger := testLogger()
@@ -1705,44 +1705,44 @@ func TestHandler_Errors(t *testing.T) {
 // TestHandler_SessionInfo tests session info handling.
 func TestHandler_SessionInfo(t *testing.T) {
 	t.Run("creates valid session info", func(t *testing.T) {
-		session := &auth.SessionInfo{
+		session := &server.SessionInfo{
 			UserID:    "user123",
-			ExpiresAt: time.Now().Add(time.Hour),
+			ExpiresAt: time.Now().Add(time.Hour).Unix(),
 		}
 
 		assert.Equal(t, "user123", session.UserID)
-		assert.True(t, session.ExpiresAt.After(time.Now()))
+		assert.True(t, session.ExpiresAt > time.Now().Unix())
 	})
 
 	t.Run("handles expired session", func(t *testing.T) {
-		session := &auth.SessionInfo{
+		session := &server.SessionInfo{
 			UserID:    "user123",
-			ExpiresAt: time.Now().Add(-time.Hour),
+			ExpiresAt: time.Now().Add(-time.Hour).Unix(),
 		}
 
-		assert.True(t, session.ExpiresAt.Before(time.Now()))
+		assert.True(t, session.ExpiresAt < time.Now().Unix())
 	})
 }
 
 // TestHandler_UserIsolation tests user isolation.
 func TestHandler_UserIsolation(t *testing.T) {
 	t.Run("different users have different user IDs", func(t *testing.T) {
-		user1Session := &auth.SessionInfo{
+		user1Session := &server.SessionInfo{
 			UserID:    "user1",
-			ExpiresAt: time.Now().Add(time.Hour),
+			ExpiresAt: time.Now().Add(time.Hour).Unix(),
 		}
-		user2Session := &auth.SessionInfo{
+		user2Session := &server.SessionInfo{
 			UserID:    "user2",
-			ExpiresAt: time.Now().Add(time.Hour),
+			ExpiresAt: time.Now().Add(time.Hour).Unix(),
 		}
 
 		assert.NotEqual(t, user1Session.UserID, user2Session.UserID)
 	})
 
 	t.Run("user ID is extracted from session", func(t *testing.T) {
-		session := &auth.SessionInfo{
+		session := &server.SessionInfo{
 			UserID:    "test-user-123",
-			ExpiresAt: time.Now().Add(time.Hour),
+			ExpiresAt: time.Now().Add(time.Hour).Unix(),
 		}
 
 		assert.Equal(t, "test-user-123", session.UserID)
@@ -1855,9 +1855,9 @@ func TestHandler_ReleaseConn(t *testing.T) {
 		agentProvider := newMockAgentProvider()
 		service := node.NewService(testLogger(), agentProvider)
 		authClient := &mockAuthClient{
-			session: &auth.SessionInfo{
+			session: &server.SessionInfo{
 				UserID:    "user123",
-				ExpiresAt: time.Now().Add(time.Hour),
+				ExpiresAt: time.Now().Add(time.Hour).Unix(),
 			},
 		}
 		logger := testLogger()
@@ -2181,9 +2181,9 @@ func TestHandler_Recovery(t *testing.T) {
 		agentProvider := newMockAgentProvider()
 		service := node.NewService(testLogger(), agentProvider)
 		authClient := &mockAuthClient{
-			session: &auth.SessionInfo{
+			session: &server.SessionInfo{
 				UserID:    "user123",
-				ExpiresAt: time.Now().Add(time.Hour),
+				ExpiresAt: time.Now().Add(time.Hour).Unix(),
 			},
 		}
 		logger := testLogger()
@@ -2292,11 +2292,11 @@ func TestHandler_LongRunningConnection(t *testing.T) {
 
 // mockAuthClient is a mock implementation of AuthClient.
 type mockAuthClient struct {
-	session       *auth.SessionInfo
+	session       *server.SessionInfo
 	validateError error
 }
 
-func (m *mockAuthClient) ValidateSession(ctx context.Context, token string) (*auth.SessionInfo, error) {
+func (m *mockAuthClient) ValidateSession(ctx context.Context, token string) (*server.SessionInfo, error) {
 	if m.validateError != nil {
 		return nil, m.validateError
 	}

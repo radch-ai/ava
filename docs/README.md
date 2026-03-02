@@ -127,11 +127,10 @@ config/             # Environment-based configuration
 └── plans/          # Subscription plans
 
 internal/
-├── server/         # HTTP server, middleware, routing
+├── server/         # HTTP server, middleware, routing, auth client
 ├── websocket/      # WebSocket handler, multi-agent routing
 ├── agent/          # Agent runtime, state management, events
 │   └── tools/      # Built-in tools (Mem0, files, nodes)
-├── auth/           # Zetidal API client for session validation
 ├── billing/        # RevenueCat webhooks, migrations
 ├── ctx/            # Context utilities (userID, agentID)
 ├── storage/        # S3 storage, workspaces, transcripts
@@ -146,12 +145,11 @@ internal/
 |---------|---------|
 | [`config/`](config/README.md) | Environment-based configuration with validation |
 | [`cmd/gateway`](cmd/gateway.md) | Application entry point |
-| [`internal/server/`](internal/server/README.md) | HTTP server, middleware, routing |
+| [`internal/server/`](internal/server/README.md) | HTTP server, middleware, routing, auth client |
 | [`internal/websocket`](internal/websocket.md) | WebSocket connection management with multi-agent routing |
 | [`internal/agent/`](internal/agent/README.md) | Agent runtime, state management, event system |
 | [`internal/agent/tools`](internal/agent/tools.md) | Built-in agent tools (Mem0, file operations, node tools) |
 | [LLM Proxy SDK](https://github.com/nevaria-ai/llm-proxy-sdk) | LLM client factory, quota, health, routing, usage |
-| [`internal/auth/`](internal/auth.md) | Zetidal API client for session validation |
 | [`internal/billing/`](internal/billing.md) | RevenueCat webhooks, credit tracking, migrations |
 | [`internal/ctx/`](internal/ctx.md) | Context utilities for user ID and agent ID propagation |
 | [`internal/storage/`](internal/storage/README.md) | S3 storage, workspace loader, transcript writer |
@@ -284,13 +282,12 @@ Event types: `connected`, `agent_start`, `agent_end`, `turn_start`, `turn_end`, 
 - [Gateway](cmd/gateway.md) - Application entry point
 
 ### Internal Packages
-- [Server](internal/server/README.md) - HTTP server and middleware
+- [Server](internal/server/README.md) - HTTP server, middleware, and auth client
 - [WebSocket](internal/websocket.md) - WebSocket handler and multi-agent routing
 - [Agent](internal/agent/README.md) - Agent runtime
 - [Agent Tools](internal/agent/tools.md) - Built-in tools (Mem0, files, nodes)
 - [LLM Client](https://github.com/nevaria-ai/llm-proxy-sdk) - LLM client factory
 - [LLM Proxy](https://github.com/nevaria-ai/llm-proxy-sdk) - Proxy routing and quota
-- [Auth](internal/auth.md) - Authentication client
 - [Billing](internal/billing.md) - RevenueCat webhooks and credit tracking
 - [Storage](internal/storage/README.md) - S3 storage, workspaces, transcripts
 - [Mem0](internal/mem0/README.md) - Memory API client
