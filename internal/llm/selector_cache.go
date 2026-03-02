@@ -9,6 +9,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// SelectorCache stores NotDiamond model recommendations in Redis.
+// TTL varies by tier: pro=15min, standard=30min, lite=60min.
 type SelectorCache struct {
 	client *redis.Client
 }

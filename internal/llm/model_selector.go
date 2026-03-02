@@ -10,6 +10,9 @@ import (
 	"time"
 )
 
+// ModelSelector calls NotDiamond API for intelligent model routing.
+// NotDiamond analyzes prompt content and recommends the best model
+// based on cost, latency, and capability tradeoffs.
 type ModelSelector struct {
 	baseURL string
 	apiKey  string
@@ -49,6 +52,8 @@ func NewModelSelector(baseURL string, apiKey string) *ModelSelector {
 	}
 }
 
+// SelectModel requests a model recommendation from NotDiamond.
+// Tradeoff options: "cost", "latency", "quality".
 func (ms *ModelSelector) SelectModel(ctx context.Context, messages []Message, providers []string, tradeoff string) (*ModelRecommendation, error) {
 	messageContents := make([]string, len(messages))
 	for i, msg := range messages {

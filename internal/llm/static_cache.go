@@ -9,6 +9,8 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+// StaticCache caches model recommendations for system contexts (cron, heartbeat, webhook).
+// Uses singleflight to prevent cache stampede on refresh.
 type StaticCache struct {
 	store           map[string]*cacheEntry
 	mu              sync.RWMutex

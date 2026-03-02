@@ -13,11 +13,14 @@ type QuotaSession struct {
 	AgentID string
 }
 
+// QuotaMiddleware defines hooks for quota tracking before/after LLM calls.
 type QuotaMiddleware interface {
 	BeforeLLM(ctx context.Context, session *QuotaSession) error
 	AfterLLM(ctx context.Context, session *QuotaSession, promptTokens, completionTokens int)
 }
 
+// QuotaChatModel wraps a ToolCallingChatModel with quota tracking.
+// Decorator pattern: intercepts Generate/Stream calls to track token usage.
 type QuotaChatModel struct {
 	inner   model.ToolCallingChatModel
 	quota   QuotaMiddleware

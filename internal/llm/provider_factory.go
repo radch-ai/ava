@@ -12,6 +12,8 @@ import (
 	"google.golang.org/genai"
 )
 
+// ProviderFactory creates chat model instances with caching.
+// Models are cached after first creation to avoid repeated initialization.
 type ProviderFactory struct {
 	config    *ModelsConfig
 	cache     map[string]model.ToolCallingChatModel
@@ -25,6 +27,8 @@ func NewProviderFactory(config *ModelsConfig) *ProviderFactory {
 	}
 }
 
+// CreateChatModel creates or returns a cached chat model for the given model name.
+// Supported providers: openai, anthropic, google, grok.
 func (f *ProviderFactory) CreateChatModel(ctx context.Context, modelName string) (model.ToolCallingChatModel, error) {
 	f.cacheLock.RLock()
 	cached, exists := f.cache[modelName]

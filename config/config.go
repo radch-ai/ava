@@ -67,16 +67,18 @@ func Load() (*Config, error) {
 	}
 	origins := parseList(originsRaw)
 
-	// Parse max connections (default 0 = unlimited)
-	maxConns := 0
+	// Default connection limit (10000):
+	// - Handles typical traffic spikes
+	// - Prevents accidental resource exhaustion
+	maxConns := 10000 // hard default
 	if maxConnsStr := os.Getenv("GATEWAY_MAX_CONNS"); maxConnsStr != "" {
 		var err error
 		maxConns, err = strconv.Atoi(maxConnsStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid GATEWAY_MAX_CONNS: %q", maxConnsStr)
 		}
-		if maxConns < 0 {
-			return nil, fmt.Errorf("invalid GATEWAY_MAX_CONNS: must be non-negative")
+		if maxConns <= 0 {
+			return nil, fmt.Errorf("invalid GATEWAY_MAX_CONNS: must be a positive integer")
 		}
 	}
 

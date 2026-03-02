@@ -1,3 +1,14 @@
+// Package llm provides LLM model configuration, provider factories, and model selection.
+//
+// JSON-Based Configuration:
+//   - Easy to add new models without code changes
+//   - Cost updates don't require deployment
+//   - Version controlled alongside code
+//
+// Env-Based API Keys:
+//   - Config file can be committed to git safely
+//   - Keys injected at runtime via environment
+//   - Standard 12-factor app pattern
 package llm
 
 import (
@@ -6,6 +17,7 @@ import (
 	"os"
 )
 
+// Provider names for supported LLM providers.
 type Provider string
 
 const (
@@ -15,6 +27,7 @@ const (
 	ProviderGrok      Provider = "grok"
 )
 
+// ModelConfig holds pricing and configuration for a specific model.
 type ModelConfig struct {
 	InputCostPerMillion  float64 `json:"input_cost_per_million"`
 	OutputCostPerMillion float64 `json:"output_cost_per_million"`
@@ -22,6 +35,8 @@ type ModelConfig struct {
 	Tier                 string  `json:"tier"`
 }
 
+// ProviderConfig holds API settings and models for a provider.
+// APIKeyEnv stores the environment variable name (not the key itself).
 type ProviderConfig struct {
 	APIKeyEnv string                  `json:"api_key_env"`
 	BaseURL   string                  `json:"base_url,omitempty"`
@@ -141,6 +156,8 @@ type LLM struct {
 	ModelSelector *ModelSelector
 }
 
+// InitModels loads configuration and creates a model selector.
+// Returns *LLM with both config and NotDiamond model selector.
 func InitModels(path string) (*LLM, error) {
 	cfg, err := LoadModelsConfig(path)
 	if err != nil {

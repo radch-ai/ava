@@ -65,21 +65,11 @@ func main() {
 	})
 	_ = rdb // TODO: Wire to storage/user config store
 
-	// Default connection limit (10000):
-	// - Handles typical traffic spikes
-	// - Prevents accidental resource exhaustion
-	// - Configurable via GATEWAY_MAX_CONNS
-	maxConns := cfg.MaxConns
-	if maxConns == 0 {
-		maxConns = 10000
-		logger.Info().Int("max_conns", maxConns).Msg("using default connection limit")
-	}
-
 	// Create WebSocket handler:
 	// - AgentManager accepts nil opts and operates without quota enforcement
 	// - QuotaChatModel will be wired once LLM client integration is complete
 	// - TODO: Wire QuotaChatModel from models config when ready
-	wsHandler := websocket.NewHandler(logger, cfg.AllowedOrigins, maxConns, nil)
+	wsHandler := websocket.NewHandler(logger, cfg.AllowedOrigins, cfg.MaxConns, nil)
 
 	// Create Zitadel introspector:
 	zitadelIntrospector, err := server.NewZitadelIntrospector(context.Background(), cfg.ZitadelDomain, cfg.ZitadelKeyPath)

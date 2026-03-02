@@ -1,3 +1,4 @@
+// Package websocket provides WebSocket connection handling with multi-agent routing.
 package websocket
 
 import (
@@ -15,26 +16,25 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// Connection configuration constants.
 const (
+	// defaultBufferSize is the read/write buffer size per connection (8KB).
 	defaultBufferSize = 8192
-	MaxMessageSize    = 65536 // 64KB
-	maxMessageSize    = MaxMessageSize
-	readTimeout       = 60 * time.Second
-	writeTimeout      = 10 * time.Second
-	pingInterval      = 30 * time.Second
+
+	// MaxMessageSize limits message size to 64KB to prevent memory exhaustion attacks.
+	MaxMessageSize = 65536
+
+	// readTimeout is the deadline for reading from WebSocket (60s).
+	readTimeout = 60 * time.Second
+
+	// writeTimeout is the deadline for writing to WebSocket (10s).
+	writeTimeout = 10 * time.Second
+
+	// pingInterval is how often ping frames are sent (30s).
+	pingInterval = 30 * time.Second
 )
 
-var upgrader = websocket.Upgrader{
-	// 8KB buffers balance memory usage with throughput for production scale.
-	// Each connection allocates 16KB total (8KB read + 8KB write).
-	// With 100K concurrent connections: ~1.6GB RAM for buffers alone.
-	// Horizontal scaling required for viral growth.
-	ReadBufferSize:   defaultBufferSize,
-	WriteBufferSize:  defaultBufferSize,
-	HandshakeTimeout: 10 * time.Second,
-}
-
-// A Handler manages WebSocket connections with connection limiting and origin validation.
+// Handler manages WebSocket connections with connection limiting and origin validation.
 type Handler struct {
 	logger       zerolog.Logger
 	upgrader     websocket.Upgrader
@@ -44,12 +44,15 @@ type Handler struct {
 	agentManager *AgentManager
 }
 
+// wsMessage represents a message to be written to the WebSocket connection.
 type wsMessage struct {
 	messageType int
 	data        []byte
 }
 
 // wsMsgPool is a sync.Pool for wsMessage structs.
+// Messages are short-lived and frequently allocated; the pool reuses memory
+// across all connections and reduces GC pressure in high-traffic scenarios.
 var wsMsgPool = sync.Pool{
 	New: func() interface{} {
 		return &wsMessage{}
@@ -59,33 +62,26 @@ var wsMsgPool = sync.Pool{
 // wsEvent represents an event sent to the WebSocket client as JSON.
 type wsEvent struct {
 	Type    string `json:"type"`
-	AgentID string `json:"agent_id,omitempty"` // Include agent_id in all agent events
+	AgentID string `json:"agent_id,omitempty"`
 	Data    any    `json:"data,omitempty"`
-}
-
-// marshalEvent converts an event to JSON bytes for WebSocket transmission.
-func marshalEvent(event wsEvent) []byte {
-	data, _ := json.Marshal(event)
-	return data
 }
 
 // NewHandler creates a new WebSocket handler with connection limiting.
 func NewHandler(logger zerolog.Logger, allowedOrigins []string, maxConns int, agentOpts *AgentManagerOptions) *Handler {
-	// Create upgrader with origin checking
-	handlerUpgrader := upgrader // Copy package default
-	handlerUpgrader.CheckOrigin = func(r *http.Request) bool {
-		return checkOrigin(r, allowedOrigins)
+	upgrader := websocket.Upgrader{
+		ReadBufferSize:   defaultBufferSize,
+		WriteBufferSize:  defaultBufferSize,
+		HandshakeTimeout: 10 * time.Second,
+		CheckOrigin: func(r *http.Request) bool {
+			return checkOrigin(r, allowedOrigins)
+		},
 	}
 
-	// Create semaphore if maxConns > 0
-	var sem chan struct{}
-	if maxConns > 0 {
-		sem = make(chan struct{}, maxConns)
-	}
+	sem := make(chan struct{}, maxConns)
 
 	return &Handler{
 		logger:       logger,
-		upgrader:     handlerUpgrader,
+		upgrader:     upgrader,
 		connSem:      sem,
 		maxConns:     maxConns,
 		agentManager: NewAgentManager(logger, agentOpts),
@@ -110,6 +106,7 @@ func checkOrigin(r *http.Request, allowedOrigins []string) bool {
 }
 
 // HandleWebSocket handles an incoming WebSocket connection upgrade request.
+// Each connection spawns three goroutines: Writer, PingLoop, and Main loop.
 func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Check connection limit
 	if h.connSem != nil {
@@ -141,25 +138,28 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = conn.Close() }()
 
 	// Set max message size to prevent memory exhaustion attacks
-	conn.SetReadLimit(maxMessageSize)
+	conn.SetReadLimit(MaxMessageSize)
 
 	// Generate unique connection ID
 	connID := uuid.New().String()
 
 	// Get user_id from context (set by auth middleware)
-	// If not set, fall back to random session ID for backward compatibility
 	userID := ctx.GetUserIDFromContext(r.Context())
-	sessionID := userID
-	if sessionID == "" {
-		// No auth middleware - generate random session ID
-		sessionID = uuid.New().String()
+
+	// Get real client IP (behind proxy)
+	clientIP := r.Header.Get("X-Forwarded-For")
+	if clientIP == "" {
+		clientIP = r.Header.Get("X-Real-IP")
+	}
+	if clientIP == "" {
+		h.logger.Warn().Str("real_ip", r.RemoteAddr).Msg("no proxy headers found, using direct connection (possibly proxy IP)")
+		clientIP = r.RemoteAddr
 	}
 
 	logCtx := h.logger.With().
 		Str("conn_id", connID).
 		Str("user_id", userID).
-		Str("session_id", sessionID).
-		Str("remote_addr", r.RemoteAddr).
+		Str("client_ip", clientIP).
 		Int("active_conns", int(atomic.LoadInt32(&h.activeConns))).
 		Logger()
 
@@ -202,17 +202,17 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	go h.pingLoop(ctx, writeCh, logCtx)
 
 	// Send connected event to client
-	// NOTE: No agent subscription on connection - agents are loaded per-message
 	connectedEvent := wsEvent{
 		Type: "connected",
 		Data: map[string]string{
-			"session_id": sessionID,
-			"conn_id":    connID,
+			"user_id": userID,
+			"conn_id": connID,
 		},
 	}
+	connectedData, _ := json.Marshal(connectedEvent)
 	msg := wsMsgPool.Get().(*wsMessage)
 	msg.messageType = websocket.TextMessage
-	msg.data = marshalEvent(connectedEvent)
+	msg.data = connectedData
 	select {
 	case writeCh <- msg:
 	case <-time.After(100 * time.Millisecond):
@@ -240,12 +240,10 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 				msg.data = nil
 				wsMsgPool.Put(msg)
 			}
-			// NOTE: Agents persist beyond connection - no cleanup
 			return
 		case err := <-writerErrCh:
 			logCtx.Error().Err(err).Msg("writer failed, closing connection")
 			cancel()
-			// NOTE: Agents persist beyond connection - no cleanup
 			return
 		default:
 			// Set read deadline before each read
@@ -259,12 +257,11 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 					logCtx.Error().Err(err).Msg("unexpected close")
 				}
 				cancel()
-				// NOTE: Agents persist beyond connection - no cleanup
 				return
 			}
 
 			logCtx.Debug().
-				Str("msg_type", messageTypeToString(messageType)).
+				Int("msg_type", messageType).
 				Int("msg_size", len(message)).
 				Msg("received message")
 
@@ -282,20 +279,16 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 					writeTimer.Stop()
 				case <-ctx.Done():
 					writeTimer.Stop()
-					// Return msg to pool on context cancellation
 					msg.messageType = 0
 					msg.data = nil
 					wsMsgPool.Put(msg)
-					// NOTE: Agents persist beyond connection - no cleanup
 					return
 				case <-writeTimer.C:
 					logCtx.Error().Msg("write channel timeout")
-					// Return msg to pool on timeout
 					msg.messageType = 0
 					msg.data = nil
 					wsMsgPool.Put(msg)
 					cancel()
-					// NOTE: Agents persist beyond connection - no cleanup
 					return
 				}
 			}
@@ -304,6 +297,8 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 // writer serializes writes to the WebSocket connection.
+// WebSocket requires serialized writes; this goroutine manages deadlines centrally
+// and handles ping/pong interleaving. Reports errors via writerErrCh.
 func (h *Handler) writer(ctx context.Context, conn *websocket.Conn, writeCh <-chan *wsMessage, logger zerolog.Logger, writerErrCh chan<- error) {
 	for {
 		select {
@@ -362,14 +357,14 @@ func (h *Handler) pingLoop(ctx context.Context, writeCh chan<- *wsMessage, logge
 				pingTimer.Stop()
 			case <-ctx.Done():
 				pingTimer.Stop()
-				// Return to pool on context cancellation
 				msg.messageType = 0
+				msg.data = nil
 				wsMsgPool.Put(msg)
 				return
 			case <-pingTimer.C:
 				pingTimer.Stop()
-				// Return to pool on timeout
 				msg.messageType = 0
+				msg.data = nil
 				wsMsgPool.Put(msg)
 				logger.Debug().Msg("ping send timeout - connection likely dead")
 				return
@@ -378,23 +373,8 @@ func (h *Handler) pingLoop(ctx context.Context, writeCh chan<- *wsMessage, logge
 	}
 }
 
-func messageTypeToString(t int) string {
-	switch t {
-	case websocket.TextMessage:
-		return "text"
-	case websocket.BinaryMessage:
-		return "binary"
-	case websocket.CloseMessage:
-		return "close"
-	case websocket.PingMessage:
-		return "ping"
-	case websocket.PongMessage:
-		return "pong"
-	default:
-		return "unknown"
-	}
-}
-
+// handleTextMessage processes incoming text messages and routes them to the appropriate agent.
+// Supported message types: "prompt" (send to agent), "steer" (stop agent), "status" (get agent status).
 func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID string, writeCh chan<- *wsMessage, logger zerolog.Logger) {
 	var msg struct {
 		ID      string `json:"id"`
@@ -424,21 +404,15 @@ func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID str
 			return
 		}
 
-		connWrapper := NewWSConnWrapper(writeCh)
-		ctx := ctx
-		agentTask := agent.Task{
-			Message: msg.Text,
-			MsgID:   msg.ID,
-		}
-		ag := h.agentManager.GetAgent(ctx, userID, msg.AgentID, connWrapper, agentTask)
-		if ag == nil {
-			logger.Debug().Msg("failed to get agent")
-			return
-		}
-
 		task := agent.Task{
 			Message: msg.Text,
 			MsgID:   msg.ID,
+		}
+		connWrapper := NewWSConnWrapper(writeCh)
+		ag := h.agentManager.GetAgent(ctx, userID, msg.AgentID, connWrapper, task)
+		if ag == nil {
+			logger.Debug().Msg("failed to get agent")
+			return
 		}
 		ag.Submit(task)
 	case "steer":
@@ -467,14 +441,14 @@ func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID str
 			AgentID: msg.AgentID,
 			Data:    status,
 		}
-
-		msg := wsMsgPool.Get().(*wsMessage)
-		msg.messageType = websocket.TextMessage
-		msg.data = marshalEvent(statusEvent)
+		statusData, _ := json.Marshal(statusEvent)
+		respMsg := wsMsgPool.Get().(*wsMessage)
+		respMsg.messageType = websocket.TextMessage
+		respMsg.data = statusData
 		select {
-		case writeCh <- msg:
+		case writeCh <- respMsg:
 		case <-time.After(100 * time.Millisecond):
-			wsMsgPool.Put(msg)
+			wsMsgPool.Put(respMsg)
 			logger.Debug().Msg("failed to send status event")
 		}
 	default:
