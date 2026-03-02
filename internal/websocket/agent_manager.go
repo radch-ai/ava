@@ -108,7 +108,7 @@ func (m *AgentManager) GetAgent(ctx context.Context, userID, agentID string, con
 	if exists {
 		existingAgent.Submit(task)
 		m.mu.Unlock()
-		return &adkAgentAdapter{agent: existingAgent, conn: conn, agentID: agentID}
+		return &adkAgentAdapter{agent: existingAgent, conn: conn, ctx: ctx, agentID: agentID}
 	}
 
 	newAgent := agent.NewADKAgent(ctx, task, agent.ADKAgentOptions{
@@ -125,7 +125,7 @@ func (m *AgentManager) GetAgent(ctx context.Context, userID, agentID string, con
 		Memories:       m.loadMemories(userID),
 	})
 
-	return &adkAgentAdapter{agent: newAgent, conn: conn, agentID: agentID}
+	return &adkAgentAdapter{agent: newAgent, conn: conn, ctx: ctx, agentID: agentID}
 }
 
 // adkAgentAdapter wraps ADKAgent with WebSocket connection for streaming events.
@@ -133,18 +133,19 @@ func (m *AgentManager) GetAgent(ctx context.Context, userID, agentID string, con
 type adkAgentAdapter struct {
 	agent   *agent.ADKAgent
 	conn    *WSConnWrapper
+	ctx     context.Context
 	agentID string
 }
 
 // Submit sends a task to the wrapped agent with WebSocket event notifications.
 func (a *adkAgentAdapter) Submit(task agent.Task) {
-	if a.conn != nil {
-		_ = a.conn.WriteJSON(map[string]interface{}{
+	if a.conn != nil && a.ctx != nil {
+		_ = a.conn.WriteJSON(a.ctx, map[string]interface{}{
 			"type":     "agent_start",
 			"agent_id": a.agentID,
 		})
 
-		_ = a.conn.WriteJSON(map[string]interface{}{
+		_ = a.conn.WriteJSON(a.ctx, map[string]interface{}{
 			"type":     "agent_end",
 			"agent_id": a.agentID,
 		})

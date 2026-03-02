@@ -4,23 +4,21 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
-	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
 	"github.com/nevaria-ai/gateway/internal/agent"
-	"github.com/nevaria-ai/gateway/internal/ctx"
+	internalctx "github.com/nevaria-ai/gateway/internal/ctx"
 	"github.com/rs/zerolog"
 )
 
 // Connection configuration constants.
 const (
-	// defaultBufferSize is the read/write buffer size per connection (8KB).
-	defaultBufferSize = 8192
-
 	// MaxMessageSize limits message size to 64KB to prevent memory exhaustion attacks.
 	MaxMessageSize = 65536
 
@@ -37,76 +35,32 @@ const (
 // Handler manages WebSocket connections with connection limiting and origin validation.
 type Handler struct {
 	logger       zerolog.Logger
-	upgrader     websocket.Upgrader
+	acceptOpts   websocket.AcceptOptions
 	connSem      chan struct{} // Semaphore for connection limiting
 	maxConns     int
 	activeConns  int32 // atomic counter
 	agentManager *AgentManager
 }
 
-// wsMessage represents a message to be written to the WebSocket connection.
-type wsMessage struct {
-	messageType int
-	data        []byte
-}
-
-// wsMsgPool is a sync.Pool for wsMessage structs.
-// Messages are short-lived and frequently allocated; the pool reuses memory
-// across all connections and reduces GC pressure in high-traffic scenarios.
-var wsMsgPool = sync.Pool{
-	New: func() interface{} {
-		return &wsMessage{}
-	},
-}
-
-// wsEvent represents an event sent to the WebSocket client as JSON.
-type wsEvent struct {
-	Type    string `json:"type"`
-	AgentID string `json:"agent_id,omitempty"`
-	Data    any    `json:"data,omitempty"`
-}
-
 // NewHandler creates a new WebSocket handler with connection limiting.
 func NewHandler(logger zerolog.Logger, allowedOrigins []string, maxConns int, agentOpts *AgentManagerOptions) *Handler {
-	upgrader := websocket.Upgrader{
-		ReadBufferSize:   defaultBufferSize,
-		WriteBufferSize:  defaultBufferSize,
-		HandshakeTimeout: 10 * time.Second,
-		CheckOrigin: func(r *http.Request) bool {
-			return checkOrigin(r, allowedOrigins)
-		},
+	acceptOpts := websocket.AcceptOptions{
+		OriginPatterns: allowedOrigins,
 	}
 
 	sem := make(chan struct{}, maxConns)
 
 	return &Handler{
 		logger:       logger,
-		upgrader:     upgrader,
+		acceptOpts:   acceptOpts,
 		connSem:      sem,
 		maxConns:     maxConns,
 		agentManager: NewAgentManager(logger, agentOpts),
 	}
 }
 
-// checkOrigin validates the Origin header against allowed origins.
-// "*" allows all origins (use with caution in development).
-func checkOrigin(r *http.Request, allowedOrigins []string) bool {
-	origin := r.Header.Get("Origin")
-	if origin == "" {
-		// No Origin header, allow for same-origin or non-browser clients
-		return true
-	}
-
-	for _, allowed := range allowedOrigins {
-		if allowed == "*" || allowed == origin {
-			return true
-		}
-	}
-	return false
-}
-
 // HandleWebSocket handles an incoming WebSocket connection upgrade request.
-// Each connection spawns three goroutines: Writer, PingLoop, and Main loop.
+// Each connection spawns one goroutine for ping loop; reads happen on main goroutine.
 func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Check connection limit
 	if h.connSem != nil {
@@ -127,15 +81,14 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer atomic.AddInt32(&h.activeConns, -1)
 
 	// Upgrade to WebSocket
-	conn, err := h.upgrader.Upgrade(w, r, nil)
+	conn, err := websocket.Accept(w, r, &h.acceptOpts)
 	if err != nil {
 		h.logger.Error().Err(err).Msg("websocket upgrade failed")
 		return
 	}
 
 	// Ensure connection is closed on all exit paths
-	// Note: Don't write close frame here as it violates single-writer pattern
-	defer func() { _ = conn.Close() }()
+	defer func() { _ = conn.CloseNow() }()
 
 	// Set max message size to prevent memory exhaustion attacks
 	conn.SetReadLimit(MaxMessageSize)
@@ -144,7 +97,7 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	connID := uuid.New().String()
 
 	// Get user_id from context (set by auth middleware)
-	userID := ctx.GetUserIDFromContext(r.Context())
+	userID := internalctx.GetUserIDFromContext(r.Context())
 
 	// Get real client IP (behind proxy)
 	clientIP := r.Header.Get("X-Forwarded-For")
@@ -165,18 +118,6 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	logCtx.Info().Msg("websocket connection established")
 
-	// Set initial read deadline and configure pong handler
-	if err := conn.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
-		logCtx.Debug().Err(err).Msg("failed to set read deadline")
-	}
-	conn.SetPongHandler(func(appData string) error {
-		// Reset read deadline on pong
-		if err := conn.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
-			logCtx.Debug().Err(err).Msg("failed to set read deadline")
-		}
-		return nil
-	})
-
 	// Context for graceful shutdown - cancellable by any goroutine
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -187,19 +128,8 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		cancel()
 	}()
 
-	// Channel for serializing all writes (single writer pattern)
-	// Using pointer channel to work with sync.Pool for wsMessage structs
-	writeCh := make(chan *wsMessage, 8)
-	defer close(writeCh)
-
-	// Channel for writer goroutine to report errors (buffered to prevent blocking)
-	writerErrCh := make(chan error, 1)
-
-	// Start single writer goroutine
-	go h.writer(ctx, conn, writeCh, logCtx, writerErrCh)
-
-	// Start ping goroutine
-	go h.pingLoop(ctx, writeCh, logCtx)
+	// Start ping goroutine to keep connection alive
+	go h.pingLoop(ctx, conn, logCtx, cancel)
 
 	// Send connected event to client
 	connectedEvent := wsEvent{
@@ -209,136 +139,77 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			"conn_id": connID,
 		},
 	}
-	connectedData, _ := json.Marshal(connectedEvent)
-	msg := wsMsgPool.Get().(*wsMessage)
-	msg.messageType = websocket.TextMessage
-	msg.data = connectedData
-	select {
-	case writeCh <- msg:
-	case <-time.After(100 * time.Millisecond):
-		wsMsgPool.Put(msg)
-		logCtx.Warn().Msg("failed to send connected event")
+	writeCtx, writeCancel := context.WithTimeout(ctx, writeTimeout)
+	if err := wsjson.Write(writeCtx, conn, connectedEvent); err != nil {
+		writeCancel()
+		logCtx.Warn().Err(err).Msg("failed to send connected event")
+		return
 	}
+	writeCancel()
+
+	// Create connection wrapper for agent streaming
+	connWrapper := NewWSConnWrapper(conn)
 
 	// Message loop
 	for {
 		select {
 		case <-ctx.Done():
 			logCtx.Info().Msg("context cancelled, closing connection")
-			// Try to send close frame through writer, but don't block
-			closeTimer := time.NewTimer(100 * time.Millisecond)
-			msg := wsMsgPool.Get().(*wsMessage)
-			msg.messageType = websocket.CloseMessage
-			msg.data = websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
-			select {
-			case writeCh <- msg:
-				closeTimer.Stop()
-				// Close frame queued successfully
-			case <-closeTimer.C:
-				// Timeout sending close frame, return msg to pool
-				msg.messageType = 0
-				msg.data = nil
-				wsMsgPool.Put(msg)
-			}
-			return
-		case err := <-writerErrCh:
-			logCtx.Error().Err(err).Msg("writer failed, closing connection")
-			cancel()
+			_ = conn.Close(websocket.StatusNormalClosure, "")
 			return
 		default:
-			// Set read deadline before each read
-			if err := conn.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
-				logCtx.Debug().Err(err).Msg("failed to set read deadline")
-			}
+			// Set read deadline
+			readCtx, readCancel := context.WithTimeout(ctx, readTimeout)
 
-			messageType, message, err := conn.ReadMessage()
+			// Read message
+			typ, reader, err := conn.Reader(readCtx)
 			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					logCtx.Error().Err(err).Msg("unexpected close")
+				readCancel()
+				if websocket.CloseStatus(err) == websocket.StatusNormalClosure ||
+					websocket.CloseStatus(err) == websocket.StatusGoingAway {
+					logCtx.Info().Msg("client closed connection")
+				} else {
+					logCtx.Error().Err(err).Msg("read error")
 				}
 				cancel()
 				return
 			}
 
+			// Read the complete message
+			message, err := io.ReadAll(reader)
+			readCancel()
+			if err != nil {
+				logCtx.Error().Err(err).Msg("failed to read message")
+				cancel()
+				return
+			}
+
 			logCtx.Debug().
-				Int("msg_type", messageType).
+				Int("msg_type", int(typ)).
 				Int("msg_size", len(message)).
 				Msg("received message")
 
 			// Handle text messages as potential agent prompts
-			if messageType == websocket.TextMessage {
-				h.handleTextMessage(ctx, message, userID, writeCh, logCtx)
+			if typ == websocket.MessageText {
+				h.handleTextMessage(ctx, message, userID, connWrapper, logCtx)
 			} else {
 				// Echo non-text messages back
-				writeTimer := time.NewTimer(writeTimeout)
-				msg := wsMsgPool.Get().(*wsMessage)
-				msg.messageType = messageType
-				msg.data = message
-				select {
-				case writeCh <- msg:
-					writeTimer.Stop()
-				case <-ctx.Done():
-					writeTimer.Stop()
-					msg.messageType = 0
-					msg.data = nil
-					wsMsgPool.Put(msg)
-					return
-				case <-writeTimer.C:
-					logCtx.Error().Msg("write channel timeout")
-					msg.messageType = 0
-					msg.data = nil
-					wsMsgPool.Put(msg)
+				writeCtx, writeCancel := context.WithTimeout(ctx, writeTimeout)
+				if err := conn.Write(writeCtx, typ, message); err != nil {
+					writeCancel()
+					logCtx.Error().Err(err).Msg("failed to echo message")
 					cancel()
 					return
 				}
+				writeCancel()
 			}
-		}
-	}
-}
-
-// writer serializes writes to the WebSocket connection.
-// WebSocket requires serialized writes; this goroutine manages deadlines centrally
-// and handles ping/pong interleaving. Reports errors via writerErrCh.
-func (h *Handler) writer(ctx context.Context, conn *websocket.Conn, writeCh <-chan *wsMessage, logger zerolog.Logger, writerErrCh chan<- error) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case msg, ok := <-writeCh:
-			if !ok {
-				return
-			}
-			if msg.messageType == 0 {
-				// Skip invalid messages (already cleaned up)
-				wsMsgPool.Put(msg)
-				continue
-			}
-			if err := conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
-				logger.Debug().Err(err).Msg("failed to set write deadline")
-			}
-			if err := conn.WriteMessage(msg.messageType, msg.data); err != nil {
-				logger.Debug().Err(err).Msg("write failed")
-				// Return to pool and continue
-				msg.messageType = 0
-				msg.data = nil
-				wsMsgPool.Put(msg)
-				// Use select to avoid blocking if context is cancelled
-				select {
-				case writerErrCh <- err:
-				case <-ctx.Done():
-				}
-				return
-			}
-			// Reset and return to pool for reuse
-			msg.messageType = 0
-			msg.data = nil
-			wsMsgPool.Put(msg)
 		}
 	}
 }
 
 // pingLoop sends periodic ping frames to keep connections alive.
-func (h *Handler) pingLoop(ctx context.Context, writeCh chan<- *wsMessage, logger zerolog.Logger) {
+// Uses conn.Ping which handles pong response automatically.
+func (h *Handler) pingLoop(ctx context.Context, conn *websocket.Conn, logger zerolog.Logger, cancel context.CancelFunc) {
 	ticker := time.NewTicker(pingInterval)
 	defer ticker.Stop()
 
@@ -347,26 +218,13 @@ func (h *Handler) pingLoop(ctx context.Context, writeCh chan<- *wsMessage, logge
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// Use a timer to avoid blocking forever on write
-			pingTimer := time.NewTimer(writeTimeout)
-			msg := wsMsgPool.Get().(*wsMessage)
-			msg.messageType = websocket.PingMessage
-			msg.data = nil
-			select {
-			case writeCh <- msg:
-				pingTimer.Stop()
-			case <-ctx.Done():
-				pingTimer.Stop()
-				msg.messageType = 0
-				msg.data = nil
-				wsMsgPool.Put(msg)
-				return
-			case <-pingTimer.C:
-				pingTimer.Stop()
-				msg.messageType = 0
-				msg.data = nil
-				wsMsgPool.Put(msg)
-				logger.Debug().Msg("ping send timeout - connection likely dead")
+			pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
+			err := conn.Ping(pingCtx)
+			pingCancel()
+
+			if err != nil {
+				logger.Debug().Err(err).Msg("ping failed - connection likely dead")
+				cancel()
 				return
 			}
 		}
@@ -375,7 +233,7 @@ func (h *Handler) pingLoop(ctx context.Context, writeCh chan<- *wsMessage, logge
 
 // handleTextMessage processes incoming text messages and routes them to the appropriate agent.
 // Supported message types: "prompt" (send to agent), "steer" (stop agent), "status" (get agent status).
-func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID string, writeCh chan<- *wsMessage, logger zerolog.Logger) {
+func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID string, conn *WSConnWrapper, logger zerolog.Logger) {
 	var msg struct {
 		ID      string `json:"id"`
 		Type    string `json:"type"`
@@ -408,8 +266,7 @@ func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID str
 			Message: msg.Text,
 			MsgID:   msg.ID,
 		}
-		connWrapper := NewWSConnWrapper(writeCh)
-		ag := h.agentManager.GetAgent(ctx, userID, msg.AgentID, connWrapper, task)
+		ag := h.agentManager.GetAgent(ctx, userID, msg.AgentID, conn, task)
 		if ag == nil {
 			logger.Debug().Msg("failed to get agent")
 			return
@@ -441,19 +298,19 @@ func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID str
 			AgentID: msg.AgentID,
 			Data:    status,
 		}
-		statusData, _ := json.Marshal(statusEvent)
-		respMsg := wsMsgPool.Get().(*wsMessage)
-		respMsg.messageType = websocket.TextMessage
-		respMsg.data = statusData
-		select {
-		case writeCh <- respMsg:
-		case <-time.After(100 * time.Millisecond):
-			wsMsgPool.Put(respMsg)
-			logger.Debug().Msg("failed to send status event")
+		if err := conn.WriteJSON(ctx, statusEvent); err != nil {
+			logger.Debug().Err(err).Msg("failed to send status event")
 		}
 	default:
 		logger.Debug().Str("msg_type", msg.Type).Msg("unknown message type")
 	}
+}
+
+// wsEvent represents an event sent to the WebSocket client as JSON.
+type wsEvent struct {
+	Type    string `json:"type"`
+	AgentID string `json:"agent_id,omitempty"`
+	Data    any    `json:"data,omitempty"`
 }
 
 // ActiveConns returns the current number of active WebSocket connections.
