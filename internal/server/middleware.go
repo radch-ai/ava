@@ -12,8 +12,8 @@ import (
 	internalctx "github.com/nevaria-ai/gateway/internal/ctx"
 )
 
-// Cache defines the interface for session caching.
-type Cache interface {
+// AuthCache defines the interface for session caching.
+type AuthCache interface {
 	Get(ctx context.Context, key string) (string, error)
 	Set(ctx context.Context, key string, value string, ttl time.Duration) error
 	Delete(ctx context.Context, key string) error
@@ -22,12 +22,12 @@ type Cache interface {
 // AuthMiddleware handles authentication for incoming requests.
 type AuthMiddleware struct {
 	authClient *auth.Client
-	cache      Cache // can be nil
+	cache      AuthCache // can be nil
 	cacheTTL   time.Duration
 }
 
 // NewAuthMiddleware creates a new authentication middleware.
-func NewAuthMiddleware(authURL string, cache Cache, cacheTTL time.Duration) *AuthMiddleware {
+func NewAuthMiddleware(authURL string, cache AuthCache, cacheTTL time.Duration) *AuthMiddleware {
 	return &AuthMiddleware{
 		authClient: auth.NewAuthClient(authURL, nil),
 		cache:      cache,

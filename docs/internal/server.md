@@ -15,10 +15,10 @@ HTTP server, middleware, and routing for the gateway.
 
 ## Interfaces
 
-### Cache
+### AuthCache
 
 ```go
-type Cache interface {
+type AuthCache interface {
     Get(ctx context.Context, key string) (string, error)
     Set(ctx context.Context, key string, value string, ttl time.Duration) error
     Delete(ctx context.Context, key string) error
@@ -32,7 +32,7 @@ type Cache interface {
 | Struct | Field | Type | Description |
 |--------|-------|------|-------------|
 | `AuthMiddleware` | `authClient` | `*auth.Client` | Auth service client |
-| | `cache` | `Cache` | Session cache (can be nil) |
+| | `cache` | `AuthCache` | Session cache (can be nil) |
 | | `cacheTTL` | `time.Duration` | Cache TTL |
 
 ### RedisCache

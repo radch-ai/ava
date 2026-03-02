@@ -8,7 +8,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// RedisCache implements the Cache interface using Redis.
+// RedisCache implements the AuthCache interface using Redis.
 type RedisCache struct {
 	client *redis.Client
 }

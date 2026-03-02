@@ -19,13 +19,13 @@ const (
 
 // ToolCache manages caching of user tool lists.
 type ToolCache struct {
-	cache      server.Cache
+	cache      server.AuthCache
 	defaultTTL time.Duration
 }
 
 // NewToolCache creates a new ToolCache with the given underlying cache implementation.
 // The default TTL is set to 3 minutes.
-func NewToolCache(cache server.Cache) *ToolCache {
+func NewToolCache(cache server.AuthCache) *ToolCache {
 	return &ToolCache{
 		cache:      cache,
 		defaultTTL: defaultCacheTTL,
