@@ -7,12 +7,10 @@ import (
 	"context"
 	"path"
 	"testing"
-	"time"
 
 	"github.com/nevaria-ai/gateway/internal/agent"
 	ctxpkg "github.com/nevaria-ai/gateway/internal/ctx"
 	"github.com/nevaria-ai/gateway/internal/mem0"
-	"github.com/nevaria-ai/gateway/internal/session"
 	"github.com/nevaria-ai/gateway/internal/storage"
 	"github.com/nevaria-ai/gateway/internal/websocket"
 	"github.com/rs/zerolog"
@@ -52,32 +50,6 @@ func TestMultiAgentPerUser(t *testing.T) {
 	state2 := agent2.GetStatus()
 	if state2["agent_id"] != "agent-2" {
 		t.Errorf("expected agent-2, got %s", state2["agent_id"])
-	}
-}
-
-// TestSessionIsolation verifies sessions are isolated per agent.
-func TestSessionIsolation(t *testing.T) {
-	ctx := context.Background()
-	sessionMgr := session.NewManager(zerolog.Nop(), 5*time.Minute)
-
-	userID := "user-123"
-	agentID1 := "agent-1"
-	agentID2 := "agent-2"
-
-	// Create sessions for different agents
-	session1 := sessionMgr.GetOrCreateSession(ctx, userID, agentID1)
-	session2 := sessionMgr.GetOrCreateSession(ctx, userID, agentID2)
-
-	if session1.SessionID() == session2.SessionID() {
-		t.Error("sessions should have different IDs")
-	}
-
-	if session1.AgentID() != agentID1 {
-		t.Errorf("expected agent-1, got %s", session1.AgentID())
-	}
-
-	if session2.AgentID() != agentID2 {
-		t.Errorf("expected agent-2, got %s", session2.AgentID())
 	}
 }
 
@@ -173,26 +145,6 @@ func TestAgentWithTools(t *testing.T) {
 
 	if state.Tools[0].Name != "test_tool" {
 		t.Errorf("expected tool name 'test_tool', got %s", state.Tools[0].Name)
-	}
-}
-
-// TestSessionTimeout verifies sessions timeout correctly.
-func TestSessionTimeout(t *testing.T) {
-	ctx := context.Background()
-	s := session.NewSession(ctx, "user-123", "agent-456")
-
-	// Fresh session should not be expired
-	if s.IsExpired(5 * time.Minute) {
-		t.Error("fresh session should not be expired")
-	}
-
-	// Set old activity time
-	oldTime := time.Now().Add(-10 * time.Minute)
-	s.SetLastActivity(oldTime)
-
-	// Should be expired now
-	if !s.IsExpired(5 * time.Minute) {
-		t.Error("old session should be expired")
 	}
 }
 

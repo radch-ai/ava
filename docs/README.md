@@ -47,11 +47,6 @@ flowchart TB
             Mem0Tools[Mem0 Tools]
         end
 
-        subgraph SessionLayer["Session Layer"]
-            SessionMgr[Session Manager]
-            SessionState[Session State]
-        end
-
         subgraph NodeLayer["Node Layer"]
             NodeService[Node Service]
             NodeRegistry[Node Registry]
@@ -105,9 +100,6 @@ flowchart TB
     S3Client --> S3
     Mem0Client --> Mem0API
 
-    SessionMgr --> SessionState
-    AgentMgr --> SessionMgr
-
     NodeService --> NodeRegistry
     NodeService --> NodeExecutor
     NodeService --> AgentMgr
@@ -135,7 +127,6 @@ internal/
 ├── ctx/            # Context utilities (userID, agentID)
 ├── storage/        # S3 storage, workspaces, transcripts
 ├── mem0/           # Mem0 API client for memory
-├── session/        # Session management with Redis
 └── node/           # Distributed node execution
 ```
 
@@ -154,7 +145,6 @@ internal/
 | [`internal/ctx/`](internal/ctx.md) | Context utilities for user ID and agent ID propagation |
 | [`internal/storage/`](internal/storage/README.md) | S3 storage, workspace loader, transcript writer |
 | [`internal/mem0/`](internal/mem0/README.md) | Mem0 API client for long-term memory |
-| [`internal/session/`](internal/session/README.md) | Session management with timeout and reconnection |
 | [`internal/node/`](internal/node/README.md) | Distributed node execution for remote tools |
 
 ## Data Flows
@@ -291,6 +281,5 @@ Event types: `connected`, `agent_start`, `agent_end`, `turn_start`, `turn_end`, 
 - [Billing](internal/billing.md) - RevenueCat webhooks and credit tracking
 - [Storage](internal/storage/README.md) - S3 storage, workspaces, transcripts
 - [Mem0](internal/mem0/README.md) - Memory API client
-- [Session](internal/session/README.md) - Session management
 - [Node](internal/node/README.md) - Distributed node execution
 - [Context](internal/ctx.md) - Context utilities
