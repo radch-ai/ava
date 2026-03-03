@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/cloudwego/eino/components/model"
 	"github.com/nevaria-ai/gateway/internal/agent"
 	"github.com/nevaria-ai/gateway/internal/wsconn"
 	"github.com/rs/zerolog"
@@ -11,7 +12,7 @@ import (
 
 // AgentManagerOptions configures a new AgentManager.
 type AgentManagerOptions struct {
-	QuotaChatModel agent.QuotaChatModelInterface
+	ChatModel model.ToolCallingChatModel
 }
 
 // AgentKey is a composite key for agent lookup: (userID, agentID).
@@ -47,20 +48,20 @@ const (
 // sync.Map provides lock-free reads. sync.Once ensures each agent is
 // initialized exactly once per lane.
 type AgentManager struct {
-	lanes          sync.Map // map[AgentKey]*AgentLane
-	logger         zerolog.Logger
-	quotaChatModel agent.QuotaChatModelInterface
+	lanes     sync.Map // map[AgentKey]*AgentLane
+	logger    zerolog.Logger
+	chatModel model.ToolCallingChatModel
 }
 
 // NewAgentManager creates a new AgentManager.
 func NewAgentManager(logger zerolog.Logger, opts *AgentManagerOptions) *AgentManager {
-	var quotaChatModel agent.QuotaChatModelInterface
+	var chatModel model.ToolCallingChatModel
 	if opts != nil {
-		quotaChatModel = opts.QuotaChatModel
+		chatModel = opts.ChatModel
 	}
 	return &AgentManager{
-		logger:         logger,
-		quotaChatModel: quotaChatModel,
+		logger:    logger,
+		chatModel: chatModel,
 	}
 }
 
@@ -85,11 +86,11 @@ func (m *AgentManager) SubmitMsg(ctx context.Context, userID, agentID string, co
 		lane.LaneCh = make(chan agent.Message, defaultLaneQueueSize)
 		lane.Done = make(chan struct{})
 		lane.Agent = agent.NewUserAgent(ctx, agent.UserAgentOptions{
-			AgentID:        agentID,
-			UserID:         userID,
-			Conn:           conn,
-			QuotaChatModel: m.quotaChatModel,
-			LaneCh:         lane.LaneCh,
+			AgentID:   agentID,
+			UserID:    userID,
+			Conn:      conn,
+			ChatModel: m.chatModel,
+			LaneCh:    lane.LaneCh,
 			OnExit: func() {
 				close(lane.Done)
 				m.lanes.Delete(key)

@@ -13,23 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type MockQuotaChatModel struct {
-	inner    model.ToolCallingChatModel
-	innerMux sync.RWMutex
-}
-
-func (m *MockQuotaChatModel) GetInnerModel() model.ToolCallingChatModel {
-	m.innerMux.RLock()
-	defer m.innerMux.RUnlock()
-	return m.inner
-}
-
-func (m *MockQuotaChatModel) SetInnerModel(inner model.ToolCallingChatModel) {
-	m.innerMux.Lock()
-	defer m.innerMux.Unlock()
-	m.inner = inner
-}
-
 type MockToolCallingChatModel struct {
 	generateCalls  int
 	streamCalls    int
@@ -83,18 +66,16 @@ func (m *MockToolCallingChatModel) GetWithToolsCalls() int {
 
 func TestUserAgent_NewUserAgent_Success(t *testing.T) {
 	mockChatModel := &MockToolCallingChatModel{}
-	mockQuotaModel := &MockQuotaChatModel{}
-	mockQuotaModel.SetInnerModel(mockChatModel)
 
 	laneCh := make(chan agent.Message, 100)
 	ag := agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
-		AgentID:        "agent-start-test",
-		UserID:         "user-1",
-		QuotaChatModel: mockQuotaModel,
-		SystemPrompt:   "You are a helpful assistant.",
-		Description:    "Test agent for unit testing",
-		LaneCh:         laneCh,
-		IdleTimeout:    100 * time.Millisecond,
+		AgentID:      "agent-start-test",
+		UserID:       "user-1",
+		ChatModel:    mockChatModel,
+		SystemPrompt: "You are a helpful assistant.",
+		Description:  "Test agent for unit testing",
+		LaneCh:       laneCh,
+		IdleTimeout:  100 * time.Millisecond,
 	})
 
 	require.NotNil(t, ag)
@@ -103,18 +84,16 @@ func TestUserAgent_NewUserAgent_Success(t *testing.T) {
 
 func TestUserAgent_NewUserAgent_WithTools(t *testing.T) {
 	mockChatModel := &MockToolCallingChatModel{}
-	mockQuotaModel := &MockQuotaChatModel{}
-	mockQuotaModel.SetInnerModel(mockChatModel)
 
 	laneCh := make(chan agent.Message, 100)
 	ag := agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
-		AgentID:        "agent-tools-test",
-		UserID:         "user-1",
-		QuotaChatModel: mockQuotaModel,
-		SystemPrompt:   "You are a helpful assistant.",
-		Description:    "Test agent for tools testing",
-		LaneCh:         laneCh,
-		IdleTimeout:    100 * time.Millisecond,
+		AgentID:      "agent-tools-test",
+		UserID:       "user-1",
+		ChatModel:    mockChatModel,
+		SystemPrompt: "You are a helpful assistant.",
+		Description:  "Test agent for tools testing",
+		LaneCh:       laneCh,
+		IdleTimeout:  100 * time.Millisecond,
 	})
 
 	require.NotNil(t, ag)
@@ -123,8 +102,6 @@ func TestUserAgent_NewUserAgent_WithTools(t *testing.T) {
 
 func TestUserAgent_NewUserAgent_WithMemories(t *testing.T) {
 	mockChatModel := &MockToolCallingChatModel{}
-	mockQuotaModel := &MockQuotaChatModel{}
-	mockQuotaModel.SetInnerModel(mockChatModel)
 
 	memories := []string{
 		"User prefers dark mode",
@@ -134,14 +111,14 @@ func TestUserAgent_NewUserAgent_WithMemories(t *testing.T) {
 
 	laneCh := make(chan agent.Message, 100)
 	ag := agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
-		AgentID:        "agent-memories-test",
-		UserID:         "user-1",
-		QuotaChatModel: mockQuotaModel,
-		SystemPrompt:   "You are a helpful assistant.",
-		Memories:       memories,
-		Description:    "Test agent for memories testing",
-		LaneCh:         laneCh,
-		IdleTimeout:    100 * time.Millisecond,
+		AgentID:      "agent-memories-test",
+		UserID:       "user-1",
+		ChatModel:    mockChatModel,
+		SystemPrompt: "You are a helpful assistant.",
+		Memories:     memories,
+		Description:  "Test agent for memories testing",
+		LaneCh:       laneCh,
+		IdleTimeout:  100 * time.Millisecond,
 	})
 
 	require.NotNil(t, ag)
@@ -150,21 +127,19 @@ func TestUserAgent_NewUserAgent_WithMemories(t *testing.T) {
 
 func TestUserAgent_ConcurrentSubmit(t *testing.T) {
 	mockChatModel := &MockToolCallingChatModel{}
-	mockQuotaModel := &MockQuotaChatModel{}
-	mockQuotaModel.SetInnerModel(mockChatModel)
 
 	var processedMessages []agent.Message
 	var processedMu sync.Mutex
 
 	laneCh := make(chan agent.Message, 100)
 	_ = agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
-		AgentID:        "agent-concurrent-test",
-		UserID:         "user-1",
-		IdleTimeout:    2 * time.Second,
-		QuotaChatModel: mockQuotaModel,
-		SystemPrompt:   "You are a helpful assistant.",
-		Description:    "Test agent for concurrent testing",
-		LaneCh:         laneCh,
+		AgentID:      "agent-concurrent-test",
+		UserID:       "user-1",
+		IdleTimeout:  2 * time.Second,
+		ChatModel:    mockChatModel,
+		SystemPrompt: "You are a helpful assistant.",
+		Description:  "Test agent for concurrent testing",
+		LaneCh:       laneCh,
 		ProcessMessagesFn: func(messages []agent.Message) {
 			processedMu.Lock()
 			processedMessages = append(processedMessages, messages...)
@@ -201,15 +176,15 @@ func TestUserAgent_ConcurrentSubmit(t *testing.T) {
 	assert.GreaterOrEqual(t, totalProcessed, numGoroutines*numMessagesPerGoroutine)
 }
 
-func TestUserAgent_NewUserAgent_NilQuotaModel(t *testing.T) {
+func TestUserAgent_NewUserAgent_NilModel(t *testing.T) {
 	laneCh := make(chan agent.Message, 100)
 	ag := agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
-		AgentID:        "agent-nil-model-test",
-		UserID:         "user-1",
-		QuotaChatModel: nil,
-		SystemPrompt:   "You are a helpful assistant.",
-		LaneCh:         laneCh,
-		IdleTimeout:    100 * time.Millisecond,
+		AgentID:      "agent-nil-model-test",
+		UserID:       "user-1",
+		ChatModel:    nil,
+		SystemPrompt: "You are a helpful assistant.",
+		LaneCh:       laneCh,
+		IdleTimeout:  100 * time.Millisecond,
 	})
 
 	require.NotNil(t, ag)
@@ -218,20 +193,18 @@ func TestUserAgent_NewUserAgent_NilQuotaModel(t *testing.T) {
 
 func TestUserAgent_IdleTimeout_TriggersExit(t *testing.T) {
 	mockChatModel := &MockToolCallingChatModel{}
-	mockQuotaModel := &MockQuotaChatModel{}
-	mockQuotaModel.SetInnerModel(mockChatModel)
 
 	exited := make(chan bool, 1)
 
 	laneCh := make(chan agent.Message, 100)
 	_ = agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
-		AgentID:        "agent-idle-exit-test",
-		UserID:         "user-1",
-		IdleTimeout:    50 * time.Millisecond,
-		QuotaChatModel: mockQuotaModel,
-		SystemPrompt:   "You are a helpful assistant.",
-		Description:    "Test agent for idle timeout testing",
-		LaneCh:         laneCh,
+		AgentID:      "agent-idle-exit-test",
+		UserID:       "user-1",
+		IdleTimeout:  50 * time.Millisecond,
+		ChatModel:    mockChatModel,
+		SystemPrompt: "You are a helpful assistant.",
+		Description:  "Test agent for idle timeout testing",
+		LaneCh:       laneCh,
 		OnExit: func() {
 			exited <- true
 		},
@@ -246,21 +219,19 @@ func TestUserAgent_IdleTimeout_TriggersExit(t *testing.T) {
 
 func TestUserAgent_ProcessMessagesCalled(t *testing.T) {
 	mockChatModel := &MockToolCallingChatModel{}
-	mockQuotaModel := &MockQuotaChatModel{}
-	mockQuotaModel.SetInnerModel(mockChatModel)
 
 	var messagesReceived []agent.Message
 	var messagesMu sync.Mutex
 
 	laneCh := make(chan agent.Message, 100)
 	_ = agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
-		AgentID:        "agent-process-test",
-		UserID:         "user-1",
-		IdleTimeout:    500 * time.Millisecond,
-		QuotaChatModel: mockQuotaModel,
-		SystemPrompt:   "You are a helpful assistant.",
-		Description:    "Test agent for process messages testing",
-		LaneCh:         laneCh,
+		AgentID:      "agent-process-test",
+		UserID:       "user-1",
+		IdleTimeout:  500 * time.Millisecond,
+		ChatModel:    mockChatModel,
+		SystemPrompt: "You are a helpful assistant.",
+		Description:  "Test agent for process messages testing",
+		LaneCh:       laneCh,
 		ProcessMessagesFn: func(messages []agent.Message) {
 			messagesMu.Lock()
 			messagesReceived = append(messagesReceived, messages...)

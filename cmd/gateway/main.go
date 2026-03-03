@@ -42,22 +42,18 @@ func main() {
 		logger.Warn().Msg("GATEWAY_ALLOWED_ORIGINS='*' allows all origins - not recommended for production!")
 	}
 
-	// Initialize LLM (models.json is required):
-	// - Gateway's primary purpose is LLM agent orchestration
-	// - Missing models.json indicates deployment error
-	// - Failing fast prevents confusing runtime errors
-	llmClient, err := llm.InitModels("models.json")
-	if err != nil {
-		logger.Error().Err(err).Msg("failed to load models.json")
-		os.Exit(1)
-	}
-	logger.Info().Msg("LLM initialized")
-	_ = llmClient // TODO: Wire to AgentManager for quota enforcement
+	// Initialize LLM client (connects to llm-proxy):
+	// - llm-proxy handles quota, model routing, and multi-provider support
+	// - Gateway just sends requests to llm-proxy's OpenAI-compatible endpoint
+	llmClient := llm.NewClient(llm.DefaultConfig())
+	logger.Info().
+		Str("proxy_url", llmClient.Config.BaseURL).
+		Str("default_model", llmClient.Config.DefaultModel).
+		Msg("LLM client initialized")
 
 	// Initialize Redis client:
 	// - Ensures Redis connection is configured before server starts
 	// - TODO: Wire to storage/user config store
-	// - TODO: Wire to quota system for rate limiting
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     cfg.RedisAddr,
 		Password: cfg.RedisPassword,
@@ -66,9 +62,8 @@ func main() {
 	_ = rdb // TODO: Wire to storage/user config store
 
 	// Create WebSocket handler:
-	// - AgentManager accepts nil opts and operates without quota enforcement
-	// - QuotaChatModel will be wired once LLM client integration is complete
-	// - TODO: Wire QuotaChatModel from models config when ready
+	// - AgentManager accepts nil opts and operates without LLM until configured
+	// - ChatModel will be created per-session from llmClient
 	wsHandler := websocket.NewHandler(logger, cfg.AllowedOrigins, cfg.MaxConns, nil)
 
 	// Create Zitadel introspector:

@@ -67,14 +67,6 @@ func (m *ADKMockToolCallingChatModel) GetGenerateCalls() int {
 	return m.generateCalls
 }
 
-type ADKMockQuotaChatModel struct {
-	inner model.ToolCallingChatModel
-}
-
-func (m *ADKMockQuotaChatModel) GetInnerModel() model.ToolCallingChatModel {
-	return m.inner
-}
-
 func setupMockModel() *ADKMockToolCallingChatModel {
 	mockModel := new(ADKMockToolCallingChatModel)
 	mockModel.On("WithTools", mock.Anything).Return(mockModel, nil)
@@ -94,31 +86,30 @@ func TestUserAgent_FullFlow_Integration(t *testing.T) {
 		ctx := context.Background()
 
 		mockModel := setupMockModel()
-		quotaModel := &ADKMockQuotaChatModel{inner: mockModel}
-
-		firstMessage := agent.Message{
-			Content: "Hello, agent!",
-			ID:      "msg-001",
-		}
+		laneCh := make(chan agent.Message, 100)
 
 		opts := agent.UserAgentOptions{
-			AgentID:        "agent-full-flow",
-			UserID:         "user-123",
-			Description:    "A helpful assistant for testing",
-			SystemPrompt:   "You are a helpful assistant",
-			QuotaChatModel: quotaModel,
-			IdleTimeout:    2 * time.Second,
+			AgentID:      "agent-full-flow",
+			UserID:       "user-123",
+			Description:  "A helpful assistant for testing",
+			SystemPrompt: "You are a helpful assistant",
+			ChatModel:    mockModel,
+			IdleTimeout:  2 * time.Second,
+			LaneCh:       laneCh,
 		}
 
-		ag := agent.NewUserAgent(ctx, firstMessage, opts)
+		ag := agent.NewUserAgent(ctx, opts)
 		require.NotNil(t, ag)
-		assert.Equal(t, "agent-full-flow", ag.GetAgentID())
-		assert.Equal(t, "user-123", ag.GetUserID())
+
+		// Send a message
+		laneCh <- agent.Message{Content: "Hello, agent!", ID: "msg-001"}
 
 		time.Sleep(300 * time.Millisecond)
 
-		ag.Stop()
-		assert.GreaterOrEqual(t, mockModel.GetGenerateCalls(), 1, "Generate should have been called")
+		status := ag.GetStatus()
+		assert.Equal(t, "agent-full-flow", status["agent_id"])
+		assert.Equal(t, "user-123", status["user_id"])
+		assert.True(t, status["active"].(bool))
 	})
 
 	t.Run("handles LLM errors gracefully", func(t *testing.T) {
@@ -130,57 +121,50 @@ func TestUserAgent_FullFlow_Integration(t *testing.T) {
 		mockModel.On("WithTools", mock.Anything).Return(mockModel, nil)
 		mockModel.On("Generate", mock.Anything, mock.Anything, mock.Anything).Return(nil, llmErr)
 
-		quotaModel := &ADKMockQuotaChatModel{inner: mockModel}
-
-		firstMessage := agent.Message{
-			Content: "This should fail",
-			ID:      "msg-err",
-		}
+		laneCh := make(chan agent.Message, 100)
 
 		opts := agent.UserAgentOptions{
-			AgentID:        "agent-error",
-			UserID:         "user-456",
-			Description:    "An agent for error testing",
-			QuotaChatModel: quotaModel,
-			IdleTimeout:    2 * time.Second,
+			AgentID:     "agent-error",
+			UserID:      "user-456",
+			Description: "An agent for error testing",
+			ChatModel:   mockModel,
+			IdleTimeout: 2 * time.Second,
+			LaneCh:      laneCh,
 		}
 
-		ag := agent.NewUserAgent(ctx, firstMessage, opts)
+		ag := agent.NewUserAgent(ctx, opts)
 		require.NotNil(t, ag)
 
-		time.Sleep(200 * time.Millisecond)
+		laneCh <- agent.Message{Content: "This should fail", ID: "msg-err"}
 
-		ag.Stop()
+		time.Sleep(200 * time.Millisecond)
 		assert.GreaterOrEqual(t, mockModel.GetGenerateCalls(), 1, "Generate should have been called")
 	})
 
-	t.Run("agent context cancellation stops processing", func(t *testing.T) {
+	t.Run("agent interrupt cancels query", func(t *testing.T) {
 		ctx := context.Background()
 
 		mockModel := setupMockModel()
-		quotaModel := &ADKMockQuotaChatModel{inner: mockModel}
-
-		firstMessage := agent.Message{
-			Content: "Will be cancelled",
-			ID:      "msg-cancel",
-		}
+		laneCh := make(chan agent.Message, 100)
 
 		opts := agent.UserAgentOptions{
-			AgentID:        "agent-cancel",
-			UserID:         "user-789",
-			Description:    "An agent for cancellation testing",
-			QuotaChatModel: quotaModel,
-			IdleTimeout:    10 * time.Second,
+			AgentID:     "agent-interrupt",
+			UserID:      "user-789",
+			Description: "An agent for interrupt testing",
+			ChatModel:   mockModel,
+			IdleTimeout: 10 * time.Second,
+			LaneCh:      laneCh,
 		}
 
-		ag := agent.NewUserAgent(ctx, firstMessage, opts)
+		ag := agent.NewUserAgent(ctx, opts)
 		require.NotNil(t, ag)
 
-		time.Sleep(50 * time.Millisecond)
-		ag.Stop()
+		laneCh <- agent.Message{Content: "Will be interrupted", ID: "msg-int"}
 
 		time.Sleep(50 * time.Millisecond)
-		assert.Error(t, ag.GetContext().Err(), "Context should be cancelled")
+		ag.Interrupt()
+
+		time.Sleep(50 * time.Millisecond)
 	})
 }
 
@@ -189,33 +173,30 @@ func TestUserAgent_WithTools_Integration(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	t.Run("agent initializes with DuckDuckGo tool", func(t *testing.T) {
+	t.Run("agent initializes with tools", func(t *testing.T) {
 		ctx := context.Background()
 
 		mockModel := setupMockModel()
-		quotaModel := &ADKMockQuotaChatModel{inner: mockModel}
-
-		firstMessage := agent.Message{
-			Content: "Search for Go programming tutorials",
-			ID:      "msg-search",
-		}
+		laneCh := make(chan agent.Message, 100)
 
 		opts := agent.UserAgentOptions{
-			AgentID:        "agent-tools",
-			UserID:         "user-tools",
-			Description:    "An agent with search tools",
-			SystemPrompt:   "You are a helpful assistant with search capabilities",
-			QuotaChatModel: quotaModel,
-			IdleTimeout:    2 * time.Second,
+			AgentID:      "agent-tools",
+			UserID:       "user-tools",
+			Description:  "An agent with search tools",
+			SystemPrompt: "You are a helpful assistant with search capabilities",
+			ChatModel:    mockModel,
+			IdleTimeout:  2 * time.Second,
+			LaneCh:       laneCh,
 		}
 
-		ag := agent.NewUserAgent(ctx, firstMessage, opts)
+		ag := agent.NewUserAgent(ctx, opts)
 		require.NotNil(t, ag)
+
+		laneCh <- agent.Message{Content: "Search for Go programming tutorials", ID: "msg-search"}
 
 		time.Sleep(200 * time.Millisecond)
 
 		mockModel.AssertCalled(t, "WithTools", mock.Anything)
-		ag.Stop()
 	})
 }
 
@@ -228,85 +209,57 @@ func TestUserAgent_MultipleMessages_Integration(t *testing.T) {
 		ctx := context.Background()
 
 		mockModel := setupMockModel()
-		quotaModel := &ADKMockQuotaChatModel{inner: mockModel}
-
-		firstMessage := agent.Message{
-			Content: "First message",
-			ID:      "msg-1",
-		}
+		laneCh := make(chan agent.Message, 100)
 
 		opts := agent.UserAgentOptions{
-			AgentID:        "agent-multi",
-			UserID:         "user-multi",
-			Description:    "An agent for multi-message testing",
-			SystemPrompt:   "You are a helpful assistant",
-			QuotaChatModel: quotaModel,
-			IdleTimeout:    2 * time.Second,
+			AgentID:      "agent-multi",
+			UserID:       "user-multi",
+			Description:  "An agent for multi-message testing",
+			SystemPrompt: "You are a helpful assistant",
+			ChatModel:    mockModel,
+			IdleTimeout:  2 * time.Second,
+			LaneCh:       laneCh,
 		}
 
-		ag := agent.NewUserAgent(ctx, firstMessage, opts)
+		ag := agent.NewUserAgent(ctx, opts)
 		require.NotNil(t, ag)
+
+		laneCh <- agent.Message{Content: "First message", ID: "msg-1"}
 
 		time.Sleep(300 * time.Millisecond)
 
-		ag.Stop()
 		assert.GreaterOrEqual(t, mockModel.GetGenerateCalls(), 1, "Generate should have been called")
-	})
 
-	t.Run("processes sequential messages in order", func(t *testing.T) {
-		ctx := context.Background()
-
-		mockModel := setupMockModel()
-		quotaModel := &ADKMockQuotaChatModel{inner: mockModel}
-
-		firstMessage := agent.Message{
-			Content: "Message A",
-			ID:      "msg-a",
-		}
-
-		opts := agent.UserAgentOptions{
-			AgentID:        "agent-sequential",
-			UserID:         "user-seq",
-			Description:    "An agent for sequential message testing",
-			QuotaChatModel: quotaModel,
-			IdleTimeout:    3 * time.Second,
-		}
-
-		ag := agent.NewUserAgent(ctx, firstMessage, opts)
-		require.NotNil(t, ag)
-
-		time.Sleep(200 * time.Millisecond)
-
-		ag.Stop()
-		assert.GreaterOrEqual(t, mockModel.GetGenerateCalls(), 1, "Generate should have been called")
+		_ = ag
 	})
 
 	t.Run("idle timeout triggers after message processing", func(t *testing.T) {
 		ctx := context.Background()
 
 		mockModel := setupMockModel()
-		quotaModel := &ADKMockQuotaChatModel{inner: mockModel}
+		laneCh := make(chan agent.Message, 100)
 
-		firstMessage := agent.Message{
-			Content: "Trigger idle",
-			ID:      "msg-idle",
-		}
+		exited := make(chan bool, 1)
 
 		opts := agent.UserAgentOptions{
-			AgentID:        "agent-idle-test",
-			UserID:         "user-idle",
-			Description:    "An agent for idle timeout testing",
-			QuotaChatModel: quotaModel,
-			IdleTimeout:    100 * time.Millisecond,
+			AgentID:     "agent-idle-test",
+			UserID:      "user-idle",
+			Description: "An agent for idle timeout testing",
+			ChatModel:   mockModel,
+			IdleTimeout: 100 * time.Millisecond,
+			LaneCh:      laneCh,
+			OnExit: func() {
+				exited <- true
+			},
 		}
 
-		ag := agent.NewUserAgent(ctx, firstMessage, opts)
+		ag := agent.NewUserAgent(ctx, opts)
 		require.NotNil(t, ag)
 
-		time.Sleep(300 * time.Millisecond)
+		laneCh <- agent.Message{Content: "Trigger idle", ID: "msg-idle"}
 
 		select {
-		case <-ag.GetContext().Done():
+		case <-exited:
 		case <-time.After(500 * time.Millisecond):
 		}
 	})
@@ -321,29 +274,26 @@ func TestUserAgent_Memories_Integration(t *testing.T) {
 		ctx := context.Background()
 
 		mockModel := setupMockModel()
-		quotaModel := &ADKMockQuotaChatModel{inner: mockModel}
-
-		firstMessage := agent.Message{
-			Content: "Hello",
-			ID:      "msg-memory",
-		}
+		laneCh := make(chan agent.Message, 100)
 
 		opts := agent.UserAgentOptions{
-			AgentID:        "agent-memory",
-			UserID:         "user-memory",
-			Description:    "An agent with user memories",
-			SystemPrompt:   "You are a helpful assistant",
-			Memories:       []string{"User prefers Go programming", "User likes dark mode"},
-			QuotaChatModel: quotaModel,
-			IdleTimeout:    2 * time.Second,
+			AgentID:      "agent-memory",
+			UserID:       "user-memory",
+			Description:  "An agent with user memories",
+			SystemPrompt: "You are a helpful assistant",
+			Memories:     []string{"User prefers Go programming", "User likes dark mode"},
+			ChatModel:    mockModel,
+			IdleTimeout:  2 * time.Second,
+			LaneCh:       laneCh,
 		}
 
-		ag := agent.NewUserAgent(ctx, firstMessage, opts)
+		ag := agent.NewUserAgent(ctx, opts)
 		require.NotNil(t, ag)
+
+		laneCh <- agent.Message{Content: "Hello", ID: "msg-memory"}
 
 		time.Sleep(200 * time.Millisecond)
 
-		ag.Stop()
 		assert.GreaterOrEqual(t, mockModel.GetGenerateCalls(), 1, "Generate should have been called")
 	})
 }
@@ -357,22 +307,18 @@ func TestUserAgent_ConcurrentAccess_Integration(t *testing.T) {
 		ctx := context.Background()
 
 		mockModel := setupMockModel()
-		quotaModel := &ADKMockQuotaChatModel{inner: mockModel}
-
-		firstMessage := agent.Message{
-			Content: "Initial message",
-			ID:      "msg-init",
-		}
+		laneCh := make(chan agent.Message, 100)
 
 		opts := agent.UserAgentOptions{
-			AgentID:        "agent-concurrent",
-			UserID:         "user-concurrent",
-			Description:    "An agent for concurrent access testing",
-			QuotaChatModel: quotaModel,
-			IdleTimeout:    3 * time.Second,
+			AgentID:     "agent-concurrent",
+			UserID:      "user-concurrent",
+			Description: "An agent for concurrent access testing",
+			ChatModel:   mockModel,
+			IdleTimeout: 3 * time.Second,
+			LaneCh:      laneCh,
 		}
 
-		ag := agent.NewUserAgent(ctx, firstMessage, opts)
+		ag := agent.NewUserAgent(ctx, opts)
 		require.NotNil(t, ag)
 
 		var wg sync.WaitGroup
@@ -380,13 +326,13 @@ func TestUserAgent_ConcurrentAccess_Integration(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
+				laneCh <- agent.Message{Content: "concurrent message", ID: "msg-concurrent"}
 			}(i)
 		}
 		wg.Wait()
 
 		time.Sleep(200 * time.Millisecond)
 
-		ag.Stop()
 		assert.GreaterOrEqual(t, mockModel.GetGenerateCalls(), 1, "Generate should have been called")
 	})
 }

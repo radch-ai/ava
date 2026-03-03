@@ -24,16 +24,12 @@ type Message struct {
 	Content string
 }
 
-type QuotaChatModelInterface interface {
-	GetInnerModel() model.ToolCallingChatModel
-}
-
 type UserAgentOptions struct {
 	AgentID           string
 	UserID            string
 	Description       string
 	SystemPrompt      string
-	QuotaChatModel    QuotaChatModelInterface
+	ChatModel         model.ToolCallingChatModel
 	Memories          []string
 	IdleTimeout       time.Duration
 	Conn              *wsconn.Wrapper
@@ -90,15 +86,14 @@ func NewUserAgent(ctx context.Context, opts UserAgentOptions) *UserAgent {
 	}
 
 	// Initialize LLM agent if model is provided
-	if opts.QuotaChatModel != nil {
-		chatModel := opts.QuotaChatModel.GetInnerModel()
+	if opts.ChatModel != nil {
 		globalTools := tools.GetGlobalTools()
 
 		a.einoAgent, _ = adk.NewChatModelAgent(a.ctx, &adk.ChatModelAgentConfig{
 			Name:        a.agentID,
 			Description: opts.Description,
 			Instruction: buildInstruction(opts.SystemPrompt, opts.Memories),
-			Model:       chatModel,
+			Model:       opts.ChatModel,
 			ToolsConfig: adk.ToolsConfig{
 				ToolsNodeConfig: compose.ToolsNodeConfig{
 					Tools: globalTools,
