@@ -224,7 +224,6 @@ type incomingMsg struct {
 	ID      string `json:"id"`
 	Type    string `json:"type"`
 	AgentID string `json:"agent_id"`
-	Text    string `json:"text,omitempty"`
 	Content string `json:"content,omitempty"`
 }
 
@@ -251,14 +250,14 @@ func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID str
 
 	switch msg.Type {
 	case "prompt":
-		if msg.ID == "" || msg.Text == "" {
+		if msg.ID == "" || msg.Content == "" {
 			logger.Debug().Msg("prompt missing id or text")
 			return
 		}
 		ag := h.agentManager.GetOrAdd(ctx, userID, msg.AgentID, conn)
 		// Refresh conn in case this is a reconnect on an existing agent.
 		h.agentManager.UpdateConn(userID, msg.AgentID, conn.Conn())
-		ag.Submit(agent.Message{Content: msg.Text, ID: msg.ID})
+		ag.Submit(agent.Message{Content: msg.Content, ID: msg.ID})
 
 	case "stop":
 		ag := h.agentManager.GetOrAdd(ctx, userID, msg.AgentID, conn)

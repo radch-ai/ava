@@ -85,7 +85,7 @@ func setupMockModel() *ADKMockToolCallingChatModel {
 	return mockModel
 }
 
-func TestADKAgent_FullFlow_Integration(t *testing.T) {
+func TestUserAgent_FullFlow_Integration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
@@ -101,7 +101,7 @@ func TestADKAgent_FullFlow_Integration(t *testing.T) {
 			MsgID:   "msg-001",
 		}
 
-		opts := agent.ADKAgentOptions{
+		opts := agent.UserAgentOptions{
 			AgentID:        "agent-full-flow",
 			UserID:         "user-123",
 			Description:    "A helpful assistant for testing",
@@ -110,7 +110,7 @@ func TestADKAgent_FullFlow_Integration(t *testing.T) {
 			IdleTimeout:    2 * time.Second,
 		}
 
-		ag := agent.NewADKAgent(ctx, firstTask, opts)
+		ag := agent.NewUserAgent(ctx, firstTask, opts)
 		require.NotNil(t, ag)
 		assert.Equal(t, "agent-full-flow", ag.GetAgentID())
 		assert.Equal(t, "user-123", ag.GetUserID())
@@ -140,7 +140,7 @@ func TestADKAgent_FullFlow_Integration(t *testing.T) {
 			MsgID:   "msg-err",
 		}
 
-		opts := agent.ADKAgentOptions{
+		opts := agent.UserAgentOptions{
 			AgentID:        "agent-error",
 			UserID:         "user-456",
 			Description:    "An agent for error testing",
@@ -148,7 +148,7 @@ func TestADKAgent_FullFlow_Integration(t *testing.T) {
 			IdleTimeout:    2 * time.Second,
 		}
 
-		ag := agent.NewADKAgent(ctx, firstTask, opts)
+		ag := agent.NewUserAgent(ctx, firstTask, opts)
 		require.NotNil(t, ag)
 
 		err := ag.Start(opts)
@@ -171,7 +171,7 @@ func TestADKAgent_FullFlow_Integration(t *testing.T) {
 			MsgID:   "msg-cancel",
 		}
 
-		opts := agent.ADKAgentOptions{
+		opts := agent.UserAgentOptions{
 			AgentID:        "agent-cancel",
 			UserID:         "user-789",
 			Description:    "An agent for cancellation testing",
@@ -179,7 +179,7 @@ func TestADKAgent_FullFlow_Integration(t *testing.T) {
 			IdleTimeout:    10 * time.Second,
 		}
 
-		ag := agent.NewADKAgent(ctx, firstTask, opts)
+		ag := agent.NewUserAgent(ctx, firstTask, opts)
 		require.NotNil(t, ag)
 
 		err := ag.Start(opts)
@@ -193,7 +193,7 @@ func TestADKAgent_FullFlow_Integration(t *testing.T) {
 	})
 }
 
-func TestADKAgent_WithTools_Integration(t *testing.T) {
+func TestUserAgent_WithTools_Integration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
@@ -212,7 +212,7 @@ func TestADKAgent_WithTools_Integration(t *testing.T) {
 			MsgID:   "msg-search",
 		}
 
-		opts := agent.ADKAgentOptions{
+		opts := agent.UserAgentOptions{
 			AgentID:        "agent-tools",
 			UserID:         "user-tools",
 			Description:    "An agent with search tools",
@@ -221,7 +221,7 @@ func TestADKAgent_WithTools_Integration(t *testing.T) {
 			IdleTimeout:    2 * time.Second,
 		}
 
-		ag := agent.NewADKAgent(ctx, firstTask, opts)
+		ag := agent.NewUserAgent(ctx, firstTask, opts)
 		require.NotNil(t, ag)
 
 		err := ag.Start(opts)
@@ -234,7 +234,7 @@ func TestADKAgent_WithTools_Integration(t *testing.T) {
 	})
 }
 
-func TestADKAgent_MultipleMessages_Integration(t *testing.T) {
+func TestUserAgent_MultipleMessages_Integration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
@@ -250,7 +250,7 @@ func TestADKAgent_MultipleMessages_Integration(t *testing.T) {
 			MsgID:   "msg-1",
 		}
 
-		opts := agent.ADKAgentOptions{
+		opts := agent.UserAgentOptions{
 			AgentID:        "agent-multi",
 			UserID:         "user-multi",
 			Description:    "An agent for multi-message testing",
@@ -259,7 +259,7 @@ func TestADKAgent_MultipleMessages_Integration(t *testing.T) {
 			IdleTimeout:    2 * time.Second,
 		}
 
-		ag := agent.NewADKAgent(ctx, firstTask, opts)
+		ag := agent.NewUserAgent(ctx, firstTask, opts)
 		require.NotNil(t, ag)
 
 		err := ag.Start(opts)
@@ -282,7 +282,7 @@ func TestADKAgent_MultipleMessages_Integration(t *testing.T) {
 			MsgID:   "msg-a",
 		}
 
-		opts := agent.ADKAgentOptions{
+		opts := agent.UserAgentOptions{
 			AgentID:        "agent-sequential",
 			UserID:         "user-seq",
 			Description:    "An agent for sequential message testing",
@@ -290,7 +290,7 @@ func TestADKAgent_MultipleMessages_Integration(t *testing.T) {
 			IdleTimeout:    3 * time.Second,
 		}
 
-		ag := agent.NewADKAgent(ctx, firstTask, opts)
+		ag := agent.NewUserAgent(ctx, firstTask, opts)
 		require.NotNil(t, ag)
 
 		err := ag.Start(opts)
@@ -313,7 +313,7 @@ func TestADKAgent_MultipleMessages_Integration(t *testing.T) {
 			MsgID:   "msg-idle",
 		}
 
-		opts := agent.ADKAgentOptions{
+		opts := agent.UserAgentOptions{
 			AgentID:        "agent-idle-test",
 			UserID:         "user-idle",
 			Description:    "An agent for idle timeout testing",
@@ -321,7 +321,7 @@ func TestADKAgent_MultipleMessages_Integration(t *testing.T) {
 			IdleTimeout:    100 * time.Millisecond,
 		}
 
-		ag := agent.NewADKAgent(ctx, firstTask, opts)
+		ag := agent.NewUserAgent(ctx, firstTask, opts)
 		require.NotNil(t, ag)
 
 		err := ag.Start(opts)
@@ -336,7 +336,7 @@ func TestADKAgent_MultipleMessages_Integration(t *testing.T) {
 	})
 }
 
-func TestADKAgent_Memories_Integration(t *testing.T) {
+func TestUserAgent_Memories_Integration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
@@ -352,7 +352,7 @@ func TestADKAgent_Memories_Integration(t *testing.T) {
 			MsgID:   "msg-memory",
 		}
 
-		opts := agent.ADKAgentOptions{
+		opts := agent.UserAgentOptions{
 			AgentID:        "agent-memory",
 			UserID:         "user-memory",
 			Description:    "An agent with user memories",
@@ -362,7 +362,7 @@ func TestADKAgent_Memories_Integration(t *testing.T) {
 			IdleTimeout:    2 * time.Second,
 		}
 
-		ag := agent.NewADKAgent(ctx, firstTask, opts)
+		ag := agent.NewUserAgent(ctx, firstTask, opts)
 		require.NotNil(t, ag)
 
 		err := ag.Start(opts)
@@ -375,7 +375,7 @@ func TestADKAgent_Memories_Integration(t *testing.T) {
 	})
 }
 
-func TestADKAgent_ConcurrentAccess_Integration(t *testing.T) {
+func TestUserAgent_ConcurrentAccess_Integration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
@@ -391,7 +391,7 @@ func TestADKAgent_ConcurrentAccess_Integration(t *testing.T) {
 			MsgID:   "msg-init",
 		}
 
-		opts := agent.ADKAgentOptions{
+		opts := agent.UserAgentOptions{
 			AgentID:        "agent-concurrent",
 			UserID:         "user-concurrent",
 			Description:    "An agent for concurrent access testing",
@@ -399,7 +399,7 @@ func TestADKAgent_ConcurrentAccess_Integration(t *testing.T) {
 			IdleTimeout:    3 * time.Second,
 		}
 
-		ag := agent.NewADKAgent(ctx, firstTask, opts)
+		ag := agent.NewUserAgent(ctx, firstTask, opts)
 		require.NotNil(t, ag)
 
 		err := ag.Start(opts)

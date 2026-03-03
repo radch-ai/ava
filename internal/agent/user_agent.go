@@ -30,7 +30,7 @@ type QuotaChatModelInterface interface {
 	GetInnerModel() model.ToolCallingChatModel
 }
 
-type ADKAgentOptions struct {
+type UserAgentOptions struct {
 	AgentID        string
 	UserID         string
 	Description    string
@@ -41,7 +41,7 @@ type ADKAgentOptions struct {
 	Conn           *wsconn.Wrapper
 }
 
-type ADKAgent struct {
+type UserAgent struct {
 	agentID string
 	userID  string
 	ctx     context.Context
@@ -60,10 +60,10 @@ type ADKAgent struct {
 	onExit            func()
 }
 
-func NewADKAgent(ctx context.Context, firstMessage Message, opts ADKAgentOptions) *ADKAgent {
+func NewUserAgent(ctx context.Context, firstMessage Message, opts UserAgentOptions) *UserAgent {
 	ctx, cancel := context.WithCancel(ctx)
 
-	a := &ADKAgent{
+	a := &UserAgent{
 		agentID:     opts.AgentID,
 		userID:      opts.UserID,
 		ctx:         ctx,
@@ -82,53 +82,53 @@ func NewADKAgent(ctx context.Context, firstMessage Message, opts ADKAgentOptions
 	return a
 }
 
-func (a *ADKAgent) Stop() {
+func (a *UserAgent) Stop() {
 	if a.cancel != nil {
 		a.cancel()
 	}
 }
 
-func (a *ADKAgent) GetContext() context.Context {
+func (a *UserAgent) GetContext() context.Context {
 	return a.ctx
 }
 
-func (a *ADKAgent) GetAgentID() string {
+func (a *UserAgent) GetAgentID() string {
 	return a.agentID
 }
 
-func (a *ADKAgent) GetUserID() string {
+func (a *UserAgent) GetUserID() string {
 	return a.userID
 }
 
-func (a *ADKAgent) Submit(msg Message) {
+func (a *UserAgent) Submit(msg Message) {
 	a.laneCh <- msg
 }
 
-func (a *ADKAgent) GetConn() *wsconn.Wrapper {
+func (a *UserAgent) GetConn() *wsconn.Wrapper {
 	return a.conn
 }
 
-func (a *ADKAgent) UpdateConn(conn *websocket.Conn) {
+func (a *UserAgent) UpdateConn(conn *websocket.Conn) {
 	if a.conn != nil {
 		a.conn.UpdateConn(conn)
 	}
 }
 
-func (a *ADKAgent) SetProcessMessagesFn(fn func([]Message)) {
+func (a *UserAgent) SetProcessMessagesFn(fn func([]Message)) {
 	a.processMessagesFn = fn
 }
 
-func (a *ADKAgent) SetOnExit(fn func()) {
+func (a *UserAgent) SetOnExit(fn func()) {
 	a.onExit = fn
 }
 
-func (a *ADKAgent) Start(opts ADKAgentOptions) error {
+func (a *UserAgent) Start(opts UserAgentOptions) error {
 	go a.loop()
 
 	return nil
 }
 
-func (a *ADKAgent) StartWithModel(opts ADKAgentOptions) error {
+func (a *UserAgent) StartWithModel(opts UserAgentOptions) error {
 	if opts.QuotaChatModel == nil {
 		go a.loop()
 		return nil
@@ -183,7 +183,7 @@ func GetGlobalTools() []tool.BaseTool {
 	return []tool.BaseTool{ddgTool}
 }
 
-func (a *ADKAgent) loop() {
+func (a *UserAgent) loop() {
 	idleTimer := time.NewTimer(a.idleTimeout)
 	defer idleTimer.Stop()
 
@@ -221,7 +221,7 @@ func (a *ADKAgent) loop() {
 	}
 }
 
-func (a *ADKAgent) drainMessages(first Message) []Message {
+func (a *UserAgent) drainMessages(first Message) []Message {
 	messages := []Message{first}
 
 	for {
@@ -234,7 +234,7 @@ func (a *ADKAgent) drainMessages(first Message) []Message {
 	}
 }
 
-func (a *ADKAgent) processMessages(messages []Message) {
+func (a *UserAgent) processMessages(messages []Message) {
 	if len(messages) == 0 {
 		return
 	}
@@ -261,7 +261,7 @@ func (a *ADKAgent) processMessages(messages []Message) {
 	}
 }
 
-func (a *ADKAgent) GetStatus() map[string]interface{} {
+func (a *UserAgent) GetStatus() map[string]interface{} {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -273,5 +273,5 @@ func (a *ADKAgent) GetStatus() map[string]interface{} {
 	}
 }
 
-func (a *ADKAgent) notifyUser(msgID, content string) {
+func (a *UserAgent) notifyUser(msgID, content string) {
 }

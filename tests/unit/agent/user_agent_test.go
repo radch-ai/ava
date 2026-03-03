@@ -82,17 +82,17 @@ func (m *MockToolCallingChatModel) GetWithToolsCalls() int {
 	return m.withToolsCalls
 }
 
-func TestADKAgent_Start_Success(t *testing.T) {
+func TestUserAgent_Start_Success(t *testing.T) {
 	mockChatModel := &MockToolCallingChatModel{}
 	mockQuotaModel := &MockQuotaChatModel{}
 	mockQuotaModel.SetInnerModel(mockChatModel)
 
-	ag := agent.NewADKAgent(context.Background(), agent.Message{Content: "hello"}, agent.ADKAgentOptions{
+	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "hello"}, agent.UserAgentOptions{
 		AgentID: "agent-start-test",
 		UserID:  "user-1",
 	})
 
-	opts := agent.ADKAgentOptions{
+	opts := agent.UserAgentOptions{
 		QuotaChatModel: mockQuotaModel,
 		SystemPrompt:   "You are a helpful assistant.",
 		Description:    "Test agent for unit testing",
@@ -104,17 +104,17 @@ func TestADKAgent_Start_Success(t *testing.T) {
 	ag.Stop()
 }
 
-func TestADKAgent_Start_WithTools(t *testing.T) {
+func TestUserAgent_Start_WithTools(t *testing.T) {
 	mockChatModel := &MockToolCallingChatModel{}
 	mockQuotaModel := &MockQuotaChatModel{}
 	mockQuotaModel.SetInnerModel(mockChatModel)
 
-	ag := agent.NewADKAgent(context.Background(), agent.Message{Content: "hello"}, agent.ADKAgentOptions{
+	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "hello"}, agent.UserAgentOptions{
 		AgentID: "agent-tools-test",
 		UserID:  "user-1",
 	})
 
-	opts := agent.ADKAgentOptions{
+	opts := agent.UserAgentOptions{
 		QuotaChatModel: mockQuotaModel,
 		SystemPrompt:   "You are a helpful assistant.",
 		Description:    "Test agent for tools testing",
@@ -128,7 +128,7 @@ func TestADKAgent_Start_WithTools(t *testing.T) {
 	ag.Stop()
 }
 
-func TestADKAgent_Start_WithMemories(t *testing.T) {
+func TestUserAgent_Start_WithMemories(t *testing.T) {
 	mockChatModel := &MockToolCallingChatModel{}
 	mockQuotaModel := &MockQuotaChatModel{}
 	mockQuotaModel.SetInnerModel(mockChatModel)
@@ -139,12 +139,12 @@ func TestADKAgent_Start_WithMemories(t *testing.T) {
 		"User is a Go developer",
 	}
 
-	ag := agent.NewADKAgent(context.Background(), agent.Message{Content: "hello"}, agent.ADKAgentOptions{
+	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "hello"}, agent.UserAgentOptions{
 		AgentID: "agent-memories-test",
 		UserID:  "user-1",
 	})
 
-	opts := agent.ADKAgentOptions{
+	opts := agent.UserAgentOptions{
 		QuotaChatModel: mockQuotaModel,
 		SystemPrompt:   "You are a helpful assistant.",
 		Memories:       memories,
@@ -157,7 +157,7 @@ func TestADKAgent_Start_WithMemories(t *testing.T) {
 	ag.Stop()
 }
 
-func TestADKAgent_ConcurrentSubmit(t *testing.T) {
+func TestUserAgent_ConcurrentSubmit(t *testing.T) {
 	mockChatModel := &MockToolCallingChatModel{}
 	mockQuotaModel := &MockQuotaChatModel{}
 	mockQuotaModel.SetInnerModel(mockChatModel)
@@ -165,7 +165,7 @@ func TestADKAgent_ConcurrentSubmit(t *testing.T) {
 	var processedMessages []agent.Message
 	var processedMu sync.Mutex
 
-	ag := agent.NewADKAgent(context.Background(), agent.Message{Content: "initial"}, agent.ADKAgentOptions{
+	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "initial"}, agent.UserAgentOptions{
 		AgentID:     "agent-concurrent-test",
 		UserID:      "user-1",
 		IdleTimeout: 2 * time.Second,
@@ -177,7 +177,7 @@ func TestADKAgent_ConcurrentSubmit(t *testing.T) {
 		processedMu.Unlock()
 	})
 
-	opts := agent.ADKAgentOptions{
+	opts := agent.UserAgentOptions{
 		QuotaChatModel: mockQuotaModel,
 		SystemPrompt:   "You are a helpful assistant.",
 		Description:    "Test agent for concurrent testing",
@@ -217,14 +217,14 @@ func TestADKAgent_ConcurrentSubmit(t *testing.T) {
 	ag.Stop()
 }
 
-func TestADKAgent_ConnWrapper_Integration(t *testing.T) {
+func TestUserAgent_ConnWrapper_Integration(t *testing.T) {
 	mockChatModel := &MockToolCallingChatModel{}
 	mockQuotaModel := &MockQuotaChatModel{}
 	mockQuotaModel.SetInnerModel(mockChatModel)
 
 	wrapper := wsconn.NewWrapper(nil)
 
-	ag := agent.NewADKAgent(context.Background(), agent.Message{Content: "hello"}, agent.ADKAgentOptions{
+	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "hello"}, agent.UserAgentOptions{
 		AgentID: "agent-wsconn-test",
 		UserID:  "user-1",
 		Conn:    wrapper,
@@ -239,7 +239,7 @@ func TestADKAgent_ConnWrapper_Integration(t *testing.T) {
 	ag.UpdateConn(nil)
 	assert.Nil(t, conn.Conn())
 
-	opts := agent.ADKAgentOptions{
+	opts := agent.UserAgentOptions{
 		QuotaChatModel: mockQuotaModel,
 		SystemPrompt:   "You are a helpful assistant.",
 		Description:    "Test agent for ConnWrapper testing",
@@ -251,13 +251,13 @@ func TestADKAgent_ConnWrapper_Integration(t *testing.T) {
 	ag.Stop()
 }
 
-func TestADKAgent_Start_NilQuotaModel(t *testing.T) {
-	ag := agent.NewADKAgent(context.Background(), agent.Message{Content: "hello"}, agent.ADKAgentOptions{
+func TestUserAgent_Start_NilQuotaModel(t *testing.T) {
+	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "hello"}, agent.UserAgentOptions{
 		AgentID: "agent-nil-model-test",
 		UserID:  "user-1",
 	})
 
-	opts := agent.ADKAgentOptions{
+	opts := agent.UserAgentOptions{
 		QuotaChatModel: nil,
 		SystemPrompt:   "You are a helpful assistant.",
 	}
@@ -269,18 +269,18 @@ func TestADKAgent_Start_NilQuotaModel(t *testing.T) {
 	_ = ag.Start(opts)
 }
 
-func TestADKAgent_Submit_AfterStop(t *testing.T) {
+func TestUserAgent_Submit_AfterStop(t *testing.T) {
 	mockChatModel := &MockToolCallingChatModel{}
 	mockQuotaModel := &MockQuotaChatModel{}
 	mockQuotaModel.SetInnerModel(mockChatModel)
 
-	ag := agent.NewADKAgent(context.Background(), agent.Message{Content: "hello"}, agent.ADKAgentOptions{
+	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "hello"}, agent.UserAgentOptions{
 		AgentID:     "agent-submit-stop-test",
 		UserID:      "user-1",
 		IdleTimeout: 100 * time.Millisecond,
 	})
 
-	opts := agent.ADKAgentOptions{
+	opts := agent.UserAgentOptions{
 		QuotaChatModel: mockQuotaModel,
 		SystemPrompt:   "You are a helpful assistant.",
 		Description:    "Test agent for submit after stop testing",
@@ -299,8 +299,8 @@ func TestADKAgent_Submit_AfterStop(t *testing.T) {
 	})
 }
 
-func TestADKAgent_GetContext(t *testing.T) {
-	ag := agent.NewADKAgent(context.Background(), agent.Message{Content: "hello"}, agent.ADKAgentOptions{
+func TestUserAgent_GetContext(t *testing.T) {
+	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "hello"}, agent.UserAgentOptions{
 		AgentID: "agent-ctx-test",
 		UserID:  "user-1",
 	})
@@ -317,8 +317,8 @@ func TestADKAgent_GetContext(t *testing.T) {
 	assert.NotNil(t, ag.GetContext().Err())
 }
 
-func TestADKAgent_GetAgentID_GetUserID(t *testing.T) {
-	ag := agent.NewADKAgent(context.Background(), agent.Message{Content: "hello"}, agent.ADKAgentOptions{
+func TestUserAgent_GetAgentID_GetUserID(t *testing.T) {
+	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "hello"}, agent.UserAgentOptions{
 		AgentID: "agent-id-test",
 		UserID:  "user-id-test",
 	})
@@ -327,18 +327,18 @@ func TestADKAgent_GetAgentID_GetUserID(t *testing.T) {
 	assert.Equal(t, "user-id-test", ag.GetUserID())
 }
 
-func TestADKAgent_MultipleStartCalls(t *testing.T) {
+func TestUserAgent_MultipleStartCalls(t *testing.T) {
 	mockChatModel := &MockToolCallingChatModel{}
 	mockQuotaModel := &MockQuotaChatModel{}
 	mockQuotaModel.SetInnerModel(mockChatModel)
 
-	ag := agent.NewADKAgent(context.Background(), agent.Message{Content: "hello"}, agent.ADKAgentOptions{
+	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "hello"}, agent.UserAgentOptions{
 		AgentID:     "agent-multi-start-test",
 		UserID:      "user-1",
 		IdleTimeout: 100 * time.Millisecond,
 	})
 
-	opts := agent.ADKAgentOptions{
+	opts := agent.UserAgentOptions{
 		QuotaChatModel: mockQuotaModel,
 		SystemPrompt:   "You are a helpful assistant.",
 		Description:    "Test agent for multiple start testing",
@@ -352,14 +352,14 @@ func TestADKAgent_MultipleStartCalls(t *testing.T) {
 	ag.Stop()
 }
 
-func TestADKAgent_IdleTimeout_TriggersExit(t *testing.T) {
+func TestUserAgent_IdleTimeout_TriggersExit(t *testing.T) {
 	mockChatModel := &MockToolCallingChatModel{}
 	mockQuotaModel := &MockQuotaChatModel{}
 	mockQuotaModel.SetInnerModel(mockChatModel)
 
 	exited := make(chan bool, 1)
 
-	ag := agent.NewADKAgent(context.Background(), agent.Message{Content: "hello"}, agent.ADKAgentOptions{
+	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "hello"}, agent.UserAgentOptions{
 		AgentID:     "agent-idle-exit-test",
 		UserID:      "user-1",
 		IdleTimeout: 50 * time.Millisecond,
@@ -369,7 +369,7 @@ func TestADKAgent_IdleTimeout_TriggersExit(t *testing.T) {
 		exited <- true
 	})
 
-	opts := agent.ADKAgentOptions{
+	opts := agent.UserAgentOptions{
 		QuotaChatModel: mockQuotaModel,
 		SystemPrompt:   "You are a helpful assistant.",
 		Description:    "Test agent for idle timeout testing",
@@ -385,7 +385,7 @@ func TestADKAgent_IdleTimeout_TriggersExit(t *testing.T) {
 	}
 }
 
-func TestADKAgent_ProcessMessagesCalled(t *testing.T) {
+func TestUserAgent_ProcessMessagesCalled(t *testing.T) {
 	mockChatModel := &MockToolCallingChatModel{}
 	mockQuotaModel := &MockQuotaChatModel{}
 	mockQuotaModel.SetInnerModel(mockChatModel)
@@ -393,7 +393,7 @@ func TestADKAgent_ProcessMessagesCalled(t *testing.T) {
 	var messagesReceived []agent.Message
 	var messagesMu sync.Mutex
 
-	ag := agent.NewADKAgent(context.Background(), agent.Message{Content: "initial"}, agent.ADKAgentOptions{
+	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "initial"}, agent.UserAgentOptions{
 		AgentID:     "agent-process-test",
 		UserID:      "user-1",
 		IdleTimeout: 500 * time.Millisecond,
@@ -405,7 +405,7 @@ func TestADKAgent_ProcessMessagesCalled(t *testing.T) {
 		messagesMu.Unlock()
 	})
 
-	opts := agent.ADKAgentOptions{
+	opts := agent.UserAgentOptions{
 		QuotaChatModel: mockQuotaModel,
 		SystemPrompt:   "You are a helpful assistant.",
 		Description:    "Test agent for process messages testing",

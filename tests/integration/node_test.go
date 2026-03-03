@@ -3,14 +3,17 @@
 package integration_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/gorilla/websocket"
+	coderws "github.com/coder/websocket"
 	"github.com/nevaria-ai/gateway/internal/agent"
 	"github.com/nevaria-ai/gateway/internal/node"
 	"github.com/rs/zerolog"
@@ -52,6 +55,7 @@ func (m *mockAgentProvider) getAgent(userID string) *agent.Agent {
 }
 
 // mockWebSocketConn is a mock WebSocket connection for integration testing.
+// It implements the node.WebSocketConn interface using coder/websocket types.
 type mockWebSocketConn struct {
 	sendCh    chan []byte
 	receiveCh chan []byte
@@ -70,43 +74,38 @@ func newMockWebSocketConn(nodeID string) *mockWebSocketConn {
 	}
 }
 
-func (m *mockWebSocketConn) WriteMessage(messageType int, data []byte) error {
+// Write implements the WebSocketConn interface.
+func (m *mockWebSocketConn) Write(ctx context.Context, typ coderws.MessageType, p []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.isClosed {
-		return &websocket.CloseError{Code: websocket.CloseNormalClosure}
+		return errors.New("connection closed")
 	}
 	// Echo back to receive channel for testing
-	m.receiveCh <- data
+	m.receiveCh <- p
 	return nil
 }
 
-func (m *mockWebSocketConn) ReadMessage() (int, []byte, error) {
+// Reader implements the WebSocketConn interface.
+func (m *mockWebSocketConn) Reader(ctx context.Context) (coderws.MessageType, io.Reader, error) {
 	select {
 	case data := <-m.receiveCh:
-		return websocket.TextMessage, data, nil
+		return coderws.MessageText, bytes.NewReader(data), nil
 	case <-m.closed:
-		return 0, nil, &websocket.CloseError{Code: websocket.CloseNormalClosure}
-	case <-time.After(100 * time.Millisecond):
-		return 0, nil, &websocket.CloseError{Code: websocket.CloseGoingAway}
+		return 0, nil, errors.New("connection closed")
+	case <-ctx.Done():
+		return 0, nil, ctx.Err()
 	}
 }
 
-func (m *mockWebSocketConn) Close() error {
+// CloseNow implements the WebSocketConn interface.
+func (m *mockWebSocketConn) CloseNow() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !m.isClosed {
 		m.isClosed = true
 		close(m.closed)
 	}
-	return nil
-}
-
-func (m *mockWebSocketConn) SetReadDeadline(t time.Time) error {
-	return nil
-}
-
-func (m *mockWebSocketConn) SetWriteDeadline(t time.Time) error {
 	return nil
 }
 
@@ -152,7 +151,7 @@ func TestNodeService_ConnectionFlow(t *testing.T) {
 		// Cleanup
 		err = svc.UnregisterConnection(ctx, "test-node-1", "user-1")
 		require.NoError(t, err)
-		mockConn.Close()
+		_ = mockConn.CloseNow()
 
 		// Verify tools were removed
 		state = userAgent.State()
@@ -221,7 +220,7 @@ func TestNodeService_ToolCreation(t *testing.T) {
 
 		// Cleanup
 		svc.UnregisterConnection(ctx, "tool-node-1", "user-1")
-		mockConn.Close()
+		_ = mockConn.CloseNow()
 	})
 }
 
@@ -308,7 +307,7 @@ func TestNodeService_HealthUpdates(t *testing.T) {
 
 		// Cleanup
 		svc.UnregisterConnection(ctx, "health-node-1", "user-1")
-		mockConn.Close()
+		_ = mockConn.CloseNow()
 	})
 }
 
@@ -337,7 +336,7 @@ func TestNodeService_Reconnection(t *testing.T) {
 		// Simulate disconnect
 		err = svc.UnregisterConnection(ctx, nodeID, "user-1")
 		require.NoError(t, err)
-		mockConn1.Close()
+		_ = mockConn1.CloseNow()
 
 		// Verify tools were removed
 		assert.Empty(t, userAgent.State().Tools, "tools should be removed after unregister")
@@ -357,7 +356,7 @@ func TestNodeService_Reconnection(t *testing.T) {
 
 		// Cleanup
 		svc.UnregisterConnection(ctx, nodeID, "user-1")
-		mockConn2.Close()
+		_ = mockConn2.CloseNow()
 	})
 }
 
@@ -398,7 +397,7 @@ func TestNodeService_PlatformVariations(t *testing.T) {
 
 			// Cleanup
 			testSvc.UnregisterConnection(ctx, p.nodeID, "user-1")
-			mockConn.Close()
+			_ = mockConn.CloseNow()
 		}
 	})
 }
@@ -488,7 +487,7 @@ func TestNodeService_ToolIntegration(t *testing.T) {
 
 		// Cleanup
 		svc.UnregisterConnection(ctx, "agent-node-1", "user-1")
-		mockConn.Close()
+		_ = mockConn.CloseNow()
 	})
 }
 
@@ -525,8 +524,8 @@ func TestNodeService_ErrorHandling(t *testing.T) {
 
 		// Cleanup
 		svc.UnregisterConnection(ctx, "dup-node", "user-1")
-		mockConn1.Close()
-		mockConn2.Close()
+		_ = mockConn1.CloseNow()
+		_ = mockConn2.CloseNow()
 	})
 }
 
@@ -576,6 +575,6 @@ func TestNodeService_ToolDescriptions(t *testing.T) {
 
 		// Cleanup
 		svc.UnregisterConnection(ctx, "desc-node-1", "user-1")
-		mockConn.Close()
+		_ = mockConn.CloseNow()
 	})
 }

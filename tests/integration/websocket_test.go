@@ -5,13 +5,14 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
 
-	"github.com/gorilla/websocket"
+	coderws "github.com/coder/websocket"
 	"github.com/nevaria-ai/gateway/internal/agent"
 	wspkg "github.com/nevaria-ai/gateway/internal/websocket"
 	"github.com/rs/zerolog"
@@ -19,7 +20,7 @@ import (
 
 // wsClient is a test helper for WebSocket connections.
 type wsClient struct {
-	conn   *websocket.Conn
+	conn   *coderws.Conn
 	done   chan struct{}
 	events chan json.RawMessage
 }
@@ -29,7 +30,9 @@ func newWSClient(t *testing.T, serverURL string) *wsClient {
 	t.Helper()
 
 	wsURL := "ws" + serverURL[4:] + "/ws"
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	conn, _, err := coderws.Dial(ctx, wsURL, nil)
+	cancel()
 	if err != nil {
 		t.Fatalf("failed to connect: %v", err)
 	}
@@ -48,7 +51,14 @@ func newWSClient(t *testing.T, serverURL string) *wsClient {
 			case <-client.done:
 				return
 			default:
-				_, message, err := conn.ReadMessage()
+				readCtx, readCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				_, reader, err := conn.Reader(readCtx)
+				if err != nil {
+					readCancel()
+					return
+				}
+				message, err := io.ReadAll(reader)
+				readCancel()
 				if err != nil {
 					return
 				}
@@ -63,7 +73,7 @@ func newWSClient(t *testing.T, serverURL string) *wsClient {
 // Close closes the WebSocket connection.
 func (c *wsClient) Close() {
 	close(c.done)
-	_ = c.conn.Close()
+	_ = c.conn.CloseNow()
 }
 
 // SendPrompt sends a prompt message to the server.
@@ -76,9 +86,12 @@ func (c *wsClient) SendPrompt(t *testing.T, prompt string) {
 		t.Fatalf("failed to marshal prompt: %v", err)
 	}
 
-	if err := c.conn.WriteMessage(websocket.TextMessage, data); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := c.conn.Write(ctx, coderws.MessageText, data); err != nil {
+		cancel()
 		t.Fatalf("failed to send prompt: %v", err)
 	}
+	cancel()
 }
 
 // WaitForEvent waits for an event matching the predicate.
@@ -172,9 +185,9 @@ func TestAgentCreationOnConnect(t *testing.T) {
 		t.Fatal("expected data object in connected event")
 	}
 
-	sessionID, ok := data["session_id"].(string)
-	if !ok || sessionID == "" {
-		t.Error("expected session_id in connected event")
+	userID, ok := data["user_id"].(string)
+	if !ok || userID == "" {
+		t.Error("expected user_id in connected event")
 	}
 
 	connID, ok := data["conn_id"].(string)
@@ -244,9 +257,9 @@ func TestAgentCleanupOnDisconnect(t *testing.T) {
 	if !ok {
 		t.Fatal("expected data in connected event")
 	}
-	sessionID1, ok := data1["session_id"].(string)
-	if !ok || sessionID1 == "" {
-		t.Fatal("expected session_id in connected event")
+	userID1, ok := data1["user_id"].(string)
+	if !ok || userID1 == "" {
+		t.Fatal("expected user_id in connected event")
 	}
 
 	// Create second connection
@@ -257,14 +270,14 @@ func TestAgentCleanupOnDisconnect(t *testing.T) {
 	if !ok {
 		t.Fatal("expected data in connected event")
 	}
-	sessionID2, ok := data2["session_id"].(string)
-	if !ok || sessionID2 == "" {
-		t.Fatal("expected session_id in connected event")
+	userID2, ok := data2["user_id"].(string)
+	if !ok || userID2 == "" {
+		t.Fatal("expected user_id in connected event")
 	}
 
 	// Verify we have two different sessions
-	if sessionID1 == sessionID2 {
-		t.Error("expected different session IDs for different connections")
+	if userID1 == userID2 {
+		t.Error("expected different user IDs for different connections")
 	}
 
 	// Close first connection
@@ -357,23 +370,29 @@ func TestInvalidMessageType(t *testing.T) {
 	defer srv.Close()
 
 	wsURL := "ws" + srv.URL[4:] + "/ws"
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	conn, _, err := coderws.Dial(ctx, wsURL, nil)
+	cancel()
 	if err != nil {
 		t.Fatalf("failed to connect: %v", err)
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() { _ = conn.CloseNow() }()
 
 	// Send invalid JSON
-	if err := conn.WriteMessage(websocket.TextMessage, []byte("invalid json")); err != nil {
+	writeCtx, writeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := conn.Write(writeCtx, coderws.MessageText, []byte("invalid json")); err != nil {
+		writeCancel()
 		t.Fatalf("failed to send message: %v", err)
 	}
+	writeCancel()
 
 	// Connection should remain open (error is logged but doesn't close)
-	_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-	_, _, err = conn.ReadMessage()
+	readCtx, readCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	_, _, err = conn.Reader(readCtx)
+	readCancel()
 	if err != nil {
 		// Connection might close or might not - just verify we don't panic
-		t.Logf("ReadMessage error (expected): %v", err)
+		t.Logf("Reader error (expected): %v", err)
 	}
 }
 
@@ -385,24 +404,30 @@ func TestInvalidPromptMessage(t *testing.T) {
 	defer srv.Close()
 
 	wsURL := "ws" + srv.URL[4:] + "/ws"
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	conn, _, err := coderws.Dial(ctx, wsURL, nil)
+	cancel()
 	if err != nil {
 		t.Fatalf("failed to connect: %v", err)
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() { _ = conn.CloseNow() }()
 
 	// Send prompt without text field
 	msg := map[string]string{"type": "prompt"}
 	data, _ := json.Marshal(msg)
-	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+	writeCtx, writeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := conn.Write(writeCtx, coderws.MessageText, data); err != nil {
+		writeCancel()
 		t.Fatalf("failed to send message: %v", err)
 	}
+	writeCancel()
 
 	// Connection should remain open
-	_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-	_, _, err = conn.ReadMessage()
+	readCtx, readCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	_, _, err = conn.Reader(readCtx)
+	readCancel()
 	if err != nil {
-		t.Logf("ReadMessage error (might be expected): %v", err)
+		t.Logf("Reader error (might be expected): %v", err)
 	}
 }
 

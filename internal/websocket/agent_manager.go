@@ -22,7 +22,7 @@ type AgentKey struct {
 	AgentID string
 }
 
-// AgentManager manages per-user ADKAgents with thread-safe access.
+// AgentManager manages per-user UserAgents with thread-safe access.
 //
 // # One Connection Per Agent
 // Each agent lane has its own WebSocket connection — no multiplexing.
@@ -36,7 +36,7 @@ type AgentKey struct {
 // sync.Mutex with lock-then-check prevents races during agent creation.
 type AgentManager struct {
 	mu             sync.Mutex
-	agents         map[AgentKey]*agent.ADKAgent
+	agents         map[AgentKey]*agent.UserAgent
 	logger         zerolog.Logger
 	quotaChatModel agent.QuotaChatModelInterface
 }
@@ -48,7 +48,7 @@ func NewAgentManager(logger zerolog.Logger, opts *AgentManagerOptions) *AgentMan
 		quotaChatModel = opts.QuotaChatModel
 	}
 	return &AgentManager{
-		agents:         make(map[AgentKey]*agent.ADKAgent),
+		agents:         make(map[AgentKey]*agent.UserAgent),
 		logger:         logger,
 		quotaChatModel: quotaChatModel,
 	}
@@ -57,7 +57,7 @@ func NewAgentManager(logger zerolog.Logger, opts *AgentManagerOptions) *AgentMan
 // GetOrAdd returns an existing agent or creates a new one for (userID, agentID).
 // conn is the WebSocket connection for this specific agent lane.
 // On reconnect, use UpdateConn instead — this conn is only used at creation.
-func (m *AgentManager) GetOrAdd(ctx context.Context, userID, agentID string, conn *wsconn.Wrapper) *agent.ADKAgent {
+func (m *AgentManager) GetOrAdd(ctx context.Context, userID, agentID string, conn *wsconn.Wrapper) *agent.UserAgent {
 	key := AgentKey{UserID: userID, AgentID: agentID}
 
 	m.mu.Lock()
@@ -66,7 +66,7 @@ func (m *AgentManager) GetOrAdd(ctx context.Context, userID, agentID string, con
 		return ag
 	}
 
-	ag := agent.NewADKAgent(ctx, agent.Message{}, agent.ADKAgentOptions{
+	ag := agent.NewUserAgent(ctx, agent.Message{}, agent.UserAgentOptions{
 		AgentID: agentID,
 		UserID:  userID,
 		Conn:    conn,
@@ -75,7 +75,7 @@ func (m *AgentManager) GetOrAdd(ctx context.Context, userID, agentID string, con
 	m.mu.Unlock()
 
 	config := m.loadAgentConfig(userID, agentID)
-	_ = ag.StartWithModel(agent.ADKAgentOptions{
+	_ = ag.StartWithModel(agent.UserAgentOptions{
 		SystemPrompt:   config.SystemPrompt,
 		QuotaChatModel: m.quotaChatModel,
 		Memories:       m.loadMemories(userID),

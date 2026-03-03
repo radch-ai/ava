@@ -6,13 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/gorilla/websocket"
+	coderws "github.com/coder/websocket"
 	"github.com/nevaria-ai/gateway/internal/agent"
 	"github.com/nevaria-ai/gateway/internal/node"
 	"github.com/nevaria-ai/gateway/internal/server"
@@ -114,9 +115,9 @@ func TestHandler_HandleNodeConnect_ConnectionLimit(t *testing.T) {
 		w2 := httptest.NewRecorder()
 		handler.HandleNodeConnect(w2, req2)
 
-		// Second connection might either get 503 (semaphore reject) or 500 (WebSocket fail)
-		// depending on timing. Both are acceptable for this test.
-		assert.Contains(t, []int{http.StatusServiceUnavailable, http.StatusInternalServerError}, w2.Code)
+		// Second connection might get 503 (semaphore reject), 500 (internal error), or 501 (WebSocket upgrade fail in test env)
+		// depending on timing. All are acceptable for this test.
+		assert.Contains(t, []int{http.StatusServiceUnavailable, http.StatusInternalServerError, http.StatusNotImplemented}, w2.Code, "expected service unavailable, internal error, or not implemented (test env)")
 	})
 
 	t.Run("allows connection when under limit", func(t *testing.T) {
@@ -140,7 +141,7 @@ func TestHandler_HandleNodeConnect_ConnectionLimit(t *testing.T) {
 
 		// Should not return 503 (connection limit error)
 		// It will return 500 due to WebSocket upgrade failure in test env, which is fine
-		assert.NotEqual(t, http.StatusServiceUnavailable, w.Code)
+		assert.NotEqual(t, http.StatusServiceUnavailable, w.Code, "expected not service unavailable")
 	})
 
 	t.Run("active connections count is accurate", func(t *testing.T) {
@@ -791,7 +792,7 @@ func TestHandler_HandleConnection(t *testing.T) {
 		mockConn.QueueMessage(heartbeatMsgBytes)
 
 		// Then queue close to terminate the loop
-		mockConn.SetReadError(&websocket.CloseError{Code: websocket.CloseNormalClosure})
+		mockConn.SetReadError(errors.New("connection closed"))
 
 		// Run the connection handler (will block until connection closes)
 		// This should not panic
@@ -817,7 +818,7 @@ func TestHandler_HandleConnection(t *testing.T) {
 		// The mock will return text for queued messages
 		// To test binary, we'd need to modify the mock
 		// For now, test with close
-		mockConn.SetReadError(&websocket.CloseError{Code: websocket.CloseNormalClosure})
+		mockConn.SetReadError(errors.New("connection closed"))
 
 		testHandleConnection(handler, ctx, mockConn, userID)
 
@@ -845,7 +846,7 @@ func TestHandler_HandleConnection(t *testing.T) {
 		mockConn.QueueMessage(unknownMsgBytes)
 
 		// Then close
-		mockConn.SetReadError(&websocket.CloseError{Code: websocket.CloseNormalClosure})
+		mockConn.SetReadError(errors.New("connection closed"))
 
 		// Should not panic, just log warning
 		testHandleConnection(handler, ctx, mockConn, userID)
@@ -880,7 +881,7 @@ func TestHandler_HandleConnection(t *testing.T) {
 		mockConn.QueueMessage(toolResultMsgBytes)
 
 		// Then close
-		mockConn.SetReadError(&websocket.CloseError{Code: websocket.CloseNormalClosure})
+		mockConn.SetReadError(errors.New("connection closed"))
 
 		// Should not panic, tool_result is just logged
 		testHandleConnection(handler, ctx, mockConn, userID)
@@ -910,7 +911,7 @@ func TestHandler_HandleConnection(t *testing.T) {
 		mockConn.QueueMessage(registerMsgBytes)
 
 		// Then close
-		mockConn.SetReadError(&websocket.CloseError{Code: websocket.CloseNormalClosure})
+		mockConn.SetReadError(errors.New("connection closed"))
 
 		testHandleConnection(handler, ctx, mockConn, userID)
 
@@ -994,7 +995,7 @@ func TestHandler_MessageRouting(t *testing.T) {
 			mockConn.QueueMessage(testMsgBytes)
 
 			// Close
-			mockConn.SetReadError(&websocket.CloseError{Code: websocket.CloseNormalClosure})
+			mockConn.SetReadError(errors.New("connection closed"))
 
 			// Should not panic
 			testHandleConnection(handler, ctx, mockConn, userID)
@@ -1030,7 +1031,7 @@ func TestHandler_ConnectionCleanup(t *testing.T) {
 		registerMsgBytes, _ := json.Marshal(registerMsg)
 		mockConn.QueueMessage(registerMsgBytes)
 
-		mockConn.SetReadError(&websocket.CloseError{Code: websocket.CloseNormalClosure})
+		mockConn.SetReadError(errors.New("connection closed"))
 
 		testHandleConnection(handler, ctx, mockConn, userID)
 
@@ -1091,7 +1092,7 @@ func TestHandler_ConnectionCleanup(t *testing.T) {
 		registerMsgBytes, _ := json.Marshal(registerMsg)
 		mockConn.QueueMessage(registerMsgBytes)
 
-		mockConn.SetReadError(&websocket.CloseError{Code: websocket.CloseNormalClosure})
+		mockConn.SetReadError(errors.New("connection closed"))
 
 		testHandleConnection(handler, ctx, mockConn, userID)
 
@@ -1861,7 +1862,7 @@ func TestHandler_ReleaseConn(t *testing.T) {
 		w2 := httptest.NewRecorder()
 		handler.HandleNodeConnect(w2, req2)
 
-		assert.Contains(t, []int{http.StatusServiceUnavailable, http.StatusInternalServerError}, w2.Code)
+		assert.Contains(t, []int{http.StatusServiceUnavailable, http.StatusInternalServerError, http.StatusNotImplemented}, w2.Code, "expected service unavailable, internal server error, or not implemented (test env)")
 
 		// Wait for first to complete
 		<-done1
@@ -2010,7 +2011,7 @@ func TestHandler_UnknownMessageHandling(t *testing.T) {
 		mockConn.QueueMessage(unknownMsgBytes)
 
 		// Close
-		mockConn.SetReadError(&websocket.CloseError{Code: websocket.CloseNormalClosure})
+		mockConn.SetReadError(errors.New("connection closed"))
 
 		// Should not panic
 		testHandleConnection(handler, ctx, mockConn, userID)
@@ -2258,7 +2259,7 @@ func TestHandler_LongRunningConnection(t *testing.T) {
 		}
 
 		// Close
-		mockConn.SetReadError(&websocket.CloseError{Code: websocket.CloseNormalClosure})
+		mockConn.SetReadError(errors.New("connection closed"))
 
 		// Should process all messages without issues
 		testHandleConnection(handler, ctx, mockConn, userID)
@@ -2324,7 +2325,7 @@ func testHandleRegister(handler *node.Handler, ctx context.Context, conn *mockWe
 		},
 	}
 	respData, _ := json.Marshal(response)
-	_ = conn.WriteMessage(websocket.TextMessage, respData)
+	_ = conn.Write(context.Background(), coderws.MessageText, respData)
 
 	return nil
 }
@@ -2349,13 +2350,18 @@ func testHandleConnection(handler *node.Handler, ctx context.Context, conn *mock
 
 	// Simulate the connection loop
 	for {
-		messageType, data, err := conn.ReadMessage()
+		messageType, reader, err := conn.Reader(ctx)
 		if err != nil {
 			// Connection closed
 			break
 		}
 
-		if messageType != websocket.TextMessage {
+		if messageType != coderws.MessageText {
+			continue
+		}
+
+		data, err := io.ReadAll(reader)
+		if err != nil {
 			continue
 		}
 
@@ -2376,5 +2382,5 @@ func testHandleConnection(handler *node.Handler, ctx context.Context, conn *mock
 		}
 	}
 
-	_ = conn.Close()
+	_ = conn.CloseNow()
 }

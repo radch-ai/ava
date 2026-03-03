@@ -40,15 +40,15 @@ func (m *MockToolCallingChatModelForADK) BindTools(tools []*schema.ToolInfo) err
 	return nil
 }
 
-func TestNewADKAgent_CreatesLaneCh(t *testing.T) {
+func TestNewUserAgent_CreatesLaneCh(t *testing.T) {
 	ctx := context.Background()
 	msg := Message{Content: "hello", ID: "msg1"}
-	opts := ADKAgentOptions{
+	opts := UserAgentOptions{
 		AgentID: "agent1",
 		UserID:  "user1",
 	}
 
-	agent := NewADKAgent(ctx, msg, opts)
+	agent := NewUserAgent(ctx, msg, opts)
 
 	assert.NotNil(t, agent)
 	assert.NotNil(t, agent.laneCh)
@@ -58,20 +58,20 @@ func TestNewADKAgent_CreatesLaneCh(t *testing.T) {
 	assert.Nil(t, agent.conn)
 }
 
-func TestNewADKAgent_QueuesFirstMessage(t *testing.T) {
+func TestNewUserAgent_QueuesFirstMessage(t *testing.T) {
 	ctx := context.Background()
 	msg := Message{Content: "hello", ID: "msg1"}
 
-	agent := NewADKAgent(ctx, msg, ADKAgentOptions{})
+	agent := NewUserAgent(ctx, msg, UserAgentOptions{})
 
 	assert.Equal(t, 1, len(agent.laneCh))
 }
 
-func TestADKAgent_Stop(t *testing.T) {
+func TestUserAgent_Stop(t *testing.T) {
 	ctx := context.Background()
 	msg := Message{Content: "hello"}
 
-	agent := NewADKAgent(ctx, msg, ADKAgentOptions{})
+	agent := NewUserAgent(ctx, msg, UserAgentOptions{})
 
 	require.NotNil(t, agent.ctx)
 	agent.Stop()
@@ -79,11 +79,11 @@ func TestADKAgent_Stop(t *testing.T) {
 	assert.Error(t, agent.ctx.Err())
 }
 
-func TestADKAgent_LaneCh_AcceptsMessages(t *testing.T) {
+func TestUserAgent_LaneCh_AcceptsMessages(t *testing.T) {
 	ctx := context.Background()
 	msg := Message{Content: "first"}
 
-	agent := NewADKAgent(ctx, msg, ADKAgentOptions{})
+	agent := NewUserAgent(ctx, msg, UserAgentOptions{})
 
 	agent.laneCh <- Message{Content: "second"}
 	agent.laneCh <- Message{Content: "third"}
@@ -91,9 +91,9 @@ func TestADKAgent_LaneCh_AcceptsMessages(t *testing.T) {
 	assert.Equal(t, 3, len(agent.laneCh))
 }
 
-func TestADKAgent_Loop_DrainsMessages(t *testing.T) {
+func TestUserAgent_Loop_DrainsMessages(t *testing.T) {
 	ctx := context.Background()
-	agent := NewADKAgent(ctx, Message{Content: "first"}, ADKAgentOptions{})
+	agent := NewUserAgent(ctx, Message{Content: "first"}, UserAgentOptions{})
 
 	agent.laneCh <- Message{Content: "second"}
 	agent.laneCh <- Message{Content: "third"}
@@ -113,9 +113,9 @@ func TestADKAgent_Loop_DrainsMessages(t *testing.T) {
 	agent.Stop()
 }
 
-func TestADKAgent_Loop_IdleExit(t *testing.T) {
+func TestUserAgent_Loop_IdleExit(t *testing.T) {
 	ctx := context.Background()
-	agent := NewADKAgent(ctx, Message{Content: "first"}, ADKAgentOptions{
+	agent := NewUserAgent(ctx, Message{Content: "first"}, UserAgentOptions{
 		IdleTimeout: 50 * time.Millisecond,
 	})
 
@@ -133,9 +133,9 @@ func TestADKAgent_Loop_IdleExit(t *testing.T) {
 	}
 }
 
-func TestADKAgent_Loop_ContextCancel(t *testing.T) {
+func TestUserAgent_Loop_ContextCancel(t *testing.T) {
 	ctx := context.Background()
-	agent := NewADKAgent(ctx, Message{Content: "first"}, ADKAgentOptions{
+	agent := NewUserAgent(ctx, Message{Content: "first"}, UserAgentOptions{
 		IdleTimeout: 10 * time.Second,
 	})
 
@@ -156,9 +156,9 @@ func TestADKAgent_Loop_ContextCancel(t *testing.T) {
 	}
 }
 
-func TestADKAgent_DrainMessages(t *testing.T) {
+func TestUserAgent_DrainMessages(t *testing.T) {
 	ctx := context.Background()
-	agent := NewADKAgent(ctx, Message{Content: "first"}, ADKAgentOptions{})
+	agent := NewUserAgent(ctx, Message{Content: "first"}, UserAgentOptions{})
 
 	agent.laneCh <- Message{Content: "second"}
 	agent.laneCh <- Message{Content: "third"}
@@ -215,9 +215,9 @@ func TestGetGlobalTools_ReturnsTools(t *testing.T) {
 	assert.NotEmpty(t, tools, "GetGlobalTools should return at least one tool")
 }
 
-func TestADKAgent_ProcessMessages_CombinesInput(t *testing.T) {
+func TestUserAgent_ProcessMessages_CombinesInput(t *testing.T) {
 	ctx := context.Background()
-	agent := NewADKAgent(ctx, Message{Content: "first"}, ADKAgentOptions{})
+	agent := NewUserAgent(ctx, Message{Content: "first"}, UserAgentOptions{})
 
 	agent.processMessagesFn = nil
 
@@ -230,9 +230,9 @@ func TestADKAgent_ProcessMessages_CombinesInput(t *testing.T) {
 	agent.processMessages(messages)
 }
 
-func TestADKAgent_ProcessMessages_ExtractsID(t *testing.T) {
+func TestUserAgent_ProcessMessages_ExtractsID(t *testing.T) {
 	ctx := context.Background()
-	agent := NewADKAgent(ctx, Message{Content: "first"}, ADKAgentOptions{})
+	agent := NewUserAgent(ctx, Message{Content: "first"}, UserAgentOptions{})
 
 	agent.processMessagesFn = nil
 
@@ -244,9 +244,9 @@ func TestADKAgent_ProcessMessages_ExtractsID(t *testing.T) {
 	agent.processMessages(messages)
 }
 
-func TestADKAgent_ProcessMessages_WithNilConn(t *testing.T) {
+func TestUserAgent_ProcessMessages_WithNilConn(t *testing.T) {
 	ctx := context.Background()
-	agent := NewADKAgent(ctx, Message{Content: "first"}, ADKAgentOptions{})
+	agent := NewUserAgent(ctx, Message{Content: "first"}, UserAgentOptions{})
 
 	agent.processMessagesFn = nil
 
@@ -260,9 +260,9 @@ func TestADKAgent_ProcessMessages_WithNilConn(t *testing.T) {
 	agent.processMessages(messages)
 }
 
-func TestADKAgent_ProcessMessages_EmptyMessages(t *testing.T) {
+func TestUserAgent_ProcessMessages_EmptyMessages(t *testing.T) {
 	ctx := context.Background()
-	agent := NewADKAgent(ctx, Message{Content: "first"}, ADKAgentOptions{})
+	agent := NewUserAgent(ctx, Message{Content: "first"}, UserAgentOptions{})
 
 	agent.processMessagesFn = nil
 

@@ -2,9 +2,12 @@
 package node
 
 import (
+	"context"
+	"io"
 	"strings"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/nevaria-ai/gateway/internal/agent"
 )
 
@@ -75,10 +78,11 @@ type NodeConnection struct {
 }
 
 // WebSocketConn is an interface for WebSocket-like connections.
+// This interface matches github.com/coder/websocket's API.
 type WebSocketConn interface {
-	WriteMessage(messageType int, data []byte) error
-	ReadMessage() (int, []byte, error)
-	Close() error
+	Write(ctx context.Context, typ websocket.MessageType, p []byte) error
+	Reader(ctx context.Context) (websocket.MessageType, io.Reader, error)
+	CloseNow() error
 }
 
 // ErrorMessage is sent for protocol-level errors.

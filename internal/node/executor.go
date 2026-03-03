@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
 	"github.com/nevaria-ai/gateway/internal/agent"
 	"github.com/rs/zerolog"
 )
@@ -88,9 +89,12 @@ func (e *Executor) ExecuteOnNode(ctx context.Context, nodeID, toolName string, a
 		return nil, fmt.Errorf("failed to marshal execute message: %w", err)
 	}
 
-	if err := node.Conn.WriteMessage(websocket.TextMessage, msgData); err != nil {
+	writeCtx, writeCancel := context.WithTimeout(ctx, 10*time.Second)
+	if err := node.Conn.Write(writeCtx, websocket.MessageText, msgData); err != nil {
+		writeCancel()
 		return nil, fmt.Errorf("failed to send message to node: %w", err)
 	}
+	writeCancel()
 
 	ctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
@@ -140,9 +144,12 @@ func (e *Executor) ExecuteOnNodeWithoutIsolation(ctx context.Context, nodeID, to
 		return nil, fmt.Errorf("failed to marshal execute message: %w", err)
 	}
 
-	if err := node.Conn.WriteMessage(websocket.TextMessage, msgData); err != nil {
+	writeCtx, writeCancel := context.WithTimeout(ctx, 10*time.Second)
+	if err := node.Conn.Write(writeCtx, websocket.MessageText, msgData); err != nil {
+		writeCancel()
 		return nil, fmt.Errorf("failed to send message to node: %w", err)
 	}
+	writeCancel()
 
 	ctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
@@ -184,9 +191,11 @@ func (e *Executor) listenForResultsLoop(ctx context.Context, node *NodeConnectio
 			return
 		}
 
-		// ReadMessage blocks until a message arrives or error/timeout
-		messageType, data, err := conn.ReadMessage()
+		// Read message with timeout
+		readCtx, readCancel := context.WithTimeout(ctx, 5*time.Second)
+		typ, reader, err := conn.Reader(readCtx)
 		if err != nil {
+			readCancel()
 			// Check context again after error
 			select {
 			case <-ctx.Done():
@@ -198,7 +207,13 @@ func (e *Executor) listenForResultsLoop(ctx context.Context, node *NodeConnectio
 			}
 		}
 
-		if messageType != websocket.TextMessage {
+		data, err := io.ReadAll(reader)
+		readCancel()
+		if err != nil {
+			continue
+		}
+
+		if typ != websocket.MessageText {
 			continue
 		}
 

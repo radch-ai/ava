@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	gorillawebsocket "github.com/gorilla/websocket"
+	coderws "github.com/coder/websocket"
 	"github.com/rs/zerolog"
 
 	"github.com/nevaria-ai/gateway/internal/websocket"
@@ -142,17 +143,24 @@ func TestWebSocketHandlerWithoutAuth(t *testing.T) {
 
 	// Test WebSocket endpoint
 	wsURL := "ws" + strings.TrimPrefix(testSrv.URL, "http") + "/ws"
-	ws, _, err := gorillawebsocket.DefaultDialer.Dial(wsURL, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ws, _, err := coderws.Dial(ctx, wsURL, nil)
 	if err != nil {
 		t.Fatalf("websocket connection failed: %v", err)
 	}
-	defer func() { _ = ws.Close() }()
+	defer func() { _ = ws.CloseNow() }()
 
 	// Read connected event
-	_ = ws.SetReadDeadline(time.Now().Add(2 * time.Second))
-	_, p, err := ws.ReadMessage()
+	readCtx, readCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	_, reader, err := ws.Reader(readCtx)
+	readCancel()
 	if err != nil {
 		t.Fatalf("failed to read connected event: %v", err)
+	}
+	p, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("failed to read connected event data: %v", err)
 	}
 
 	var connected map[string]any
@@ -167,13 +175,17 @@ func TestWebSocketHandlerWithoutAuth(t *testing.T) {
 	// Send a valid prompt message with required agent_id
 	promptMsg := map[string]string{"type": "prompt", "agent_id": "test-agent-1", "text": "hello"}
 	data, _ := serializeJSON(promptMsg)
-	if err := ws.WriteMessage(gorillawebsocket.TextMessage, data); err != nil {
+	writeCtx, writeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	err = ws.Write(writeCtx, coderws.MessageText, data)
+	writeCancel()
+	if err != nil {
 		t.Errorf("failed to write message: %v", err)
 	}
 
 	// Note: agent_start event won't be sent because LLM client is not configured
-	_ = ws.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-	_, _, err = ws.ReadMessage()
+	readCtx2, readCancel2 := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	_, _, err = ws.Reader(readCtx2)
+	readCancel2()
 	if err != nil {
 		// Timeout is expected - no LLM client configured
 		t.Log("no message received (expected - no LLM client configured)")

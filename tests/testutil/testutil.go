@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	gorillawebsocket "github.com/gorilla/websocket"
+	coderws "github.com/coder/websocket"
 	"github.com/rs/zerolog"
 )
 
@@ -139,40 +140,48 @@ func (ts *TestServer) PostWithCookies(path string, body string, cookies []*http.
 
 // ============ WebSocket Helper Methods ============
 
-// WebSocketDialer creates a websocket dialer configured for the test server.
+// WebSocketDialOptions returns options for dialing WebSocket connections.
 // For TLS servers, it skips certificate verification.
-func (ts *TestServer) WebSocketDialer() *gorillawebsocket.Dialer {
-	dialer := &gorillawebsocket.Dialer{
-		HandshakeTimeout: 5 * time.Second,
+func (ts *TestServer) WebSocketDialOptions() *coderws.DialOptions {
+	opts := &coderws.DialOptions{
+		HTTPClient: ts.Client,
 	}
 
 	// Skip TLS cert verification for test servers
 	if strings.HasPrefix(ts.BaseURL, "https") {
-		dialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		if transport, ok := ts.Client.Transport.(*http.Transport); ok {
+			if transport.TLSClientConfig == nil {
+				transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+			}
+		}
 	}
 
-	return dialer
+	return opts
 }
 
 // DialWebSocket creates a WebSocket connection to the test server.
-// Returns the connection, HTTP response, and any error.
-func (ts *TestServer) DialWebSocket(path string) (*gorillawebsocket.Conn, *http.Response, error) {
+// Returns the connection and any error.
+func (ts *TestServer) DialWebSocket(ctx context.Context, path string) (*coderws.Conn, *http.Response, error) {
 	wsURL := wsURL(ts.BaseURL, path)
-	return ts.WebSocketDialer().Dial(wsURL, nil)
+	return coderws.Dial(ctx, wsURL, ts.WebSocketDialOptions())
 }
 
 // DialWebSocketWithHeaders creates a WebSocket connection with custom headers.
-func (ts *TestServer) DialWebSocketWithHeaders(path string, headers http.Header) (*gorillawebsocket.Conn, *http.Response, error) {
+func (ts *TestServer) DialWebSocketWithHeaders(ctx context.Context, path string, headers http.Header) (*coderws.Conn, *http.Response, error) {
 	wsURL := wsURL(ts.BaseURL, path)
-	return ts.WebSocketDialer().Dial(wsURL, headers)
+	opts := ts.WebSocketDialOptions()
+	opts.HTTPHeader = headers
+	return coderws.Dial(ctx, wsURL, opts)
 }
 
 // DialWebSocketWithCookie creates a WebSocket connection with a session cookie.
-func (ts *TestServer) DialWebSocketWithCookie(path string, cookie *http.Cookie) (*gorillawebsocket.Conn, *http.Response, error) {
+func (ts *TestServer) DialWebSocketWithCookie(ctx context.Context, path string, cookie *http.Cookie) (*coderws.Conn, *http.Response, error) {
 	headers := http.Header{}
 	headers.Set("Cookie", cookie.Name+"="+cookie.Value)
 	wsURL := wsURL(ts.BaseURL, path)
-	return ts.WebSocketDialer().Dial(wsURL, headers)
+	opts := ts.WebSocketDialOptions()
+	opts.HTTPHeader = headers
+	return coderws.Dial(ctx, wsURL, opts)
 }
 
 // wsURL converts an HTTP(S) URL to a WebSocket URL.
@@ -185,13 +194,13 @@ func wsURL(baseURL, path string) string {
 
 // WebSocketMessage represents a message sent or received via WebSocket.
 type WebSocketMessage struct {
-	Type int
+	Type coderws.MessageType
 	Data []byte
 }
 
 // ReadWebSocketMessages reads all messages from a WebSocket until the connection closes
 // or a timeout occurs. Returns all received messages.
-func ReadWebSocketMessages(t *testing.T, conn *gorillawebsocket.Conn, timeout time.Duration) []WebSocketMessage {
+func ReadWebSocketMessages(t *testing.T, conn *coderws.Conn, timeout time.Duration) []WebSocketMessage {
 	t.Helper()
 
 	var messages []WebSocketMessage
@@ -199,13 +208,21 @@ func ReadWebSocketMessages(t *testing.T, conn *gorillawebsocket.Conn, timeout ti
 
 	go func() {
 		for {
-			messageType, data, err := conn.ReadMessage()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			typ, reader, err := conn.Reader(ctx)
+			if err != nil {
+				cancel()
+				close(done)
+				return
+			}
+			data, err := io.ReadAll(reader)
+			cancel()
 			if err != nil {
 				close(done)
 				return
 			}
 			messages = append(messages, WebSocketMessage{
-				Type: messageType,
+				Type: typ,
 				Data: data,
 			})
 		}
@@ -221,11 +238,11 @@ func ReadWebSocketMessages(t *testing.T, conn *gorillawebsocket.Conn, timeout ti
 }
 
 // ReadSingleWebSocketMessage reads a single message from WebSocket with timeout.
-func ReadSingleWebSocketMessage(t *testing.T, conn *gorillawebsocket.Conn, timeout time.Duration) (int, []byte, error) {
+func ReadSingleWebSocketMessage(t *testing.T, conn *coderws.Conn, timeout time.Duration) (coderws.MessageType, []byte, error) {
 	t.Helper()
 
 	type result struct {
-		messageType int
+		messageType coderws.MessageType
 		data        []byte
 		err         error
 	}
@@ -233,8 +250,15 @@ func ReadSingleWebSocketMessage(t *testing.T, conn *gorillawebsocket.Conn, timeo
 	resultChan := make(chan result, 1)
 
 	go func() {
-		messageType, data, err := conn.ReadMessage()
-		resultChan <- result{messageType, data, err}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		typ, reader, err := conn.Reader(ctx)
+		cancel()
+		if err != nil {
+			resultChan <- result{err: err}
+			return
+		}
+		data, err := io.ReadAll(reader)
+		resultChan <- result{messageType: typ, data: data, err: err}
 	}()
 
 	select {
@@ -259,38 +283,35 @@ func (e *timeoutError) Timeout() bool {
 }
 
 // WriteWebSocketMessage writes a message to the WebSocket connection.
-func WriteWebSocketMessage(t *testing.T, conn *gorillawebsocket.Conn, messageType int, data []byte) {
+func WriteWebSocketMessage(t *testing.T, conn *coderws.Conn, messageType coderws.MessageType, data []byte) {
 	t.Helper()
-	if err := conn.WriteMessage(messageType, data); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := conn.Write(ctx, messageType, data); err != nil {
 		t.Fatalf("Failed to write WebSocket message: %v", err)
 	}
 }
 
 // WriteJSONWebSocketMessage writes a JSON message to the WebSocket connection.
-func WriteJSONWebSocketMessage(t *testing.T, conn *gorillawebsocket.Conn, v interface{}) {
+func WriteJSONWebSocketMessage(t *testing.T, conn *coderws.Conn, v interface{}) {
 	t.Helper()
-	if err := conn.WriteJSON(v); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("Failed to marshal JSON: %v", err)
+	}
+	if err := conn.Write(ctx, coderws.MessageText, data); err != nil {
 		t.Fatalf("Failed to write JSON WebSocket message: %v", err)
 	}
 }
 
 // CloseWebSocket closes a WebSocket connection with a graceful close frame.
-func CloseWebSocket(t *testing.T, conn *gorillawebsocket.Conn) {
+func CloseWebSocket(t *testing.T, conn *coderws.Conn) {
 	t.Helper()
 
-	// Send close frame
-	message := gorillawebsocket.FormatCloseMessage(gorillawebsocket.CloseNormalClosure, "")
-	if err := conn.WriteMessage(gorillawebsocket.CloseMessage, message); err != nil {
-		t.Logf("Failed to send close frame: %v", err)
-	}
-
-	// Wait for server to close connection
-	_ = conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-	_, _, _ = conn.ReadMessage()
-
-	if err := conn.Close(); err != nil {
-		t.Logf("Failed to close connection: %v", err)
-	}
+	// Close the connection
+	_ = conn.Close(coderws.StatusNormalClosure, "")
 }
 
 // ============ Cookie Helper Methods ============

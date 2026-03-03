@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
+	"time"
 
-	"github.com/gorilla/websocket"
+	"github.com/coder/websocket"
 	"github.com/nevaria-ai/gateway/internal/server"
 	"github.com/rs/zerolog"
 )
@@ -21,15 +23,6 @@ var (
 	ErrInvalidToken = errors.New("invalid token")
 )
 
-// upgrader is used to upgrade HTTP connections to WebSocket.
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true // TODO: Configure proper origin checking
-	},
-}
-
 // Handler manages WebSocket connections from nodes.
 type Handler struct {
 	service     *Service
@@ -39,6 +32,7 @@ type Handler struct {
 	connSem     chan struct{}
 	activeConns int
 	connMu      sync.RWMutex
+	acceptOpts  websocket.AcceptOptions
 }
 
 // AuthClient defines the interface for validating sessions.
@@ -54,6 +48,9 @@ func NewHandler(service *Service, authClient AuthClient, logger *zerolog.Logger,
 		logger:     logger,
 		maxConns:   maxConns,
 		connSem:    make(chan struct{}, maxConns),
+		acceptOpts: websocket.AcceptOptions{
+			OriginPatterns: []string{"*"}, // TODO: Configure proper origin checking
+		},
 	}
 }
 
@@ -97,7 +94,7 @@ func (h *Handler) HandleNodeConnect(w http.ResponseWriter, r *http.Request) {
 	h.logger.Info().Str("user_id", userID).Msg("Node connection authenticated")
 
 	// 4. Upgrade to WebSocket
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := websocket.Accept(w, r, &h.acceptOpts)
 	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to upgrade WebSocket")
 		h.releaseConn()
@@ -111,7 +108,7 @@ func (h *Handler) HandleNodeConnect(w http.ResponseWriter, r *http.Request) {
 
 	// 6. Handle connection (blocking)
 	defer func() {
-		_ = conn.Close()
+		_ = conn.CloseNow()
 		h.releaseConn()
 	}()
 
@@ -134,10 +131,13 @@ func (h *Handler) handleConnection(ctx context.Context, conn *websocket.Conn, us
 	}()
 
 	for {
-		// Read message
-		messageType, data, err := conn.ReadMessage()
+		// Read message with timeout
+		readCtx, readCancel := context.WithTimeout(ctx, 60*time.Second)
+		typ, reader, err := conn.Reader(readCtx)
 		if err != nil {
-			if websocket.IsCloseError(err) {
+			readCancel()
+			if websocket.CloseStatus(err) == websocket.StatusNormalClosure ||
+				websocket.CloseStatus(err) == websocket.StatusGoingAway {
 				h.logger.Info().Str("node_id", nodeID).Msg("Node connection closed")
 			} else {
 				h.logger.Error().Err(err).Str("node_id", nodeID).Msg("Error reading from node")
@@ -145,7 +145,14 @@ func (h *Handler) handleConnection(ctx context.Context, conn *websocket.Conn, us
 			return
 		}
 
-		if messageType != websocket.TextMessage {
+		data, err := io.ReadAll(reader)
+		readCancel()
+		if err != nil {
+			h.logger.Error().Err(err).Str("node_id", nodeID).Msg("Error reading message data")
+			return
+		}
+
+		if typ != websocket.MessageText {
 			continue
 		}
 
@@ -211,7 +218,9 @@ func (h *Handler) handleRegister(ctx context.Context, conn *websocket.Conn, user
 		},
 	}
 	respData, _ := json.Marshal(response)
-	_ = conn.WriteMessage(websocket.TextMessage, respData)
+	writeCtx, writeCancel := context.WithTimeout(ctx, 10*time.Second)
+	_ = conn.Write(writeCtx, websocket.MessageText, respData)
+	writeCancel()
 
 	// Convert tool specs to names for logging
 	toolNames := make([]string, 0, len(data.Tools))

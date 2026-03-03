@@ -2,13 +2,15 @@
 package node_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/gorilla/websocket"
+	coderws "github.com/coder/websocket"
 	"github.com/nevaria-ai/gateway/internal/agent"
 	"github.com/nevaria-ai/gateway/internal/node"
 	"github.com/rs/zerolog"
@@ -83,8 +85,8 @@ func (m *mockAgentProvider) HasAgent(userID string) bool {
 	return exists
 }
 
-// mockWebSocketConn is a mock WebSocket connection that implements the minimal
-// interface needed to work with gorilla/websocket.Conn.
+// mockWebSocketConn is a mock WebSocket connection that implements the
+// node.WebSocketConn interface using coder/websocket types.
 type mockWebSocketConn struct {
 	mu              sync.Mutex
 	closed          bool
@@ -102,8 +104,8 @@ func newMockWebSocketConn() *mockWebSocketConn {
 	}
 }
 
-// WriteMessage mimics gorilla/websocket.Conn.WriteMessage
-func (m *mockWebSocketConn) WriteMessage(messageType int, data []byte) error {
+// Write implements the WebSocketConn interface.
+func (m *mockWebSocketConn) Write(ctx context.Context, typ coderws.MessageType, p []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -112,20 +114,20 @@ func (m *mockWebSocketConn) WriteMessage(messageType int, data []byte) error {
 	}
 
 	if m.closed {
-		return &websocket.CloseError{Code: websocket.CloseNormalClosure}
+		return fmt.Errorf("connection closed")
 	}
 
-	m.messagesWritten = append(m.messagesWritten, data)
+	m.messagesWritten = append(m.messagesWritten, p)
 	return nil
 }
 
-// ReadMessage mimics gorilla/websocket.Conn.ReadMessage
-func (m *mockWebSocketConn) ReadMessage() (int, []byte, error) {
+// Reader implements the WebSocketConn interface.
+func (m *mockWebSocketConn) Reader(ctx context.Context) (coderws.MessageType, io.Reader, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if m.closed {
-		return 0, nil, &websocket.CloseError{Code: websocket.CloseNormalClosure}
+		return 0, nil, fmt.Errorf("connection closed")
 	}
 
 	if m.readError != nil {
@@ -139,11 +141,11 @@ func (m *mockWebSocketConn) ReadMessage() (int, []byte, error) {
 
 	msg := m.messagesToRead[m.readIndex]
 	m.readIndex++
-	return websocket.TextMessage, msg, nil
+	return coderws.MessageText, bytes.NewReader(msg), nil
 }
 
-// Close mimics gorilla/websocket.Conn.Close
-func (m *mockWebSocketConn) Close() error {
+// CloseNow implements the WebSocketConn interface.
+func (m *mockWebSocketConn) CloseNow() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.closed = true

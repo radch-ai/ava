@@ -4,11 +4,12 @@ package node_test
 import (
 	"context"
 	"fmt"
+	"io"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/gorilla/websocket"
+	coderws "github.com/coder/websocket"
 	"github.com/nevaria-ai/gateway/internal/node"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -558,14 +559,14 @@ func TestRegistry_ConnectionMapping(t *testing.T) {
 // mockRegistryWebSocketConn is a mock WebSocket connection for testing.
 type mockRegistryWebSocketConn struct{}
 
-func (m *mockRegistryWebSocketConn) WriteMessage(messageType int, data []byte) error {
+func (m *mockRegistryWebSocketConn) Write(ctx context.Context, typ coderws.MessageType, p []byte) error {
 	return nil
 }
 
-func (m *mockRegistryWebSocketConn) ReadMessage() (int, []byte, error) {
-	return 0, nil, &websocket.CloseError{Code: websocket.CloseNormalClosure}
+func (m *mockRegistryWebSocketConn) Reader(ctx context.Context) (coderws.MessageType, io.Reader, error) {
+	return 0, nil, context.Canceled
 }
 
-func (m *mockRegistryWebSocketConn) Close() error {
+func (m *mockRegistryWebSocketConn) CloseNow() error {
 	return nil
 }

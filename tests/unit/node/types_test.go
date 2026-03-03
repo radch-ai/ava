@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
+	coderws "github.com/coder/websocket"
 	"github.com/nevaria-ai/gateway/internal/agent"
 	"github.com/nevaria-ai/gateway/internal/node"
 	"github.com/stretchr/testify/assert"
@@ -17,15 +19,15 @@ import (
 // mockTypesWebSocketConn is a mock WebSocket connection for testing.
 type mockTypesWebSocketConn struct{}
 
-func (m *mockTypesWebSocketConn) WriteMessage(messageType int, data []byte) error {
+func (m *mockTypesWebSocketConn) Write(ctx context.Context, typ coderws.MessageType, p []byte) error {
 	return nil
 }
 
-func (m *mockTypesWebSocketConn) ReadMessage() (int, []byte, error) {
+func (m *mockTypesWebSocketConn) Reader(ctx context.Context) (coderws.MessageType, io.Reader, error) {
 	return 0, nil, errors.New("not implemented")
 }
 
-func (m *mockTypesWebSocketConn) Close() error {
+func (m *mockTypesWebSocketConn) CloseNow() error {
 	return nil
 }
 
