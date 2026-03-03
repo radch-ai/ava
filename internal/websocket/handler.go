@@ -256,10 +256,10 @@ func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID str
 		}
 		h.agentManager.SubmitMsg(ctx, userID, msg.AgentID, conn, agent.Message{Content: msg.Content, ID: msg.ID})
 
-	case "stop":
+	case "interrupt":
 		ag := h.agentManager.Get(userID, msg.AgentID)
 		if ag != nil {
-			ag.Stop()
+			ag.Interrupt()
 		}
 
 	case "status":

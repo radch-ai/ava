@@ -51,6 +51,9 @@ type UserAgent struct {
 	laneCh chan Message // owned by AgentManager, passed via options
 	mu     sync.Mutex
 
+	queryCtx    context.Context
+	queryCancel context.CancelFunc
+
 	conn *wsconn.Wrapper
 
 	einoAgent  *adk.ChatModelAgent
@@ -116,26 +119,18 @@ func NewUserAgent(ctx context.Context, opts UserAgentOptions) *UserAgent {
 	return a
 }
 
-func (a *UserAgent) Stop() {
-	if a.cancel != nil {
-		a.cancel()
+// Interrupt cancels the current LLM query mid-stream.
+// The loop continues and will process buffered messages
+//
+// TODO: Add option to either:
+//   - Interrupt current run only (buffered messages stay) - current behavior
+//   - Interrupt and drain (discard buffered messages from laneCh)
+func (a *UserAgent) Interrupt() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.queryCancel != nil {
+		a.queryCancel()
 	}
-}
-
-func (a *UserAgent) GetContext() context.Context {
-	return a.ctx
-}
-
-func (a *UserAgent) GetAgentID() string {
-	return a.agentID
-}
-
-func (a *UserAgent) GetUserID() string {
-	return a.userID
-}
-
-func (a *UserAgent) GetConn() *wsconn.Wrapper {
-	return a.conn
 }
 
 func (a *UserAgent) UpdateConn(conn *websocket.Conn) {
@@ -145,14 +140,6 @@ func (a *UserAgent) UpdateConn(conn *websocket.Conn) {
 	if a.conn != nil {
 		a.conn.UpdateConn(conn)
 	}
-}
-
-func (a *UserAgent) SetProcessMessagesFn(fn func([]Message)) {
-	a.processMessagesFn = fn
-}
-
-func (a *UserAgent) SetOnExit(fn func()) {
-	a.onExit = fn
 }
 
 func buildInstruction(systemPrompt string, memories []string) string {
@@ -176,6 +163,11 @@ func (a *UserAgent) loop() {
 			idleTimer.Reset(a.idleTimeout)
 
 			messages := a.drainMessages(msg)
+
+			// Create fresh context for this query (can be cancelled by Pause)
+			a.mu.Lock()
+			a.queryCtx, a.queryCancel = context.WithCancel(a.ctx)
+			a.mu.Unlock()
 
 			if a.processMessagesFn != nil {
 				a.processMessagesFn(messages)
@@ -235,8 +227,12 @@ func (a *UserAgent) processMessages(messages []Message) {
 		}
 	}
 
-	if a.einoRunner != nil {
-		_ = a.einoRunner.Query(a.ctx, input.String())
+	a.mu.Lock()
+	queryCtx := a.queryCtx
+	a.mu.Unlock()
+
+	if a.einoRunner != nil && queryCtx != nil {
+		_ = a.einoRunner.Query(queryCtx, input.String())
 	}
 
 	if a.conn == nil || a.conn.Conn() == nil {

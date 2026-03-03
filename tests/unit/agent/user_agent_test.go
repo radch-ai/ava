@@ -9,7 +9,6 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	"github.com/nevaria-ai/gateway/internal/agent"
-	"github.com/nevaria-ai/gateway/internal/wsconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -95,10 +94,11 @@ func TestUserAgent_NewUserAgent_Success(t *testing.T) {
 		SystemPrompt:   "You are a helpful assistant.",
 		Description:    "Test agent for unit testing",
 		LaneCh:         laneCh,
+		IdleTimeout:    100 * time.Millisecond,
 	})
 
 	require.NotNil(t, ag)
-	ag.Stop()
+	time.Sleep(150 * time.Millisecond) // let idle timeout cleanup
 }
 
 func TestUserAgent_NewUserAgent_WithTools(t *testing.T) {
@@ -114,10 +114,11 @@ func TestUserAgent_NewUserAgent_WithTools(t *testing.T) {
 		SystemPrompt:   "You are a helpful assistant.",
 		Description:    "Test agent for tools testing",
 		LaneCh:         laneCh,
+		IdleTimeout:    100 * time.Millisecond,
 	})
 
-	time.Sleep(50 * time.Millisecond)
-	ag.Stop()
+	require.NotNil(t, ag)
+	time.Sleep(150 * time.Millisecond)
 }
 
 func TestUserAgent_NewUserAgent_WithMemories(t *testing.T) {
@@ -140,9 +141,11 @@ func TestUserAgent_NewUserAgent_WithMemories(t *testing.T) {
 		Memories:       memories,
 		Description:    "Test agent for memories testing",
 		LaneCh:         laneCh,
+		IdleTimeout:    100 * time.Millisecond,
 	})
 
-	ag.Stop()
+	require.NotNil(t, ag)
+	time.Sleep(150 * time.Millisecond)
 }
 
 func TestUserAgent_ConcurrentSubmit(t *testing.T) {
@@ -154,7 +157,7 @@ func TestUserAgent_ConcurrentSubmit(t *testing.T) {
 	var processedMu sync.Mutex
 
 	laneCh := make(chan agent.Message, 100)
-	ag := agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
+	_ = agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
 		AgentID:        "agent-concurrent-test",
 		UserID:         "user-1",
 		IdleTimeout:    2 * time.Second,
@@ -196,38 +199,6 @@ func TestUserAgent_ConcurrentSubmit(t *testing.T) {
 	processedMu.Unlock()
 
 	assert.GreaterOrEqual(t, totalProcessed, numGoroutines*numMessagesPerGoroutine)
-
-	ag.Stop()
-}
-
-func TestUserAgent_ConnWrapper_Integration(t *testing.T) {
-	mockChatModel := &MockToolCallingChatModel{}
-	mockQuotaModel := &MockQuotaChatModel{}
-	mockQuotaModel.SetInnerModel(mockChatModel)
-
-	wrapper := wsconn.NewWrapper(nil)
-
-	laneCh := make(chan agent.Message, 100)
-	ag := agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
-		AgentID:        "agent-wsconn-test",
-		UserID:         "user-1",
-		Conn:           wrapper,
-		QuotaChatModel: mockQuotaModel,
-		SystemPrompt:   "You are a helpful assistant.",
-		Description:    "Test agent for ConnWrapper testing",
-		LaneCh:         laneCh,
-	})
-
-	conn := ag.GetConn()
-	require.NotNil(t, conn)
-
-	assert.Nil(t, conn.Conn())
-
-	// Test UpdateConn
-	ag.UpdateConn(nil)
-	assert.Nil(t, conn.Conn())
-
-	ag.Stop()
 }
 
 func TestUserAgent_NewUserAgent_NilQuotaModel(t *testing.T) {
@@ -238,70 +209,11 @@ func TestUserAgent_NewUserAgent_NilQuotaModel(t *testing.T) {
 		QuotaChatModel: nil,
 		SystemPrompt:   "You are a helpful assistant.",
 		LaneCh:         laneCh,
+		IdleTimeout:    100 * time.Millisecond,
 	})
 
 	require.NotNil(t, ag)
-	ag.Stop()
-}
-
-func TestUserAgent_Submit_AfterStop(t *testing.T) {
-	mockChatModel := &MockToolCallingChatModel{}
-	mockQuotaModel := &MockQuotaChatModel{}
-	mockQuotaModel.SetInnerModel(mockChatModel)
-
-	laneCh := make(chan agent.Message, 100)
-	ag := agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
-		AgentID:        "agent-submit-stop-test",
-		UserID:         "user-1",
-		IdleTimeout:    100 * time.Millisecond,
-		QuotaChatModel: mockQuotaModel,
-		SystemPrompt:   "You are a helpful assistant.",
-		Description:    "Test agent for submit after stop testing",
-		LaneCh:         laneCh,
-	})
-
-	time.Sleep(50 * time.Millisecond)
-
-	ag.Stop()
-
-	// Send to lane after stop (will be ignored since agent is stopped)
-	laneCh <- agent.Message{
-		Content: "after stop",
-		ID:      "msg-after-stop",
-	}
-}
-
-func TestUserAgent_GetContext(t *testing.T) {
-	laneCh := make(chan agent.Message, 100)
-	ag := agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
-		AgentID: "agent-ctx-test",
-		UserID:  "user-1",
-		LaneCh:  laneCh,
-	})
-
-	ctx := ag.GetContext()
-	require.NotNil(t, ctx)
-
-	assert.Nil(t, ctx.Err())
-
-	ag.Stop()
-
-	time.Sleep(10 * time.Millisecond)
-
-	assert.NotNil(t, ag.GetContext().Err())
-}
-
-func TestUserAgent_GetAgentID_GetUserID(t *testing.T) {
-	laneCh := make(chan agent.Message, 100)
-	ag := agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
-		AgentID: "agent-id-test",
-		UserID:  "user-id-test",
-		LaneCh:  laneCh,
-	})
-
-	assert.Equal(t, "agent-id-test", ag.GetAgentID())
-	assert.Equal(t, "user-id-test", ag.GetUserID())
-	ag.Stop()
+	time.Sleep(150 * time.Millisecond)
 }
 
 func TestUserAgent_IdleTimeout_TriggersExit(t *testing.T) {
@@ -341,7 +253,7 @@ func TestUserAgent_ProcessMessagesCalled(t *testing.T) {
 	var messagesMu sync.Mutex
 
 	laneCh := make(chan agent.Message, 100)
-	ag := agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
+	_ = agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
 		AgentID:        "agent-process-test",
 		UserID:         "user-1",
 		IdleTimeout:    500 * time.Millisecond,
@@ -363,6 +275,4 @@ func TestUserAgent_ProcessMessagesCalled(t *testing.T) {
 	messagesMu.Lock()
 	assert.GreaterOrEqual(t, len(messagesReceived), 1)
 	messagesMu.Unlock()
-
-	ag.Stop()
 }

@@ -115,15 +115,3 @@ func (m *AgentManager) Get(userID, agentID string) *agent.UserAgent {
 	}
 	return nil
 }
-
-// Remove stops and removes the agent for (userID, agentID).
-func (m *AgentManager) Remove(userID, agentID string) {
-	key := AgentKey{UserID: userID, AgentID: agentID}
-
-	if val, ok := m.lanes.LoadAndDelete(key); ok {
-		lane := val.(*AgentLane)
-		if lane.Agent != nil {
-			lane.Agent.Stop()
-		}
-	}
-}
