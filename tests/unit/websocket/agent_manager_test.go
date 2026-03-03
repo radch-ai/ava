@@ -21,7 +21,7 @@ func TestAgentManagerCreation(t *testing.T) {
 	}
 }
 
-func TestGetOrAdd(t *testing.T) {
+func TestGet(t *testing.T) {
 	logger := zerolog.Nop()
 
 	mgr := websocket.NewAgentManager(logger, nil)
@@ -30,14 +30,23 @@ func TestGetOrAdd(t *testing.T) {
 	agentID := "test-agent-456"
 	conn := wsconn.NewWrapper(nil)
 
-	ag := mgr.GetOrAdd(context.Background(), userID, agentID, conn) //nolint:staticcheck // Testing deprecated method
-	if ag == nil {
-		t.Fatal("GetOrAdd returned nil")
+	// Get returns nil before agent is created
+	ag := mgr.Get(userID, agentID)
+	if ag != nil {
+		t.Error("Expected nil before agent creation")
 	}
 
-	ag2 := mgr.GetOrAdd(context.Background(), userID, agentID, conn) //nolint:staticcheck // Testing deprecated method
-	if ag != ag2 {
-		t.Error("Expected same agent instance")
+	// Create agent via Submit
+	msg := agent.Message{Content: "test", ID: "msg-1"}
+	ok := mgr.SubmitMsg(context.Background(), userID, agentID, conn, msg)
+	if !ok {
+		t.Fatal("Submit failed")
+	}
+
+	// Get returns the agent after creation
+	ag = mgr.Get(userID, agentID)
+	if ag == nil {
+		t.Error("Expected agent after Submit")
 	}
 }
 
@@ -50,39 +59,26 @@ func TestRemove(t *testing.T) {
 	agentID := "test-agent-456"
 	conn := wsconn.NewWrapper(nil)
 
-	ag := mgr.GetOrAdd(context.Background(), userID, agentID, conn) //nolint:staticcheck // Testing deprecated method
+	// Create agent via Submit
+	msg := agent.Message{Content: "test", ID: "msg-1"}
+	ok := mgr.SubmitMsg(context.Background(), userID, agentID, conn, msg)
+	if !ok {
+		t.Fatal("Submit failed")
+	}
+
+	// Verify agent exists
+	ag := mgr.Get(userID, agentID)
 	if ag == nil {
-		t.Fatal("GetOrAdd returned nil")
+		t.Fatal("Expected agent before removal")
 	}
 
 	mgr.Remove(userID, agentID)
 
-	// After removal, GetOrAdd should create a new agent
-	ag2 := mgr.GetOrAdd(context.Background(), userID, agentID, conn) //nolint:staticcheck // Testing deprecated method
-	if ag == ag2 {
-		t.Error("Expected different agent instance after removal")
+	// After removal, Get returns nil
+	ag = mgr.Get(userID, agentID)
+	if ag != nil {
+		t.Error("Expected nil after removal")
 	}
-}
-
-func TestUpdateConn(t *testing.T) {
-	logger := zerolog.Nop()
-
-	mgr := websocket.NewAgentManager(logger, nil)
-
-	userID := "test-user-123"
-	agentID := "test-agent-456"
-	conn := wsconn.NewWrapper(nil)
-
-	ag := mgr.GetOrAdd(context.Background(), userID, agentID, conn) //nolint:staticcheck // Testing deprecated method
-	if ag == nil {
-		t.Fatal("GetOrAdd returned nil")
-	}
-
-	// UpdateConn should not panic with nil
-	mgr.UpdateConn(userID, agentID, nil)
-
-	// UpdateConn on non-existent agent should not panic
-	mgr.UpdateConn("nonexistent", "nonexistent", nil)
 }
 
 func TestAgentKeyCompositeKey(t *testing.T) {
@@ -93,22 +89,31 @@ func TestAgentKeyCompositeKey(t *testing.T) {
 	agentID := "agent-456"
 	conn := wsconn.NewWrapper(nil)
 
-	ag1 := mgr.GetOrAdd(context.Background(), userID, agentID, conn) //nolint:staticcheck // Testing deprecated method
+	// Create first agent
+	msg := agent.Message{Content: "test", ID: "msg-1"}
+	_ = mgr.SubmitMsg(context.Background(), userID, agentID, conn, msg)
+	ag1 := mgr.Get(userID, agentID)
 	if ag1 == nil {
-		t.Fatal("GetOrAdd returned nil")
+		t.Fatal("Expected agent")
 	}
 
-	ag2 := mgr.GetOrAdd(context.Background(), userID, agentID, conn) //nolint:staticcheck // Testing deprecated method
+	// Same key returns same agent
+	_ = mgr.SubmitMsg(context.Background(), userID, agentID, conn, msg)
+	ag2 := mgr.Get(userID, agentID)
 	if ag1 != ag2 {
 		t.Error("Expected same agent for same (userID, agentID)")
 	}
 
-	ag3 := mgr.GetOrAdd(context.Background(), userID, "agent-789", conn) //nolint:staticcheck // Testing deprecated method
+	// Different agentID creates new agent
+	_ = mgr.SubmitMsg(context.Background(), userID, "agent-789", conn, msg)
+	ag3 := mgr.Get(userID, "agent-789")
 	if ag1 == ag3 {
 		t.Error("Expected different agent for different agentID")
 	}
 
-	ag4 := mgr.GetOrAdd(context.Background(), "user-456", agentID, conn) //nolint:staticcheck // Testing deprecated method
+	// Different userID creates new agent
+	_ = mgr.SubmitMsg(context.Background(), "user-456", agentID, conn, msg)
+	ag4 := mgr.Get("user-456", agentID)
 	if ag1 == ag4 {
 		t.Error("Expected different agent for different userID")
 	}
@@ -124,7 +129,7 @@ func TestSubmit(t *testing.T) {
 
 	msg := agent.Message{Content: "test message", ID: "msg-1"}
 
-	ok := mgr.Submit(context.Background(), userID, agentID, conn, msg)
+	ok := mgr.SubmitMsg(context.Background(), userID, agentID, conn, msg)
 	if !ok {
 		t.Error("Expected Submit to return true for active agent")
 	}
@@ -138,28 +143,37 @@ func TestSubmitAfterStop(t *testing.T) {
 	agentID := "test-agent-stop"
 	conn := wsconn.NewWrapper(nil)
 
-	// Create agent via Submit
+	// Create agent via SubmitMsg
 	msg := agent.Message{Content: "first message", ID: "msg-1"}
-	ok := mgr.Submit(context.Background(), userID, agentID, conn, msg)
+	ok := mgr.SubmitMsg(context.Background(), userID, agentID, conn, msg)
 	if !ok {
-		t.Fatal("Expected first Submit to return true")
+		t.Fatal("Expected first SubmitMsg to return true")
 	}
 
 	// Get the agent and stop it
-	ag := mgr.GetOrAdd(context.Background(), userID, agentID, conn) //nolint:staticcheck // Need to get agent to stop it
+	ag := mgr.Get(userID, agentID)
 	if ag == nil {
-		t.Fatal("GetOrAdd returned nil")
+		t.Fatal("Get returned nil")
 	}
 	ag.Stop()
 
-	// Wait for exit to propagate
+	// Wait for exit to propagate (OnExit deletes lane)
 	time.Sleep(50 * time.Millisecond)
 
-	// Submit should return false because agent was stopped
+	// SubmitMsg should create a NEW agent (lane was deleted on exit)
 	msg2 := agent.Message{Content: "after stop", ID: "msg-2"}
-	ok = mgr.Submit(context.Background(), userID, agentID, conn, msg2)
-	if ok {
-		t.Error("Expected Submit to return false for stopped agent")
+	ok = mgr.SubmitMsg(context.Background(), userID, agentID, conn, msg2)
+	if !ok {
+		t.Error("Expected SubmitMsg to create new agent and return true")
+	}
+
+	// Verify new agent was created
+	ag2 := mgr.Get(userID, agentID)
+	if ag2 == nil {
+		t.Error("Expected new agent to exist")
+	}
+	if ag == ag2 {
+		t.Error("Expected different agent instance")
 	}
 }
 
@@ -171,16 +185,58 @@ func TestSubmitCreatesAgent(t *testing.T) {
 	agentID := "test-agent-create"
 	conn := wsconn.NewWrapper(nil)
 
-	// Submit without prior GetOrAdd should create agent
+	// Submit without prior agent should create agent
 	msg := agent.Message{Content: "create and submit", ID: "msg-3"}
-	ok := mgr.Submit(context.Background(), userID, agentID, conn, msg)
+	ok := mgr.SubmitMsg(context.Background(), userID, agentID, conn, msg)
 	if !ok {
 		t.Error("Expected Submit to create agent and return true")
 	}
 
 	// Verify agent was created
-	ag := mgr.GetOrAdd(context.Background(), userID, agentID, conn) //nolint:staticcheck // Verifying agent creation
+	ag := mgr.Get(userID, agentID)
 	if ag == nil {
 		t.Error("Expected agent to be created by Submit")
+	}
+}
+
+func TestSubmitResetsDeadLane(t *testing.T) {
+	logger := zerolog.Nop()
+	mgr := websocket.NewAgentManager(logger, nil)
+
+	userID := "test-user-reset"
+	agentID := "test-agent-reset"
+	conn := wsconn.NewWrapper(nil)
+
+	// Create agent via Submit
+	msg := agent.Message{Content: "first", ID: "msg-1"}
+	ok := mgr.SubmitMsg(context.Background(), userID, agentID, conn, msg)
+	if !ok {
+		t.Fatal("Expected first Submit to return true")
+	}
+
+	// Get and stop the agent
+	ag := mgr.Get(userID, agentID)
+	if ag == nil {
+		t.Fatal("Expected agent to exist")
+	}
+	ag.Stop()
+
+	// Wait for exit
+	time.Sleep(50 * time.Millisecond)
+
+	// Submit should create a NEW agent (lane was dead)
+	msg2 := agent.Message{Content: "second", ID: "msg-2"}
+	ok = mgr.SubmitMsg(context.Background(), userID, agentID, conn, msg2)
+	if !ok {
+		t.Error("Expected Submit to create new agent after previous one exited")
+	}
+
+	// Verify new agent was created
+	ag2 := mgr.Get(userID, agentID)
+	if ag2 == nil {
+		t.Error("Expected new agent to be created")
+	}
+	if ag == ag2 {
+		t.Error("Expected different agent instance")
 	}
 }

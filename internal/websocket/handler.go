@@ -254,22 +254,24 @@ func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID str
 			logger.Debug().Msg("prompt missing id or text")
 			return
 		}
-		// Refresh conn in case this is a reconnect on an existing agent.
-		h.agentManager.UpdateConn(userID, msg.AgentID, conn.Conn())
-		h.agentManager.Submit(ctx, userID, msg.AgentID, conn, agent.Message{Content: msg.Content, ID: msg.ID})
+		h.agentManager.SubmitMsg(ctx, userID, msg.AgentID, conn, agent.Message{Content: msg.Content, ID: msg.ID})
 
 	case "stop":
-		ag := h.agentManager.GetOrAdd(ctx, userID, msg.AgentID, conn)
-		ag.Stop()
+		ag := h.agentManager.Get(userID, msg.AgentID)
+		if ag != nil {
+			ag.Stop()
+		}
 
 	case "status":
-		ag := h.agentManager.GetOrAdd(ctx, userID, msg.AgentID, conn)
-		if err := conn.WriteJSON(ctx, wsEvent{
-			Type:    "lane_status",
-			AgentID: msg.AgentID,
-			Data:    ag.GetStatus(),
-		}); err != nil {
-			logger.Debug().Err(err).Msg("failed to send status event")
+		ag := h.agentManager.Get(userID, msg.AgentID)
+		if ag != nil {
+			if err := conn.WriteJSON(ctx, wsEvent{
+				Type:    "lane_status",
+				AgentID: msg.AgentID,
+				Data:    ag.GetStatus(),
+			}); err != nil {
+				logger.Debug().Err(err).Msg("failed to send status event")
+			}
 		}
 
 	default:

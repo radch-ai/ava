@@ -16,8 +16,7 @@ import (
 )
 
 const (
-	defaultIdleTimeout   = 5 * time.Minute
-	defaultLaneQueueSize = 100
+	defaultIdleTimeout = 5 * time.Minute
 )
 
 // Message represents a message submitted to an agent.
@@ -39,6 +38,7 @@ type UserAgentOptions struct {
 	Memories          []string
 	IdleTimeout       time.Duration
 	Conn              *wsconn.Wrapper
+	LaneCh            chan Message // passed from AgentManager
 	ProcessMessagesFn func([]Message)
 	OnExit            func()
 }
@@ -49,7 +49,7 @@ type UserAgent struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 
-	laneCh chan Message
+	laneCh chan Message // owned by AgentManager, passed via options
 	mu     sync.Mutex
 
 	conn *wsconn.Wrapper
@@ -64,15 +64,19 @@ type UserAgent struct {
 
 // NewUserAgent creates a new agent, initializes it with the LLM model if provided,
 // and starts its message processing loop. The returned agent is fully ready to use.
-func NewUserAgent(ctx context.Context, firstMessage Message, opts UserAgentOptions) *UserAgent {
+func NewUserAgent(ctx context.Context, opts UserAgentOptions) *UserAgent {
 	ctx, cancel := context.WithCancel(ctx)
+
+	if opts.LaneCh == nil {
+		panic("LaneCh is required")
+	}
 
 	a := &UserAgent{
 		agentID:           opts.AgentID,
 		userID:            opts.UserID,
 		ctx:               ctx,
 		cancel:            cancel,
-		laneCh:            make(chan Message, defaultLaneQueueSize),
+		laneCh:            opts.LaneCh,
 		conn:              opts.Conn,
 		idleTimeout:       opts.IdleTimeout,
 		processMessagesFn: opts.ProcessMessagesFn,
@@ -110,11 +114,6 @@ func NewUserAgent(ctx context.Context, firstMessage Message, opts UserAgentOptio
 	// Start the message processing loop
 	go a.loop()
 
-	// Queue first message if provided
-	if firstMessage.Content != "" {
-		a.laneCh <- firstMessage
-	}
-
 	return a
 }
 
@@ -134,10 +133,6 @@ func (a *UserAgent) GetAgentID() string {
 
 func (a *UserAgent) GetUserID() string {
 	return a.userID
-}
-
-func (a *UserAgent) Submit(msg Message) {
-	a.laneCh <- msg
 }
 
 func (a *UserAgent) GetConn() *wsconn.Wrapper {
