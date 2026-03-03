@@ -54,7 +54,8 @@ func TestNewADKAgent_CreatesLaneCh(t *testing.T) {
 	assert.NotNil(t, agent.laneCh)
 	assert.Equal(t, "agent1", agent.agentID)
 	assert.Equal(t, "user1", agent.userID)
-	assert.NotNil(t, agent.connRef)
+	// conn is nil when not provided
+	assert.Nil(t, agent.conn)
 }
 
 func TestNewADKAgent_QueuesFirstMessage(t *testing.T) {
@@ -249,8 +250,8 @@ func TestADKAgent_ProcessTasks_WithNilConn(t *testing.T) {
 
 	agent.processTasksFn = nil
 
-	assert.NotNil(t, agent.connRef)
-	assert.False(t, agent.connRef.IsSet())
+	// conn is nil when not provided
+	assert.Nil(t, agent.conn)
 
 	tasks := []Task{
 		{Message: "hello", MsgID: "msg-123"},

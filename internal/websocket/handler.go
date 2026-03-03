@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/nevaria-ai/gateway/internal/agent"
 	internalctx "github.com/nevaria-ai/gateway/internal/ctx"
+	"github.com/nevaria-ai/gateway/internal/wsconn"
 	"github.com/rs/zerolog"
 )
 
@@ -44,15 +45,12 @@ type Handler struct {
 
 // NewHandler creates a new WebSocket handler with connection limiting.
 func NewHandler(logger zerolog.Logger, allowedOrigins []string, maxConns int, agentOpts *AgentManagerOptions) *Handler {
-	acceptOpts := websocket.AcceptOptions{
-		OriginPatterns: allowedOrigins,
-	}
-
 	sem := make(chan struct{}, maxConns)
-
 	return &Handler{
-		logger:       logger,
-		acceptOpts:   acceptOpts,
+		logger: logger,
+		acceptOpts: websocket.AcceptOptions{
+			OriginPatterns: allowedOrigins,
+		},
 		connSem:      sem,
 		maxConns:     maxConns,
 		agentManager: NewAgentManager(logger, agentOpts),
@@ -60,7 +58,8 @@ func NewHandler(logger zerolog.Logger, allowedOrigins []string, maxConns int, ag
 }
 
 // HandleWebSocket handles an incoming WebSocket connection upgrade request.
-// Each connection spawns one goroutine for ping loop; reads happen on main goroutine.
+// Each connection is dedicated to a single agent lane — no multiplexing.
+// One goroutine is spawned for the ping loop; reads happen on the main goroutine.
 func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Check connection limit
 	if h.connSem != nil {
@@ -109,14 +108,14 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		clientIP = r.RemoteAddr
 	}
 
-	logCtx := h.logger.With().
+	logger := h.logger.With().
 		Str("conn_id", connID).
 		Str("user_id", userID).
 		Str("client_ip", clientIP).
 		Int("active_conns", int(atomic.LoadInt32(&h.activeConns))).
 		Logger()
 
-	logCtx.Info().Msg("websocket connection established")
+	logger.Info().Msg("websocket connection established")
 
 	// Context for graceful shutdown - cancellable by any goroutine
 	ctx, cancel := context.WithCancel(context.Background())
@@ -129,75 +128,65 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Start ping goroutine to keep connection alive
-	go h.pingLoop(ctx, conn, logCtx, cancel)
+	go h.pingLoop(ctx, conn, logger, cancel)
 
 	// Send connected event to client
-	connectedEvent := wsEvent{
-		Type: "connected",
-		Data: map[string]string{
-			"user_id": userID,
-			"conn_id": connID,
-		},
-	}
 	writeCtx, writeCancel := context.WithTimeout(ctx, writeTimeout)
-	if err := wsjson.Write(writeCtx, conn, connectedEvent); err != nil {
-		writeCancel()
-		logCtx.Warn().Err(err).Msg("failed to send connected event")
+	err = wsjson.Write(writeCtx, conn, wsEvent{
+		Type: "connected",
+		Data: map[string]string{"user_id": userID, "conn_id": connID},
+	})
+	writeCancel()
+	if err != nil {
+		logger.Warn().Err(err).Msg("failed to send connected event")
 		return
 	}
-	writeCancel()
 
-	// Create connection wrapper for agent streaming
-	connWrapper := NewWSConnWrapper(conn)
+	// One wsconn.Wrapper per connection — this conn is dedicated to one agent lane.
+	// On reconnect, UpdateConn swaps the underlying conn atomically for agent streaming
+	connWrapper := wsconn.NewWrapper(conn)
 
 	// Message loop
 	for {
 		select {
 		case <-ctx.Done():
-			logCtx.Info().Msg("context cancelled, closing connection")
+			logger.Info().Msg("context cancelled, closing connection")
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 			return
 		default:
-			// Set read deadline
 			readCtx, readCancel := context.WithTimeout(ctx, readTimeout)
-
-			// Read message
 			typ, reader, err := conn.Reader(readCtx)
 			if err != nil {
 				readCancel()
 				if websocket.CloseStatus(err) == websocket.StatusNormalClosure ||
 					websocket.CloseStatus(err) == websocket.StatusGoingAway {
-					logCtx.Info().Msg("client closed connection")
+					logger.Info().Msg("client closed connection")
 				} else {
-					logCtx.Error().Err(err).Msg("read error")
+					logger.Error().Err(err).Msg("read error")
 				}
 				cancel()
 				return
 			}
 
-			// Read the complete message
 			message, err := io.ReadAll(reader)
 			readCancel()
 			if err != nil {
-				logCtx.Error().Err(err).Msg("failed to read message")
+				logger.Error().Err(err).Msg("failed to read message")
 				cancel()
 				return
 			}
 
-			logCtx.Debug().
-				Int("msg_type", int(typ)).
-				Int("msg_size", len(message)).
-				Msg("received message")
+			logger.Debug().Int("msg_type", int(typ)).Int("msg_size", len(message)).Msg("received message")
 
 			// Handle text messages as potential agent prompts
 			if typ == websocket.MessageText {
-				h.handleTextMessage(ctx, message, userID, connWrapper, logCtx)
+				h.handleTextMessage(ctx, message, userID, connWrapper, logger)
 			} else {
 				// Echo non-text messages back
 				writeCtx, writeCancel := context.WithTimeout(ctx, writeTimeout)
 				if err := conn.Write(writeCtx, typ, message); err != nil {
 					writeCancel()
-					logCtx.Error().Err(err).Msg("failed to echo message")
+					logger.Error().Err(err).Msg("failed to echo message")
 					cancel()
 					return
 				}
@@ -207,8 +196,8 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// pingLoop sends periodic ping frames to keep connections alive.
-// Uses conn.Ping which handles pong response automatically.
+// pingLoop sends periodic ping frames to keep the connection alive.
+// coder/websocket handles pong responses automatically.
 func (h *Handler) pingLoop(ctx context.Context, conn *websocket.Conn, logger zerolog.Logger, cancel context.CancelFunc) {
 	ticker := time.NewTicker(pingInterval)
 	defer ticker.Stop()
@@ -221,7 +210,6 @@ func (h *Handler) pingLoop(ctx context.Context, conn *websocket.Conn, logger zer
 			pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
 			err := conn.Ping(pingCtx)
 			pingCancel()
-
 			if err != nil {
 				logger.Debug().Err(err).Msg("ping failed - connection likely dead")
 				cancel()
@@ -231,82 +219,67 @@ func (h *Handler) pingLoop(ctx context.Context, conn *websocket.Conn, logger zer
 	}
 }
 
-// handleTextMessage processes incoming text messages and routes them to the appropriate agent.
-// Supported message types: "prompt" (send to agent), "steer" (stop agent), "status" (get agent status).
-func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID string, conn *WSConnWrapper, logger zerolog.Logger) {
-	var msg struct {
-		ID      string `json:"id"`
-		Type    string `json:"type"`
-		AgentID string `json:"agent_id"` // Required field - which agent to route to
-		Text    string `json:"text,omitempty"`
-		Content string `json:"content,omitempty"` // for tool calls, etc
-	}
+// incomingMsg is the expected shape of all client messages.
+type incomingMsg struct {
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	AgentID string `json:"agent_id"`
+	Text    string `json:"text,omitempty"`
+	Content string `json:"content,omitempty"`
+}
 
+// handleTextMessage parses and routes incoming client messages to the appropriate agent.
+//
+// Supported message types:
+//   - "prompt": submit a task to the agent, creating it if needed
+//   - "stop":   stop the agent's current task
+//   - "status": return the agent's current status over the connection
+//
+// On reconnect, "prompt" also refreshes the agent's conn via UpdateConn so
+// subsequent streaming events go to the new connection.
+func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID string, conn *wsconn.Wrapper, logger zerolog.Logger) {
+	var msg incomingMsg
 	if err := json.Unmarshal(data, &msg); err != nil {
 		logger.Debug().Err(err).Msg("failed to unmarshal message")
 		return
 	}
 
+	if msg.AgentID == "" {
+		logger.Debug().Msg("missing agent_id")
+		return
+	}
+
 	switch msg.Type {
 	case "prompt":
-		if msg.ID == "" {
-			logger.Debug().Msg("prompt message missing id field")
+		if msg.ID == "" || msg.Text == "" {
+			logger.Debug().Msg("prompt missing id or text")
 			return
 		}
-		if msg.AgentID == "" {
-			logger.Debug().Msg("prompt message missing agent_id field")
-			return
-		}
-		if msg.Text == "" {
-			logger.Debug().Msg("prompt message missing text field")
-			return
-		}
+		ag := h.agentManager.GetOrAdd(ctx, userID, msg.AgentID, conn)
+		// Refresh conn in case this is a reconnect on an existing agent.
+		h.agentManager.UpdateConn(userID, msg.AgentID, conn.Conn())
+		ag.Submit(agent.Task{Message: msg.Text, MsgID: msg.ID})
 
-		task := agent.Task{
-			Message: msg.Text,
-			MsgID:   msg.ID,
-		}
-		ag := h.agentManager.GetAgent(ctx, userID, msg.AgentID, conn, task)
-		if ag == nil {
-			logger.Debug().Msg("failed to get agent")
-			return
-		}
-		ag.Submit(task)
-	case "steer":
-		if msg.AgentID == "" {
-			logger.Debug().Msg("steer message missing agent_id field")
-			return
-		}
-
-		ag := h.agentManager.GetAgent(ctx, userID, msg.AgentID, nil, agent.Task{})
-		if ag == nil {
-			logger.Debug().Msg("failed to get agent for steer")
-			return
-		}
+	case "stop":
+		ag := h.agentManager.GetOrAdd(ctx, userID, msg.AgentID, conn)
 		ag.Stop()
+
 	case "status":
-		if msg.AgentID == "" {
-			logger.Debug().Msg("status message missing agent_id field")
-			return
-		}
-
-		agentInstance := h.agentManager.GetOrCreateAgentForUser(ctx, userID, msg.AgentID, agent.Task{})
-		status := agentInstance.GetStatus()
-
-		statusEvent := wsEvent{
+		ag := h.agentManager.GetOrAdd(ctx, userID, msg.AgentID, conn)
+		if err := conn.WriteJSON(ctx, wsEvent{
 			Type:    "lane_status",
 			AgentID: msg.AgentID,
-			Data:    status,
-		}
-		if err := conn.WriteJSON(ctx, statusEvent); err != nil {
+			Data:    ag.GetStatus(),
+		}); err != nil {
 			logger.Debug().Err(err).Msg("failed to send status event")
 		}
+
 	default:
 		logger.Debug().Str("msg_type", msg.Type).Msg("unknown message type")
 	}
 }
 
-// wsEvent represents an event sent to the WebSocket client as JSON.
+// wsEvent is the JSON envelope for all server-to-client events.
 type wsEvent struct {
 	Type    string `json:"type"`
 	AgentID string `json:"agent_id,omitempty"`

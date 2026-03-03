@@ -11,6 +11,8 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
+	"github.com/coder/websocket"
+	"github.com/nevaria-ai/gateway/internal/wsconn"
 )
 
 const (
@@ -35,6 +37,7 @@ type ADKAgentOptions struct {
 	QuotaChatModel QuotaChatModelInterface
 	Memories       []string
 	IdleTimeout    time.Duration
+	Conn           *wsconn.Wrapper
 }
 
 type ADKAgent struct {
@@ -46,7 +49,7 @@ type ADKAgent struct {
 	laneCh chan Task
 	mu     sync.Mutex
 
-	connRef *WSConnRef
+	conn *wsconn.Wrapper
 
 	einoAgent  *adk.ChatModelAgent
 	einoRunner *adk.Runner
@@ -65,7 +68,7 @@ func NewADKAgent(ctx context.Context, firstTask Task, opts ADKAgentOptions) *ADK
 		ctx:         ctx,
 		cancel:      cancel,
 		laneCh:      make(chan Task, defaultLaneQueueSize),
-		connRef:     NewWSConnRef(),
+		conn:        opts.Conn,
 		idleTimeout: opts.IdleTimeout,
 	}
 
@@ -100,8 +103,14 @@ func (a *ADKAgent) Submit(task Task) {
 	a.laneCh <- task
 }
 
-func (a *ADKAgent) GetConnRef() *WSConnRef {
-	return a.connRef
+func (a *ADKAgent) GetConn() *wsconn.Wrapper {
+	return a.conn
+}
+
+func (a *ADKAgent) UpdateConn(conn *websocket.Conn) {
+	if a.conn != nil {
+		a.conn.UpdateConn(conn)
+	}
 }
 
 func (a *ADKAgent) SetProcessTasksFn(fn func([]Task)) {
@@ -246,7 +255,7 @@ func (a *ADKAgent) processTasks(tasks []Task) {
 		_ = a.einoRunner.Query(a.ctx, input.String())
 	}
 
-	if !a.connRef.IsSet() {
+	if a.conn == nil || a.conn.Conn() == nil {
 		a.notifyUser(msgID, input.String())
 	}
 }

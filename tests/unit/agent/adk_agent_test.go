@@ -9,6 +9,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	"github.com/nevaria-ai/gateway/internal/agent"
+	"github.com/nevaria-ai/gateway/internal/wsconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -216,31 +217,32 @@ func TestADKAgent_ConcurrentSubmit(t *testing.T) {
 	ag.Stop()
 }
 
-func TestADKAgent_WSConnRef_Integration(t *testing.T) {
+func TestADKAgent_ConnWrapper_Integration(t *testing.T) {
 	mockChatModel := &MockToolCallingChatModel{}
 	mockQuotaModel := &MockQuotaChatModel{}
 	mockQuotaModel.SetInnerModel(mockChatModel)
 
+	wrapper := wsconn.NewWrapper(nil)
+
 	ag := agent.NewADKAgent(context.Background(), agent.Task{Message: "hello"}, agent.ADKAgentOptions{
 		AgentID: "agent-wsconn-test",
 		UserID:  "user-1",
+		Conn:    wrapper,
 	})
 
-	connRef := ag.GetConnRef()
-	require.NotNil(t, connRef)
+	conn := ag.GetConn()
+	require.NotNil(t, conn)
 
-	assert.False(t, connRef.IsSet())
+	assert.Nil(t, conn.Conn())
 
-	connRef.Set(nil)
-	assert.False(t, connRef.IsSet())
-
-	connRef.Clear()
-	assert.False(t, connRef.IsSet())
+	// Test UpdateConn
+	ag.UpdateConn(nil)
+	assert.Nil(t, conn.Conn())
 
 	opts := agent.ADKAgentOptions{
 		QuotaChatModel: mockQuotaModel,
 		SystemPrompt:   "You are a helpful assistant.",
-		Description:    "Test agent for WSConnRef testing",
+		Description:    "Test agent for ConnWrapper testing",
 	}
 
 	err := ag.Start(opts)

@@ -4,9 +4,8 @@ import (
 	"context"
 	"testing"
 
-	agentpkg "github.com/nevaria-ai/gateway/internal/agent"
-
 	"github.com/nevaria-ai/gateway/internal/websocket"
+	"github.com/nevaria-ai/gateway/internal/wsconn"
 	"github.com/rs/zerolog"
 )
 
@@ -20,58 +19,68 @@ func TestAgentManagerCreation(t *testing.T) {
 	}
 }
 
-func TestGetOrCreateAgentForUser(t *testing.T) {
+func TestGetOrAdd(t *testing.T) {
 	logger := zerolog.Nop()
 
 	mgr := websocket.NewAgentManager(logger, nil)
 
 	userID := "test-user-123"
 	agentID := "test-agent-456"
+	conn := wsconn.NewWrapper(nil)
 
-	ag := mgr.GetOrCreateAgentForUser(context.Background(), userID, agentID, agentpkg.Task{})
+	ag := mgr.GetOrAdd(context.Background(), userID, agentID, conn)
 	if ag == nil {
-		t.Fatal("GetOrCreateAgentForUser returned nil")
+		t.Fatal("GetOrAdd returned nil")
 	}
 
-	ag2 := mgr.GetOrCreateAgentForUser(context.Background(), userID, agentID, agentpkg.Task{})
+	ag2 := mgr.GetOrAdd(context.Background(), userID, agentID, conn)
 	if ag != ag2 {
 		t.Error("Expected same agent instance")
 	}
 }
 
-func TestRemoveAgentForUser(t *testing.T) {
+func TestRemove(t *testing.T) {
 	logger := zerolog.Nop()
 
 	mgr := websocket.NewAgentManager(logger, nil)
 
 	userID := "test-user-123"
 	agentID := "test-agent-456"
+	conn := wsconn.NewWrapper(nil)
 
-	ag := mgr.GetOrCreateAgentForUser(context.Background(), userID, agentID, agentpkg.Task{})
+	ag := mgr.GetOrAdd(context.Background(), userID, agentID, conn)
 	if ag == nil {
-		t.Fatal("GetOrCreateAgentForUser returned nil")
+		t.Fatal("GetOrAdd returned nil")
 	}
 
-	mgr.RemoveAgentForUser(userID, agentID)
+	mgr.Remove(userID, agentID)
 
-	ag2 := mgr.GetOrCreateAgentForUser(context.Background(), userID, agentID, agentpkg.Task{})
+	// After removal, GetOrAdd should create a new agent
+	ag2 := mgr.GetOrAdd(context.Background(), userID, agentID, conn)
 	if ag == ag2 {
 		t.Error("Expected different agent instance after removal")
 	}
 }
 
-func TestGetAgent(t *testing.T) {
+func TestUpdateConn(t *testing.T) {
 	logger := zerolog.Nop()
 
 	mgr := websocket.NewAgentManager(logger, nil)
 
 	userID := "test-user-123"
 	agentID := "test-agent-456"
+	conn := wsconn.NewWrapper(nil)
 
-	ag := mgr.GetAgent(context.Background(), userID, agentID, nil, agentpkg.Task{})
+	ag := mgr.GetOrAdd(context.Background(), userID, agentID, conn)
 	if ag == nil {
-		t.Fatal("GetAgent returned nil")
+		t.Fatal("GetOrAdd returned nil")
 	}
+
+	// UpdateConn should not panic with nil
+	mgr.UpdateConn(userID, agentID, nil)
+
+	// UpdateConn on non-existent agent should not panic
+	mgr.UpdateConn("nonexistent", "nonexistent", nil)
 }
 
 func TestAgentKeyCompositeKey(t *testing.T) {
@@ -80,23 +89,24 @@ func TestAgentKeyCompositeKey(t *testing.T) {
 
 	userID := "user-123"
 	agentID := "agent-456"
+	conn := wsconn.NewWrapper(nil)
 
-	ag1 := mgr.GetOrCreateAgentForUser(context.Background(), userID, agentID, agentpkg.Task{})
+	ag1 := mgr.GetOrAdd(context.Background(), userID, agentID, conn)
 	if ag1 == nil {
-		t.Fatal("GetOrCreateAgentForUser returned nil")
+		t.Fatal("GetOrAdd returned nil")
 	}
 
-	ag2 := mgr.GetOrCreateAgentForUser(context.Background(), userID, agentID, agentpkg.Task{})
+	ag2 := mgr.GetOrAdd(context.Background(), userID, agentID, conn)
 	if ag1 != ag2 {
 		t.Error("Expected same agent for same (userID, agentID)")
 	}
 
-	ag3 := mgr.GetOrCreateAgentForUser(context.Background(), userID, "agent-789", agentpkg.Task{})
+	ag3 := mgr.GetOrAdd(context.Background(), userID, "agent-789", conn)
 	if ag1 == ag3 {
 		t.Error("Expected different agent for different agentID")
 	}
 
-	ag4 := mgr.GetOrCreateAgentForUser(context.Background(), "user-456", agentID, agentpkg.Task{})
+	ag4 := mgr.GetOrAdd(context.Background(), "user-456", agentID, conn)
 	if ag1 == ag4 {
 		t.Error("Expected different agent for different userID")
 	}

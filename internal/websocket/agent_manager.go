@@ -4,49 +4,36 @@ import (
 	"context"
 	"sync"
 
+	"github.com/coder/websocket"
 	"github.com/nevaria-ai/gateway/internal/agent"
+	"github.com/nevaria-ai/gateway/internal/wsconn"
 	"github.com/rs/zerolog"
 )
-
-// Agent defines the interface for agent operations used by the WebSocket handler.
-type Agent interface {
-	Submit(task agent.Task)
-	Stop()
-}
-
-// AgentKey is a composite key for agent lookup: (userID, agentID).
-// Using composite key prevents agent ID collisions between users and provides
-// clear ownership boundaries without requiring agentID coordination between users.
-type AgentKey struct {
-	UserID  string
-	AgentID string
-}
 
 // AgentManagerOptions configures a new AgentManager.
 type AgentManagerOptions struct {
 	QuotaChatModel agent.QuotaChatModelInterface
 }
 
+// AgentKey is a composite key for agent lookup: (userID, agentID).
+// Prevents agent ID collisions across users.
+type AgentKey struct {
+	UserID  string
+	AgentID string
+}
+
 // AgentManager manages per-user ADKAgents with thread-safe access.
-// Agents are keyed by composite (userID, agentID) to support multiple agents per user.
 //
-// # Agents Persist Beyond Connection
+// # One Connection Per Agent
+// Each agent lane has its own WebSocket connection — no multiplexing.
+// Agents stream independently; a slow or dead agent doesn't block others.
 //
-// Mobile clients may lose connection frequently. Agents persist so users can
-// reconnect and continue conversation seamlessly. Workspace and memory are
-// retained between sessions. Agents have internal idle timeout for cleanup.
+// # Persistence Across Reconnects
+// Agents survive disconnections. On reconnect, call UpdateConn to swap
+// the connection on the existing agent's WSConnWrapper atomically.
 //
-// # Thread-Safe Agent Management
-//
-//   - Uses sync.Mutex instead of sync.Map for predictable locking behavior
-//   - Lock-then-check pattern prevents race conditions during agent creation
-//   - Standard Go pattern familiar to most developers
-//
-// # ADKAgent Adapter Pattern
-//
-//   - adkAgentAdapter keeps ADKAgent pure while adding handler-specific behaviors
-//   - Separation of concerns: ADKAgent handles Eino, adapter handles WebSocket
-//   - Testability: Can mock adapter in handler tests
+// # Thread Safety
+// sync.Mutex with lock-then-check prevents races during agent creation.
 type AgentManager struct {
 	mu             sync.Mutex
 	agents         map[AgentKey]*agent.ADKAgent
@@ -60,7 +47,6 @@ func NewAgentManager(logger zerolog.Logger, opts *AgentManagerOptions) *AgentMan
 	if opts != nil {
 		quotaChatModel = opts.QuotaChatModel
 	}
-
 	return &AgentManager{
 		agents:         make(map[AgentKey]*agent.ADKAgent),
 		logger:         logger,
@@ -68,94 +54,61 @@ func NewAgentManager(logger zerolog.Logger, opts *AgentManagerOptions) *AgentMan
 	}
 }
 
-// GetOrCreateAgentForUser returns an existing agent for (userID, agentID) pair or creates a new one.
-// This is used when you need the raw ADKAgent (e.g., for status checks).
-func (m *AgentManager) GetOrCreateAgentForUser(ctx context.Context, userID, agentID string, firstTask agent.Task) *agent.ADKAgent {
+// GetOrAdd returns an existing agent or creates a new one for (userID, agentID).
+// conn is the WebSocket connection for this specific agent lane.
+// On reconnect, use UpdateConn instead — this conn is only used at creation.
+func (m *AgentManager) GetOrAdd(ctx context.Context, userID, agentID string, conn *wsconn.Wrapper) *agent.ADKAgent {
 	key := AgentKey{UserID: userID, AgentID: agentID}
 
 	m.mu.Lock()
-
-	existingAgent, exists := m.agents[key]
-	if exists {
+	if ag, exists := m.agents[key]; exists {
 		m.mu.Unlock()
-		return existingAgent
+		return ag
 	}
 
-	newAgent := agent.NewADKAgent(ctx, firstTask, agent.ADKAgentOptions{
+	ag := agent.NewADKAgent(ctx, agent.Task{}, agent.ADKAgentOptions{
 		AgentID: agentID,
 		UserID:  userID,
+		Conn:    conn,
 	})
-	m.agents[key] = newAgent
+	m.agents[key] = ag
 	m.mu.Unlock()
 
 	config := m.loadAgentConfig(userID, agentID)
-	_ = newAgent.StartWithModel(agent.ADKAgentOptions{
+	_ = ag.StartWithModel(agent.ADKAgentOptions{
 		SystemPrompt:   config.SystemPrompt,
 		QuotaChatModel: m.quotaChatModel,
 		Memories:       m.loadMemories(userID),
 	})
 
-	return newAgent
+	return ag
 }
 
-// GetAgent returns an Agent interface for the given (userID, agentID) pair.
-func (m *AgentManager) GetAgent(ctx context.Context, userID, agentID string, conn *WSConnWrapper, task agent.Task) Agent {
+// UpdateConn swaps the WebSocket connection for a specific agent lane on reconnect.
+// The agent continues running; new writes transparently use the new connection.
+func (m *AgentManager) UpdateConn(userID, agentID string, conn *websocket.Conn) {
 	key := AgentKey{UserID: userID, AgentID: agentID}
 
 	m.mu.Lock()
-
-	existingAgent, exists := m.agents[key]
-	if exists {
-		existingAgent.Submit(task)
-		m.mu.Unlock()
-		return &adkAgentAdapter{agent: existingAgent, conn: conn, ctx: ctx, agentID: agentID}
-	}
-
-	newAgent := agent.NewADKAgent(ctx, task, agent.ADKAgentOptions{
-		AgentID: agentID,
-		UserID:  userID,
-	})
-	m.agents[key] = newAgent
+	ag := m.agents[key]
 	m.mu.Unlock()
 
-	config := m.loadAgentConfig(userID, agentID)
-	_ = newAgent.StartWithModel(agent.ADKAgentOptions{
-		SystemPrompt:   config.SystemPrompt,
-		QuotaChatModel: m.quotaChatModel,
-		Memories:       m.loadMemories(userID),
-	})
-
-	return &adkAgentAdapter{agent: newAgent, conn: conn, ctx: ctx, agentID: agentID}
-}
-
-// adkAgentAdapter wraps ADKAgent with WebSocket connection for streaming events.
-// Implements the Agent interface for use by the WebSocket handler.
-type adkAgentAdapter struct {
-	agent   *agent.ADKAgent
-	conn    *WSConnWrapper
-	ctx     context.Context
-	agentID string
-}
-
-// Submit sends a task to the wrapped agent with WebSocket event notifications.
-func (a *adkAgentAdapter) Submit(task agent.Task) {
-	if a.conn != nil && a.ctx != nil {
-		_ = a.conn.WriteJSON(a.ctx, map[string]interface{}{
-			"type":     "agent_start",
-			"agent_id": a.agentID,
-		})
-
-		_ = a.conn.WriteJSON(a.ctx, map[string]interface{}{
-			"type":     "agent_end",
-			"agent_id": a.agentID,
-		})
+	if ag != nil {
+		ag.UpdateConn(conn)
 	}
-	a.agent.Submit(task)
 }
 
-// Stop stops the wrapped agent.
-func (a *adkAgentAdapter) Stop() {
-	a.agent.Stop()
+// Remove stops and removes the agent for (userID, agentID).
+func (m *AgentManager) Remove(userID, agentID string) {
+	key := AgentKey{UserID: userID, AgentID: agentID}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if ag, exists := m.agents[key]; exists {
+		ag.Stop()
+		delete(m.agents, key)
+	}
 }
 
 // agentConfig holds configuration for an agent.
@@ -163,51 +116,12 @@ type agentConfig struct {
 	SystemPrompt string
 }
 
-// loadAgentConfig loads agent configuration (placeholder implementation).
+// loadAgentConfig loads agent configuration (placeholder).
 func (m *AgentManager) loadAgentConfig(userID, agentID string) agentConfig {
-	return agentConfig{
-		SystemPrompt: "You are a helpful assistant.",
-	}
+	return agentConfig{SystemPrompt: "You are a helpful assistant."}
 }
 
-// loadMemories loads user memories (placeholder implementation).
+// loadMemories loads user memories (placeholder).
 func (m *AgentManager) loadMemories(userID string) []string {
 	return []string{}
-}
-
-// RemoveAgentForUser removes agent for given (userID, agentID) pair.
-func (m *AgentManager) RemoveAgentForUser(userID, agentID string) {
-	key := AgentKey{UserID: userID, AgentID: agentID}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if existingAgent, exists := m.agents[key]; exists {
-		existingAgent.Stop()
-		delete(m.agents, key)
-	}
-}
-
-// GetAgentStatus returns the status of an agent if it exists.
-func (m *AgentManager) GetAgentStatus(userID, agentID string) map[string]interface{} {
-	key := AgentKey{UserID: userID, AgentID: agentID}
-
-	m.mu.Lock()
-	ag := m.agents[key]
-	m.mu.Unlock()
-
-	if ag == nil {
-		return map[string]interface{}{"status": "not_found"}
-	}
-	return map[string]interface{}{"status": "active", "agent_id": agentID}
-}
-
-// GetExistingAgent returns an existing agent without creating a new one.
-func (m *AgentManager) GetExistingAgent(userID, agentID string) *agent.ADKAgent {
-	key := AgentKey{UserID: userID, AgentID: agentID}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	return m.agents[key]
 }
