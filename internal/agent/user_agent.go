@@ -6,12 +6,11 @@ import (
 	"sync"
 	"time"
 
-	duckduckgo "github.com/cloudwego/eino-ext/components/tool/duckduckgo"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
-	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/coder/websocket"
+	"github.com/nevaria-ai/gateway/internal/agent/tools"
 	"github.com/nevaria-ai/gateway/internal/wsconn"
 )
 
@@ -90,7 +89,7 @@ func NewUserAgent(ctx context.Context, opts UserAgentOptions) *UserAgent {
 	// Initialize LLM agent if model is provided
 	if opts.QuotaChatModel != nil {
 		chatModel := opts.QuotaChatModel.GetInnerModel()
-		tools := getGlobalTools()
+		globalTools := tools.GetGlobalTools()
 
 		a.einoAgent, _ = adk.NewChatModelAgent(a.ctx, &adk.ChatModelAgentConfig{
 			Name:        a.agentID,
@@ -99,7 +98,7 @@ func NewUserAgent(ctx context.Context, opts UserAgentOptions) *UserAgent {
 			Model:       chatModel,
 			ToolsConfig: adk.ToolsConfig{
 				ToolsNodeConfig: compose.ToolsNodeConfig{
-					Tools: tools,
+					Tools: globalTools,
 				},
 			},
 		})
@@ -165,15 +164,6 @@ func buildInstruction(systemPrompt string, memories []string) string {
 		}
 	}
 	return instruction
-}
-
-func getGlobalTools() []tool.BaseTool {
-	ctx := context.Background()
-	ddgTool, err := duckduckgo.NewTool(ctx, &duckduckgo.Config{}) //nolint:staticcheck // NewTextSearchTool not yet available
-	if err != nil {
-		return []tool.BaseTool{}
-	}
-	return []tool.BaseTool{ddgTool}
 }
 
 func (a *UserAgent) loop() {

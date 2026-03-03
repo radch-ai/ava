@@ -122,7 +122,7 @@ internal/
 ├── server/         # HTTP server, middleware, routing, auth client
 ├── websocket/      # WebSocket handler, multi-agent routing
 ├── agent/          # Agent runtime, state management, events
-│   └── tools/      # Built-in tools (Mem0, files, nodes)
+│   └── tools/      # Global tools (DuckDuckGo search)
 ├── billing/        # RevenueCat webhooks, migrations
 ├── ctx/            # Context utilities (userID, agentID)
 ├── storage/        # S3 storage, workspaces, transcripts
@@ -139,7 +139,6 @@ internal/
 | [`internal/server/`](internal/server/README.md) | HTTP server, middleware, routing, auth client |
 | [`internal/websocket`](internal/websocket.md) | WebSocket connection management with multi-agent routing |
 | [`internal/agent/`](internal/agent/README.md) | Agent runtime, state management, event system |
-| [`internal/agent/tools`](internal/agent/tools.md) | Built-in agent tools (Mem0, file operations, node tools) |
 | [LLM Proxy SDK](https://github.com/nevaria-ai/llm-proxy-sdk) | LLM client factory, quota, health, routing, usage |
 | [`internal/billing/`](internal/billing.md) | RevenueCat webhooks, credit tracking, migrations |
 | [`internal/ctx/`](internal/ctx.md) | Context utilities for user ID and agent ID propagation |
@@ -275,7 +274,6 @@ Event types: `connected`, `agent_start`, `agent_end`, `turn_start`, `turn_end`, 
 - [Server](internal/server/README.md) - HTTP server, middleware, and auth client
 - [WebSocket](internal/websocket.md) - WebSocket handler and multi-agent routing
 - [Agent](internal/agent/README.md) - Agent runtime
-- [Agent Tools](internal/agent/tools.md) - Built-in tools (Mem0, files, nodes)
 - [LLM Client](https://github.com/nevaria-ai/llm-proxy-sdk) - LLM client factory
 - [LLM Proxy](https://github.com/nevaria-ai/llm-proxy-sdk) - Proxy routing and quota
 - [Billing](internal/billing.md) - RevenueCat webhooks and credit tracking
