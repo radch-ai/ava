@@ -66,7 +66,7 @@ func (m *AgentManager) GetOrAdd(ctx context.Context, userID, agentID string, con
 		return ag
 	}
 
-	ag := agent.NewADKAgent(ctx, agent.Task{}, agent.ADKAgentOptions{
+	ag := agent.NewADKAgent(ctx, agent.Message{}, agent.ADKAgentOptions{
 		AgentID: agentID,
 		UserID:  userID,
 		Conn:    conn,

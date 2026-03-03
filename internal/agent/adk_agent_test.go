@@ -42,13 +42,13 @@ func (m *MockToolCallingChatModelForADK) BindTools(tools []*schema.ToolInfo) err
 
 func TestNewADKAgent_CreatesLaneCh(t *testing.T) {
 	ctx := context.Background()
-	task := Task{Message: "hello", MsgID: "msg1"}
+	msg := Message{Content: "hello", ID: "msg1"}
 	opts := ADKAgentOptions{
 		AgentID: "agent1",
 		UserID:  "user1",
 	}
 
-	agent := NewADKAgent(ctx, task, opts)
+	agent := NewADKAgent(ctx, msg, opts)
 
 	assert.NotNil(t, agent)
 	assert.NotNil(t, agent.laneCh)
@@ -60,18 +60,18 @@ func TestNewADKAgent_CreatesLaneCh(t *testing.T) {
 
 func TestNewADKAgent_QueuesFirstMessage(t *testing.T) {
 	ctx := context.Background()
-	task := Task{Message: "hello", MsgID: "msg1"}
+	msg := Message{Content: "hello", ID: "msg1"}
 
-	agent := NewADKAgent(ctx, task, ADKAgentOptions{})
+	agent := NewADKAgent(ctx, msg, ADKAgentOptions{})
 
 	assert.Equal(t, 1, len(agent.laneCh))
 }
 
 func TestADKAgent_Stop(t *testing.T) {
 	ctx := context.Background()
-	task := Task{Message: "hello"}
+	msg := Message{Content: "hello"}
 
-	agent := NewADKAgent(ctx, task, ADKAgentOptions{})
+	agent := NewADKAgent(ctx, msg, ADKAgentOptions{})
 
 	require.NotNil(t, agent.ctx)
 	agent.Stop()
@@ -81,27 +81,27 @@ func TestADKAgent_Stop(t *testing.T) {
 
 func TestADKAgent_LaneCh_AcceptsMessages(t *testing.T) {
 	ctx := context.Background()
-	task := Task{Message: "first"}
+	msg := Message{Content: "first"}
 
-	agent := NewADKAgent(ctx, task, ADKAgentOptions{})
+	agent := NewADKAgent(ctx, msg, ADKAgentOptions{})
 
-	agent.laneCh <- Task{Message: "second"}
-	agent.laneCh <- Task{Message: "third"}
+	agent.laneCh <- Message{Content: "second"}
+	agent.laneCh <- Message{Content: "third"}
 
 	assert.Equal(t, 3, len(agent.laneCh))
 }
 
 func TestADKAgent_Loop_DrainsMessages(t *testing.T) {
 	ctx := context.Background()
-	agent := NewADKAgent(ctx, Task{Message: "first"}, ADKAgentOptions{})
+	agent := NewADKAgent(ctx, Message{Content: "first"}, ADKAgentOptions{})
 
-	agent.laneCh <- Task{Message: "second"}
-	agent.laneCh <- Task{Message: "third"}
+	agent.laneCh <- Message{Content: "second"}
+	agent.laneCh <- Message{Content: "third"}
 
 	var receivedMessages []string
-	agent.processTasksFn = func(tasks []Task) {
-		for _, t := range tasks {
-			receivedMessages = append(receivedMessages, t.Message)
+	agent.processMessagesFn = func(messages []Message) {
+		for _, m := range messages {
+			receivedMessages = append(receivedMessages, m.Content)
 		}
 	}
 
@@ -115,7 +115,7 @@ func TestADKAgent_Loop_DrainsMessages(t *testing.T) {
 
 func TestADKAgent_Loop_IdleExit(t *testing.T) {
 	ctx := context.Background()
-	agent := NewADKAgent(ctx, Task{Message: "first"}, ADKAgentOptions{
+	agent := NewADKAgent(ctx, Message{Content: "first"}, ADKAgentOptions{
 		IdleTimeout: 50 * time.Millisecond,
 	})
 
@@ -135,7 +135,7 @@ func TestADKAgent_Loop_IdleExit(t *testing.T) {
 
 func TestADKAgent_Loop_ContextCancel(t *testing.T) {
 	ctx := context.Background()
-	agent := NewADKAgent(ctx, Task{Message: "first"}, ADKAgentOptions{
+	agent := NewADKAgent(ctx, Message{Content: "first"}, ADKAgentOptions{
 		IdleTimeout: 10 * time.Second,
 	})
 
@@ -158,14 +158,14 @@ func TestADKAgent_Loop_ContextCancel(t *testing.T) {
 
 func TestADKAgent_DrainMessages(t *testing.T) {
 	ctx := context.Background()
-	agent := NewADKAgent(ctx, Task{Message: "first"}, ADKAgentOptions{})
+	agent := NewADKAgent(ctx, Message{Content: "first"}, ADKAgentOptions{})
 
-	agent.laneCh <- Task{Message: "second"}
-	agent.laneCh <- Task{Message: "third"}
+	agent.laneCh <- Message{Content: "second"}
+	agent.laneCh <- Message{Content: "third"}
 
-	tasks := agent.drainMessages(Task{Message: "new"})
+	messages := agent.drainMessages(Message{Content: "new"})
 
-	assert.GreaterOrEqual(t, len(tasks), 1)
+	assert.GreaterOrEqual(t, len(messages), 1)
 }
 
 func TestBuildInstruction_WithMemories(t *testing.T) {
@@ -215,56 +215,56 @@ func TestGetGlobalTools_ReturnsTools(t *testing.T) {
 	assert.NotEmpty(t, tools, "GetGlobalTools should return at least one tool")
 }
 
-func TestADKAgent_ProcessTasks_CombinesInput(t *testing.T) {
+func TestADKAgent_ProcessMessages_CombinesInput(t *testing.T) {
 	ctx := context.Background()
-	agent := NewADKAgent(ctx, Task{Message: "first"}, ADKAgentOptions{})
+	agent := NewADKAgent(ctx, Message{Content: "first"}, ADKAgentOptions{})
 
-	agent.processTasksFn = nil
+	agent.processMessagesFn = nil
 
-	tasks := []Task{
-		{Message: "hello", MsgID: "msg1"},
-		{Message: "world", MsgID: "msg2"},
-		{Message: "test", MsgID: "msg3"},
+	messages := []Message{
+		{Content: "hello", ID: "msg1"},
+		{Content: "world", ID: "msg2"},
+		{Content: "test", ID: "msg3"},
 	}
 
-	agent.processTasks(tasks)
+	agent.processMessages(messages)
 }
 
-func TestADKAgent_ProcessTasks_ExtractsMsgID(t *testing.T) {
+func TestADKAgent_ProcessMessages_ExtractsID(t *testing.T) {
 	ctx := context.Background()
-	agent := NewADKAgent(ctx, Task{Message: "first"}, ADKAgentOptions{})
+	agent := NewADKAgent(ctx, Message{Content: "first"}, ADKAgentOptions{})
 
-	agent.processTasksFn = nil
+	agent.processMessagesFn = nil
 
-	tasks := []Task{
-		{Message: "hello", MsgID: "msg-123"},
-		{Message: "world"},
+	messages := []Message{
+		{Content: "hello", ID: "msg-123"},
+		{Content: "world"},
 	}
 
-	agent.processTasks(tasks)
+	agent.processMessages(messages)
 }
 
-func TestADKAgent_ProcessTasks_WithNilConn(t *testing.T) {
+func TestADKAgent_ProcessMessages_WithNilConn(t *testing.T) {
 	ctx := context.Background()
-	agent := NewADKAgent(ctx, Task{Message: "first"}, ADKAgentOptions{})
+	agent := NewADKAgent(ctx, Message{Content: "first"}, ADKAgentOptions{})
 
-	agent.processTasksFn = nil
+	agent.processMessagesFn = nil
 
 	// conn is nil when not provided
 	assert.Nil(t, agent.conn)
 
-	tasks := []Task{
-		{Message: "hello", MsgID: "msg-123"},
+	messages := []Message{
+		{Content: "hello", ID: "msg-123"},
 	}
 
-	agent.processTasks(tasks)
+	agent.processMessages(messages)
 }
 
-func TestADKAgent_ProcessTasks_EmptyTasks(t *testing.T) {
+func TestADKAgent_ProcessMessages_EmptyMessages(t *testing.T) {
 	ctx := context.Background()
-	agent := NewADKAgent(ctx, Task{Message: "first"}, ADKAgentOptions{})
+	agent := NewADKAgent(ctx, Message{Content: "first"}, ADKAgentOptions{})
 
-	agent.processTasksFn = nil
+	agent.processMessagesFn = nil
 
-	agent.processTasks([]Task{})
+	agent.processMessages([]Message{})
 }

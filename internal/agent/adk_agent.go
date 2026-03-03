@@ -20,9 +20,10 @@ const (
 	defaultLaneQueueSize = 100
 )
 
-type Task struct {
-	Message string
-	MsgID   string
+// Message represents a message submitted to an agent.
+type Message struct {
+	ID      string
+	Content string
 }
 
 type QuotaChatModelInterface interface {
@@ -46,7 +47,7 @@ type ADKAgent struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 
-	laneCh chan Task
+	laneCh chan Message
 	mu     sync.Mutex
 
 	conn *wsconn.Wrapper
@@ -54,12 +55,12 @@ type ADKAgent struct {
 	einoAgent  *adk.ChatModelAgent
 	einoRunner *adk.Runner
 
-	idleTimeout    time.Duration
-	processTasksFn func([]Task)
-	onExit         func()
+	idleTimeout       time.Duration
+	processMessagesFn func([]Message)
+	onExit            func()
 }
 
-func NewADKAgent(ctx context.Context, firstTask Task, opts ADKAgentOptions) *ADKAgent {
+func NewADKAgent(ctx context.Context, firstMessage Message, opts ADKAgentOptions) *ADKAgent {
 	ctx, cancel := context.WithCancel(ctx)
 
 	a := &ADKAgent{
@@ -67,7 +68,7 @@ func NewADKAgent(ctx context.Context, firstTask Task, opts ADKAgentOptions) *ADK
 		userID:      opts.UserID,
 		ctx:         ctx,
 		cancel:      cancel,
-		laneCh:      make(chan Task, defaultLaneQueueSize),
+		laneCh:      make(chan Message, defaultLaneQueueSize),
 		conn:        opts.Conn,
 		idleTimeout: opts.IdleTimeout,
 	}
@@ -76,7 +77,7 @@ func NewADKAgent(ctx context.Context, firstTask Task, opts ADKAgentOptions) *ADK
 		a.idleTimeout = defaultIdleTimeout
 	}
 
-	a.laneCh <- firstTask
+	a.laneCh <- firstMessage
 
 	return a
 }
@@ -99,8 +100,8 @@ func (a *ADKAgent) GetUserID() string {
 	return a.userID
 }
 
-func (a *ADKAgent) Submit(task Task) {
-	a.laneCh <- task
+func (a *ADKAgent) Submit(msg Message) {
+	a.laneCh <- msg
 }
 
 func (a *ADKAgent) GetConn() *wsconn.Wrapper {
@@ -113,8 +114,8 @@ func (a *ADKAgent) UpdateConn(conn *websocket.Conn) {
 	}
 }
 
-func (a *ADKAgent) SetProcessTasksFn(fn func([]Task)) {
-	a.processTasksFn = fn
+func (a *ADKAgent) SetProcessMessagesFn(fn func([]Message)) {
+	a.processMessagesFn = fn
 }
 
 func (a *ADKAgent) SetOnExit(fn func()) {
@@ -188,15 +189,15 @@ func (a *ADKAgent) loop() {
 
 	for {
 		select {
-		case task := <-a.laneCh:
+		case msg := <-a.laneCh:
 			idleTimer.Reset(a.idleTimeout)
 
-			tasks := a.drainMessages(task)
+			messages := a.drainMessages(msg)
 
-			if a.processTasksFn != nil {
-				a.processTasksFn(tasks)
+			if a.processMessagesFn != nil {
+				a.processMessagesFn(messages)
 			} else {
-				a.processTasks(tasks)
+				a.processMessages(messages)
 			}
 
 		case <-idleTimer.C:
@@ -220,34 +221,34 @@ func (a *ADKAgent) loop() {
 	}
 }
 
-func (a *ADKAgent) drainMessages(first Task) []Task {
-	tasks := []Task{first}
+func (a *ADKAgent) drainMessages(first Message) []Message {
+	messages := []Message{first}
 
 	for {
 		select {
-		case t := <-a.laneCh:
-			tasks = append(tasks, t)
+		case m := <-a.laneCh:
+			messages = append(messages, m)
 		default:
-			return tasks
+			return messages
 		}
 	}
 }
 
-func (a *ADKAgent) processTasks(tasks []Task) {
-	if len(tasks) == 0 {
+func (a *ADKAgent) processMessages(messages []Message) {
+	if len(messages) == 0 {
 		return
 	}
 
 	var input strings.Builder
 	var msgID string
 
-	for i, t := range tasks {
+	for i, m := range messages {
 		if i > 0 {
 			input.WriteString("\n")
 		}
-		input.WriteString(t.Message)
-		if msgID == "" && t.MsgID != "" {
-			msgID = t.MsgID
+		input.WriteString(m.Content)
+		if msgID == "" && m.ID != "" {
+			msgID = m.ID
 		}
 	}
 
