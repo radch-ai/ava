@@ -254,10 +254,9 @@ func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID str
 			logger.Debug().Msg("prompt missing id or text")
 			return
 		}
-		ag := h.agentManager.GetOrAdd(ctx, userID, msg.AgentID, conn)
 		// Refresh conn in case this is a reconnect on an existing agent.
 		h.agentManager.UpdateConn(userID, msg.AgentID, conn.Conn())
-		ag.Submit(agent.Message{Content: msg.Content, ID: msg.ID})
+		h.agentManager.Submit(ctx, userID, msg.AgentID, conn, agent.Message{Content: msg.Content, ID: msg.ID})
 
 	case "stop":
 		ag := h.agentManager.GetOrAdd(ctx, userID, msg.AgentID, conn)

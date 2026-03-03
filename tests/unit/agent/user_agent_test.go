@@ -82,53 +82,41 @@ func (m *MockToolCallingChatModel) GetWithToolsCalls() int {
 	return m.withToolsCalls
 }
 
-func TestUserAgent_Start_Success(t *testing.T) {
+func TestUserAgent_NewUserAgent_Success(t *testing.T) {
 	mockChatModel := &MockToolCallingChatModel{}
 	mockQuotaModel := &MockQuotaChatModel{}
 	mockQuotaModel.SetInnerModel(mockChatModel)
 
 	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "hello"}, agent.UserAgentOptions{
-		AgentID: "agent-start-test",
-		UserID:  "user-1",
-	})
-
-	opts := agent.UserAgentOptions{
+		AgentID:        "agent-start-test",
+		UserID:         "user-1",
 		QuotaChatModel: mockQuotaModel,
 		SystemPrompt:   "You are a helpful assistant.",
 		Description:    "Test agent for unit testing",
-	}
+	})
 
-	err := ag.Start(opts)
-	require.NoError(t, err)
-
+	require.NotNil(t, ag)
 	ag.Stop()
 }
 
-func TestUserAgent_Start_WithTools(t *testing.T) {
+func TestUserAgent_NewUserAgent_WithTools(t *testing.T) {
 	mockChatModel := &MockToolCallingChatModel{}
 	mockQuotaModel := &MockQuotaChatModel{}
 	mockQuotaModel.SetInnerModel(mockChatModel)
 
 	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "hello"}, agent.UserAgentOptions{
-		AgentID: "agent-tools-test",
-		UserID:  "user-1",
-	})
-
-	opts := agent.UserAgentOptions{
+		AgentID:        "agent-tools-test",
+		UserID:         "user-1",
 		QuotaChatModel: mockQuotaModel,
 		SystemPrompt:   "You are a helpful assistant.",
 		Description:    "Test agent for tools testing",
-	}
-
-	err := ag.Start(opts)
-	require.NoError(t, err)
+	})
 
 	time.Sleep(50 * time.Millisecond)
-
 	ag.Stop()
 }
 
-func TestUserAgent_Start_WithMemories(t *testing.T) {
+func TestUserAgent_NewUserAgent_WithMemories(t *testing.T) {
 	mockChatModel := &MockToolCallingChatModel{}
 	mockQuotaModel := &MockQuotaChatModel{}
 	mockQuotaModel.SetInnerModel(mockChatModel)
@@ -140,19 +128,13 @@ func TestUserAgent_Start_WithMemories(t *testing.T) {
 	}
 
 	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "hello"}, agent.UserAgentOptions{
-		AgentID: "agent-memories-test",
-		UserID:  "user-1",
-	})
-
-	opts := agent.UserAgentOptions{
+		AgentID:        "agent-memories-test",
+		UserID:         "user-1",
 		QuotaChatModel: mockQuotaModel,
 		SystemPrompt:   "You are a helpful assistant.",
 		Memories:       memories,
 		Description:    "Test agent for memories testing",
-	}
-
-	err := ag.Start(opts)
-	require.NoError(t, err)
+	})
 
 	ag.Stop()
 }
@@ -166,25 +148,18 @@ func TestUserAgent_ConcurrentSubmit(t *testing.T) {
 	var processedMu sync.Mutex
 
 	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "initial"}, agent.UserAgentOptions{
-		AgentID:     "agent-concurrent-test",
-		UserID:      "user-1",
-		IdleTimeout: 2 * time.Second,
-	})
-
-	ag.SetProcessMessagesFn(func(messages []agent.Message) {
-		processedMu.Lock()
-		processedMessages = append(processedMessages, messages...)
-		processedMu.Unlock()
-	})
-
-	opts := agent.UserAgentOptions{
+		AgentID:        "agent-concurrent-test",
+		UserID:         "user-1",
+		IdleTimeout:    2 * time.Second,
 		QuotaChatModel: mockQuotaModel,
 		SystemPrompt:   "You are a helpful assistant.",
 		Description:    "Test agent for concurrent testing",
-	}
-
-	err := ag.Start(opts)
-	require.NoError(t, err)
+		ProcessMessagesFn: func(messages []agent.Message) {
+			processedMu.Lock()
+			processedMessages = append(processedMessages, messages...)
+			processedMu.Unlock()
+		},
+	})
 
 	const numGoroutines = 10
 	const numMessagesPerGoroutine = 5
@@ -225,9 +200,12 @@ func TestUserAgent_ConnWrapper_Integration(t *testing.T) {
 	wrapper := wsconn.NewWrapper(nil)
 
 	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "hello"}, agent.UserAgentOptions{
-		AgentID: "agent-wsconn-test",
-		UserID:  "user-1",
-		Conn:    wrapper,
+		AgentID:        "agent-wsconn-test",
+		UserID:         "user-1",
+		Conn:           wrapper,
+		QuotaChatModel: mockQuotaModel,
+		SystemPrompt:   "You are a helpful assistant.",
+		Description:    "Test agent for ConnWrapper testing",
 	})
 
 	conn := ag.GetConn()
@@ -239,34 +217,19 @@ func TestUserAgent_ConnWrapper_Integration(t *testing.T) {
 	ag.UpdateConn(nil)
 	assert.Nil(t, conn.Conn())
 
-	opts := agent.UserAgentOptions{
-		QuotaChatModel: mockQuotaModel,
-		SystemPrompt:   "You are a helpful assistant.",
-		Description:    "Test agent for ConnWrapper testing",
-	}
-
-	err := ag.Start(opts)
-	require.NoError(t, err)
-
 	ag.Stop()
 }
 
-func TestUserAgent_Start_NilQuotaModel(t *testing.T) {
+func TestUserAgent_NewUserAgent_NilQuotaModel(t *testing.T) {
 	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "hello"}, agent.UserAgentOptions{
-		AgentID: "agent-nil-model-test",
-		UserID:  "user-1",
-	})
-
-	opts := agent.UserAgentOptions{
+		AgentID:        "agent-nil-model-test",
+		UserID:         "user-1",
 		QuotaChatModel: nil,
 		SystemPrompt:   "You are a helpful assistant.",
-	}
+	})
 
-	defer func() {
-		_ = recover()
-	}()
-
-	_ = ag.Start(opts)
+	require.NotNil(t, ag)
+	ag.Stop()
 }
 
 func TestUserAgent_Submit_AfterStop(t *testing.T) {
@@ -275,19 +238,13 @@ func TestUserAgent_Submit_AfterStop(t *testing.T) {
 	mockQuotaModel.SetInnerModel(mockChatModel)
 
 	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "hello"}, agent.UserAgentOptions{
-		AgentID:     "agent-submit-stop-test",
-		UserID:      "user-1",
-		IdleTimeout: 100 * time.Millisecond,
-	})
-
-	opts := agent.UserAgentOptions{
+		AgentID:        "agent-submit-stop-test",
+		UserID:         "user-1",
+		IdleTimeout:    100 * time.Millisecond,
 		QuotaChatModel: mockQuotaModel,
 		SystemPrompt:   "You are a helpful assistant.",
 		Description:    "Test agent for submit after stop testing",
-	}
-
-	err := ag.Start(opts)
-	require.NoError(t, err)
+	})
 
 	time.Sleep(50 * time.Millisecond)
 
@@ -325,30 +282,6 @@ func TestUserAgent_GetAgentID_GetUserID(t *testing.T) {
 
 	assert.Equal(t, "agent-id-test", ag.GetAgentID())
 	assert.Equal(t, "user-id-test", ag.GetUserID())
-}
-
-func TestUserAgent_MultipleStartCalls(t *testing.T) {
-	mockChatModel := &MockToolCallingChatModel{}
-	mockQuotaModel := &MockQuotaChatModel{}
-	mockQuotaModel.SetInnerModel(mockChatModel)
-
-	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "hello"}, agent.UserAgentOptions{
-		AgentID:     "agent-multi-start-test",
-		UserID:      "user-1",
-		IdleTimeout: 100 * time.Millisecond,
-	})
-
-	opts := agent.UserAgentOptions{
-		QuotaChatModel: mockQuotaModel,
-		SystemPrompt:   "You are a helpful assistant.",
-		Description:    "Test agent for multiple start testing",
-	}
-
-	err := ag.Start(opts)
-	require.NoError(t, err)
-
-	time.Sleep(50 * time.Millisecond)
-
 	ag.Stop()
 }
 
@@ -359,24 +292,17 @@ func TestUserAgent_IdleTimeout_TriggersExit(t *testing.T) {
 
 	exited := make(chan bool, 1)
 
-	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "hello"}, agent.UserAgentOptions{
-		AgentID:     "agent-idle-exit-test",
-		UserID:      "user-1",
-		IdleTimeout: 50 * time.Millisecond,
-	})
-
-	ag.SetOnExit(func() {
-		exited <- true
-	})
-
-	opts := agent.UserAgentOptions{
+	_ = agent.NewUserAgent(context.Background(), agent.Message{Content: "hello"}, agent.UserAgentOptions{
+		AgentID:        "agent-idle-exit-test",
+		UserID:         "user-1",
+		IdleTimeout:    50 * time.Millisecond,
 		QuotaChatModel: mockQuotaModel,
 		SystemPrompt:   "You are a helpful assistant.",
 		Description:    "Test agent for idle timeout testing",
-	}
-
-	err := ag.Start(opts)
-	require.NoError(t, err)
+		OnExit: func() {
+			exited <- true
+		},
+	})
 
 	select {
 	case <-exited:
@@ -394,25 +320,18 @@ func TestUserAgent_ProcessMessagesCalled(t *testing.T) {
 	var messagesMu sync.Mutex
 
 	ag := agent.NewUserAgent(context.Background(), agent.Message{Content: "initial"}, agent.UserAgentOptions{
-		AgentID:     "agent-process-test",
-		UserID:      "user-1",
-		IdleTimeout: 500 * time.Millisecond,
-	})
-
-	ag.SetProcessMessagesFn(func(messages []agent.Message) {
-		messagesMu.Lock()
-		messagesReceived = append(messagesReceived, messages...)
-		messagesMu.Unlock()
-	})
-
-	opts := agent.UserAgentOptions{
+		AgentID:        "agent-process-test",
+		UserID:         "user-1",
+		IdleTimeout:    500 * time.Millisecond,
 		QuotaChatModel: mockQuotaModel,
 		SystemPrompt:   "You are a helpful assistant.",
 		Description:    "Test agent for process messages testing",
-	}
-
-	err := ag.Start(opts)
-	require.NoError(t, err)
+		ProcessMessagesFn: func(messages []agent.Message) {
+			messagesMu.Lock()
+			messagesReceived = append(messagesReceived, messages...)
+			messagesMu.Unlock()
+		},
+	})
 
 	ag.Submit(agent.Message{Content: "test message", ID: "msg-1"})
 

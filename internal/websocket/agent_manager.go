@@ -22,6 +22,14 @@ type AgentKey struct {
 	AgentID string
 }
 
+// agentEntry wraps an agent with coordination for submit vs exit.
+type agentEntry struct {
+	once   sync.Once
+	mu     sync.RWMutex // coordinates submit vs exit
+	active bool         // true while agent loop is running
+	agent  *agent.UserAgent
+}
+
 // AgentManager manages per-user UserAgents with thread-safe access.
 //
 // # One Connection Per Agent
@@ -33,10 +41,10 @@ type AgentKey struct {
 // the connection on the existing agent's WSConnWrapper atomically.
 //
 // # Thread Safety
-// sync.Mutex with lock-then-check prevents races during agent creation.
+// sync.Map provides lock-free reads and fine-grained locking per key.
+// sync.Once ensures each agent is initialized exactly once.
 type AgentManager struct {
-	mu             sync.Mutex
-	agents         map[AgentKey]*agent.UserAgent
+	agents         sync.Map // map[AgentKey]*agentEntry
 	logger         zerolog.Logger
 	quotaChatModel agent.QuotaChatModelInterface
 }
@@ -48,7 +56,6 @@ func NewAgentManager(logger zerolog.Logger, opts *AgentManagerOptions) *AgentMan
 		quotaChatModel = opts.QuotaChatModel
 	}
 	return &AgentManager{
-		agents:         make(map[AgentKey]*agent.UserAgent),
 		logger:         logger,
 		quotaChatModel: quotaChatModel,
 	}
@@ -57,31 +64,80 @@ func NewAgentManager(logger zerolog.Logger, opts *AgentManagerOptions) *AgentMan
 // GetOrAdd returns an existing agent or creates a new one for (userID, agentID).
 // conn is the WebSocket connection for this specific agent lane.
 // On reconnect, use UpdateConn instead — this conn is only used at creation.
+//
+// Deprecated: Use Submit instead to ensure proper coordination with agent exit.
 func (m *AgentManager) GetOrAdd(ctx context.Context, userID, agentID string, conn *wsconn.Wrapper) *agent.UserAgent {
 	key := AgentKey{UserID: userID, AgentID: agentID}
 
-	m.mu.Lock()
-	if ag, exists := m.agents[key]; exists {
-		m.mu.Unlock()
-		return ag
+	// Get or create entry (cheap - just a small struct)
+	entry := &agentEntry{}
+	if actual, ok := m.agents.LoadOrStore(key, entry); ok {
+		entry = actual.(*agentEntry)
 	}
 
-	ag := agent.NewUserAgent(ctx, agent.Message{}, agent.UserAgentOptions{
-		AgentID: agentID,
-		UserID:  userID,
-		Conn:    conn,
+	// Initialize exactly once - all callers wait for the same initialization
+	entry.once.Do(func() {
+		config := m.loadAgentConfig(userID, agentID)
+		entry.agent = agent.NewUserAgent(ctx, agent.Message{}, agent.UserAgentOptions{
+			AgentID:        agentID,
+			UserID:         userID,
+			Conn:           conn,
+			SystemPrompt:   config.SystemPrompt,
+			QuotaChatModel: m.quotaChatModel,
+			Memories:       m.loadMemories(userID),
+			OnExit: func() {
+				entry.mu.Lock()
+				entry.active = false
+				entry.mu.Unlock()
+			},
+		})
+		entry.active = true
 	})
-	m.agents[key] = ag
-	m.mu.Unlock()
 
-	config := m.loadAgentConfig(userID, agentID)
-	_ = ag.StartWithModel(agent.UserAgentOptions{
-		SystemPrompt:   config.SystemPrompt,
-		QuotaChatModel: m.quotaChatModel,
-		Memories:       m.loadMemories(userID),
+	return entry.agent
+}
+
+// Submit sends a message to an agent, creating it if needed.
+// It handles coordination between message submission and agent exit,
+// ensuring messages are not sent to stopped agents.
+func (m *AgentManager) Submit(ctx context.Context, userID, agentID string, conn *wsconn.Wrapper, msg agent.Message) bool {
+	key := AgentKey{UserID: userID, AgentID: agentID}
+
+	// Get or create entry
+	entry := &agentEntry{}
+	if actual, ok := m.agents.LoadOrStore(key, entry); ok {
+		entry = actual.(*agentEntry)
+	}
+
+	// Initialize exactly once if needed
+	entry.once.Do(func() {
+		config := m.loadAgentConfig(userID, agentID)
+		entry.agent = agent.NewUserAgent(ctx, agent.Message{}, agent.UserAgentOptions{
+			AgentID:        agentID,
+			UserID:         userID,
+			Conn:           conn,
+			SystemPrompt:   config.SystemPrompt,
+			QuotaChatModel: m.quotaChatModel,
+			Memories:       m.loadMemories(userID),
+			OnExit: func() {
+				entry.mu.Lock()
+				entry.active = false
+				entry.mu.Unlock()
+			},
+		})
+		entry.active = true
 	})
 
-	return ag
+	// Acquire read lock to coordinate with exit
+	entry.mu.RLock()
+	defer entry.mu.RUnlock()
+
+	if !entry.active {
+		return false
+	}
+
+	entry.agent.Submit(msg)
+	return true
 }
 
 // UpdateConn swaps the WebSocket connection for a specific agent lane on reconnect.
@@ -89,12 +145,11 @@ func (m *AgentManager) GetOrAdd(ctx context.Context, userID, agentID string, con
 func (m *AgentManager) UpdateConn(userID, agentID string, conn *websocket.Conn) {
 	key := AgentKey{UserID: userID, AgentID: agentID}
 
-	m.mu.Lock()
-	ag := m.agents[key]
-	m.mu.Unlock()
-
-	if ag != nil {
-		ag.UpdateConn(conn)
+	if val, ok := m.agents.Load(key); ok {
+		entry := val.(*agentEntry)
+		if entry.agent != nil {
+			entry.agent.UpdateConn(conn)
+		}
 	}
 }
 
@@ -102,12 +157,11 @@ func (m *AgentManager) UpdateConn(userID, agentID string, conn *websocket.Conn) 
 func (m *AgentManager) Remove(userID, agentID string) {
 	key := AgentKey{UserID: userID, AgentID: agentID}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if ag, exists := m.agents[key]; exists {
-		ag.Stop()
-		delete(m.agents, key)
+	if val, ok := m.agents.LoadAndDelete(key); ok {
+		entry := val.(*agentEntry)
+		if entry.agent != nil {
+			entry.agent.Stop()
+		}
 	}
 }
 

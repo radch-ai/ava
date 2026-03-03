@@ -96,9 +96,9 @@ func TestUserAgent_FullFlow_Integration(t *testing.T) {
 		mockModel := setupMockModel()
 		quotaModel := &ADKMockQuotaChatModel{inner: mockModel}
 
-		firstTask := agent.Task{
-			Message: "Hello, agent!",
-			MsgID:   "msg-001",
+		firstMessage := agent.Message{
+			Content: "Hello, agent!",
+			ID:      "msg-001",
 		}
 
 		opts := agent.UserAgentOptions{
@@ -110,13 +110,10 @@ func TestUserAgent_FullFlow_Integration(t *testing.T) {
 			IdleTimeout:    2 * time.Second,
 		}
 
-		ag := agent.NewUserAgent(ctx, firstTask, opts)
+		ag := agent.NewUserAgent(ctx, firstMessage, opts)
 		require.NotNil(t, ag)
 		assert.Equal(t, "agent-full-flow", ag.GetAgentID())
 		assert.Equal(t, "user-123", ag.GetUserID())
-
-		err := ag.Start(opts)
-		require.NoError(t, err)
 
 		time.Sleep(300 * time.Millisecond)
 
@@ -135,9 +132,9 @@ func TestUserAgent_FullFlow_Integration(t *testing.T) {
 
 		quotaModel := &ADKMockQuotaChatModel{inner: mockModel}
 
-		firstTask := agent.Task{
-			Message: "This should fail",
-			MsgID:   "msg-err",
+		firstMessage := agent.Message{
+			Content: "This should fail",
+			ID:      "msg-err",
 		}
 
 		opts := agent.UserAgentOptions{
@@ -148,11 +145,8 @@ func TestUserAgent_FullFlow_Integration(t *testing.T) {
 			IdleTimeout:    2 * time.Second,
 		}
 
-		ag := agent.NewUserAgent(ctx, firstTask, opts)
+		ag := agent.NewUserAgent(ctx, firstMessage, opts)
 		require.NotNil(t, ag)
-
-		err := ag.Start(opts)
-		require.NoError(t, err)
 
 		time.Sleep(200 * time.Millisecond)
 
@@ -166,9 +160,9 @@ func TestUserAgent_FullFlow_Integration(t *testing.T) {
 		mockModel := setupMockModel()
 		quotaModel := &ADKMockQuotaChatModel{inner: mockModel}
 
-		firstTask := agent.Task{
-			Message: "Will be cancelled",
-			MsgID:   "msg-cancel",
+		firstMessage := agent.Message{
+			Content: "Will be cancelled",
+			ID:      "msg-cancel",
 		}
 
 		opts := agent.UserAgentOptions{
@@ -179,11 +173,8 @@ func TestUserAgent_FullFlow_Integration(t *testing.T) {
 			IdleTimeout:    10 * time.Second,
 		}
 
-		ag := agent.NewUserAgent(ctx, firstTask, opts)
+		ag := agent.NewUserAgent(ctx, firstMessage, opts)
 		require.NotNil(t, ag)
-
-		err := ag.Start(opts)
-		require.NoError(t, err)
 
 		time.Sleep(50 * time.Millisecond)
 		ag.Stop()
@@ -204,12 +195,9 @@ func TestUserAgent_WithTools_Integration(t *testing.T) {
 		mockModel := setupMockModel()
 		quotaModel := &ADKMockQuotaChatModel{inner: mockModel}
 
-		tools := agent.GetGlobalTools()
-		require.NotEmpty(t, tools, "Should have at least DuckDuckGo tool available")
-
-		firstTask := agent.Task{
-			Message: "Search for Go programming tutorials",
-			MsgID:   "msg-search",
+		firstMessage := agent.Message{
+			Content: "Search for Go programming tutorials",
+			ID:      "msg-search",
 		}
 
 		opts := agent.UserAgentOptions{
@@ -221,11 +209,8 @@ func TestUserAgent_WithTools_Integration(t *testing.T) {
 			IdleTimeout:    2 * time.Second,
 		}
 
-		ag := agent.NewUserAgent(ctx, firstTask, opts)
+		ag := agent.NewUserAgent(ctx, firstMessage, opts)
 		require.NotNil(t, ag)
-
-		err := ag.Start(opts)
-		require.NoError(t, err)
 
 		time.Sleep(200 * time.Millisecond)
 
@@ -245,9 +230,9 @@ func TestUserAgent_MultipleMessages_Integration(t *testing.T) {
 		mockModel := setupMockModel()
 		quotaModel := &ADKMockQuotaChatModel{inner: mockModel}
 
-		firstTask := agent.Task{
-			Message: "First message",
-			MsgID:   "msg-1",
+		firstMessage := agent.Message{
+			Content: "First message",
+			ID:      "msg-1",
 		}
 
 		opts := agent.UserAgentOptions{
@@ -259,11 +244,8 @@ func TestUserAgent_MultipleMessages_Integration(t *testing.T) {
 			IdleTimeout:    2 * time.Second,
 		}
 
-		ag := agent.NewUserAgent(ctx, firstTask, opts)
+		ag := agent.NewUserAgent(ctx, firstMessage, opts)
 		require.NotNil(t, ag)
-
-		err := ag.Start(opts)
-		require.NoError(t, err)
 
 		time.Sleep(300 * time.Millisecond)
 
@@ -277,9 +259,9 @@ func TestUserAgent_MultipleMessages_Integration(t *testing.T) {
 		mockModel := setupMockModel()
 		quotaModel := &ADKMockQuotaChatModel{inner: mockModel}
 
-		firstTask := agent.Task{
-			Message: "Message A",
-			MsgID:   "msg-a",
+		firstMessage := agent.Message{
+			Content: "Message A",
+			ID:      "msg-a",
 		}
 
 		opts := agent.UserAgentOptions{
@@ -290,11 +272,8 @@ func TestUserAgent_MultipleMessages_Integration(t *testing.T) {
 			IdleTimeout:    3 * time.Second,
 		}
 
-		ag := agent.NewUserAgent(ctx, firstTask, opts)
+		ag := agent.NewUserAgent(ctx, firstMessage, opts)
 		require.NotNil(t, ag)
-
-		err := ag.Start(opts)
-		require.NoError(t, err)
 
 		time.Sleep(200 * time.Millisecond)
 
@@ -308,9 +287,9 @@ func TestUserAgent_MultipleMessages_Integration(t *testing.T) {
 		mockModel := setupMockModel()
 		quotaModel := &ADKMockQuotaChatModel{inner: mockModel}
 
-		firstTask := agent.Task{
-			Message: "Trigger idle",
-			MsgID:   "msg-idle",
+		firstMessage := agent.Message{
+			Content: "Trigger idle",
+			ID:      "msg-idle",
 		}
 
 		opts := agent.UserAgentOptions{
@@ -321,11 +300,8 @@ func TestUserAgent_MultipleMessages_Integration(t *testing.T) {
 			IdleTimeout:    100 * time.Millisecond,
 		}
 
-		ag := agent.NewUserAgent(ctx, firstTask, opts)
+		ag := agent.NewUserAgent(ctx, firstMessage, opts)
 		require.NotNil(t, ag)
-
-		err := ag.Start(opts)
-		require.NoError(t, err)
 
 		time.Sleep(300 * time.Millisecond)
 
@@ -347,9 +323,9 @@ func TestUserAgent_Memories_Integration(t *testing.T) {
 		mockModel := setupMockModel()
 		quotaModel := &ADKMockQuotaChatModel{inner: mockModel}
 
-		firstTask := agent.Task{
-			Message: "Hello",
-			MsgID:   "msg-memory",
+		firstMessage := agent.Message{
+			Content: "Hello",
+			ID:      "msg-memory",
 		}
 
 		opts := agent.UserAgentOptions{
@@ -362,11 +338,8 @@ func TestUserAgent_Memories_Integration(t *testing.T) {
 			IdleTimeout:    2 * time.Second,
 		}
 
-		ag := agent.NewUserAgent(ctx, firstTask, opts)
+		ag := agent.NewUserAgent(ctx, firstMessage, opts)
 		require.NotNil(t, ag)
-
-		err := ag.Start(opts)
-		require.NoError(t, err)
 
 		time.Sleep(200 * time.Millisecond)
 
@@ -386,9 +359,9 @@ func TestUserAgent_ConcurrentAccess_Integration(t *testing.T) {
 		mockModel := setupMockModel()
 		quotaModel := &ADKMockQuotaChatModel{inner: mockModel}
 
-		firstTask := agent.Task{
-			Message: "Initial message",
-			MsgID:   "msg-init",
+		firstMessage := agent.Message{
+			Content: "Initial message",
+			ID:      "msg-init",
 		}
 
 		opts := agent.UserAgentOptions{
@@ -399,11 +372,8 @@ func TestUserAgent_ConcurrentAccess_Integration(t *testing.T) {
 			IdleTimeout:    3 * time.Second,
 		}
 
-		ag := agent.NewUserAgent(ctx, firstTask, opts)
+		ag := agent.NewUserAgent(ctx, firstMessage, opts)
 		require.NotNil(t, ag)
-
-		err := ag.Start(opts)
-		require.NoError(t, err)
 
 		var wg sync.WaitGroup
 		for i := 0; i < 5; i++ {

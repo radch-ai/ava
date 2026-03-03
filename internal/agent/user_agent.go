@@ -31,14 +31,16 @@ type QuotaChatModelInterface interface {
 }
 
 type UserAgentOptions struct {
-	AgentID        string
-	UserID         string
-	Description    string
-	SystemPrompt   string
-	QuotaChatModel QuotaChatModelInterface
-	Memories       []string
-	IdleTimeout    time.Duration
-	Conn           *wsconn.Wrapper
+	AgentID           string
+	UserID            string
+	Description       string
+	SystemPrompt      string
+	QuotaChatModel    QuotaChatModelInterface
+	Memories          []string
+	IdleTimeout       time.Duration
+	Conn              *wsconn.Wrapper
+	ProcessMessagesFn func([]Message)
+	OnExit            func()
 }
 
 type UserAgent struct {
@@ -60,24 +62,58 @@ type UserAgent struct {
 	onExit            func()
 }
 
+// NewUserAgent creates a new agent, initializes it with the LLM model if provided,
+// and starts its message processing loop. The returned agent is fully ready to use.
 func NewUserAgent(ctx context.Context, firstMessage Message, opts UserAgentOptions) *UserAgent {
 	ctx, cancel := context.WithCancel(ctx)
 
 	a := &UserAgent{
-		agentID:     opts.AgentID,
-		userID:      opts.UserID,
-		ctx:         ctx,
-		cancel:      cancel,
-		laneCh:      make(chan Message, defaultLaneQueueSize),
-		conn:        opts.Conn,
-		idleTimeout: opts.IdleTimeout,
+		agentID:           opts.AgentID,
+		userID:            opts.UserID,
+		ctx:               ctx,
+		cancel:            cancel,
+		laneCh:            make(chan Message, defaultLaneQueueSize),
+		conn:              opts.Conn,
+		idleTimeout:       opts.IdleTimeout,
+		processMessagesFn: opts.ProcessMessagesFn,
+		onExit:            opts.OnExit,
 	}
 
 	if a.idleTimeout == 0 {
 		a.idleTimeout = defaultIdleTimeout
 	}
 
-	a.laneCh <- firstMessage
+	// Initialize LLM agent if model is provided
+	if opts.QuotaChatModel != nil {
+		chatModel := opts.QuotaChatModel.GetInnerModel()
+		tools := getGlobalTools()
+
+		a.einoAgent, _ = adk.NewChatModelAgent(a.ctx, &adk.ChatModelAgentConfig{
+			Name:        a.agentID,
+			Description: opts.Description,
+			Instruction: buildInstruction(opts.SystemPrompt, opts.Memories),
+			Model:       chatModel,
+			ToolsConfig: adk.ToolsConfig{
+				ToolsNodeConfig: compose.ToolsNodeConfig{
+					Tools: tools,
+				},
+			},
+		})
+
+		if a.einoAgent != nil {
+			a.einoRunner = adk.NewRunner(a.ctx, adk.RunnerConfig{
+				Agent: a.einoAgent,
+			})
+		}
+	}
+
+	// Start the message processing loop
+	go a.loop()
+
+	// Queue first message if provided
+	if firstMessage.Content != "" {
+		a.laneCh <- firstMessage
+	}
 
 	return a
 }
@@ -109,6 +145,9 @@ func (a *UserAgent) GetConn() *wsconn.Wrapper {
 }
 
 func (a *UserAgent) UpdateConn(conn *websocket.Conn) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	if a.conn != nil {
 		a.conn.UpdateConn(conn)
 	}
@@ -122,47 +161,6 @@ func (a *UserAgent) SetOnExit(fn func()) {
 	a.onExit = fn
 }
 
-func (a *UserAgent) Start(opts UserAgentOptions) error {
-	go a.loop()
-
-	return nil
-}
-
-func (a *UserAgent) StartWithModel(opts UserAgentOptions) error {
-	if opts.QuotaChatModel == nil {
-		go a.loop()
-		return nil
-	}
-
-	chatModel := opts.QuotaChatModel.GetInnerModel()
-
-	tools := GetGlobalTools()
-
-	var err error
-	a.einoAgent, err = adk.NewChatModelAgent(a.ctx, &adk.ChatModelAgentConfig{
-		Name:        a.agentID,
-		Description: opts.Description,
-		Instruction: buildInstruction(opts.SystemPrompt, opts.Memories),
-		Model:       chatModel,
-		ToolsConfig: adk.ToolsConfig{
-			ToolsNodeConfig: compose.ToolsNodeConfig{
-				Tools: tools,
-			},
-		},
-	})
-	if err != nil {
-		return err
-	}
-
-	a.einoRunner = adk.NewRunner(a.ctx, adk.RunnerConfig{
-		Agent: a.einoAgent,
-	})
-
-	go a.loop()
-
-	return nil
-}
-
 func buildInstruction(systemPrompt string, memories []string) string {
 	instruction := systemPrompt
 	if len(memories) > 0 {
@@ -174,7 +172,7 @@ func buildInstruction(systemPrompt string, memories []string) string {
 	return instruction
 }
 
-func GetGlobalTools() []tool.BaseTool {
+func getGlobalTools() []tool.BaseTool {
 	ctx := context.Background()
 	ddgTool, err := duckduckgo.NewTool(ctx, &duckduckgo.Config{}) //nolint:staticcheck // NewTextSearchTool not yet available
 	if err != nil {
