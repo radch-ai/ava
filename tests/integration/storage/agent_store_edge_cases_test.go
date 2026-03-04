@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/nevaria-ai/gateway/internal/billing"
 	"github.com/nevaria-ai/gateway/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,6 +22,30 @@ func getAgentStoreTestDBURL() string {
 		return url
 	}
 	return "postgres://test:test@localhost:5433/test?sslmode=disable"
+}
+
+// createAgentsTable creates the agents table for testing.
+// Backend owns migrations; gateway tests create table directly.
+func createAgentsTableForStoreTest(ctx context.Context, pool *pgxpool.Pool) error {
+	_, err := pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS agents (
+			agent_id     TEXT PRIMARY KEY,
+			user_id      TEXT NOT NULL,
+			name         TEXT,
+			soul_md      TEXT,
+			agents_md    TEXT,
+			user_md      TEXT,
+			identity_md  TEXT,
+			tools_md     TEXT,
+			heartbeat_md TEXT,
+			config       JSONB,
+			created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		CREATE INDEX IF NOT EXISTS idx_agents_user_id ON agents(user_id);
+		CREATE INDEX IF NOT EXISTS idx_agents_updated_at ON agents(updated_at);
+	`)
+	return err
 }
 
 func setupAgentStoreTestDB(t *testing.T) *pgxpool.Pool {
@@ -46,10 +69,10 @@ func setupAgentStoreTestDB(t *testing.T) *pgxpool.Pool {
 		return nil
 	}
 
-	err = billing.RunMigrationsWithPool(ctx, pool)
+	err = createAgentsTableForStoreTest(ctx, pool)
 	if err != nil {
 		pool.Close()
-		t.Skipf("Skipping test: cannot run migrations: %v", err)
+		t.Skipf("Skipping test: cannot create agents table: %v", err)
 		return nil
 	}
 
@@ -720,9 +743,9 @@ func BenchmarkUpsert(b *testing.B) {
 	}
 	defer pool.Close()
 
-	err = billing.RunMigrationsWithPool(ctx, pool)
+	err = createAgentsTableForStoreTest(ctx, pool)
 	if err != nil {
-		b.Skip("Cannot run migrations")
+		b.Skip("Cannot create agents table")
 		return
 	}
 
@@ -763,9 +786,9 @@ func BenchmarkGet(b *testing.B) {
 	}
 	defer pool.Close()
 
-	err = billing.RunMigrationsWithPool(ctx, pool)
+	err = createAgentsTableForStoreTest(ctx, pool)
 	if err != nil {
-		b.Skip("Cannot run migrations")
+		b.Skip("Cannot create agents table")
 		return
 	}
 
@@ -811,9 +834,9 @@ func BenchmarkListByUser(b *testing.B) {
 	}
 	defer pool.Close()
 
-	err = billing.RunMigrationsWithPool(ctx, pool)
+	err = createAgentsTableForStoreTest(ctx, pool)
 	if err != nil {
-		b.Skip("Cannot run migrations")
+		b.Skip("Cannot create agents table")
 		return
 	}
 
