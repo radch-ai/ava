@@ -22,7 +22,7 @@ func NewAuthMiddleware(introspector *zitadelvalidate.Introspector) *AuthMiddlewa
 }
 
 // Authenticate returns a middleware handler that validates the session cookie
-// and adds user_id to context before calling the next handler.
+// and adds user_id to context before calling next handler.
 //
 // Simple Auth Flow (no sliding sessions):
 //   - Gateway only validates session authenticity
@@ -46,6 +46,10 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 		// Validate with Zitadel introspection
 		sessionInfo, err := m.introspector.ValidateSession(r.Context(), sessionToken)
 		if err != nil {
+			if errors.Is(err, zitadelvalidate.ErrSessionExpired) {
+				m.writeAuthError(w, "session_expired", "Your session has expired. Please login again.")
+				return
+			}
 			if errors.Is(err, zitadelvalidate.ErrSessionInvalid) {
 				m.writeAuthError(w, "authentication_required", "Valid session required. Please login.")
 				return
