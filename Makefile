@@ -40,14 +40,14 @@ test-integration:
 	@if [ -z "$(TEST_PATH)" ]; then \
 		echo "Running integration tests for all packages..."; \
 		TEST_DATABASE_URL="postgres://test:test@localhost:5433/test?sslmode=disable" \
-			go test -race -coverprofile=coverage-integration.out -tags=integration -v ./... -timeout 5m; \
+			go test -race -coverprofile=coverage.integration.out -tags=integration -v ./... -timeout 5m; \
 	else \
 		echo "Running integration tests for $(TEST_PATH)..."; \
 		TEST_DATABASE_URL="postgres://test:test@localhost:5433/test?sslmode=disable" \
-			go test -race -coverprofile=coverage-integration.out -tags=integration -v $(TEST_PATH) -timeout 5m; \
+			go test -race -coverprofile=coverage.integration.out -tags=integration -v $(TEST_PATH) -timeout 5m; \
 	fi
-	@go tool cover -html=coverage-integration.out -o coverage-integration.html
-	@echo "Integration coverage report: coverage-integration.html"
+	@go tool cover -html=coverage.integration.out -o coverage.integration.html
+	@echo "Integration coverage report: coverage.integration.html"
 	@echo "Stopping Docker test services..."
 	@docker compose -f tests/docker-compose.test.yml down -v
 
@@ -56,9 +56,9 @@ test-e2e:
 	@echo "Starting Docker test services..."
 	@docker compose -f tests/docker-compose.test.yml up -d --wait --quiet-pull
 	@sleep 2
-	go test -race -coverprofile=coverage-e2e.out -tags=e2e -v ./tests/e2e/... -timeout 10m
-	@go tool cover -html=coverage-e2e.out -o coverage-e2e.html
-	@echo "E2E coverage report: coverage-e2e.html"
+	go test -race -coverprofile=coverage.e2e.out -tags=e2e -v ./tests/e2e/... -timeout 10m
+	@go tool cover -html=coverage.e2e.out -o coverage.e2e.html
+	@echo "E2E coverage report: coverage.e2e.html"
 	@echo "Stopping Docker test services..."
 	@docker compose -f tests/docker-compose.test.yml down -v
 
@@ -75,8 +75,8 @@ docker-build-test:
 clean:
 	@echo "Cleaning..."
 	@rm -rf bin
-	@rm -f coverage.out coverage.html coverage-integration.out coverage-integration.html
-	@rm -f coverage-e2e.out coverage-e2e.html
+	@rm -f coverage.out coverage.html coverage.integration.out coverage.integration.html
+	@rm -f coverage.e2e.out coverage.e2e.html
 
 ## deps: Download dependencies
 deps:
