@@ -473,22 +473,46 @@ func TestNewIntrospector(t *testing.T) {
 	})
 }
 
-// TestIntrospectorOptions tests the option functions.
-func TestIntrospectorOptions(t *testing.T) {
-	t.Run("WithTimeout sets custom timeout", func(t *testing.T) {
-		i := &Introspector{}
-		WithTimeout(10 * time.Second)(i)
-		if i.timeout != 10*time.Second {
-			t.Errorf("timeout = %v, want 10s", i.timeout)
-		}
-	})
-}
-
 // TestDefaultIntrospectionTimeout verifies the default timeout value.
 func TestDefaultIntrospectionTimeout(t *testing.T) {
 	if DefaultIntrospectionTimeout != 5*time.Second {
 		t.Errorf("DefaultIntrospectionTimeout = %v, want 5s", DefaultIntrospectionTimeout)
 	}
+}
+
+// TestIntrospectorBuilderMethods tests the fluent builder methods.
+func TestIntrospectorBuilderMethods(t *testing.T) {
+	t.Run("WithTimeout sets custom timeout", func(t *testing.T) {
+		i := &Introspector{}
+		result := i.WithTimeout(10 * time.Second)
+		if i.timeout != 10*time.Second {
+			t.Errorf("timeout = %v, want 10s", i.timeout)
+		}
+		if result != i {
+			t.Error("WithTimeout should return same instance for chaining")
+		}
+	})
+
+	t.Run("WithLogger sets logger", func(t *testing.T) {
+		i := &Introspector{}
+		log := zerolog.Nop()
+		result := i.WithLogger(log)
+		if result != i {
+			t.Error("WithLogger should return same instance for chaining")
+		}
+	})
+
+	t.Run("methods can be chained", func(t *testing.T) {
+		i := &Introspector{}
+		log := zerolog.Nop()
+		result := i.WithLogger(log).WithTimeout(10 * time.Second)
+		if result != i {
+			t.Error("chaining should return same instance")
+		}
+		if i.timeout != 10*time.Second {
+			t.Errorf("timeout = %v, want 10s", i.timeout)
+		}
+	})
 }
 
 // TestMustNewIntrospector tests the Must variant calls Fatal on error.

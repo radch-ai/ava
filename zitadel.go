@@ -36,23 +36,6 @@ type Introspector struct {
 	timeout        time.Duration
 }
 
-// IntrospectorOption configures an Introspector.
-type IntrospectorOption func(*Introspector)
-
-// WithLogger sets a custom zerolog logger for the introspector.
-func WithLogger(log zerolog.Logger) IntrospectorOption {
-	return func(i *Introspector) {
-		i.log = log
-	}
-}
-
-// WithTimeout sets a custom timeout for introspection calls.
-func WithTimeout(timeout time.Duration) IntrospectorOption {
-	return func(i *Introspector) {
-		i.timeout = timeout
-	}
-}
-
 // NewIntrospector creates a new introspector for Zitadel using JWT Profile.
 //
 // Machine Key JWT Authentication (JWT Profile):
@@ -63,7 +46,7 @@ func WithTimeout(timeout time.Duration) IntrospectorOption {
 //
 // Note: The ctx parameter is only used for the initial setup. The returned
 // Introspector is long-lived and safe to use across requests.
-func NewIntrospector(ctx context.Context, domain, keyPath string, opts ...IntrospectorOption) (*Introspector, error) {
+func NewIntrospector(ctx context.Context, domain, keyPath string) (*Introspector, error) {
 	if domain == "" {
 		return nil, errors.New("zitadel domain is required")
 	}
@@ -90,23 +73,31 @@ func NewIntrospector(ctx context.Context, domain, keyPath string, opts ...Intros
 		return nil, fmt.Errorf("failed to create resource server client: %w", err)
 	}
 
-	i := &Introspector{
+	return &Introspector{
 		resourceServer: resourceServer,
 		log:            zerolog.Nop(),
 		timeout:        DefaultIntrospectionTimeout,
-	}
+	}, nil
+}
 
-	for _, opt := range opts {
-		opt(i)
-	}
+// WithLogger sets a custom zerolog logger for the introspector.
+// Returns the Introspector for method chaining.
+func (i *Introspector) WithLogger(log zerolog.Logger) *Introspector {
+	i.log = log
+	return i
+}
 
-	return i, nil
+// WithTimeout sets a custom timeout for introspection calls.
+// Returns the Introspector for method chaining.
+func (i *Introspector) WithTimeout(timeout time.Duration) *Introspector {
+	i.timeout = timeout
+	return i
 }
 
 // MustNewIntrospector is like NewIntrospector but calls log.Fatal on error.
 // Useful for initialization in main() where failures should halt startup.
-func MustNewIntrospector(ctx context.Context, domain, keyPath string, opts ...IntrospectorOption) *Introspector {
-	i, err := NewIntrospector(ctx, domain, keyPath, opts...)
+func MustNewIntrospector(ctx context.Context, domain, keyPath string) *Introspector {
+	i, err := NewIntrospector(ctx, domain, keyPath)
 	if err != nil {
 		log := zerolog.New(nil).With().Timestamp().Logger()
 		log.Fatal().Err(err).Msg("failed to create introspector")
