@@ -16,7 +16,7 @@ import (
 	coderws "github.com/coder/websocket"
 	"github.com/nevaria-ai/gateway/internal/agent"
 	"github.com/nevaria-ai/gateway/internal/node"
-	"github.com/nevaria-ai/gateway/internal/server"
+	zitadelvalidate "github.com/nevaria-ai/zitadel-validate"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -86,7 +86,7 @@ func TestHandler_HandleNodeConnect_ConnectionLimit(t *testing.T) {
 		agentProvider := newMockAgentProvider()
 		service := node.NewService(testLogger(), agentProvider)
 		authClient := &mockAuthClient{
-			session: &server.SessionInfo{
+			session: &zitadelvalidate.SessionInfo{
 				UserID: "user123",
 			},
 		}
@@ -124,7 +124,7 @@ func TestHandler_HandleNodeConnect_ConnectionLimit(t *testing.T) {
 		agentProvider := newMockAgentProvider()
 		service := node.NewService(testLogger(), agentProvider)
 		authClient := &mockAuthClient{
-			session: &server.SessionInfo{
+			session: &zitadelvalidate.SessionInfo{
 				UserID: "user123",
 			},
 		}
@@ -148,7 +148,7 @@ func TestHandler_HandleNodeConnect_ConnectionLimit(t *testing.T) {
 		agentProvider := newMockAgentProvider()
 		service := node.NewService(testLogger(), agentProvider)
 		authClient := &mockAuthClient{
-			session: &server.SessionInfo{
+			session: &zitadelvalidate.SessionInfo{
 				UserID: "user123",
 			},
 		}
@@ -279,7 +279,7 @@ func TestHandler_HandleNodeConnect_ValidToken(t *testing.T) {
 		agentProvider := newMockAgentProvider()
 		service := node.NewService(testLogger(), agentProvider)
 		authClient := &mockAuthClient{
-			session: &server.SessionInfo{
+			session: &zitadelvalidate.SessionInfo{
 				UserID: "user123",
 			},
 		}
@@ -304,7 +304,7 @@ func TestHandler_HandleNodeConnect_ValidToken(t *testing.T) {
 
 		userID := "test-user-42"
 		authClient := &mockAuthClient{
-			session: &server.SessionInfo{
+			session: &zitadelvalidate.SessionInfo{
 				UserID: userID,
 			},
 		}
@@ -360,7 +360,7 @@ func TestHandler_ActiveConns(t *testing.T) {
 		agentProvider := newMockAgentProvider()
 		service := node.NewService(testLogger(), agentProvider)
 		authClient := &mockAuthClient{
-			session: &server.SessionInfo{
+			session: &zitadelvalidate.SessionInfo{
 				UserID: "user123",
 			},
 		}
@@ -1289,7 +1289,7 @@ func TestHandler_ConnectionLifecycle(t *testing.T) {
 		agentProvider := newMockAgentProvider()
 		service := node.NewService(testLogger(), agentProvider)
 		authClient := &mockAuthClient{
-			session: &server.SessionInfo{
+			session: &zitadelvalidate.SessionInfo{
 				UserID: "user123",
 			},
 		}
@@ -1699,7 +1699,7 @@ func TestHandler_Errors(t *testing.T) {
 // TestHandler_SessionInfo tests session info handling.
 func TestHandler_SessionInfo(t *testing.T) {
 	t.Run("creates valid session info", func(t *testing.T) {
-		session := &server.SessionInfo{
+		session := &zitadelvalidate.SessionInfo{
 			UserID: "user123",
 		}
 
@@ -1710,10 +1710,10 @@ func TestHandler_SessionInfo(t *testing.T) {
 // TestHandler_UserIsolation tests user isolation.
 func TestHandler_UserIsolation(t *testing.T) {
 	t.Run("different users have different user IDs", func(t *testing.T) {
-		user1Session := &server.SessionInfo{
+		user1Session := &zitadelvalidate.SessionInfo{
 			UserID: "user1",
 		}
-		user2Session := &server.SessionInfo{
+		user2Session := &zitadelvalidate.SessionInfo{
 			UserID: "user2",
 		}
 
@@ -1721,7 +1721,7 @@ func TestHandler_UserIsolation(t *testing.T) {
 	})
 
 	t.Run("user ID is extracted from session", func(t *testing.T) {
-		session := &server.SessionInfo{
+		session := &zitadelvalidate.SessionInfo{
 			UserID: "test-user-123",
 		}
 
@@ -1835,7 +1835,7 @@ func TestHandler_ReleaseConn(t *testing.T) {
 		agentProvider := newMockAgentProvider()
 		service := node.NewService(testLogger(), agentProvider)
 		authClient := &mockAuthClient{
-			session: &server.SessionInfo{
+			session: &zitadelvalidate.SessionInfo{
 				UserID: "user123",
 			},
 		}
@@ -2160,7 +2160,7 @@ func TestHandler_Recovery(t *testing.T) {
 		agentProvider := newMockAgentProvider()
 		service := node.NewService(testLogger(), agentProvider)
 		authClient := &mockAuthClient{
-			session: &server.SessionInfo{
+			session: &zitadelvalidate.SessionInfo{
 				UserID: "user123",
 			},
 		}
@@ -2270,11 +2270,11 @@ func TestHandler_LongRunningConnection(t *testing.T) {
 
 // mockAuthClient is a mock implementation of AuthClient.
 type mockAuthClient struct {
-	session       *server.SessionInfo
+	session       *zitadelvalidate.SessionInfo
 	validateError error
 }
 
-func (m *mockAuthClient) ValidateSession(ctx context.Context, token string) (*server.SessionInfo, error) {
+func (m *mockAuthClient) ValidateSession(ctx context.Context, token string) (*zitadelvalidate.SessionInfo, error) {
 	if m.validateError != nil {
 		return nil, m.validateError
 	}

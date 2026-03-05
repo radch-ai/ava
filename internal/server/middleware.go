@@ -6,15 +6,16 @@ import (
 	"net/http"
 
 	internalctx "github.com/nevaria-ai/gateway/internal/ctx"
+	"github.com/nevaria-ai/zitadel-validate"
 )
 
 // AuthMiddleware handles authentication for incoming requests.
 type AuthMiddleware struct {
-	introspector *ZitadelIntrospector
+	introspector *zitadelvalidate.Introspector
 }
 
 // NewAuthMiddleware creates a new authentication middleware with the given introspector.
-func NewAuthMiddleware(introspector *ZitadelIntrospector) *AuthMiddleware {
+func NewAuthMiddleware(introspector *zitadelvalidate.Introspector) *AuthMiddleware {
 	return &AuthMiddleware{
 		introspector: introspector,
 	}
@@ -43,9 +44,9 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 		sessionToken := cookie.Value
 
 		// Validate with Zitadel introspection
-		sessionInfo, err := ValidateSession(r.Context(), m.introspector, sessionToken)
+		sessionInfo, err := m.introspector.ValidateSession(r.Context(), sessionToken)
 		if err != nil {
-			if errors.Is(err, ErrSessionInvalid) {
+			if errors.Is(err, zitadelvalidate.ErrSessionInvalid) {
 				m.writeAuthError(w, "authentication_required", "Valid session required. Please login.")
 				return
 			}

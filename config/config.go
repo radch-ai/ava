@@ -2,11 +2,12 @@
 package config
 
 import (
-	"fmt"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/rs/zerolog"
 )
 
 // A Config holds the application configuration.
@@ -19,6 +20,8 @@ type Config struct {
 	ZitadelKeyPath string // Path to service account JSON key file for gateway authentication
 	RedisAddr      string
 	RedisPassword  string
+	BifrostBaseURL string // Bifrost LLM gateway URL
+	DatabaseURL    string // PostgreSQL connection URL
 }
 
 // getEnv returns the environment variable value or a default.
@@ -29,13 +32,13 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-// getEnvRequired returns the environment variable value or an error if not set.
-func getEnvRequired(key string) (string, error) {
+// getEnvRequired returns the environment variable value or fatals with logger.
+func getEnvRequired(key string, logger zerolog.Logger) string {
 	value := os.Getenv(key)
 	if value == "" {
-		return "", fmt.Errorf("%s is required", key)
+		logger.Fatal().Str("env_var", key).Msg("required environment variable is not set")
 	}
-	return value, nil
+	return value
 }
 
 // parseList parses a comma-separated list into a string slice.
@@ -54,17 +57,33 @@ func parseList(value string) []string {
 	return result
 }
 
+// SetupLogger configures the global zerolog logger and returns a service-scoped logger.
+// Reads log level from GATEWAY_LOG_LEVEL env var (defaults to "info").
+func SetupLogger() zerolog.Logger {
+	level := getEnv("GATEWAY_LOG_LEVEL", "info")
+
+	logLevel, err := zerolog.ParseLevel(level)
+	if err != nil {
+		// Use stderr directly since logger isn't set up yet
+		logger := zerolog.New(os.Stderr).With().Timestamp().Logger()
+		logger.Fatal().
+			Str("level", level).
+			Err(err).
+			Msg("invalid log level")
+	}
+	zerolog.SetGlobalLevel(logLevel)
+
+	return zerolog.New(os.Stderr).With().Timestamp().Str("service", "nevaria-gateway").Logger()
+}
+
 // Load reads configuration from environment variables and returns a Config.
-// Returns an error if any required environment variable is missing or invalid.
-func Load() (*Config, error) {
+// Uses logger for fatal errors on missing required configuration.
+func Load(logger zerolog.Logger) *Config {
 	addr := getEnv("GATEWAY_ADDR", ":8080")
 	logLevel := getEnv("GATEWAY_LOG_LEVEL", "info")
 
 	// AllowedOrigins: required - specific origins only (empty denies all, "*" allows all but warns)
-	originsRaw, err := getEnvRequired("GATEWAY_ALLOWED_ORIGINS")
-	if err != nil {
-		return nil, err
-	}
+	originsRaw := getEnvRequired("GATEWAY_ALLOWED_ORIGINS", logger)
 	origins := parseList(originsRaw)
 
 	// Default connection limit (10000):
@@ -75,37 +94,31 @@ func Load() (*Config, error) {
 		var err error
 		maxConns, err = strconv.Atoi(maxConnsStr)
 		if err != nil {
-			return nil, fmt.Errorf("invalid GATEWAY_MAX_CONNS: %q", maxConnsStr)
+			logger.Fatal().Str("value", maxConnsStr).Err(err).Msg("invalid GATEWAY_MAX_CONNS")
 		}
 		if maxConns <= 0 {
-			return nil, fmt.Errorf("invalid GATEWAY_MAX_CONNS: must be a positive integer")
+			logger.Fatal().Str("value", maxConnsStr).Msg("GATEWAY_MAX_CONNS must be a positive integer")
 		}
 	}
 
 	// Redis is required for gateway services (user config store, quota system)
-	redisAddr, err := getEnvRequired("REDIS_ADDR")
-	if err != nil {
-		return nil, err
-	}
-	redisPassword, err := getEnvRequired("REDIS_PASSWORD")
-	if err != nil {
-		return nil, err
-	}
+	redisAddr := getEnvRequired("REDIS_ADDR", logger)
+	redisPassword := getEnvRequired("REDIS_PASSWORD", logger)
 
 	// Zitadel configuration is required for auth
-	zitadelDomain, err := getEnvRequired("ZITADEL_DOMAIN")
-	if err != nil {
-		return nil, err
-	}
+	zitadelDomain := getEnvRequired("ZITADEL_DOMAIN", logger)
 	parsedURL, err := url.Parse(zitadelDomain)
 	if err != nil || parsedURL.Scheme == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
-		return nil, fmt.Errorf("ZITADEL_DOMAIN must be a valid URL with http or https scheme")
+		logger.Fatal().Str("value", zitadelDomain).Msg("ZITADEL_DOMAIN must be a valid URL with http or https scheme")
 	}
 
-	zitadelKeyPath, err := getEnvRequired("ZITADEL_KEY_PATH")
-	if err != nil {
-		return nil, err
-	}
+	zitadelKeyPath := getEnvRequired("ZITADEL_KEY_PATH", logger)
+
+	// Bifrost LLM gateway URL (optional, defaults to localhost)
+	bifrostBaseURL := getEnv("BIFROST_BASEURL", "http://localhost:8080/v1")
+
+	// Database URL (required for user config loading)
+	databaseURL := getEnvRequired("DATABASE_URL", logger)
 
 	return &Config{
 		ServerAddr:     addr,
@@ -116,5 +129,7 @@ func Load() (*Config, error) {
 		ZitadelKeyPath: zitadelKeyPath,
 		RedisAddr:      redisAddr,
 		RedisPassword:  redisPassword,
-	}, nil
+		BifrostBaseURL: bifrostBaseURL,
+		DatabaseURL:    databaseURL,
+	}
 }

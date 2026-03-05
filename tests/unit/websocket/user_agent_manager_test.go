@@ -5,25 +5,24 @@ import (
 	"testing"
 
 	"github.com/nevaria-ai/gateway/internal/agent"
-	"github.com/nevaria-ai/gateway/internal/websocket"
 	"github.com/nevaria-ai/gateway/internal/wsconn"
 	"github.com/rs/zerolog"
 )
 
-func TestAgentManagerCreation(t *testing.T) {
+func TestUserAgentManagerCreation(t *testing.T) {
 	logger := zerolog.Nop()
 
-	mgr := websocket.NewAgentManager(logger, nil)
+	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
 
 	if mgr == nil {
-		t.Fatal("NewAgentManager returned nil")
+		t.Fatal("NewUserAgentManager returned nil")
 	}
 }
 
 func TestGet(t *testing.T) {
 	logger := zerolog.Nop()
 
-	mgr := websocket.NewAgentManager(logger, nil)
+	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
 
 	userID := "test-user-123"
 	agentID := "test-agent-456"
@@ -36,7 +35,7 @@ func TestGet(t *testing.T) {
 	}
 
 	// Create agent via Submit
-	msg := agent.Message{Content: "test", ID: "msg-1"}
+	msg := agent.Message{Content: "test", ID: "msg-1", Model: "gpt-4o"}
 	ok := mgr.SubmitMsg(context.Background(), userID, agentID, conn, msg)
 	if !ok {
 		t.Fatal("Submit failed")
@@ -49,16 +48,16 @@ func TestGet(t *testing.T) {
 	}
 }
 
-func TestAgentKeyCompositeKey(t *testing.T) {
+func TestLaneKeyCompositeKey(t *testing.T) {
 	logger := zerolog.Nop()
-	mgr := websocket.NewAgentManager(logger, nil)
+	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
 
 	userID := "user-123"
 	agentID := "agent-456"
 	conn := wsconn.NewWrapper(nil)
 
 	// Create first agent
-	msg := agent.Message{Content: "test", ID: "msg-1"}
+	msg := agent.Message{Content: "test", ID: "msg-1", Model: "gpt-4o"}
 	_ = mgr.SubmitMsg(context.Background(), userID, agentID, conn, msg)
 	ag1 := mgr.Get(userID, agentID)
 	if ag1 == nil {
@@ -89,13 +88,13 @@ func TestAgentKeyCompositeKey(t *testing.T) {
 
 func TestSubmit(t *testing.T) {
 	logger := zerolog.Nop()
-	mgr := websocket.NewAgentManager(logger, nil)
+	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
 
 	userID := "test-user-submit"
 	agentID := "test-agent-submit"
 	conn := wsconn.NewWrapper(nil)
 
-	msg := agent.Message{Content: "test message", ID: "msg-1"}
+	msg := agent.Message{Content: "test message", ID: "msg-1", Model: "gpt-4o"}
 
 	ok := mgr.SubmitMsg(context.Background(), userID, agentID, conn, msg)
 	if !ok {
@@ -105,14 +104,14 @@ func TestSubmit(t *testing.T) {
 
 func TestSubmitCreatesAgent(t *testing.T) {
 	logger := zerolog.Nop()
-	mgr := websocket.NewAgentManager(logger, nil)
+	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
 
 	userID := "test-user-create"
 	agentID := "test-agent-create"
 	conn := wsconn.NewWrapper(nil)
 
 	// Submit without prior agent should create agent
-	msg := agent.Message{Content: "create and submit", ID: "msg-3"}
+	msg := agent.Message{Content: "create and submit", ID: "msg-3", Model: "gpt-4o"}
 	ok := mgr.SubmitMsg(context.Background(), userID, agentID, conn, msg)
 	if !ok {
 		t.Error("Expected Submit to create agent and return true")
@@ -127,14 +126,14 @@ func TestSubmitCreatesAgent(t *testing.T) {
 
 func TestSubmitAfterIdleTimeout(t *testing.T) {
 	logger := zerolog.Nop()
-	mgr := websocket.NewAgentManager(logger, nil)
+	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
 
 	userID := "test-user-idle"
 	agentID := "test-agent-idle"
 	conn := wsconn.NewWrapper(nil)
 
 	// Create agent via SubmitMsg with short idle timeout
-	msg := agent.Message{Content: "first message", ID: "msg-1"}
+	msg := agent.Message{Content: "first message", ID: "msg-1", Model: "gpt-4o"}
 	ok := mgr.SubmitMsg(context.Background(), userID, agentID, conn, msg)
 	if !ok {
 		t.Fatal("Expected first SubmitMsg to return true")
@@ -150,7 +149,7 @@ func TestSubmitAfterIdleTimeout(t *testing.T) {
 	// In real scenario, idle timeout would clean up the lane
 
 	// SubmitMsg should still work
-	msg2 := agent.Message{Content: "after idle", ID: "msg-2"}
+	msg2 := agent.Message{Content: "after idle", ID: "msg-2", Model: "gpt-4o"}
 	ok = mgr.SubmitMsg(context.Background(), userID, agentID, conn, msg2)
 	if !ok {
 		t.Error("Expected SubmitMsg to return true")

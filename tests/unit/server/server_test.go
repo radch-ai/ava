@@ -11,6 +11,7 @@ import (
 	"time"
 
 	coderws "github.com/coder/websocket"
+	"github.com/nevaria-ai/gateway/internal/agent"
 	"github.com/rs/zerolog"
 
 	"github.com/nevaria-ai/gateway/internal/websocket"
@@ -133,7 +134,7 @@ func TestServerInvalidPath(t *testing.T) {
 // TestWebSocketHandlerWithoutAuth tests the WebSocket handler directly without auth.
 func TestWebSocketHandlerWithoutAuth(t *testing.T) {
 	logger := zerolog.Nop()
-	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
+	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", wsHandler.HandleWebSocket)

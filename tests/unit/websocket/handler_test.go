@@ -12,13 +12,14 @@ import (
 
 	coderws "github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	"github.com/nevaria-ai/gateway/internal/agent"
 	"github.com/nevaria-ai/gateway/internal/websocket"
 	"github.com/rs/zerolog"
 )
 
 func TestWebSocketUpgrade(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
 
 	// Create test server
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
@@ -71,7 +72,7 @@ func TestWebSocketUpgrade(t *testing.T) {
 
 func TestWebSocketMessageLogging(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
 
@@ -127,7 +128,7 @@ func TestWebSocketOriginValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			logger := zerolog.New(os.Stderr)
-			handler := websocket.NewHandler(logger, []string{tt.allowedOrigin}, 100, nil)
+			handler := websocket.NewHandler(logger, []string{tt.allowedOrigin}, 100, &agent.UserAgentManagerOptions{})
 
 			server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 			defer server.Close()
@@ -166,7 +167,7 @@ func TestWebSocketOriginValidation(t *testing.T) {
 func TestWebSocketConnectionLimit(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
 	maxConns := 2
-	handler := websocket.NewHandler(logger, []string{"*"}, maxConns, nil)
+	handler := websocket.NewHandler(logger, []string{"*"}, maxConns, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -202,7 +203,7 @@ func TestWebSocketConnectionLimit(t *testing.T) {
 
 func TestWebSocketBinaryMessage(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -253,7 +254,7 @@ func TestWebSocketBinaryMessage(t *testing.T) {
 
 func TestWebSocketPingPong(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -305,7 +306,7 @@ func TestWebSocketPingPong(t *testing.T) {
 
 func TestWebSocketCloseOnClientDisconnect(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -340,7 +341,7 @@ func TestWebSocketCloseOnClientDisconnect(t *testing.T) {
 
 func TestActiveConns(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
 
 	if handler.ActiveConns() != 0 {
 		t.Errorf("expected 0 active connections initially, got %d", handler.ActiveConns())
@@ -349,7 +350,7 @@ func TestActiveConns(t *testing.T) {
 
 func TestWebSocketMessageSizeLimit(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -389,7 +390,7 @@ func TestWebSocketMessageSizeLimit(t *testing.T) {
 
 func TestWebSocketLargeMessageEcho(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -441,7 +442,7 @@ func TestWebSocketLargeMessageEcho(t *testing.T) {
 func TestWebSocketHealthEndpoint(t *testing.T) {
 	// This tests that /health works correctly when handler is used in a full server setup
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -473,7 +474,7 @@ func TestWebSocketHealthEndpoint(t *testing.T) {
 func TestNewHandlerLogger(t *testing.T) {
 	// Test with zero logger (should create default)
 	var zeroLogger zerolog.Logger
-	handler := websocket.NewHandler(zeroLogger, []string{"*"}, 100, nil)
+	handler := websocket.NewHandler(zeroLogger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
 
 	if handler == nil {
 		t.Error("expected non-nil handler")
@@ -482,7 +483,7 @@ func TestNewHandlerLogger(t *testing.T) {
 
 func TestWebSocketConcurrentMessages(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -539,7 +540,7 @@ func TestWebSocketConcurrentMessages(t *testing.T) {
 // TestWebSocketClientClose verifies proper cleanup when client closes connection
 func TestWebSocketClientClose(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -573,7 +574,7 @@ func TestWebSocketClientClose(t *testing.T) {
 // TestWebSocketMessageRequiresAgentID verifies that prompt messages must include agent_id
 func TestWebSocketMessageRequiresAgentID(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -617,7 +618,7 @@ func TestWebSocketMessageRequiresAgentID(t *testing.T) {
 // TestWebSocketMessageWithAgentID verifies that messages with agent_id are routed correctly
 func TestWebSocketMessageWithAgentID(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -668,7 +669,7 @@ func TestWebSocketMessageWithAgentID(t *testing.T) {
 // TestWebSocketConnectedEventHasUserID verifies that connected event includes user_id
 func TestWebSocketConnectedEventHasUserID(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -718,7 +719,7 @@ func TestWebSocketConnectedEventHasUserID(t *testing.T) {
 // TestWebSocketMultipleAgentsPerConnection verifies different agent_ids can be used in same connection
 func TestWebSocketMultipleAgentsPerConnection(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -785,7 +786,7 @@ func TestWebSocketMultipleAgentsPerConnection(t *testing.T) {
 // TestWebSocketStatusMessage tests the status message type
 func TestWebSocketStatusMessage(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -829,7 +830,7 @@ func TestWebSocketStatusMessage(t *testing.T) {
 // TestWebSocketSteerMessage tests the steer message type
 func TestWebSocketSteerMessage(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -886,7 +887,7 @@ func TestWebSocketSteerMessage(t *testing.T) {
 // TestWebSocketUnknownMessageType tests that unknown message types are handled gracefully
 func TestWebSocketUnknownMessageType(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -930,7 +931,7 @@ func TestWebSocketUnknownMessageType(t *testing.T) {
 // TestWebSocketInvalidJSON tests that invalid JSON is handled gracefully
 func TestWebSocketInvalidJSON(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()

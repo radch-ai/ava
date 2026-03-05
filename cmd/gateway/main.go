@@ -4,33 +4,48 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nevaria-ai/zitadel-validate"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 
 	"github.com/nevaria-ai/gateway/config"
-	"github.com/nevaria-ai/gateway/internal/llm"
+	"github.com/nevaria-ai/gateway/internal/agent"
 	"github.com/nevaria-ai/gateway/internal/server"
 	"github.com/nevaria-ai/gateway/internal/websocket"
 )
 
 func main() {
-	cfg, err := config.Load()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
-		os.Exit(1)
-	}
+	// Setup logging first (reads GATEWAY_LOG_LEVEL from env)
+	logger := config.SetupLogger()
 
-	// Configure logger level
-	logLevel, err := zerolog.ParseLevel(cfg.LogLevel)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid log level %q: %v\n", cfg.LogLevel, err)
-		os.Exit(1)
-	}
-	zerolog.SetGlobalLevel(logLevel)
+	// Load configuration (uses logger for fatal errors)
+	cfg := config.Load(logger)
 
-	// Create logger
-	logger := zerolog.New(os.Stderr).With().Timestamp().Str("service", "nevaria-gateway").Logger()
+	// Create cancellable context for graceful shutdown
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	// Initialize database connection pool
+	dbPool, err := newDBPool(ctx, cfg.DatabaseURL, logger)
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Failed to connect to database")
+	}
+	defer dbPool.Close()
+
+	// Initialize Redis client for fast lookups and pub/sub messaging.
+	// Scheduler service publishes task events; gateway subscribes and executes.
+	// TODO: Wire pub/sub handler for scheduler -> gateway communication
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     cfg.RedisAddr,
+		Password: cfg.RedisPassword,
+		DB:       0,
+	})
+	_ = rdb // TODO: Wire pub/sub handler
 
 	// Warn on insecure origins configuration:
 	// - Empty origins denies all requests (secure but likely misconfigured)
@@ -42,41 +57,67 @@ func main() {
 		logger.Warn().Msg("GATEWAY_ALLOWED_ORIGINS='*' allows all origins - not recommended for production!")
 	}
 
-	// Initialize LLM client (connects to llm-proxy):
-	// - llm-proxy handles quota, model routing, and multi-provider support
-	// - Gateway just sends requests to llm-proxy's OpenAI-compatible endpoint
-	llmClient := llm.NewClient(llm.DefaultConfig())
 	logger.Info().
-		Str("proxy_url", llmClient.Config.BaseURL).
-		Str("default_model", llmClient.Config.DefaultModel).
-		Msg("LLM client initialized")
-
-	// Initialize Redis client:
-	// - Ensures Redis connection is configured before server starts
-	// - TODO: Wire to storage/user config store
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     cfg.RedisAddr,
-		Password: cfg.RedisPassword,
-		DB:       0,
-	})
-	_ = rdb // TODO: Wire to storage/user config store
+		Str("bifrost_url", cfg.BifrostBaseURL).
+		Str("database", maskURL(cfg.DatabaseURL)).
+		Str("redis", cfg.RedisAddr).
+		Msg("Configuration loaded")
 
 	// Create WebSocket handler:
-	// - AgentManager accepts nil opts and operates without LLM until configured
-	// - ChatModel will be created per-session from llmClient
-	wsHandler := websocket.NewHandler(logger, cfg.AllowedOrigins, cfg.MaxConns, nil)
+	// - UserAgentManager creates agents with Bifrost connection
+	// - Model selection ("auto") is handled by Bifrost
+	wsHandler := websocket.NewHandler(logger, cfg.AllowedOrigins, cfg.MaxConns, &agent.UserAgentManagerOptions{
+		BifrostBaseURL: cfg.BifrostBaseURL,
+		DBPool:         dbPool,
+	})
 
-	// Create Zitadel introspector:
-	zitadelIntrospector, err := server.NewZitadelIntrospector(context.Background(), cfg.ZitadelDomain, cfg.ZitadelKeyPath)
-	if err != nil {
-		logger.Error().Err(err).Msg("failed to create zitadel introspector")
-		os.Exit(1)
-	}
+	// Create Zitadel introspector for session validation (panics on error)
+	zitadelIntr := zitadelvalidate.MustNewIntrospector(ctx, cfg.ZitadelDomain, cfg.ZitadelKeyPath).WithLogger(logger)
 
 	// Create and start server
-	srv := server.New(cfg.ServerAddr, logger, wsHandler, zitadelIntrospector)
-	if err := srv.Start(); err != nil {
-		logger.Error().Err(err).Msg("server failed")
-		os.Exit(1)
+	srv := server.New(cfg.ServerAddr, logger, wsHandler, zitadelIntr)
+	if err := srv.Start(ctx); err != nil {
+		logger.Fatal().Err(err).Msg("Server failed")
 	}
+}
+
+// maskURL masks sensitive parts of a URL for safe logging.
+// Shows first 10 and last 10 characters with *** in between.
+func maskURL(url string) string {
+	if len(url) < 20 {
+		return "***"
+	}
+	return url[:10] + "***" + url[len(url)-10:]
+}
+
+// newDBPool creates a tuned PostgreSQL connection pool.
+func newDBPool(ctx context.Context, databaseURL string, logger zerolog.Logger) (*pgxpool.Pool, error) {
+	poolCfg, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse db config: %w", err)
+	}
+
+	// Tune for gateway service
+	poolCfg.MaxConns = 10
+	poolCfg.MinConns = 2
+	poolCfg.MaxConnLifetime = 1 * time.Hour
+	poolCfg.MaxConnIdleTime = 30 * time.Minute
+	poolCfg.HealthCheckPeriod = 1 * time.Minute
+
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
+	if err != nil {
+		return nil, fmt.Errorf("create pool: %w", err)
+	}
+
+	// Verify connection is alive at startup
+	if err := pool.Ping(ctx); err != nil {
+		return nil, fmt.Errorf("ping db: %w", err)
+	}
+
+	logger.Info().
+		Int("max_conns", int(poolCfg.MaxConns)).
+		Int("min_conns", int(poolCfg.MinConns)).
+		Msg("Database pool created")
+
+	return pool, nil
 }

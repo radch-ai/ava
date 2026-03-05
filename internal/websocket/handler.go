@@ -40,11 +40,11 @@ type Handler struct {
 	connSem      chan struct{} // Semaphore for connection limiting
 	maxConns     int
 	activeConns  int32 // atomic counter
-	agentManager *AgentManager
+	agentManager *agent.UserAgentManager
 }
 
 // NewHandler creates a new WebSocket handler with connection limiting.
-func NewHandler(logger zerolog.Logger, allowedOrigins []string, maxConns int, agentOpts *AgentManagerOptions) *Handler {
+func NewHandler(logger zerolog.Logger, allowedOrigins []string, maxConns int, agentOpts *agent.UserAgentManagerOptions) *Handler {
 	sem := make(chan struct{}, maxConns)
 	return &Handler{
 		logger: logger,
@@ -53,7 +53,7 @@ func NewHandler(logger zerolog.Logger, allowedOrigins []string, maxConns int, ag
 		},
 		connSem:      sem,
 		maxConns:     maxConns,
-		agentManager: NewAgentManager(logger, agentOpts),
+		agentManager: agent.NewUserAgentManager(logger, agentOpts),
 	}
 }
 
@@ -225,6 +225,7 @@ type incomingMsg struct {
 	Type    string `json:"type"`
 	AgentID string `json:"agent_id"`
 	Content string `json:"content,omitempty"`
+	Model   string `json:"model,omitempty"`
 }
 
 // handleTextMessage parses and routes incoming client messages to the appropriate agent.
@@ -254,7 +255,11 @@ func (h *Handler) handleTextMessage(ctx context.Context, data []byte, userID str
 			logger.Debug().Msg("prompt missing id or text")
 			return
 		}
-		h.agentManager.SubmitMsg(ctx, userID, msg.AgentID, conn, agent.Message{Content: msg.Content, ID: msg.ID})
+		h.agentManager.SubmitMsg(ctx, userID, msg.AgentID, conn, agent.Message{
+			Content: msg.Content,
+			ID:      msg.ID,
+			Model:   msg.Model,
+		})
 
 	case "interrupt":
 		ag := h.agentManager.Get(userID, msg.AgentID)

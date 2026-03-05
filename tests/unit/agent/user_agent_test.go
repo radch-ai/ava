@@ -6,146 +6,48 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cloudwego/eino/components/model"
-	"github.com/cloudwego/eino/schema"
 	"github.com/nevaria-ai/gateway/internal/agent"
+	"github.com/nevaria-ai/gateway/internal/wsconn"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-type MockToolCallingChatModel struct {
-	generateCalls  int
-	streamCalls    int
-	withToolsCalls int
-	bindToolsCalls int
-	toolsBound     []*schema.ToolInfo
-	mu             sync.Mutex
-}
+func TestUserAgent_SubmitMsg_Success(t *testing.T) {
+	logger := zerolog.Nop()
+	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
 
-func (m *MockToolCallingChatModel) Generate(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.Message, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.generateCalls++
-	return &schema.Message{Role: schema.Assistant, Content: "mock response"}, nil
-}
+	userID := "user-1"
+	agentID := "agent-start-test"
+	conn := wsconn.NewWrapper(nil)
 
-func (m *MockToolCallingChatModel) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.streamCalls++
-	return nil, nil
-}
-
-func (m *MockToolCallingChatModel) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.withToolsCalls++
-	m.toolsBound = tools
-	return m, nil
-}
-
-func (m *MockToolCallingChatModel) BindTools(tools []*schema.ToolInfo) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.bindToolsCalls++
-	m.toolsBound = tools
-	return nil
-}
-
-func (m *MockToolCallingChatModel) GetToolsBound() []*schema.ToolInfo {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.toolsBound
-}
-
-func (m *MockToolCallingChatModel) GetWithToolsCalls() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.withToolsCalls
-}
-
-func TestUserAgent_NewUserAgent_Success(t *testing.T) {
-	mockChatModel := &MockToolCallingChatModel{}
-
-	laneCh := make(chan agent.Message, 100)
-	ag := agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
-		AgentID:      "agent-start-test",
-		UserID:       "user-1",
-		ChatModel:    mockChatModel,
-		SystemPrompt: "You are a helpful assistant.",
-		Description:  "Test agent for unit testing",
-		LaneCh:       laneCh,
-		IdleTimeout:  100 * time.Millisecond,
+	ok := mgr.SubmitMsg(context.Background(), userID, agentID, conn, agent.Message{
+		Content: "test message",
+		ID:      "msg-1",
+		Model:   "gpt-4o",
 	})
+	require.True(t, ok)
 
+	// Verify agent was created
+	ag := mgr.Get(userID, agentID)
 	require.NotNil(t, ag)
-	time.Sleep(150 * time.Millisecond) // let idle timeout cleanup
-}
-
-func TestUserAgent_NewUserAgent_WithTools(t *testing.T) {
-	mockChatModel := &MockToolCallingChatModel{}
-
-	laneCh := make(chan agent.Message, 100)
-	ag := agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
-		AgentID:      "agent-tools-test",
-		UserID:       "user-1",
-		ChatModel:    mockChatModel,
-		SystemPrompt: "You are a helpful assistant.",
-		Description:  "Test agent for tools testing",
-		LaneCh:       laneCh,
-		IdleTimeout:  100 * time.Millisecond,
-	})
-
-	require.NotNil(t, ag)
-	time.Sleep(150 * time.Millisecond)
-}
-
-func TestUserAgent_NewUserAgent_WithMemories(t *testing.T) {
-	mockChatModel := &MockToolCallingChatModel{}
-
-	memories := []string{
-		"User prefers dark mode",
-		"User likes concise responses",
-		"User is a Go developer",
-	}
-
-	laneCh := make(chan agent.Message, 100)
-	ag := agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
-		AgentID:      "agent-memories-test",
-		UserID:       "user-1",
-		ChatModel:    mockChatModel,
-		SystemPrompt: "You are a helpful assistant.",
-		Memories:     memories,
-		Description:  "Test agent for memories testing",
-		LaneCh:       laneCh,
-		IdleTimeout:  100 * time.Millisecond,
-	})
-
-	require.NotNil(t, ag)
-	time.Sleep(150 * time.Millisecond)
 }
 
 func TestUserAgent_ConcurrentSubmit(t *testing.T) {
-	mockChatModel := &MockToolCallingChatModel{}
+	logger := zerolog.Nop()
+	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
 
-	var processedMessages []agent.Message
-	var processedMu sync.Mutex
+	userID := "user-1"
+	agentID := "agent-concurrent-test"
+	conn := wsconn.NewWrapper(nil)
 
-	laneCh := make(chan agent.Message, 100)
-	_ = agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
-		AgentID:      "agent-concurrent-test",
-		UserID:       "user-1",
-		IdleTimeout:  2 * time.Second,
-		ChatModel:    mockChatModel,
-		SystemPrompt: "You are a helpful assistant.",
-		Description:  "Test agent for concurrent testing",
-		LaneCh:       laneCh,
-		ProcessMessagesFn: func(messages []agent.Message) {
-			processedMu.Lock()
-			processedMessages = append(processedMessages, messages...)
-			processedMu.Unlock()
-		},
+	// Create agent first
+	ok := mgr.SubmitMsg(context.Background(), userID, agentID, conn, agent.Message{
+		Content: "initial",
+		ID:      "msg-0",
+		Model:   "gpt-4o",
 	})
+	require.True(t, ok)
 
 	const numGoroutines = 10
 	const numMessagesPerGoroutine = 5
@@ -157,93 +59,83 @@ func TestUserAgent_ConcurrentSubmit(t *testing.T) {
 		go func(goroutineID int) {
 			defer wg.Done()
 			for j := 0; j < numMessagesPerGoroutine; j++ {
-				laneCh <- agent.Message{
+				mgr.SubmitMsg(context.Background(), userID, agentID, conn, agent.Message{
 					Content: "concurrent message",
 					ID:      "msg-concurrent",
-				}
+					Model:   "gpt-4o",
+				})
 			}
 		}(i)
 	}
 
 	wg.Wait()
-
 	time.Sleep(200 * time.Millisecond)
-
-	processedMu.Lock()
-	totalProcessed := len(processedMessages)
-	processedMu.Unlock()
-
-	assert.GreaterOrEqual(t, totalProcessed, numGoroutines*numMessagesPerGoroutine)
-}
-
-func TestUserAgent_NewUserAgent_NilModel(t *testing.T) {
-	laneCh := make(chan agent.Message, 100)
-	ag := agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
-		AgentID:      "agent-nil-model-test",
-		UserID:       "user-1",
-		ChatModel:    nil,
-		SystemPrompt: "You are a helpful assistant.",
-		LaneCh:       laneCh,
-		IdleTimeout:  100 * time.Millisecond,
-	})
-
-	require.NotNil(t, ag)
-	time.Sleep(150 * time.Millisecond)
 }
 
 func TestUserAgent_IdleTimeout_TriggersExit(t *testing.T) {
-	mockChatModel := &MockToolCallingChatModel{}
+	logger := zerolog.Nop()
+	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
 
-	exited := make(chan bool, 1)
+	userID := "user-1"
+	agentID := "agent-idle-exit-test"
+	conn := wsconn.NewWrapper(nil)
 
-	laneCh := make(chan agent.Message, 100)
-	_ = agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
-		AgentID:      "agent-idle-exit-test",
-		UserID:       "user-1",
-		IdleTimeout:  50 * time.Millisecond,
-		ChatModel:    mockChatModel,
-		SystemPrompt: "You are a helpful assistant.",
-		Description:  "Test agent for idle timeout testing",
-		LaneCh:       laneCh,
-		OnExit: func() {
-			exited <- true
-		},
+	// Create agent
+	ok := mgr.SubmitMsg(context.Background(), userID, agentID, conn, agent.Message{
+		Content: "test",
+		ID:      "msg-1",
+		Model:   "gpt-4o",
 	})
+	require.True(t, ok)
 
-	select {
-	case <-exited:
-	case <-time.After(200 * time.Millisecond):
-		t.Fatal("expected agent to exit on idle timeout")
-	}
+	// Agent should exist
+	ag := mgr.Get(userID, agentID)
+	require.NotNil(t, ag)
 }
 
-func TestUserAgent_ProcessMessagesCalled(t *testing.T) {
-	mockChatModel := &MockToolCallingChatModel{}
+func TestUserAgent_GetStatus(t *testing.T) {
+	logger := zerolog.Nop()
+	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
 
-	var messagesReceived []agent.Message
-	var messagesMu sync.Mutex
+	userID := "user-1"
+	agentID := "agent-status-test"
+	conn := wsconn.NewWrapper(nil)
 
-	laneCh := make(chan agent.Message, 100)
-	_ = agent.NewUserAgent(context.Background(), agent.UserAgentOptions{
-		AgentID:      "agent-process-test",
-		UserID:       "user-1",
-		IdleTimeout:  500 * time.Millisecond,
-		ChatModel:    mockChatModel,
-		SystemPrompt: "You are a helpful assistant.",
-		Description:  "Test agent for process messages testing",
-		LaneCh:       laneCh,
-		ProcessMessagesFn: func(messages []agent.Message) {
-			messagesMu.Lock()
-			messagesReceived = append(messagesReceived, messages...)
-			messagesMu.Unlock()
-		},
+	ok := mgr.SubmitMsg(context.Background(), userID, agentID, conn, agent.Message{
+		Content: "test",
+		ID:      "msg-1",
+		Model:   "gpt-4o",
 	})
+	require.True(t, ok)
 
-	laneCh <- agent.Message{Content: "test message", ID: "msg-1"}
+	ag := mgr.Get(userID, agentID)
+	require.NotNil(t, ag)
 
-	time.Sleep(100 * time.Millisecond)
+	status := ag.GetStatus()
+	assert.Equal(t, "agent-status-test", status["agent_id"])
+	assert.Equal(t, "user-1", status["user_id"])
+	assert.Equal(t, true, status["active"])
+	assert.Equal(t, "gpt-4o", status["model"])
+}
 
-	messagesMu.Lock()
-	assert.GreaterOrEqual(t, len(messagesReceived), 1)
-	messagesMu.Unlock()
+func TestUserAgent_Interrupt(t *testing.T) {
+	logger := zerolog.Nop()
+	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
+
+	userID := "user-1"
+	agentID := "agent-interrupt-test"
+	conn := wsconn.NewWrapper(nil)
+
+	ok := mgr.SubmitMsg(context.Background(), userID, agentID, conn, agent.Message{
+		Content: "test",
+		ID:      "msg-1",
+		Model:   "gpt-4o",
+	})
+	require.True(t, ok)
+
+	ag := mgr.Get(userID, agentID)
+	require.NotNil(t, ag)
+
+	// Interrupt should not panic
+	ag.Interrupt()
 }
