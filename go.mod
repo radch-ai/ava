@@ -3,6 +3,7 @@ module github.com/nevaria-ai/zitadel-validate
 go 1.25.7
 
 require (
+	github.com/rs/zerolog v1.34.0
 	github.com/zitadel/oidc/v3 v3.45.5
 	github.com/zitadel/zitadel-go/v3 v3.26.1
 	google.golang.org/protobuf v1.36.11
@@ -16,6 +17,8 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gorilla/securecookie v1.1.2 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.4 // indirect
+	github.com/mattn/go-colorable v0.1.13 // indirect
+	github.com/mattn/go-isatty v0.0.19 // indirect
 	github.com/muhlemmer/gu v0.3.1 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/zitadel/logging v0.7.0 // indirect

@@ -1,22 +1,23 @@
 // Package zitadelvalidate provides Zitadel token introspection for session validation.
 //
-// This package can be used across services to validate user sessions via Zitadel's
-// OAuth token introspection endpoint. It supports both JWT and opaque tokens.
+// This package validates user sessions via Zitadel's OAuth token introspection
+// endpoint. It uses Machine Key JWT Profile authentication to authenticate the
+// introspection calls themselves (NOT the user's session token).
 package zitadelvalidate
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
+	"github.com/rs/zerolog"
 	"github.com/zitadel/oidc/v3/pkg/client/rs"
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 	"github.com/zitadel/zitadel-go/v3/pkg/client"
 )
 
-// Default timeout for introspection calls.
+// DefaultIntrospectionTimeout is the default timeout for introspection calls.
 const DefaultIntrospectionTimeout = 5 * time.Second
 
 // Auth errors.
@@ -31,17 +32,17 @@ var (
 // Introspector holds the Zitadel resource server client for token introspection.
 type Introspector struct {
 	resourceServer rs.ResourceServer
-	logger         *slog.Logger
+	log            zerolog.Logger
 	timeout        time.Duration
 }
 
 // IntrospectorOption configures an Introspector.
 type IntrospectorOption func(*Introspector)
 
-// WithLogger sets a custom logger for the introspector.
-func WithLogger(logger *slog.Logger) IntrospectorOption {
+// WithLogger sets a custom zerolog logger for the introspector.
+func WithLogger(log zerolog.Logger) IntrospectorOption {
 	return func(i *Introspector) {
-		i.logger = logger
+		i.log = log
 	}
 }
 
@@ -58,7 +59,7 @@ func WithTimeout(timeout time.Duration) IntrospectorOption {
 //   - No shared secret that can be leaked like PAT or ClientSecrets
 //   - Private key never transmitted
 //   - Short-lived tokens with automatic renewal
-//   - The machine key JWT authenticates the GATEWAY to Zitadel (NOT the user's JWT)
+//   - The machine key JWT authenticates THIS SERVICE to Zitadel (NOT the user's session)
 //
 // Note: The ctx parameter is only used for the initial setup. The returned
 // Introspector is long-lived and safe to use across requests.
@@ -89,25 +90,26 @@ func NewIntrospector(ctx context.Context, domain, keyPath string, opts ...Intros
 		return nil, fmt.Errorf("failed to create resource server client: %w", err)
 	}
 
-	introspector := &Introspector{
+	i := &Introspector{
 		resourceServer: resourceServer,
-		logger:         slog.Default(),
+		log:            zerolog.Nop(),
 		timeout:        DefaultIntrospectionTimeout,
 	}
 
 	for _, opt := range opts {
-		opt(introspector)
+		opt(i)
 	}
 
-	return introspector, nil
+	return i, nil
 }
 
-// MustNewIntrospector is like NewIntrospector but panics on error.
+// MustNewIntrospector is like NewIntrospector but calls log.Fatal on error.
 // Useful for initialization in main() where failures should halt startup.
 func MustNewIntrospector(ctx context.Context, domain, keyPath string, opts ...IntrospectorOption) *Introspector {
 	i, err := NewIntrospector(ctx, domain, keyPath, opts...)
 	if err != nil {
-		panic(fmt.Sprintf("zitadelvalidate: %v", err))
+		log := zerolog.New(nil).With().Timestamp().Logger()
+		log.Fatal().Err(err).Msg("failed to create introspector")
 	}
 	return i
 }
@@ -118,8 +120,13 @@ type SessionInfo struct {
 	Expiry time.Time
 }
 
-// ValidateSession validates a session token using Zitadel introspection.
-// Accepts both JWT and opaque tokens - Zitadel handles the distinction internally.
+// ValidateSession validates a user session token using Zitadel introspection.
+//
+// The sessionToken is the user's session cookie value, which may be either:
+//   - A JWT (JSON Web Token)
+//   - An opaque token (random string referencing server-side session)
+//
+// Zitadel handles the distinction internally — this package just passes it through.
 //
 // Token Introspection vs Local JWT Validation:
 //   - Detects revoked tokens (user logout, admin revocation)
@@ -141,25 +148,19 @@ func (i *Introspector) ValidateSession(ctx context.Context, sessionToken string)
 
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			i.logger.Debug("introspection canceled", "latency", latency)
+			i.log.Debug().Dur("latency", latency).Msg("introspection canceled")
 			return nil, fmt.Errorf("%w: %w", ErrContextCanceled, err)
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
-			i.logger.Warn("introspection timeout",
-				"latency", latency,
-				"timeout", i.timeout,
-			)
+			i.log.Warn().Dur("latency", latency).Dur("timeout", i.timeout).Msg("introspection timeout")
 			return nil, fmt.Errorf("%w: %w", ErrAuthUnavailable, err)
 		}
-		i.logger.Error("introspection failed",
-			"error", err,
-			"latency", latency,
-		)
+		i.log.Error().Err(err).Dur("latency", latency).Msg("introspection failed")
 		return nil, fmt.Errorf("%w: introspection failed: %w", ErrAuthUnavailable, err)
 	}
 
 	if !resp.Active {
-		i.logger.Debug("inactive token")
+		i.log.Debug().Msg("inactive token")
 		return nil, ErrSessionInvalid
 	}
 
@@ -168,20 +169,17 @@ func (i *Introspector) ValidateSession(ctx context.Context, sessionToken string)
 	if resp.Expiration != 0 {
 		expiry := resp.Expiration.AsTime()
 		if time.Now().After(expiry) {
-			i.logger.Debug("token expired", "expiry", expiry)
+			i.log.Debug().Time("expiry", expiry).Msg("token expired")
 			return nil, ErrSessionExpired
 		}
 	}
 
 	if resp.Subject == "" {
-		i.logger.Warn("active token missing subject", "active", resp.Active)
+		i.log.Warn().Bool("active", resp.Active).Msg("active token missing subject")
 		return nil, fmt.Errorf("%w: missing subject in active token", ErrInvalidAuthResponse)
 	}
 
-	i.logger.Debug("token validated",
-		"subject", resp.Subject,
-		"latency", latency,
-	)
+	i.log.Debug().Str("subject", resp.Subject).Dur("latency", latency).Msg("token validated")
 
 	var expiry time.Time
 	if resp.Expiration != 0 {

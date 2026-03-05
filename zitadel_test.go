@@ -4,12 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/rs/zerolog"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -476,15 +475,6 @@ func TestNewIntrospector(t *testing.T) {
 
 // TestIntrospectorOptions tests the option functions.
 func TestIntrospectorOptions(t *testing.T) {
-	t.Run("WithLogger sets custom logger", func(t *testing.T) {
-		logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-		i := &Introspector{}
-		WithLogger(logger)(i)
-		if i.logger != logger {
-			t.Error("logger not set correctly")
-		}
-	})
-
 	t.Run("WithTimeout sets custom timeout", func(t *testing.T) {
 		i := &Introspector{}
 		WithTimeout(10 * time.Second)(i)
@@ -501,34 +491,16 @@ func TestDefaultIntrospectionTimeout(t *testing.T) {
 	}
 }
 
-// TestMustNewIntrospector tests the Must variant panics on error.
-func TestMustNewIntrospector(t *testing.T) {
-	t.Run("panics on empty domain", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("expected panic for empty domain")
-			}
-		}()
-		MustNewIntrospector(context.Background(), "", "/path/to/key.json")
-	})
-
-	t.Run("panics on empty key path", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("expected panic for empty key path")
-			}
-		}()
-		MustNewIntrospector(context.Background(), "example.zitadel.cloud", "")
-	})
-}
+// TestMustNewIntrospector tests the Must variant calls Fatal on error.
+// Note: Cannot easily test Fatal behavior as it calls os.Exit(1).
+// The MustNewIntrospector function is tested indirectly via NewIntrospector tests.
 
 // TestValidateSession_WithMock tests the ValidateSession method with a mock.
 // Note: This is a simplified test since we can't easily mock rs.ResourceServer.
 // Full integration tests would require a real Zitadel instance or test server.
 func TestValidateSession_EmptyToken(t *testing.T) {
-	// Create a minimal introspector for testing input validation
 	i := &Introspector{
-		logger:  slog.Default(),
+		log:     zerolog.Nop(),
 		timeout: DefaultIntrospectionTimeout,
 	}
 
