@@ -13,6 +13,7 @@ import (
 	"github.com/nevaria-ai/backend/config"
 	"github.com/nevaria-ai/backend/internal/server"
 	"github.com/nevaria-ai/backend/internal/user"
+	"github.com/nevaria-ai/backend/internal/webhooks"
 	"github.com/nevaria-ai/zitadel-validate"
 )
 
@@ -46,9 +47,14 @@ func main() {
 	userService := user.NewService(userStore)
 	userHandler := user.NewHandler(userService, logger)
 
+	// Initialize webhooks
+	webhookHandlers := webhooks.New(dbPool, logger)
+
 	// Create and start server
 	srv := server.New(cfg.ServerAddr, logger, dbPool, zitadelIntr, &server.Handlers{
 		UserHandler: userHandler,
+	}, &server.WebhookHandlers{
+		Router: webhookHandlers.Router(),
 	})
 	if err := srv.Start(ctx); err != nil {
 		logger.Fatal().Err(err).Msg("Server failed")

@@ -23,8 +23,13 @@ type Handlers struct {
 	UserHandler *user.Handler
 }
 
+// WebhookHandlers holds the webhook handlers.
+type WebhookHandlers struct {
+	Router http.Handler
+}
+
 // New creates a new Server with all routes configured.
-func New(addr string, logger zerolog.Logger, dbPool *pgxpool.Pool, introspector *zitadelvalidate.Introspector, handlers *Handlers) *Server {
+func New(addr string, logger zerolog.Logger, dbPool *pgxpool.Pool, introspector *zitadelvalidate.Introspector, handlers *Handlers, webhookHandlers *WebhookHandlers) *Server {
 	mux := http.NewServeMux()
 
 	// Create auth middleware
@@ -40,6 +45,14 @@ func New(addr string, logger zerolog.Logger, dbPool *pgxpool.Pool, introspector 
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	})
+
+	// Internal webhook routes (no auth, internal network only)
+	if webhookHandlers != nil {
+		mux.Handle("/internal/webhooks/", http.StripPrefix(
+			"/internal/webhooks",
+			webhookHandlers.Router,
+		))
+	}
 
 	// Protected routes (require authentication)
 	protectedMux := http.NewServeMux()
