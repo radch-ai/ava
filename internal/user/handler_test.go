@@ -32,13 +32,21 @@ func TestHandler_GetUserAgents(t *testing.T) {
 			setupService: func() *Service {
 				return &Service{
 					store: &MockStoreHandler{
-						agentIDs: []string{"agent1", "agent2", "agent3"},
+						agents: []Agent{
+							{Name: "lyla", Icon: "star"},
+							{Name: "worker", Icon: "gear"},
+							{Name: "assistant", Icon: "robot"},
+						},
 					},
 				}
 			},
 			wantStatus: http.StatusOK,
 			wantResponse: &AgentsResponse{
-				AgentIDs: []string{"agent1", "agent2", "agent3"},
+				Agents: []Agent{
+					{Name: "lyla", Icon: "star"},
+					{Name: "worker", Icon: "gear"},
+					{Name: "assistant", Icon: "robot"},
+				},
 			},
 		},
 		{
@@ -50,13 +58,13 @@ func TestHandler_GetUserAgents(t *testing.T) {
 			setupService: func() *Service {
 				return &Service{
 					store: &MockStoreHandler{
-						agentIDs: []string{},
+						agents: []Agent{},
 					},
 				}
 			},
 			wantStatus: http.StatusOK,
 			wantResponse: &AgentsResponse{
-				AgentIDs: []string{},
+				Agents: []Agent{},
 			},
 		},
 		{
@@ -93,7 +101,7 @@ func TestHandler_GetUserAgents(t *testing.T) {
 			logger := zerolog.Nop()
 			handler := NewHandler(tt.setupService(), logger)
 
-			req := httptest.NewRequest(http.MethodGet, "/users/agents", nil)
+			req := httptest.NewRequest(http.MethodGet, "/user/agents", nil)
 			tt.setupContext(req)
 
 			w := httptest.NewRecorder()
@@ -105,7 +113,7 @@ func TestHandler_GetUserAgents(t *testing.T) {
 				var response AgentsResponse
 				err := json.NewDecoder(w.Body).Decode(&response)
 				require.NoError(t, err)
-				assert.Equal(t, tt.wantResponse.AgentIDs, response.AgentIDs)
+				assert.Equal(t, tt.wantResponse.Agents, response.Agents)
 			}
 
 			if tt.wantErrBody != "" {
@@ -180,44 +188,47 @@ func TestNewHandler_NilLogger(t *testing.T) {
 
 // MockStoreHandler implements Store for handler tests
 type MockStoreHandler struct {
-	agentIDs []string
-	err      error
+	agents      []Agent
+	agentConfig *AgentConfiguration
+	createResp  *CreateAgentResponse
+	err         error
 }
 
-func (m *MockStoreHandler) GetAgentIDsByUserID(ctx context.Context, userID string) ([]string, error) {
+func (m *MockStoreHandler) GetAgentsForUser(ctx context.Context, userID string) ([]Agent, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
-	return m.agentIDs, nil
+	return m.agents, nil
 }
 
-func (m *MockStoreHandler) GetAgentConfiguration(ctx context.Context, agentID string) (*AgentConfiguration, error) {
-	return nil, m.err
+func (m *MockStoreHandler) GetAgentConfiguration(ctx context.Context, userID, agentName string) (*AgentConfiguration, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.agentConfig, nil
 }
 
-func (m *MockStoreHandler) PatchAgentConfiguration(ctx context.Context, agentID string, req *PatchAgentRequest) (*AgentConfiguration, error) {
-	return nil, m.err
+func (m *MockStoreHandler) PatchAgentConfiguration(ctx context.Context, userID, agentName string, req *PatchAgentRequest) (*AgentConfiguration, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.agentConfig, nil
 }
 
-func TestHandler_GetAgentConfiguration_MethodNotAllowed(t *testing.T) {
-	mockStore := &MockStoreHandler{agentIDs: []string{}}
+func (m *MockStoreHandler) CreateAgent(ctx context.Context, userID string, req *CreateAgentRequest) (*CreateAgentResponse, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.createResp, nil
+}
+
+func TestHandler_GetAgentConfiguration_MissingAgentName(t *testing.T) {
+	mockStore := &MockStoreHandler{agents: []Agent{}}
 	service := NewService(mockStore)
 	handler := NewHandler(service, zerolog.Nop())
 
-	req := httptest.NewRequest(http.MethodPost, "/users/agents/test-id", nil)
-	w := httptest.NewRecorder()
-
-	handler.GetAgentConfiguration(w, req)
-
-	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-}
-
-func TestHandler_GetAgentConfiguration_MissingAgentID(t *testing.T) {
-	mockStore := &MockStoreHandler{agentIDs: []string{}}
-	service := NewService(mockStore)
-	handler := NewHandler(service, zerolog.Nop())
-
-	req := httptest.NewRequest(http.MethodGet, "/users/agents/", nil)
+	ctx := internalctx.WithUserID(context.Background(), "user123")
+	req := httptest.NewRequest(http.MethodGet, "/user/agent/", nil).WithContext(ctx)
 	w := httptest.NewRecorder()
 
 	handler.GetAgentConfiguration(w, req)
@@ -225,12 +236,38 @@ func TestHandler_GetAgentConfiguration_MissingAgentID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestHandler_PatchAgentConfiguration_InvalidBody(t *testing.T) {
-	mockStore := &MockStoreHandler{agentIDs: []string{}}
+func TestHandler_GetAgentConfiguration_Success(t *testing.T) {
+	mockStore := &MockStoreHandler{
+		agentConfig: &AgentConfiguration{
+			Name: "lyla",
+			Icon: "robot",
+		},
+	}
 	service := NewService(mockStore)
 	handler := NewHandler(service, zerolog.Nop())
 
-	req := httptest.NewRequest(http.MethodPatch, "/users/agents/test-id", strings.NewReader("invalid json"))
+	ctx := internalctx.WithUserID(context.Background(), "user123")
+	req := httptest.NewRequest(http.MethodGet, "/user/agent/lyla", nil).WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	handler.GetAgentConfiguration(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var response AgentConfiguration
+	err := json.NewDecoder(w.Body).Decode(&response)
+	require.NoError(t, err)
+	assert.Equal(t, "lyla", response.Name)
+	assert.Equal(t, "robot", response.Icon)
+}
+
+func TestHandler_PatchAgentConfiguration_InvalidBody(t *testing.T) {
+	mockStore := &MockStoreHandler{agents: []Agent{}}
+	service := NewService(mockStore)
+	handler := NewHandler(service, zerolog.Nop())
+
+	ctx := internalctx.WithUserID(context.Background(), "user123")
+	req := httptest.NewRequest(http.MethodPatch, "/user/agent/lyla", strings.NewReader("invalid json")).WithContext(ctx)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -239,15 +276,133 @@ func TestHandler_PatchAgentConfiguration_InvalidBody(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestHandler_PatchAgentConfiguration_MissingAgentID(t *testing.T) {
-	mockStore := &MockStoreHandler{agentIDs: []string{}}
+func TestHandler_PatchAgentConfiguration_MissingAgentName(t *testing.T) {
+	mockStore := &MockStoreHandler{agents: []Agent{}}
 	service := NewService(mockStore)
 	handler := NewHandler(service, zerolog.Nop())
 
-	req := httptest.NewRequest(http.MethodPatch, "/users/agents/", nil)
+	ctx := internalctx.WithUserID(context.Background(), "user123")
+	req := httptest.NewRequest(http.MethodPatch, "/user/agent/", nil).WithContext(ctx)
 	w := httptest.NewRecorder()
 
 	handler.PatchAgentConfiguration(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestHandler_CreateAgent_Success(t *testing.T) {
+	mockStore := &MockStoreHandler{
+		createResp: &CreateAgentResponse{Name: "lyla"},
+	}
+	service := NewService(mockStore)
+	handler := NewHandler(service, zerolog.Nop())
+
+	// POST to /user/agent/{name} - name comes from URL
+	body := `{"icon": "robot"}`
+	ctx := internalctx.WithUserID(context.Background(), "user123")
+	req := httptest.NewRequest(http.MethodPost, "/user/agent/lyla", strings.NewReader(body)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.CreateAgent(w, req)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+
+	var response CreateAgentResponse
+	err := json.NewDecoder(w.Body).Decode(&response)
+	require.NoError(t, err)
+	assert.Equal(t, "lyla", response.Name)
+}
+
+func TestHandler_CreateAgent_DuplicateName(t *testing.T) {
+	mockStore := &MockStoreHandler{
+		createResp: &CreateAgentResponse{Name: "lyla-2"},
+	}
+	service := NewService(mockStore)
+	handler := NewHandler(service, zerolog.Nop())
+
+	// POST to /user/agent/{name} - name comes from URL
+	body := `{}`
+	ctx := internalctx.WithUserID(context.Background(), "user123")
+	req := httptest.NewRequest(http.MethodPost, "/user/agent/lyla", strings.NewReader(body)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.CreateAgent(w, req)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+
+	var response CreateAgentResponse
+	err := json.NewDecoder(w.Body).Decode(&response)
+	require.NoError(t, err)
+	assert.Equal(t, "lyla-2", response.Name)
+}
+
+func TestHandler_CreateAgent_MissingName(t *testing.T) {
+	mockStore := &MockStoreHandler{}
+	service := NewService(mockStore)
+	handler := NewHandler(service, zerolog.Nop())
+
+	// POST to /user/agent/ (no name in URL)
+	body := `{}`
+	ctx := internalctx.WithUserID(context.Background(), "user123")
+	req := httptest.NewRequest(http.MethodPost, "/user/agent/", strings.NewReader(body)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.CreateAgent(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestHandler_CreateAgent_InvalidBody(t *testing.T) {
+	mockStore := &MockStoreHandler{}
+	service := NewService(mockStore)
+	handler := NewHandler(service, zerolog.Nop())
+
+	ctx := internalctx.WithUserID(context.Background(), "user123")
+	req := httptest.NewRequest(http.MethodPost, "/user/agent/lyla", strings.NewReader("invalid")).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.CreateAgent(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestHandler_AgentConfigurationHandler_Routing(t *testing.T) {
+	mockStore := &MockStoreHandler{
+		agentConfig: &AgentConfiguration{Name: "lyla"},
+		createResp:  &CreateAgentResponse{Name: "lyla"},
+	}
+	service := NewService(mockStore)
+	handler := NewHandler(service, zerolog.Nop())
+
+	ctx := internalctx.WithUserID(context.Background(), "user123")
+
+	// Test POST routing (create)
+	req := httptest.NewRequest(http.MethodPost, "/user/agent/lyla", strings.NewReader(`{}`)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.AgentConfigurationHandler(w, req)
+	assert.Equal(t, http.StatusCreated, w.Code)
+
+	// Test GET routing
+	req = httptest.NewRequest(http.MethodGet, "/user/agent/lyla", nil).WithContext(ctx)
+	w = httptest.NewRecorder()
+	handler.AgentConfigurationHandler(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Test PATCH routing
+	req = httptest.NewRequest(http.MethodPatch, "/user/agent/lyla", strings.NewReader(`{}`)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	handler.AgentConfigurationHandler(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Test method not allowed
+	req = httptest.NewRequest(http.MethodDelete, "/user/agent/lyla", nil).WithContext(ctx)
+	w = httptest.NewRecorder()
+	handler.AgentConfigurationHandler(w, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }

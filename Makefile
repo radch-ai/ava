@@ -1,7 +1,9 @@
 BINARY_NAME ?= backend
 
-.PHONY: build run test test-unit test-integration test-e2e clean deps fmt lint help
-.PHONY: docker-test-logs docker-build-test migrate sqlc-generate migrate-up migrate-down migrate-version
+.PHONY: build run test test-unit test-integration test-e2e docker-test-logs
+.PHONY: clean deps fmt lint help
+.PHONY: migrate sqlc-generate migrate-up migrate-down migrate-version
+.PHONY: install-tools
 
 ## build: Build the application binary
 build:
@@ -62,6 +64,10 @@ test-e2e:
 	@echo "Stopping Docker test services..."
 	@docker compose -f tests/docker-compose.test.yml down -v
 
+## docker-test-logs: Show logs from Docker test services
+docker-test-logs:
+		@docker compose -f tests/docker-compose.test.yml logs --follow
+
 ## migrate: Run database migrations
 migrate:
 	@echo "Running database migrations..."
@@ -75,6 +81,16 @@ migrate:
 sqlc-generate:
 	@echo "Generating sqlc code..."
 	sqlc generate
+
+## install-tools: Install development tools (sqlc, golangci-lint)
+install-tools:
+	@echo "Installing development tools to ~/.local/bin..."
+	@mkdir -p ~/.local/bin
+	GOBIN=~/.local/bin go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
+	@if ! command -v golangci-lint >/dev/null 2>&1; then \
+		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b ~/.local/bin; \
+	fi
+	@echo "Tools installed. Ensure ~/.local/bin is in your PATH."
 
 ## migrate-up: Run database migrations up
 migrate-up:
@@ -102,15 +118,6 @@ migrate-version:
 		exit 1; \
 	fi
 	migrate -database $(DATABASE_URL) -path schema/migrations version
-
-## docker-test-logs: Show logs from Docker test services
-docker-test-logs:
-	@docker compose -f tests/docker-compose.test.yml logs --follow
-
-## docker-build-test: Build Docker image to verify Dockerfile
-docker-build-test:
-	@echo "Building Docker image..."
-	docker build -t $(BINARY_NAME):latest .
 
 ## clean: Clean build artifacts
 clean:

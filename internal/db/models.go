@@ -9,22 +9,24 @@ import (
 )
 
 type Agent struct {
-	AgentID   pgtype.UUID        `json:"agent_id"`
 	UserID    pgtype.UUID        `json:"user_id"`
-	AgentType string             `json:"agent_type"`
+	Name      string             `json:"name"`
+	Icon      pgtype.Text        `json:"icon"`
 	Config    []byte             `json:"config"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type AgentTool struct {
-	AgentID pgtype.UUID `json:"agent_id"`
-	ToolID  pgtype.UUID `json:"tool_id"`
+	UserID    pgtype.UUID `json:"user_id"`
+	AgentName string      `json:"agent_name"`
+	ToolID    pgtype.UUID `json:"tool_id"`
 }
 
 type CronJob struct {
 	ID             pgtype.UUID `json:"id"`
-	AgentID        pgtype.UUID `json:"agent_id"`
+	UserID         pgtype.UUID `json:"user_id"`
+	AgentName      string      `json:"agent_name"`
 	Time           string      `json:"time"`
 	Frequency      string      `json:"frequency"`
 	CronExpression pgtype.Text `json:"cron_expression"`
@@ -32,11 +34,12 @@ type CronJob struct {
 }
 
 type Heartbeat struct {
-	AgentID  pgtype.UUID `json:"agent_id"`
-	Model    string      `json:"model"`
-	Enabled  pgtype.Bool `json:"enabled"`
-	Duration string      `json:"duration"`
-	Content  string      `json:"content"`
+	UserID    pgtype.UUID `json:"user_id"`
+	AgentName string      `json:"agent_name"`
+	Model     string      `json:"model"`
+	Enabled   pgtype.Bool `json:"enabled"`
+	Duration  string      `json:"duration"`
+	Content   string      `json:"content"`
 }
 
 type User struct {

@@ -43,8 +43,10 @@ func New(addr string, logger zerolog.Logger, dbPool *pgxpool.Pool, introspector 
 
 	// Protected routes (require authentication)
 	protectedMux := http.NewServeMux()
-	protectedMux.Handle("/users/agents", authMiddleware.Authenticate(http.HandlerFunc(handlers.UserHandler.GetUserAgents)))
-	protectedMux.Handle("/users/agents/", authMiddleware.Authenticate(http.HandlerFunc(handlers.UserHandler.AgentConfigurationHandler)))
+
+	// Agent endpoints: GET /user/agents (list), POST/GET/PATCH /user/agent/{name} (create/get/patch)
+	protectedMux.Handle("/user/agents", authMiddleware.Authenticate(http.HandlerFunc(handlers.UserHandler.GetUserAgents)))
+	protectedMux.Handle("/user/agent/", authMiddleware.Authenticate(http.HandlerFunc(handlers.UserHandler.AgentConfigurationHandler)))
 
 	// Mount protected routes under /api prefix
 	mux.Handle("/api/", http.StripPrefix("/api", protectedMux))

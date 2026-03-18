@@ -1,0 +1,38 @@
+# Build artifacts
+bin/
+tmp/
+
+# Test artifacts
+coverage*.out
+coverage*.html
+
+# Development files
+.git/
+.gitignore
+.github/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Documentation
+docs/
+*.md
+
+# Test files
+tests/
+
+# Local environment
+.env
+.env.*
+*.env
+
+# Docker
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# Logs
+*.log

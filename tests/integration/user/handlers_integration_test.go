@@ -26,11 +26,11 @@ import (
 )
 
 const (
-	testUserID = "00000000-0000-0000-0000-000000000001"
-	agentID1   = "00000000-0000-0000-0000-000000000002"
-	agentID2   = "00000000-0000-0000-0000-000000000003"
-	agentID3   = "00000000-0000-0000-0000-000000000004"
-	testAgent  = "00000000-0000-0000-0000-000000000005"
+	testUserID    = "00000000-0000-0000-0000-000000000001"
+	agentName1    = "lyla"
+	agentName2    = "worker"
+	agentName3    = "assistant"
+	testAgentName = "test-agent"
 )
 
 // getTestDBURL returns the database URL for testing.
@@ -93,9 +93,9 @@ func setupTestDB(t *testing.T) *pgxpool.Pool {
 func cleanupTestData(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
-	pool.Exec(ctx, "DELETE FROM agent_tools WHERE agent_id IN (SELECT agent_id FROM agents WHERE user_id = $1::uuid)", testUserID)
-	pool.Exec(ctx, "DELETE FROM cron_jobs WHERE agent_id IN (SELECT agent_id FROM agents WHERE user_id = $1::uuid)", testUserID)
-	pool.Exec(ctx, "DELETE FROM heartbeat WHERE agent_id IN (SELECT agent_id FROM agents WHERE user_id = $1::uuid)", testUserID)
+	pool.Exec(ctx, "DELETE FROM agent_tools WHERE user_id = $1::uuid", testUserID)
+	pool.Exec(ctx, "DELETE FROM cron_jobs WHERE user_id = $1::uuid", testUserID)
+	pool.Exec(ctx, "DELETE FROM heartbeat WHERE user_id = $1::uuid", testUserID)
 	pool.Exec(ctx, "DELETE FROM agents WHERE user_id = $1::uuid", testUserID)
 	pool.Exec(ctx, "DELETE FROM users WHERE user_id = $1::uuid", testUserID)
 }
@@ -108,23 +108,23 @@ func setupTestData(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	_, err := pool.Exec(ctx, `INSERT INTO users (user_id) VALUES ($1::uuid) ON CONFLICT DO NOTHING`, testUserID)
 	require.NoError(t, err, "Failed to insert test user")
 
-	// Create test agents with correct schema
+	// Create test agents with new schema (agent_name, icon columns)
 	_, err = pool.Exec(ctx, `
-		INSERT INTO agents (agent_id, user_id, agent_type, config)
-		VALUES ($1::uuid, $2::uuid, 'lyla', '{"soul": {"name": "Agent 1"}}'::jsonb)
-	`, agentID1, testUserID)
+		INSERT INTO agents (user_id, agent_name, agent_type, icon, config)
+		VALUES ($1::uuid, $2, 'lyla', 'robot', '{"soul": {"personality": "friendly", "identity": "primary"}}'::jsonb)
+	`, testUserID, agentName1)
 	require.NoError(t, err, "Failed to insert test agent 1")
 
 	_, err = pool.Exec(ctx, `
-		INSERT INTO agents (agent_id, user_id, agent_type, config)
-		VALUES ($1::uuid, $2::uuid, 'lyla', '{"soul": {"name": "Agent 2"}}'::jsonb)
-	`, agentID2, testUserID)
+		INSERT INTO agents (user_id, agent_name, agent_type, icon, config)
+		VALUES ($1::uuid, $2, 'worker', 'gear', '{"soul": {"personality": "efficient", "identity": "background"}}'::jsonb)
+	`, testUserID, agentName2)
 	require.NoError(t, err, "Failed to insert test agent 2")
 
 	_, err = pool.Exec(ctx, `
-		INSERT INTO agents (agent_id, user_id, agent_type, config)
-		VALUES ($1::uuid, $2::uuid, 'lyla', '{"soul": {"name": "Agent 3"}}'::jsonb)
-	`, agentID3, testUserID)
+		INSERT INTO agents (user_id, agent_name, agent_type, icon, config)
+		VALUES ($1::uuid, $2, 'lyla', 'star', '{"soul": {"personality": "helpful", "identity": "assistant"}}'::jsonb)
+	`, testUserID, agentName3)
 	require.NoError(t, err, "Failed to insert test agent 3")
 }
 
@@ -148,7 +148,7 @@ func TestGetUserAgents_Integration_Success(t *testing.T) {
 	handler := user.NewHandler(service, zerolog.Nop())
 
 	// Create request with mocked auth
-	req := httptest.NewRequest(http.MethodGet, "/users/agents", nil)
+	req := httptest.NewRequest(http.MethodGet, "/user/agents", nil)
 	reqCtx := internalctx.WithUserID(context.Background(), testUserID)
 	req = req.WithContext(reqCtx)
 
@@ -162,8 +162,8 @@ func TestGetUserAgents_Integration_Success(t *testing.T) {
 	var response user.AgentsResponse
 	err := json.NewDecoder(w.Body).Decode(&response)
 	require.NoError(t, err)
-	assert.Len(t, response.AgentIDs, 3)
-	assert.ElementsMatch(t, response.AgentIDs, []string{agentID1, agentID2, agentID3})
+	assert.Len(t, response.AgentNames, 3)
+	assert.ElementsMatch(t, response.AgentNames, []string{agentName1, agentName2, agentName3})
 }
 
 // TestGetUserAgents_Integration_NoAgents tests empty result.
@@ -182,7 +182,7 @@ func TestGetUserAgents_Integration_NoAgents(t *testing.T) {
 	handler := user.NewHandler(service, zerolog.Nop())
 
 	// Create request with mocked auth (user with no agents)
-	req := httptest.NewRequest(http.MethodGet, "/users/agents", nil)
+	req := httptest.NewRequest(http.MethodGet, "/user/agents", nil)
 	// Use a different UUID that doesn't have agents
 	noAgentUserID := uuid.New().String()
 	reqCtx := internalctx.WithUserID(context.Background(), noAgentUserID)
@@ -198,8 +198,8 @@ func TestGetUserAgents_Integration_NoAgents(t *testing.T) {
 	var response user.AgentsResponse
 	err := json.NewDecoder(w.Body).Decode(&response)
 	require.NoError(t, err)
-	assert.Len(t, response.AgentIDs, 0)
-	assert.Empty(t, response.AgentIDs)
+	assert.Len(t, response.AgentNames, 0)
+	assert.Empty(t, response.AgentNames)
 }
 
 // TestGetUserAgents_Integration_MissingUserID tests authentication.
@@ -218,7 +218,7 @@ func TestGetUserAgents_Integration_MissingUserID(t *testing.T) {
 	handler := user.NewHandler(service, zerolog.Nop())
 
 	// Create request without user ID in context
-	req := httptest.NewRequest(http.MethodGet, "/users/agents", nil)
+	req := httptest.NewRequest(http.MethodGet, "/user/agents", nil)
 
 	// Record response
 	w := httptest.NewRecorder()
@@ -248,9 +248,9 @@ func TestGetAgentConfiguration_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = pool.Exec(ctx, `
-		INSERT INTO agents (agent_id, user_id, agent_type, config)
-		VALUES ($1::uuid, $2::uuid, 'lyla', '{"soul": {"name": "Test Agent", "personality": "friendly", "identity": "test"}, "userContext": "test context"}'::jsonb)
-	`, testAgent, testUserID)
+		INSERT INTO agents (user_id, agent_name, agent_type, icon, config)
+		VALUES ($1::uuid, $2, 'lyla', 'robot', '{"soul": {"personality": "friendly", "identity": "test"}, "userContext": "test context"}'::jsonb)
+	`, testUserID, testAgentName)
 	require.NoError(t, err)
 
 	// Create handler
@@ -258,8 +258,10 @@ func TestGetAgentConfiguration_Success(t *testing.T) {
 	service := user.NewService(store)
 	handler := user.NewHandler(service, zerolog.Nop())
 
-	// Make request
-	req := httptest.NewRequest(http.MethodGet, "/users/agents/"+testAgent, nil)
+	// Make request with user context
+	req := httptest.NewRequest(http.MethodGet, "/user/agents/"+testAgentName, nil)
+	reqCtx := internalctx.WithUserID(context.Background(), testUserID)
+	req = req.WithContext(reqCtx)
 	w := httptest.NewRecorder()
 	handler.GetAgentConfiguration(w, req)
 
@@ -269,7 +271,8 @@ func TestGetAgentConfiguration_Success(t *testing.T) {
 	var config user.AgentConfiguration
 	err = json.NewDecoder(w.Body).Decode(&config)
 	require.NoError(t, err)
-	assert.Equal(t, "Test Agent", config.Soul.Name)
+	assert.Equal(t, testAgentName, config.Name)
+	assert.Equal(t, "robot", config.Icon)
 	assert.Equal(t, "test context", config.UserContext)
 }
 
@@ -289,9 +292,9 @@ func TestPatchAgentConfiguration_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = pool.Exec(ctx, `
-		INSERT INTO agents (agent_id, user_id, agent_type, config)
-		VALUES ($1::uuid, $2::uuid, 'lyla', '{"soul": {"name": "Old Name"}}'::jsonb)
-	`, testAgent, testUserID)
+		INSERT INTO agents (user_id, agent_name, agent_type, config)
+		VALUES ($1::uuid, $2, 'lyla', '{"soul": {"personality": "old", "identity": "test"}}'::jsonb)
+	`, testUserID, testAgentName)
 	require.NoError(t, err)
 
 	// Create handler
@@ -300,9 +303,11 @@ func TestPatchAgentConfiguration_Success(t *testing.T) {
 	handler := user.NewHandler(service, zerolog.Nop())
 
 	// Make patch request
-	patchBody := `{"soul": {"name": "New Name", "personality": "updated", "identity": "test"}}`
-	req := httptest.NewRequest(http.MethodPatch, "/users/agents/"+testAgent, strings.NewReader(patchBody))
+	patchBody := `{"soul": {"personality": "updated", "identity": "test"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/user/agents/"+testAgentName, strings.NewReader(patchBody))
 	req.Header.Set("Content-Type", "application/json")
+	reqCtx := internalctx.WithUserID(context.Background(), testUserID)
+	req = req.WithContext(reqCtx)
 	w := httptest.NewRecorder()
 	handler.PatchAgentConfiguration(w, req)
 
@@ -312,7 +317,6 @@ func TestPatchAgentConfiguration_Success(t *testing.T) {
 	var config user.AgentConfiguration
 	err = json.NewDecoder(w.Body).Decode(&config)
 	require.NoError(t, err)
-	assert.Equal(t, "New Name", config.Soul.Name)
 	assert.Equal(t, "updated", config.Soul.Personality)
 }
 
@@ -333,8 +337,9 @@ func TestGetAgentConfiguration_NotFound(t *testing.T) {
 	handler := user.NewHandler(service, zerolog.Nop())
 
 	// Make request for non-existent agent
-	nonExistentID := uuid.New().String()
-	req := httptest.NewRequest(http.MethodGet, "/users/agents/"+nonExistentID, nil)
+	req := httptest.NewRequest(http.MethodGet, "/user/agents/nonexistent", nil)
+	reqCtx := internalctx.WithUserID(context.Background(), testUserID)
+	req = req.WithContext(reqCtx)
 	w := httptest.NewRecorder()
 	handler.GetAgentConfiguration(w, req)
 
@@ -358,9 +363,9 @@ func TestPatchAgentConfiguration_WithHeartbeat(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = pool.Exec(ctx, `
-		INSERT INTO agents (agent_id, user_id, agent_type, config)
-		VALUES ($1::uuid, $2::uuid, 'lyla', '{"soul": {"name": "Test"}}'::jsonb)
-	`, testAgent, testUserID)
+		INSERT INTO agents (user_id, agent_name, agent_type, config)
+		VALUES ($1::uuid, $2, 'lyla', '{"soul": {"personality": "friendly", "identity": "test"}}'::jsonb)
+	`, testUserID, testAgentName)
 	require.NoError(t, err)
 
 	// Create handler
@@ -370,11 +375,13 @@ func TestPatchAgentConfiguration_WithHeartbeat(t *testing.T) {
 
 	// Make patch request with heartbeat
 	patchBody := `{
-		"soul": {"name": "Test", "personality": "friendly", "identity": "test"},
+		"soul": {"personality": "friendly", "identity": "test"},
 		"heartbeat": {"model": "gpt-4", "enabled": true, "duration": "1hr", "content": "Check status"}
 	}`
-	req := httptest.NewRequest(http.MethodPatch, "/users/agents/"+testAgent, strings.NewReader(patchBody))
+	req := httptest.NewRequest(http.MethodPatch, "/user/agents/"+testAgentName, strings.NewReader(patchBody))
 	req.Header.Set("Content-Type", "application/json")
+	reqCtx := internalctx.WithUserID(context.Background(), testUserID)
+	req = req.WithContext(reqCtx)
 	w := httptest.NewRecorder()
 	handler.PatchAgentConfiguration(w, req)
 
@@ -407,9 +414,9 @@ func TestPatchAgentConfiguration_WithCronJobs(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = pool.Exec(ctx, `
-		INSERT INTO agents (agent_id, user_id, agent_type, config)
-		VALUES ($1::uuid, $2::uuid, 'lyla', '{"soul": {"name": "Test"}}'::jsonb)
-	`, testAgent, testUserID)
+		INSERT INTO agents (user_id, agent_name, agent_type, config)
+		VALUES ($1::uuid, $2, 'lyla', '{"soul": {"personality": "friendly", "identity": "test"}}'::jsonb)
+	`, testUserID, testAgentName)
 	require.NoError(t, err)
 
 	// Create handler
@@ -419,14 +426,16 @@ func TestPatchAgentConfiguration_WithCronJobs(t *testing.T) {
 
 	// Make patch request with cron jobs
 	patchBody := `{
-		"soul": {"name": "Test", "personality": "friendly", "identity": "test"},
+		"soul": {"personality": "friendly", "identity": "test"},
 		"cronJobs": [
 			{"time": "09:00", "frequency": "daily", "prompt": "Good morning!"},
 			{"time": "18:00", "frequency": "weekly", "prompt": "Weekly report"}
 		]
 	}`
-	req := httptest.NewRequest(http.MethodPatch, "/users/agents/"+testAgent, strings.NewReader(patchBody))
+	req := httptest.NewRequest(http.MethodPatch, "/user/agents/"+testAgentName, strings.NewReader(patchBody))
 	req.Header.Set("Content-Type", "application/json")
+	reqCtx := internalctx.WithUserID(context.Background(), testUserID)
+	req = req.WithContext(reqCtx)
 	w := httptest.NewRecorder()
 	handler.PatchAgentConfiguration(w, req)
 
@@ -437,4 +446,136 @@ func TestPatchAgentConfiguration_WithCronJobs(t *testing.T) {
 	err = json.NewDecoder(w.Body).Decode(&config)
 	require.NoError(t, err)
 	assert.Len(t, config.CronJobs, 2)
+}
+
+// TestCreateAgent_Success tests creating a new agent.
+func TestCreateAgent_Success(t *testing.T) {
+	pool := setupTestDB(t)
+	if pool == nil {
+		return
+	}
+
+	ctx := context.Background()
+	runMigrations(t)
+	defer cleanupTestData(t, pool)
+
+	// Setup test user
+	_, err := pool.Exec(ctx, `INSERT INTO users (user_id) VALUES ($1::uuid) ON CONFLICT DO NOTHING`, testUserID)
+	require.NoError(t, err)
+
+	// Create handler
+	store := user.NewPGStore(pool)
+	service := user.NewService(store)
+	handler := user.NewHandler(service, zerolog.Nop())
+
+	// Make create request
+	createBody := `{
+		"name": "new-agent",
+		"icon": "star",
+		"agentType": "lyla",
+		"soul": {"personality": "friendly", "identity": "new"},
+		"userContext": "test context"
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/user/agents", strings.NewReader(createBody))
+	req.Header.Set("Content-Type", "application/json")
+	reqCtx := internalctx.WithUserID(context.Background(), testUserID)
+	req = req.WithContext(reqCtx)
+	w := httptest.NewRecorder()
+	handler.CreateAgent(w, req)
+
+	// Verify response
+	assert.Equal(t, http.StatusCreated, w.Code)
+
+	var response user.CreateAgentResponse
+	err = json.NewDecoder(w.Body).Decode(&response)
+	require.NoError(t, err)
+	assert.Equal(t, "new-agent", response.Name)
+}
+
+// TestCreateAgent_DuplicateNameSuffix tests that duplicate names get suffixed.
+func TestCreateAgent_DuplicateNameSuffix(t *testing.T) {
+	pool := setupTestDB(t)
+	if pool == nil {
+		return
+	}
+
+	ctx := context.Background()
+	runMigrations(t)
+	defer cleanupTestData(t, pool)
+
+	// Setup test data with existing agent
+	_, err := pool.Exec(ctx, `INSERT INTO users (user_id) VALUES ($1::uuid) ON CONFLICT DO NOTHING`, testUserID)
+	require.NoError(t, err)
+
+	_, err = pool.Exec(ctx, `
+		INSERT INTO agents (user_id, agent_name, agent_type, config)
+		VALUES ($1::uuid, 'duplicate', 'lyla', '{}'::jsonb)
+	`, testUserID)
+	require.NoError(t, err)
+
+	// Create handler
+	store := user.NewPGStore(pool)
+	service := user.NewService(store)
+	handler := user.NewHandler(service, zerolog.Nop())
+
+	// Try to create agent with same name
+	createBody := `{"name": "duplicate"}`
+	req := httptest.NewRequest(http.MethodPost, "/user/agents", strings.NewReader(createBody))
+	req.Header.Set("Content-Type", "application/json")
+	reqCtx := internalctx.WithUserID(context.Background(), testUserID)
+	req = req.WithContext(reqCtx)
+	w := httptest.NewRecorder()
+	handler.CreateAgent(w, req)
+
+	// Verify response - should get suffixed name
+	assert.Equal(t, http.StatusCreated, w.Code)
+
+	var response user.CreateAgentResponse
+	err = json.NewDecoder(w.Body).Decode(&response)
+	require.NoError(t, err)
+	assert.Equal(t, "duplicate-2", response.Name)
+}
+
+// TestPatchAgentConfiguration_WithIcon tests updating icon field.
+func TestPatchAgentConfiguration_WithIcon(t *testing.T) {
+	pool := setupTestDB(t)
+	if pool == nil {
+		return
+	}
+
+	ctx := context.Background()
+	runMigrations(t)
+	defer cleanupTestData(t, pool)
+
+	// Setup test data
+	_, err := pool.Exec(ctx, `INSERT INTO users (user_id) VALUES ($1::uuid) ON CONFLICT DO NOTHING`, testUserID)
+	require.NoError(t, err)
+
+	_, err = pool.Exec(ctx, `
+		INSERT INTO agents (user_id, agent_name, agent_type, icon, config)
+		VALUES ($1::uuid, $2, 'lyla', 'old-icon', '{"soul": {"personality": "friendly", "identity": "test"}}'::jsonb)
+	`, testUserID, testAgentName)
+	require.NoError(t, err)
+
+	// Create handler
+	store := user.NewPGStore(pool)
+	service := user.NewService(store)
+	handler := user.NewHandler(service, zerolog.Nop())
+
+	// Make patch request to update icon
+	patchBody := `{"icon": "new-icon"}`
+	req := httptest.NewRequest(http.MethodPatch, "/user/agents/"+testAgentName, strings.NewReader(patchBody))
+	req.Header.Set("Content-Type", "application/json")
+	reqCtx := internalctx.WithUserID(context.Background(), testUserID)
+	req = req.WithContext(reqCtx)
+	w := httptest.NewRecorder()
+	handler.PatchAgentConfiguration(w, req)
+
+	// Verify response
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var config user.AgentConfiguration
+	err = json.NewDecoder(w.Body).Decode(&config)
+	require.NoError(t, err)
+	assert.Equal(t, "new-icon", config.Icon)
 }
