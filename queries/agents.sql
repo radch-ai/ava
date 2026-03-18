@@ -10,4 +10,5 @@
 SELECT name, icon
 FROM agents
 WHERE user_id = $1
+  AND name != 'lyla'
 ORDER BY name;
