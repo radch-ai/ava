@@ -20,8 +20,8 @@ ORDER BY name
 `
 
 type CheckAgentNameAvailabilityParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	Name   string      `json:"name"`
+	UserID int64  `json:"user_id"`
+	Name   string `json:"name"`
 }
 
 // queries/agent_config.sql
@@ -59,8 +59,8 @@ DELETE FROM agent_tools WHERE user_id = $1 AND agent_name = $2
 `
 
 type ClearAgentToolsParams struct {
-	UserID    pgtype.UUID `json:"user_id"`
-	AgentName string      `json:"agent_name"`
+	UserID    int64  `json:"user_id"`
+	AgentName string `json:"agent_name"`
 }
 
 // ClearAgentTools removes all tool associations for an agent (does NOT delete the tools themselves).
@@ -75,7 +75,7 @@ VALUES ($1, $2, $3, $4::jsonb)
 `
 
 type CreateAgentParams struct {
-	UserID  pgtype.UUID `json:"user_id"`
+	UserID  int64       `json:"user_id"`
 	Name    string      `json:"name"`
 	Icon    pgtype.Text `json:"icon"`
 	Column4 []byte      `json:"column_4"`
@@ -97,8 +97,8 @@ DELETE FROM cron_jobs WHERE user_id = $1 AND agent_name = $2
 `
 
 type DeleteCronJobsParams struct {
-	UserID    pgtype.UUID `json:"user_id"`
-	AgentName string      `json:"agent_name"`
+	UserID    int64  `json:"user_id"`
+	AgentName string `json:"agent_name"`
 }
 
 // DeleteCronJobs removes all cron jobs for an agent.
@@ -137,8 +137,8 @@ WHERE a.user_id = $1 AND a.name = $2
 `
 
 type GetAgentConfigurationParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	Name   string      `json:"name"`
+	UserID int64  `json:"user_id"`
+	Name   string `json:"name"`
 }
 
 type GetAgentConfigurationRow struct {
@@ -178,7 +178,7 @@ ON CONFLICT DO NOTHING
 `
 
 type InsertAgentToolParams struct {
-	UserID    pgtype.UUID `json:"user_id"`
+	UserID    int64       `json:"user_id"`
 	AgentName string      `json:"agent_name"`
 	Column3   pgtype.UUID `json:"column_3"`
 }
@@ -195,7 +195,7 @@ VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
 `
 
 type InsertCronJobParams struct {
-	UserID         pgtype.UUID `json:"user_id"`
+	UserID         int64       `json:"user_id"`
 	AgentName      string      `json:"agent_name"`
 	Time           string      `json:"time"`
 	Frequency      string      `json:"frequency"`
@@ -222,9 +222,9 @@ WHERE user_id = $2 AND name = $3
 `
 
 type UpdateAgentConfigParams struct {
-	Column1 []byte      `json:"column_1"`
-	UserID  pgtype.UUID `json:"user_id"`
-	Name    string      `json:"name"`
+	Column1 []byte `json:"column_1"`
+	UserID  int64  `json:"user_id"`
+	Name    string `json:"name"`
 }
 
 // UpdateAgentConfig merges new config values into the existing JSONB config.
@@ -240,7 +240,7 @@ WHERE user_id = $2 AND name = $3
 
 type UpdateAgentIconParams struct {
 	Icon   pgtype.Text `json:"icon"`
-	UserID pgtype.UUID `json:"user_id"`
+	UserID int64       `json:"user_id"`
 	Name   string      `json:"name"`
 }
 
@@ -261,7 +261,7 @@ ON CONFLICT (user_id, agent_name) DO UPDATE SET
 `
 
 type UpsertHeartbeatParams struct {
-	UserID    pgtype.UUID `json:"user_id"`
+	UserID    int64       `json:"user_id"`
 	AgentName string      `json:"agent_name"`
 	Model     string      `json:"model"`
 	Enabled   pgtype.Bool `json:"enabled"`

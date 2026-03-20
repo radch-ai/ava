@@ -3,6 +3,7 @@ package user
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -48,7 +49,16 @@ func NewPGStore(pool *pgxpool.Pool) *PGStore {
 // Helpers
 // =============================================================================
 
-// uuidFromString converts a string UUID to pgtype.UUID.
+// parseUserID converts a string user ID (Zitadel Sonyflake) to int64.
+func parseUserID(s string) int64 {
+	id, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return id
+}
+
+// uuidFromString converts a string UUID to pgtype.UUID (for tool IDs).
 func uuidFromString(s string) pgtype.UUID {
 	var u pgtype.UUID
 	_ = u.Scan(s)

@@ -12,9 +12,7 @@ import (
 
 // GetAgentsForUser returns all agents (name and icon) for a user.
 func (s *PGStore) GetAgentsForUser(ctx context.Context, userID string) ([]Agent, error) {
-	userUUID := uuidFromString(userID)
-
-	rows, err := s.queries.GetAgentsForUser(ctx, userUUID)
+	rows, err := s.queries.GetAgentsForUser(ctx, parseUserID(userID))
 	if err != nil {
 		return nil, fmt.Errorf("query agents: %w", err)
 	}

@@ -2,7 +2,7 @@
 -- Stores user-defined tools that can be enabled for agents.
 CREATE TABLE IF NOT EXISTS user_tools (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id    UUID NOT NULL,
+    user_id    BIGINT NOT NULL,
     name       TEXT NOT NULL,
     config     JSONB DEFAULT '{}',
     created_at TIMESTAMPTZ DEFAULT NOW(),

@@ -8,7 +8,6 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/nevaria-ai/backend/internal/db"
 )
@@ -19,10 +18,10 @@ import (
 
 // GetAgentConfiguration retrieves the full configuration for an agent.
 func (s *PGStore) GetAgentConfiguration(ctx context.Context, userID, agentName string) (*AgentConfiguration, error) {
-	userUUID := uuidFromString(userID)
+	uid := parseUserID(userID)
 
 	row, err := s.queries.GetAgentConfiguration(ctx, db.GetAgentConfigurationParams{
-		UserID: userUUID,
+		UserID: uid,
 		Name:   agentName,
 	})
 	if err != nil {
@@ -112,13 +111,13 @@ func (s *PGStore) PatchAgentConfiguration(ctx context.Context, userID, agentName
 	}()
 
 	txQueries := s.queries.WithTx(tx)
-	userUUID := uuidFromString(userID)
+	uid := parseUserID(userID)
 
 	// 1. Update icon if provided
 	if req.Icon != nil {
 		if err := txQueries.UpdateAgentIcon(ctx, db.UpdateAgentIconParams{
 			Icon:   pgText(*req.Icon),
-			UserID: userUUID,
+			UserID: uid,
 			Name:   agentName,
 		}); err != nil {
 			return nil, fmt.Errorf("update icon: %w", err)
@@ -148,7 +147,7 @@ func (s *PGStore) PatchAgentConfiguration(ctx context.Context, userID, agentName
 
 		err = txQueries.UpdateAgentConfig(ctx, db.UpdateAgentConfigParams{
 			Column1: configJSON,
-			UserID:  userUUID,
+			UserID:  uid,
 			Name:    agentName,
 		})
 		if err != nil {
@@ -159,7 +158,7 @@ func (s *PGStore) PatchAgentConfiguration(ctx context.Context, userID, agentName
 	// 3. Sync agent_tools junction table
 	if req.ToolsEnabled != nil {
 		err = txQueries.ClearAgentTools(ctx, db.ClearAgentToolsParams{
-			UserID:    userUUID,
+			UserID:    uid,
 			AgentName: agentName,
 		})
 		if err != nil {
@@ -168,7 +167,7 @@ func (s *PGStore) PatchAgentConfiguration(ctx context.Context, userID, agentName
 
 		for _, toolID := range req.ToolsEnabled {
 			err = txQueries.InsertAgentTool(ctx, db.InsertAgentToolParams{
-				UserID:    userUUID,
+				UserID:    uid,
 				AgentName: agentName,
 				Column3:   uuidFromString(toolID),
 			})
@@ -181,7 +180,7 @@ func (s *PGStore) PatchAgentConfiguration(ctx context.Context, userID, agentName
 	// 4. Upsert heartbeat
 	if req.Heartbeat != nil {
 		err = txQueries.UpsertHeartbeat(ctx, db.UpsertHeartbeatParams{
-			UserID:    userUUID,
+			UserID:    uid,
 			AgentName: agentName,
 			Model:     req.Heartbeat.Model,
 			Enabled:   pgBool(req.Heartbeat.Enabled),
@@ -196,7 +195,7 @@ func (s *PGStore) PatchAgentConfiguration(ctx context.Context, userID, agentName
 	// 5. Replace cron jobs (full replace)
 	if req.CronJobs != nil {
 		err = txQueries.DeleteCronJobs(ctx, db.DeleteCronJobsParams{
-			UserID:    userUUID,
+			UserID:    uid,
 			AgentName: agentName,
 		})
 		if err != nil {
@@ -205,7 +204,7 @@ func (s *PGStore) PatchAgentConfiguration(ctx context.Context, userID, agentName
 
 		for _, job := range req.CronJobs {
 			err = txQueries.InsertCronJob(ctx, db.InsertCronJobParams{
-				UserID:         userUUID,
+				UserID:         uid,
 				AgentName:      agentName,
 				Time:           job.Time,
 				Frequency:      job.Frequency,
@@ -236,12 +235,12 @@ const maxSuffixLimit = 1000
 
 // CreateAgent creates a new agent with automatic name suffixing.
 func (s *PGStore) CreateAgent(ctx context.Context, userID string, req *CreateAgentRequest) (*CreateAgentResponse, error) {
-	userUUID := uuidFromString(userID)
+	uid := parseUserID(userID)
 	baseName := req.Name
 
 	// Check name availability - returns all names that match exact or with suffix
 	existingNames, err := s.queries.CheckAgentNameAvailability(ctx, db.CheckAgentNameAvailabilityParams{
-		UserID: userUUID,
+		UserID: uid,
 		Name:   baseName,
 	})
 	if err != nil {
@@ -250,7 +249,7 @@ func (s *PGStore) CreateAgent(ctx context.Context, userID string, req *CreateAge
 
 	// If no exact match, use the base name directly
 	if len(existingNames) == 0 {
-		return s.createAgentRow(ctx, userUUID, baseName, req)
+		return s.createAgentRow(ctx, uid, baseName, req)
 	}
 
 	// Check if exact name exists
@@ -261,12 +260,12 @@ func (s *PGStore) CreateAgent(ctx context.Context, userID string, req *CreateAge
 			if err != nil {
 				return nil, fmt.Errorf("find available name: %w", err)
 			}
-			return s.createAgentRow(ctx, userUUID, finalName, req)
+			return s.createAgentRow(ctx, uid, finalName, req)
 		}
 	}
 
 	// No exact match but suffixes exist - base name is available
-	return s.createAgentRow(ctx, userUUID, baseName, req)
+	return s.createAgentRow(ctx, uid, baseName, req)
 }
 
 // findAvailableName finds the next available name with suffix (name-2, name-3, etc.).
@@ -289,7 +288,7 @@ func (s *PGStore) findAvailableName(existingNames []string, baseName string) (st
 }
 
 // createAgentRow creates the agent row and associated data in a transaction.
-func (s *PGStore) createAgentRow(ctx context.Context, userUUID pgtype.UUID, name string, req *CreateAgentRequest) (*CreateAgentResponse, error) {
+func (s *PGStore) createAgentRow(ctx context.Context, userID int64, name string, req *CreateAgentRequest) (*CreateAgentResponse, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin transaction: %w", err)
@@ -324,7 +323,7 @@ func (s *PGStore) createAgentRow(ctx context.Context, userUUID pgtype.UUID, name
 
 	// Insert agent row
 	if err := txQueries.CreateAgent(ctx, db.CreateAgentParams{
-		UserID:  userUUID,
+		UserID:  userID,
 		Name:    name,
 		Icon:    pgText(req.Icon),
 		Column4: configJSON,
@@ -335,7 +334,7 @@ func (s *PGStore) createAgentRow(ctx context.Context, userUUID pgtype.UUID, name
 	// Create heartbeat if provided
 	if req.Heartbeat != nil {
 		if err := txQueries.UpsertHeartbeat(ctx, db.UpsertHeartbeatParams{
-			UserID:    userUUID,
+			UserID:    userID,
 			AgentName: name,
 			Model:     req.Heartbeat.Model,
 			Enabled:   pgBool(req.Heartbeat.Enabled),
@@ -350,7 +349,7 @@ func (s *PGStore) createAgentRow(ctx context.Context, userUUID pgtype.UUID, name
 	if req.ToolsEnabled != nil {
 		for _, toolID := range req.ToolsEnabled {
 			if err := txQueries.InsertAgentTool(ctx, db.InsertAgentToolParams{
-				UserID:    userUUID,
+				UserID:    userID,
 				AgentName: name,
 				Column3:   uuidFromString(toolID),
 			}); err != nil {
@@ -363,7 +362,7 @@ func (s *PGStore) createAgentRow(ctx context.Context, userUUID pgtype.UUID, name
 	if req.CronJobs != nil {
 		for _, job := range req.CronJobs {
 			if err := txQueries.InsertCronJob(ctx, db.InsertCronJobParams{
-				UserID:         userUUID,
+				UserID:         userID,
 				AgentName:      name,
 				Time:           job.Time,
 				Frequency:      job.Frequency,

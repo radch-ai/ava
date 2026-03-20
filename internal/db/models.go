@@ -9,7 +9,7 @@ import (
 )
 
 type Agent struct {
-	UserID    pgtype.UUID        `json:"user_id"`
+	UserID    int64              `json:"user_id"`
 	Name      string             `json:"name"`
 	Icon      pgtype.Text        `json:"icon"`
 	Config    []byte             `json:"config"`
@@ -18,14 +18,14 @@ type Agent struct {
 }
 
 type AgentTool struct {
-	UserID    pgtype.UUID `json:"user_id"`
+	UserID    int64       `json:"user_id"`
 	AgentName string      `json:"agent_name"`
 	ToolID    pgtype.UUID `json:"tool_id"`
 }
 
 type CronJob struct {
 	ID             pgtype.UUID `json:"id"`
-	UserID         pgtype.UUID `json:"user_id"`
+	UserID         int64       `json:"user_id"`
 	AgentName      string      `json:"agent_name"`
 	Time           string      `json:"time"`
 	Frequency      string      `json:"frequency"`
@@ -34,7 +34,7 @@ type CronJob struct {
 }
 
 type Heartbeat struct {
-	UserID    pgtype.UUID `json:"user_id"`
+	UserID    int64       `json:"user_id"`
 	AgentName string      `json:"agent_name"`
 	Model     string      `json:"model"`
 	Enabled   pgtype.Bool `json:"enabled"`
@@ -43,14 +43,14 @@ type Heartbeat struct {
 }
 
 type User struct {
-	UserID         pgtype.UUID `json:"user_id"`
+	UserID         int64       `json:"user_id"`
 	SubscriptionVk pgtype.Text `json:"subscription_vk"`
 	TopupVk        pgtype.Text `json:"topup_vk"`
 }
 
 type UserTool struct {
 	ID        pgtype.UUID        `json:"id"`
-	UserID    pgtype.UUID        `json:"user_id"`
+	UserID    int64              `json:"user_id"`
 	Name      string             `json:"name"`
 	Config    []byte             `json:"config"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`

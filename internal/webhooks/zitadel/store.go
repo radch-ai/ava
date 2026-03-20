@@ -2,8 +2,8 @@ package zitadel
 
 import (
 	"context"
+	 "strconv"
 
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nevaria-ai/backend/internal/db"
@@ -44,7 +44,7 @@ func (s *PGStore) CreateUser(ctx context.Context, userID string) error {
 	if userID == "" {
 		return nil
 	}
-	return s.queries.CreateUser(ctx, uuidFromString(userID))
+	return s.queries.CreateUser(ctx, parseUserID(userID))
 }
 
 // DeleteUser deletes a user record. CASCADE removes all related data.
@@ -52,16 +52,18 @@ func (s *PGStore) DeleteUser(ctx context.Context, userID string) error {
 	if userID == "" {
 		return nil
 	}
-	return s.queries.DeleteUser(ctx, uuidFromString(userID))
+	return s.queries.DeleteUser(ctx, parseUserID(userID))
 }
 
 // =============================================================================
 // Helpers
 // =============================================================================
 
-// uuidFromString converts a string UUID to pgtype.UUID.
-func uuidFromString(s string) pgtype.UUID {
-	var u pgtype.UUID
-	_ = u.Scan(s)
-	return u
+// parseUserID converts a string user ID (Zitadel Sonyflake) to int64.
+func parseUserID(s string) int64 {
+	id, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return id
 }

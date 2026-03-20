@@ -8,7 +8,7 @@
 -- Heartbeat table (1:1 with agent)
 -- FK (user_id, agent_name) -> agents(user_id, name) also serves as PK.
 CREATE TABLE IF NOT EXISTS heartbeat (
-    user_id    UUID NOT NULL,
+    user_id    BIGINT NOT NULL,
     agent_name TEXT NOT NULL,
     model      TEXT NOT NULL DEFAULT '',
     enabled    BOOLEAN DEFAULT false,
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS heartbeat (
 -- Stores scheduled tasks for agents.
 CREATE TABLE IF NOT EXISTS cron_jobs (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id         UUID NOT NULL,
+    user_id         BIGINT NOT NULL,
     agent_name      TEXT NOT NULL,
     time            TEXT NOT NULL DEFAULT '',
     frequency       TEXT NOT NULL DEFAULT 'daily',
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS cron_jobs (
 -- Agent tools junction table
 -- Many-to-many relationship between agents and user tools.
 CREATE TABLE IF NOT EXISTS agent_tools (
-    user_id    UUID NOT NULL,
+    user_id    BIGINT NOT NULL,
     agent_name TEXT NOT NULL,
     tool_id    UUID NOT NULL,
     PRIMARY KEY (user_id, agent_name, tool_id),

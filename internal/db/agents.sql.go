@@ -33,7 +33,7 @@ type GetAgentsForUserRow struct {
 //   - FK tables use agent_name column, referencing agents(user_id, name)
 //
 // GetAgentsForUser returns all agents (name and icon) for a given user.
-func (q *Queries) GetAgentsForUser(ctx context.Context, userID pgtype.UUID) ([]GetAgentsForUserRow, error) {
+func (q *Queries) GetAgentsForUser(ctx context.Context, userID int64) ([]GetAgentsForUserRow, error) {
 	rows, err := q.db.Query(ctx, getAgentsForUser, userID)
 	if err != nil {
 		return nil, err

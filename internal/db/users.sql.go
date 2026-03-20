@@ -7,8 +7,6 @@ package db
 
 import (
 	"context"
-
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createUser = `-- name: CreateUser :exec
@@ -21,7 +19,7 @@ ON CONFLICT (user_id) DO NOTHING
 // queries/users.sql
 // SQL queries for user lifecycle operations (webhooks)
 // CreateUser inserts a new user. Idempotent - safe if user already exists.
-func (q *Queries) CreateUser(ctx context.Context, userID pgtype.UUID) error {
+func (q *Queries) CreateUser(ctx context.Context, userID int64) error {
 	_, err := q.db.Exec(ctx, createUser, userID)
 	return err
 }
@@ -32,7 +30,7 @@ WHERE user_id = $1
 `
 
 // DeleteUser deletes a user. CASCADE removes all related data (agents, configs, tools).
-func (q *Queries) DeleteUser(ctx context.Context, userID pgtype.UUID) error {
+func (q *Queries) DeleteUser(ctx context.Context, userID int64) error {
 	_, err := q.db.Exec(ctx, deleteUser, userID)
 	return err
 }
