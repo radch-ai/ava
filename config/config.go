@@ -12,8 +12,8 @@ import (
 type Config struct {
 	ServerAddr     string
 	LogLevel       string
-	ZitadelDomain  string // Zitadel instance URL for OAuth token introspection
-	ZitadelKeyPath string // Path to service account JSON key file
+	ZitadelDomain                   string // Zitadel instance URL for OAuth token introspection
+	ZitadelIntrospectorPrivateKeyPath string // Path to application key JSON file for Private Key JWT auth
 	DatabaseURL    string // PostgreSQL connection URL
 }
 
@@ -66,7 +66,7 @@ func Load(logger zerolog.Logger) *Config {
 		logger.Fatal().Str("value", zitadelDomain).Msg("ZITADEL_DOMAIN must be a valid URL with http or https scheme")
 	}
 
-	zitadelKeyPath := getEnvRequired("ZITADEL_KEY_PATH", logger)
+	zitadelIntrospectorPrivateKeyPath := getEnvRequired("ZITADEL_INTROSPECTOR_PRIVATE_KEY_PATH", logger)
 
 	// Database URL is required
 	databaseURL := getEnvRequired("DATABASE_URL", logger)
@@ -74,8 +74,8 @@ func Load(logger zerolog.Logger) *Config {
 	return &Config{
 		ServerAddr:     addr,
 		LogLevel:       logLevel,
-		ZitadelDomain:  zitadelDomain,
-		ZitadelKeyPath: zitadelKeyPath,
+		ZitadelDomain:                    zitadelDomain,
+		ZitadelIntrospectorPrivateKeyPath: zitadelIntrospectorPrivateKeyPath,
 		DatabaseURL:    databaseURL,
 	}
 }

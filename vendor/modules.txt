@@ -60,7 +60,7 @@ github.com/mattn/go-isatty
 # github.com/muhlemmer/gu v0.3.1
 ## explicit; go 1.18
 github.com/muhlemmer/gu
-# github.com/nevaria-ai/zitadel-validate v0.0.0-20260305042008-0a03ceb883ae
+# github.com/nevaria-ai/zitadel-validate v0.0.0-20260320014133-db79236bee75
 ## explicit; go 1.25.7
 github.com/nevaria-ai/zitadel-validate
 # github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2

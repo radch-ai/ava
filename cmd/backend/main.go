@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
@@ -40,7 +41,7 @@ func main() {
 	defer dbPool.Close()
 
 	// Initialize auth
-	zitadelIntr := zitadelvalidate.MustNewIntrospector(ctx, cfg.ZitadelDomain, cfg.ZitadelKeyPath).WithLogger(logger)
+	zitadelIntr := zitadelvalidate.MustNewIntrospector(ctx, cfg.ZitadelDomain, cfg.ZitadelIntrospectorPrivateKeyPath).WithLogger(logger)
 
 	// Initialize services
 	userStore := user.NewPGStore(dbPool)
@@ -79,9 +80,9 @@ func newDBPool(ctx context.Context, databaseURL string, logger zerolog.Logger) (
 	// Tune for backend service
 	poolCfg.MaxConns = 10
 	poolCfg.MinConns = 2
-	poolCfg.MaxConnLifetime = 1 * 60 * 60 * 1000 * 1000 // 1 hour in microseconds
-	poolCfg.MaxConnIdleTime = 30 * 60 * 1000 * 1000     // 30 minutes in microseconds
-	poolCfg.HealthCheckPeriod = 1 * 60 * 1000 * 1000    // 1 minute in microseconds
+	poolCfg.MaxConnLifetime = time.Hour
+	poolCfg.MaxConnIdleTime = 30 * time.Minute
+	poolCfg.HealthCheckPeriod = time.Minute
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {

@@ -1,14 +1,15 @@
 // Package zitadelvalidate provides Zitadel token introspection for session validation.
 //
 // This package validates user sessions via Zitadel's OAuth token introspection
-// endpoint. It uses Machine Key JWT Profile authentication to authenticate the
-// introspection calls themselves (NOT the user's session token).
+// endpoint. It uses Application Private Key JWT authentication to authenticate
+// the introspection calls themselves (NOT the user's session token).
 package zitadelvalidate
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -38,14 +39,25 @@ type Introspector struct {
 
 // NewIntrospector creates a new introspector for Zitadel using JWT Profile.
 //
-// Machine Key JWT Authentication (JWT Profile):
+// Application Private Key JWT Authentication:
 //   - No shared secret that can be leaked like PAT or ClientSecrets
 //   - Private key never transmitted
 //   - Short-lived tokens with automatic renewal
-//   - The machine key JWT authenticates THIS SERVICE to Zitadel (NOT the user's session)
+//   - The application key JWT authenticates THIS SERVICE to Zitadel (NOT the user's session)
 //
-// Note: The ctx parameter is only used for the initial setup. The returned
-// Introspector is long-lived and safe to use across requests.
+// The keyPath should point to an application key file downloaded from Zitadel,
+// which has the following structure:
+//
+//	{
+//	    "type": "application",
+//	    "keyId": "<YOUR_KEY_ID>",
+//	    "key": "-----BEGIN RSA PRIVATE KEY-----...",
+//	    "appId": "<YOUR_APP_ID>",
+//	    "clientId": "<YOUR_CLIENT_ID>"
+//	}
+//
+// Note: ctx controls the initial OIDC discovery fetch. Once the resource
+// server is created it is long-lived and independent of any caller context.
 func NewIntrospector(ctx context.Context, domain, keyPath string) (*Introspector, error) {
 	if domain == "" {
 		return nil, errors.New("zitadel domain is required")
@@ -54,16 +66,16 @@ func NewIntrospector(ctx context.Context, domain, keyPath string) (*Introspector
 		return nil, errors.New("zitadel key path is required")
 	}
 
-	// Load the service account key file
+	// Load the application key file
 	keyFile, err := client.ConfigFromKeyFile(keyPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load key file: %w", err)
 	}
 
-	// Use background context — resource server is long-lived and should not
-	// be tied to any request-scoped context passed by the caller.
+	// ctx controls the OIDC discovery fetch; the resource server itself
+	// is long-lived and independent of any caller context.
 	resourceServer, err := rs.NewResourceServerJWTProfile(
-		context.Background(),
+		ctx,
 		domain,
 		keyFile.ClientID,
 		keyFile.KeyID,
@@ -99,7 +111,7 @@ func (i *Introspector) WithTimeout(timeout time.Duration) *Introspector {
 func MustNewIntrospector(ctx context.Context, domain, keyPath string) *Introspector {
 	i, err := NewIntrospector(ctx, domain, keyPath)
 	if err != nil {
-		log := zerolog.New(nil).With().Timestamp().Logger()
+		log := zerolog.New(os.Stderr).With().Timestamp().Logger()
 		log.Fatal().Err(err).Msg("failed to create introspector")
 	}
 	return i
@@ -111,13 +123,10 @@ type SessionInfo struct {
 	Expiry time.Time
 }
 
-// ValidateSession validates a user session token using Zitadel introspection.
+// ValidateSession validates an OAuth access token using Zitadel introspection.
 //
-// The sessionToken is the user's session cookie value, which may be either:
-//   - A JWT (JSON Web Token)
-//   - An opaque token (random string referencing server-side session)
-//
-// Zitadel handles the distinction internally — this package just passes it through.
+// The sessionToken is the OAuth access token issued to the user's client.
+// It may be a JWT or an opaque token — Zitadel handles the distinction.
 //
 // Token Introspection vs Local JWT Validation:
 //   - Detects revoked tokens (user logout, admin revocation)
@@ -155,8 +164,9 @@ func (i *Introspector) ValidateSession(ctx context.Context, sessionToken string)
 		return nil, ErrSessionInvalid
 	}
 
-	// Check expiration explicitly — resp.Active alone isn't sufficient
-	// due to potential clock skew or caching layers.
+	// Defensive check — if resp.Expiration is set, verify locally as a
+	// belt-and-suspenders measure. Zitadel's active=true should already
+	// account for expiry, but this guards against any response caching.
 	if resp.Expiration != 0 {
 		expiry := resp.Expiration.AsTime()
 		if time.Now().After(expiry) {

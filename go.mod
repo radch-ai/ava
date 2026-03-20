@@ -5,10 +5,9 @@ go 1.25.7
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.8.0
-	github.com/nevaria-ai/zitadel-validate v0.0.0-20260305042008-0a03ceb883ae
+	github.com/nevaria-ai/zitadel-validate v0.0.0-20260320014133-db79236bee75
 	github.com/rs/zerolog v1.34.0
 	github.com/stretchr/testify v1.11.1
-	golang.org/x/time v0.14.0
 )
 
 require (
