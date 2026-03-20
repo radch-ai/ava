@@ -49,7 +49,7 @@ func main() {
 	userHandler := user.NewHandler(userService, logger)
 
 	// Initialize webhooks
-	webhookHandlers := webhooks.New(dbPool, logger)
+	webhookHandlers := webhooks.New(cfg, dbPool, logger)
 
 	// Create and start server
 	srv := server.New(cfg.ServerAddr, logger, dbPool, zitadelIntr, &server.Handlers{

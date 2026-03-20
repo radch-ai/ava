@@ -14,6 +14,7 @@ type Config struct {
 	LogLevel       string
 	ZitadelDomain                   string // Zitadel instance URL for OAuth token introspection
 	ZitadelIntrospectorPrivateKeyPath string // Path to application key JSON file for Private Key JWT auth
+	ZitadelWebhookSigningKey        string // Signing key for Zitadel Actions v2 webhook signature verification (optional)
 	DatabaseURL    string // PostgreSQL connection URL
 }
 
@@ -71,11 +72,15 @@ func Load(logger zerolog.Logger) *Config {
 	// Database URL is required
 	databaseURL := getEnvRequired("DATABASE_URL", logger)
 
+	// Zitadel webhook signing key is required for Actions v2 signature verification
+	zitadelWebhookSigningKey := getEnvRequired("ZITADEL_WEBHOOK_SIGNING_KEY", logger)
+
 	return &Config{
-		ServerAddr:     addr,
-		LogLevel:       logLevel,
+		ServerAddr:                       addr,
+		LogLevel:                         logLevel,
 		ZitadelDomain:                    zitadelDomain,
 		ZitadelIntrospectorPrivateKeyPath: zitadelIntrospectorPrivateKeyPath,
-		DatabaseURL:    databaseURL,
+		ZitadelWebhookSigningKey:         zitadelWebhookSigningKey,
+		DatabaseURL:                      databaseURL,
 	}
 }
