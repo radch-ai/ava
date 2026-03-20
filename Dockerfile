@@ -10,13 +10,12 @@ ENV GOTOOLCHAIN=auto
 
 WORKDIR /app
 
-# Cache dependencies separately from source code
-COPY go.mod go.sum ./
-RUN go mod download && go mod verify
+# Copy vendor directory for offline builds
+COPY go.mod go.sum vendor/ ./
 
 # Copy source and build
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=vendor \
     -ldflags="-w -s -extldflags '-static'" \
     -trimpath \
     -o /bin/app \

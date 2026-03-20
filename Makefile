@@ -9,21 +9,21 @@ BINARY_NAME ?= backend
 build:
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p bin
-	go build -o bin/$(BINARY_NAME) ./cmd/backend
+	go build -mod=vendor -o bin/$(BINARY_NAME) ./cmd/backend
 
 ## run: Run the application
 run:
 	@echo "Running $(BINARY_NAME)..."
-	go run ./cmd/backend/main.go
+	go run -mod=vendor ./cmd/backend/main.go
 
 ## test: Run unit tests with race and coverage
 test:
 	@if [ -z "$(TEST_PATH)" ]; then \
 		echo "Running unit tests for all packages..."; \
-		CGO_ENABLED=1 go test -race -coverprofile=coverage.out -v ./...; \
+		CGO_ENABLED=1 go test -mod=vendor -race -coverprofile=coverage.out -v ./...; \
 	else \
 		echo "Running unit tests for $(TEST_PATH)..."; \
-		CGO_ENABLED=1 go test -race -coverprofile=coverage.out -v $(TEST_PATH); \
+		CGO_ENABLED=1 go test -mod=vendor -race -coverprofile=coverage.out -v $(TEST_PATH); \
 	fi
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
@@ -31,7 +31,7 @@ test:
 ## test-unit: Run unit tests only
 test-unit:
 	@echo "Running unit tests..."
-	CGO_ENABLED=1 go test -race -v ./tests/unit/...
+	CGO_ENABLED=1 go test -mod=vendor -race -v ./tests/unit/...
 
 ## test-integration: Run integration tests with Docker compose (auto cleanup)
 ## Usage (optional): make test-integration TEST_PATH=./tests/integration
@@ -42,11 +42,11 @@ test-integration:
 	@if [ -z "$(TEST_PATH)" ]; then \
 		echo "Running integration tests for all packages..."; \
 		TEST_DATABASE_URL="postgres://test:test@localhost:5433/test?sslmode=disable" \
-			go test -race -coverprofile=coverage.integration.out -tags=integration -v ./... -timeout 5m; \
+			go test -mod=vendor -race -coverprofile=coverage.integration.out -tags=integration -v ./... -timeout 5m; \
 	else \
 		echo "Running integration tests for $(TEST_PATH)..."; \
 		TEST_DATABASE_URL="postgres://test:test@localhost:5433/test?sslmode=disable" \
-			go test -race -coverprofile=coverage.integration.out -tags=integration -v $(TEST_PATH) -timeout 5m; \
+			go test -mod=vendor -race -coverprofile=coverage.integration.out -tags=integration -v $(TEST_PATH) -timeout 5m; \
 	fi
 	@go tool cover -html=coverage.integration.out -o coverage.integration.html
 	@echo "Integration coverage report: coverage.integration.html"
@@ -58,7 +58,7 @@ test-e2e:
 	@echo "Starting Docker test services..."
 	@docker compose -f tests/docker-compose.test.yml up -d --wait --quiet-pull
 	@sleep 2
-	go test -race -coverprofile=coverage.e2e.out -tags=e2e -v ./tests/e2e/... -timeout 10m
+	go test -mod=vendor -race -coverprofile=coverage.e2e.out -tags=e2e -v ./tests/e2e/... -timeout 10m
 	@go tool cover -html=coverage.e2e.out -o coverage.e2e.html
 	@echo "E2E coverage report: coverage.e2e.html"
 	@echo "Stopping Docker test services..."
@@ -75,7 +75,7 @@ migrate:
 		echo "Error: DATABASE_URL is required"; \
 		exit 1; \
 	fi
-	go run ./cmd/backend/main.go --migrate
+	go run -mod=vendor ./cmd/backend/main.go --migrate
 
 ## sqlc-generate: Generate Go code from SQL queries
 sqlc-generate:
@@ -126,11 +126,11 @@ clean:
 	@rm -f coverage.out coverage.html coverage.integration.out coverage.integration.html
 	@rm -f coverage.e2e.out coverage.e2e.html
 
-## deps: Download dependencies
+## deps: Update vendor directory
 deps:
-	@echo "Downloading dependencies..."
-	go mod download
+	@echo "Updating vendor directory..."
 	go mod tidy
+	go mod vendor
 
 ## fmt: Format code
 fmt:
