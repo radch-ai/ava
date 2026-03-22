@@ -6,7 +6,7 @@
 --   - agent_tools: junction table for agent-tool associations
 
 -- Heartbeat table (1:1 with agent)
--- FK (user_id, agent_name) -> agents(user_id, name) also serves as PK.
+-- Composite PK enforces one heartbeat row per agent.
 CREATE TABLE IF NOT EXISTS heartbeat (
     user_id    BIGINT NOT NULL,
     agent_name TEXT NOT NULL,
@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS heartbeat (
     enabled    BOOLEAN DEFAULT false,
     duration   TEXT NOT NULL DEFAULT '1hr',
     content    TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (user_id, agent_name),
     FOREIGN KEY (user_id, agent_name) REFERENCES agents(user_id, name) ON DELETE CASCADE
 );
 
