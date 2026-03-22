@@ -94,7 +94,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleUserDeleted(w, r, req)
 	default:
 		// Return 200 OK for unknown event types to prevent Zitadel retries
-		h.logger.Warn().Str("event_type", req.EventType).Msg("unknown event type, ignoring")
+		h.logger.Warn().Str("event_type", req.EventType).Msg("unknown zitadel webhook event type, ignoring")
 		w.WriteHeader(http.StatusOK)
 	}
 }

@@ -42,14 +42,8 @@ func TestHandler_ServeHTTP(t *testing.T) {
 			name:   "user.human.added success (v2 format)",
 			method: http.MethodPost,
 			body: WebhookRequest{
-				AggregateID:    "550e8400-e29b-41d4-a716-446655440000",
-				AggregateType:  "user",
-				EventType:      EventTypeUserHumanAdded,
-				ResourceOwner:  "123456789",
-				InstanceID:     "987654321",
-				Sequence:       1,
-				CreatedAt:      "2025-01-01T00:00:00Z",
-				UserID:         "admin-user-id",
+				AggregateID: "550e8400-e29b-41d4-a716-446655440000",
+				EventType:   EventTypeUserHumanAdded,
 			},
 			wantStatus:     http.StatusOK,
 			wantCreatedUID: "550e8400-e29b-41d4-a716-446655440000",
@@ -58,14 +52,8 @@ func TestHandler_ServeHTTP(t *testing.T) {
 			name:   "user.removed success (v2 format)",
 			method: http.MethodPost,
 			body: WebhookRequest{
-				AggregateID:    "550e8400-e29b-41d4-a716-446655440000",
-				AggregateType:  "user",
-				EventType:      EventTypeUserRemoved,
-				ResourceOwner:  "123456789",
-				InstanceID:     "987654321",
-				Sequence:       2,
-				CreatedAt:      "2025-01-01T00:00:00Z",
-				UserID:         "admin-user-id",
+				AggregateID: "550e8400-e29b-41d4-a716-446655440000",
+				EventType:   EventTypeUserRemoved,
 			},
 			wantStatus:     http.StatusOK,
 			wantDeletedUID: "550e8400-e29b-41d4-a716-446655440000",
@@ -170,10 +158,10 @@ func TestHandler_ServiceError(t *testing.T) {
 
 // MockStore implements Store for testing
 type MockStore struct {
-	createErr      error
-	deleteErr      error
-	createdUserID  string
-	deletedUserID  string
+	createErr     error
+	deleteErr     error
+	createdUserID string
+	deletedUserID string
 }
 
 func (m *MockStore) CreateUser(ctx context.Context, userID string) error {

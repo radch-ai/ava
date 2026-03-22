@@ -2,7 +2,7 @@ package zitadel
 
 import (
 	"context"
-	 "strconv"
+	"strconv"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
