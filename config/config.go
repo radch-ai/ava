@@ -4,18 +4,20 @@ package config
 import (
 	"net/url"
 	"os"
+	"strings"
 
 	"github.com/rs/zerolog"
 )
 
 // Config holds the application configuration.
 type Config struct {
-	ServerAddr     string
-	LogLevel       string
-	ZitadelDomain                   string // Zitadel instance URL for OAuth token introspection
+	ServerAddr                        string
+	LogLevel                          string
+	AllowedOrigins                    []string
+	ZitadelDomain                     string // Zitadel instance URL for OAuth token introspection
 	ZitadelIntrospectorPrivateKeyPath string // Path to application key JSON file for Private Key JWT auth
-	ZitadelWebhookSigningKey        string // Signing key for Zitadel Actions v2 webhook signature verification (optional)
-	DatabaseURL    string // PostgreSQL connection URL
+	ZitadelWebhookSigningKey          string // Signing key for Zitadel Actions v2 webhook signature verification (optional)
+	DatabaseURL                       string // PostgreSQL connection URL
 }
 
 // getEnv returns the environment variable value or a default.
@@ -33,6 +35,22 @@ func getEnvRequired(key string, logger zerolog.Logger) string {
 		logger.Fatal().Str("env_var", key).Msg("required environment variable is not set")
 	}
 	return value
+}
+
+// parseList parses a comma-separated list into a string slice.
+// Returns nil for empty strings (deny all for origins).
+func parseList(value string) []string {
+	if value == "" {
+		return nil
+	}
+	var result []string
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			result = append(result, item)
+		}
+	}
+	return result
 }
 
 // SetupLogger configures the global zerolog logger and returns a service-scoped logger.
@@ -60,6 +78,10 @@ func Load(logger zerolog.Logger) *Config {
 	addr := getEnv("BACKEND_ADDR", ":8080")
 	logLevel := getEnv("BACKEND_LOG_LEVEL", "info")
 
+	// AllowedOrigins: required - specific origins only (empty denies all)
+	originsRaw := getEnvRequired("BACKEND_ALLOWED_ORIGINS", logger)
+	origins := parseList(originsRaw)
+
 	// Zitadel configuration is required for auth
 	zitadelDomain := getEnvRequired("ZITADEL_DOMAIN", logger)
 	parsedURL, err := url.Parse(zitadelDomain)
@@ -76,11 +98,12 @@ func Load(logger zerolog.Logger) *Config {
 	zitadelWebhookSigningKey := getEnvRequired("ZITADEL_WEBHOOK_SIGNING_KEY", logger)
 
 	return &Config{
-		ServerAddr:                       addr,
-		LogLevel:                         logLevel,
-		ZitadelDomain:                    zitadelDomain,
+		ServerAddr:                        addr,
+		LogLevel:                          logLevel,
+		AllowedOrigins:                    origins,
+		ZitadelDomain:                     zitadelDomain,
 		ZitadelIntrospectorPrivateKeyPath: zitadelIntrospectorPrivateKeyPath,
-		ZitadelWebhookSigningKey:         zitadelWebhookSigningKey,
-		DatabaseURL:                      databaseURL,
+		ZitadelWebhookSigningKey:          zitadelWebhookSigningKey,
+		DatabaseURL:                       databaseURL,
 	}
 }

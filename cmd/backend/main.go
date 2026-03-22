@@ -52,7 +52,7 @@ func main() {
 	webhookHandlers := webhooks.New(cfg, dbPool, logger)
 
 	// Create and start server
-	srv := server.New(cfg.ServerAddr, logger, dbPool, zitadelIntr, &server.Handlers{
+	srv := server.New(logger, cfg.ServerAddr, cfg.AllowedOrigins, dbPool, zitadelIntr, &server.Handlers{
 		UserHandler: userHandler,
 	}, &server.WebhookHandlers{
 		Router: webhookHandlers.Router(),

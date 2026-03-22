@@ -29,7 +29,7 @@ type WebhookHandlers struct {
 }
 
 // New creates a new Server with all routes configured.
-func New(addr string, logger zerolog.Logger, dbPool *pgxpool.Pool, introspector *zitadelvalidate.Introspector, handlers *Handlers, webhookHandlers *WebhookHandlers) *Server {
+func New(logger zerolog.Logger, addr string, allowedOrigins []string, dbPool *pgxpool.Pool, introspector *zitadelvalidate.Introspector, handlers *Handlers, webhookHandlers *WebhookHandlers) *Server {
 	mux := http.NewServeMux()
 
 	// Create auth middleware
@@ -58,11 +58,14 @@ func New(addr string, logger zerolog.Logger, dbPool *pgxpool.Pool, introspector 
 	protectedMux := http.NewServeMux()
 
 	// Agent endpoints: GET /user/agents (list), POST/GET/PATCH /user/agent/{name} (create/get/patch)
-	protectedMux.Handle("/user/agents", authMiddleware.Authenticate(http.HandlerFunc(handlers.UserHandler.GetUserAgents)))
-	protectedMux.Handle("/user/agent/", authMiddleware.Authenticate(http.HandlerFunc(handlers.UserHandler.AgentConfigurationHandler)))
+	protectedMux.Handle("/user/agents", http.HandlerFunc(handlers.UserHandler.GetUserAgents))
+	protectedMux.Handle("/user/agent/", http.HandlerFunc(handlers.UserHandler.AgentConfigurationHandler))
 
-	// Mount protected routes under /api prefix
-	mux.Handle("/api/", http.StripPrefix("/api", protectedMux))
+	// Mount protected routes under /api prefix with CORS handling for browser clients
+	corsMiddleware := newCORSMiddleware(allowedOrigins)
+	apiHandler := http.StripPrefix("/api", protectedMux)
+	apiHandler = authMiddleware.Authenticate(apiHandler)
+	mux.Handle("/api/", corsMiddleware(apiHandler))
 
 	return &Server{
 		httpServer: &http.Server{

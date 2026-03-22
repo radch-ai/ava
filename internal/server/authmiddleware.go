@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/nevaria-ai/zitadel-validate"
 
@@ -22,12 +23,12 @@ func NewAuthMiddleware(introspector *zitadelvalidate.Introspector) *AuthMiddlewa
 	}
 }
 
-// Authenticate returns a middleware handler that validates the session cookie
+// Authenticate returns a middleware handler that validates the bearer token
 // and adds user_id to context before calling next handler.
 //
 // Simple Auth Flow (no sliding sessions):
-//   - Backend only validates session authenticity
-//   - Client handles all token/cookie management via refresh tokens
+//   - Backend only validates token authenticity
+//   - Client handles all token management via refresh tokens
 //
 // No Auth Cache:
 //   - Auth happens on each request
@@ -35,14 +36,11 @@ func NewAuthMiddleware(introspector *zitadelvalidate.Introspector) *AuthMiddlewa
 //   - Real-time revocation checking (no stale cache)
 func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Extract session cookie
-		cookie, err := r.Cookie("session")
-		if err != nil || cookie.Value == "" {
+		sessionToken := bearerTokenFromRequest(r)
+		if sessionToken == "" {
 			m.writeAuthError(w, "authentication_required", "Valid session required. Please login.")
 			return
 		}
-
-		sessionToken := cookie.Value
 
 		// Validate with Zitadel introspection
 		sessionInfo, err := m.introspector.ValidateSession(r.Context(), sessionToken)
@@ -75,4 +73,15 @@ func (m *AuthMiddleware) writeAuthError(w http.ResponseWriter, errorCode, messag
 		"message":   message,
 		"login_url": "/auth/login/google",
 	})
+}
+
+// bearerTokenFromRequest extracts the bearer token from the Authorization header.
+// Returns empty string if no valid bearer token is found.
+func bearerTokenFromRequest(r *http.Request) string {
+	authorization := r.Header.Get("Authorization")
+	if bearer, ok := strings.CutPrefix(authorization, "Bearer "); ok {
+		return strings.TrimSpace(bearer)
+	}
+
+	return ""
 }
