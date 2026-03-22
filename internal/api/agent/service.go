@@ -1,40 +1,19 @@
-// Package user provides user-related business logic.
-package user
+// Package agent provides API-layer business logic for agent configuration endpoints.
+package agent
 
 import (
 	"context"
 	"fmt"
 )
 
-// =============================================================================
-// Service
-// =============================================================================
-
-// Service orchestrates business logic for user operations.
-// Validates inputs before delegating to the store.
+// Service orchestrates business logic for agent configuration operations.
 type Service struct {
 	store Store
 }
 
-// NewService creates a new user service.
+// NewService creates a new agent service.
 func NewService(store Store) *Service {
 	return &Service{store: store}
-}
-
-// =============================================================================
-// Agent Operations
-// =============================================================================
-
-// GetAgents returns all agents (name and icon) for a user.
-func (s *Service) GetAgents(ctx context.Context, userID string) ([]Agent, error) {
-	if userID == "" {
-		return []Agent{}, nil
-	}
-	agents, err := s.store.GetAgentsForUser(ctx, userID)
-	if err != nil {
-		return nil, fmt.Errorf("get agents: %w", err)
-	}
-	return agents, nil
 }
 
 // GetAgentConfiguration returns the full configuration for an agent.

@@ -1,5 +1,5 @@
-// Package user provides agent configuration storage operations.
-package user
+// Package agent provides API-layer agent configuration storage operations.
+package agent
 
 import (
 	"context"
@@ -8,17 +8,37 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/nevaria-ai/backend/internal/api/shared"
 	"github.com/nevaria-ai/backend/internal/db"
 )
 
-// =============================================================================
-// Agent Configuration Operations
-// =============================================================================
+type Store interface {
+	// GetAgentConfiguration retrieves the full configuration for an agent.
+	GetAgentConfiguration(ctx context.Context, userID, agentName string) (*AgentConfiguration, error)
+	// PatchAgentConfiguration performs a partial update of agent configuration in a transaction.
+	PatchAgentConfiguration(ctx context.Context, userID, agentName string, req *PatchAgentRequest) (*AgentConfiguration, error)
+	// CreateAgent creates a new agent with automatic name suffixing.
+	CreateAgent(ctx context.Context, userID string, req *CreateAgentRequest) (*CreateAgentResponse, error)
+}
+
+// PGStore implements Store using PostgreSQL.
+type PGStore struct {
+	pool    *pgxpool.Pool
+	queries *db.Queries
+}
+
+func NewPGStore(pool *pgxpool.Pool) *PGStore {
+	return &PGStore{
+		pool:    pool,
+		queries: db.New(pool),
+	}
+}
 
 // GetAgentConfiguration retrieves the full configuration for an agent.
 func (s *PGStore) GetAgentConfiguration(ctx context.Context, userID, agentName string) (*AgentConfiguration, error) {
-	uid := parseUserID(userID)
+	uid := shared.ParseUserID(userID)
 
 	row, err := s.queries.GetAgentConfiguration(ctx, db.GetAgentConfigurationParams{
 		UserID: uid,
@@ -35,12 +55,10 @@ func (s *PGStore) GetAgentConfiguration(ctx context.Context, userID, agentName s
 		Name: row.Name,
 	}
 
-	// Set icon if valid
 	if row.Icon.Valid {
 		config.Icon = row.Icon.String
 	}
 
-	// Parse soul
 	if row.Soul != nil {
 		soulBytes, err := json.Marshal(row.Soul)
 		if err != nil {
@@ -51,7 +69,6 @@ func (s *PGStore) GetAgentConfiguration(ctx context.Context, userID, agentName s
 		}
 	}
 
-	// Set string fields
 	if row.UserContext != nil {
 		if str, ok := row.UserContext.(string); ok {
 			config.UserContext = str
@@ -68,7 +85,6 @@ func (s *PGStore) GetAgentConfiguration(ctx context.Context, userID, agentName s
 		}
 	}
 
-	// Parse tools enabled
 	if row.ToolsEnabled != nil {
 		toolsBytes, err := json.Marshal(row.ToolsEnabled)
 		if err != nil {
@@ -79,7 +95,6 @@ func (s *PGStore) GetAgentConfiguration(ctx context.Context, userID, agentName s
 		}
 	}
 
-	// Parse heartbeat
 	if len(row.Heartbeat) > 0 {
 		var hb HeartbeatConfig
 		if err := json.Unmarshal(row.Heartbeat, &hb); err != nil {
@@ -88,7 +103,6 @@ func (s *PGStore) GetAgentConfiguration(ctx context.Context, userID, agentName s
 		config.Heartbeat = &hb
 	}
 
-	// Parse cron jobs
 	if len(row.CronJobs) > 0 {
 		if err := json.Unmarshal(row.CronJobs, &config.CronJobs); err != nil {
 			return nil, fmt.Errorf("parse cron jobs: %w", err)
@@ -111,12 +125,11 @@ func (s *PGStore) PatchAgentConfiguration(ctx context.Context, userID, agentName
 	}()
 
 	txQueries := s.queries.WithTx(tx)
-	uid := parseUserID(userID)
+	uid := shared.ParseUserID(userID)
 
-	// 1. Update icon if provided
 	if req.Icon != nil {
 		if err := txQueries.UpdateAgentIcon(ctx, db.UpdateAgentIconParams{
-			Icon:   pgText(*req.Icon),
+			Icon:   shared.PgText(*req.Icon),
 			UserID: uid,
 			Name:   agentName,
 		}); err != nil {
@@ -124,7 +137,6 @@ func (s *PGStore) PatchAgentConfiguration(ctx context.Context, userID, agentName
 		}
 	}
 
-	// 2. Update config JSONB (if any config fields provided)
 	if req.Soul != nil || req.UserContext != nil || req.OperatingInstructions != nil || req.ToolsContext != nil {
 		configUpdates := make(map[string]interface{})
 		if req.Soul != nil {
@@ -155,7 +167,6 @@ func (s *PGStore) PatchAgentConfiguration(ctx context.Context, userID, agentName
 		}
 	}
 
-	// 3. Sync agent_tools junction table
 	if req.ToolsEnabled != nil {
 		err = txQueries.ClearAgentTools(ctx, db.ClearAgentToolsParams{
 			UserID:    uid,
@@ -169,7 +180,7 @@ func (s *PGStore) PatchAgentConfiguration(ctx context.Context, userID, agentName
 			err = txQueries.InsertAgentTool(ctx, db.InsertAgentToolParams{
 				UserID:    uid,
 				AgentName: agentName,
-				Column3:   uuidFromString(toolID),
+				Column3:   shared.UUIDFromString(toolID),
 			})
 			if err != nil {
 				return nil, fmt.Errorf("insert agent tool %s: %w", toolID, err)
@@ -177,13 +188,12 @@ func (s *PGStore) PatchAgentConfiguration(ctx context.Context, userID, agentName
 		}
 	}
 
-	// 4. Upsert heartbeat
 	if req.Heartbeat != nil {
 		err = txQueries.UpsertHeartbeat(ctx, db.UpsertHeartbeatParams{
 			UserID:    uid,
 			AgentName: agentName,
 			Model:     req.Heartbeat.Model,
-			Enabled:   pgBool(req.Heartbeat.Enabled),
+			Enabled:   shared.PgBool(req.Heartbeat.Enabled),
 			Duration:  req.Heartbeat.Duration,
 			Content:   req.Heartbeat.Content,
 		})
@@ -192,7 +202,6 @@ func (s *PGStore) PatchAgentConfiguration(ctx context.Context, userID, agentName
 		}
 	}
 
-	// 5. Replace cron jobs (full replace)
 	if req.CronJobs != nil {
 		err = txQueries.DeleteCronJobs(ctx, db.DeleteCronJobsParams{
 			UserID:    uid,
@@ -208,7 +217,7 @@ func (s *PGStore) PatchAgentConfiguration(ctx context.Context, userID, agentName
 				AgentName:      agentName,
 				Time:           job.Time,
 				Frequency:      job.Frequency,
-				CronExpression: pgText(job.CronExpression),
+				CronExpression: shared.PgText(job.CronExpression),
 				Prompt:         job.Prompt,
 			})
 			if err != nil {
@@ -217,28 +226,21 @@ func (s *PGStore) PatchAgentConfiguration(ctx context.Context, userID, agentName
 		}
 	}
 
-	// Commit transaction
 	if err = tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit transaction: %w", err)
 	}
 
-	// Return updated configuration
 	return s.GetAgentConfiguration(ctx, userID, agentName)
 }
-
-// =============================================================================
-// Agent Create Operations
-// =============================================================================
 
 // maxSuffixLimit is the maximum suffix number to try before giving up.
 const maxSuffixLimit = 1000
 
 // CreateAgent creates a new agent with automatic name suffixing.
 func (s *PGStore) CreateAgent(ctx context.Context, userID string, req *CreateAgentRequest) (*CreateAgentResponse, error) {
-	uid := parseUserID(userID)
+	uid := shared.ParseUserID(userID)
 	baseName := req.Name
 
-	// Check name availability - returns all names that match exact or with suffix
 	existingNames, err := s.queries.CheckAgentNameAvailability(ctx, db.CheckAgentNameAvailabilityParams{
 		UserID: uid,
 		Name:   baseName,
@@ -247,15 +249,12 @@ func (s *PGStore) CreateAgent(ctx context.Context, userID string, req *CreateAge
 		return nil, fmt.Errorf("check name availability: %w", err)
 	}
 
-	// If no exact match, use the base name directly
 	if len(existingNames) == 0 {
 		return s.createAgentRow(ctx, uid, baseName, req)
 	}
 
-	// Check if exact name exists
 	for _, name := range existingNames {
 		if name == baseName {
-			// Exact match exists, find available suffix
 			finalName, err := s.findAvailableName(existingNames, baseName)
 			if err != nil {
 				return nil, fmt.Errorf("find available name: %w", err)
@@ -264,19 +263,15 @@ func (s *PGStore) CreateAgent(ctx context.Context, userID string, req *CreateAge
 		}
 	}
 
-	// No exact match but suffixes exist - base name is available
 	return s.createAgentRow(ctx, uid, baseName, req)
 }
 
-// findAvailableName finds the next available name with suffix (name-2, name-3, etc.).
 func (s *PGStore) findAvailableName(existingNames []string, baseName string) (string, error) {
-	// Build set of existing names for quick lookup
 	existingSet := make(map[string]bool)
 	for _, n := range existingNames {
 		existingSet[n] = true
 	}
 
-	// Find next available suffix (start at 2, max at maxSuffixLimit)
 	for suffix := 2; suffix <= maxSuffixLimit; suffix++ {
 		candidate := fmt.Sprintf("%s-%d", baseName, suffix)
 		if !existingSet[candidate] {
@@ -287,7 +282,6 @@ func (s *PGStore) findAvailableName(existingNames []string, baseName string) (st
 	return "", fmt.Errorf("no available name found after %d suffixes", maxSuffixLimit)
 }
 
-// createAgentRow creates the agent row and associated data in a transaction.
 func (s *PGStore) createAgentRow(ctx context.Context, userID int64, name string, req *CreateAgentRequest) (*CreateAgentResponse, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -301,7 +295,6 @@ func (s *PGStore) createAgentRow(ctx context.Context, userID int64, name string,
 
 	txQueries := s.queries.WithTx(tx)
 
-	// Build config JSON
 	configMap := make(map[string]interface{})
 	if req.Soul != nil {
 		configMap["soul"] = req.Soul
@@ -321,23 +314,21 @@ func (s *PGStore) createAgentRow(ctx context.Context, userID int64, name string,
 		return nil, fmt.Errorf("marshal config: %w", err)
 	}
 
-	// Insert agent row
 	if err := txQueries.CreateAgent(ctx, db.CreateAgentParams{
 		UserID:  userID,
 		Name:    name,
-		Icon:    pgText(req.Icon),
+		Icon:    shared.PgText(req.Icon),
 		Column4: configJSON,
 	}); err != nil {
 		return nil, fmt.Errorf("create agent: %w", err)
 	}
 
-	// Create heartbeat if provided
 	if req.Heartbeat != nil {
 		if err := txQueries.UpsertHeartbeat(ctx, db.UpsertHeartbeatParams{
 			UserID:    userID,
 			AgentName: name,
 			Model:     req.Heartbeat.Model,
-			Enabled:   pgBool(req.Heartbeat.Enabled),
+			Enabled:   shared.PgBool(req.Heartbeat.Enabled),
 			Duration:  req.Heartbeat.Duration,
 			Content:   req.Heartbeat.Content,
 		}); err != nil {
@@ -345,20 +336,18 @@ func (s *PGStore) createAgentRow(ctx context.Context, userID int64, name string,
 		}
 	}
 
-	// Add tool associations
 	if req.ToolsEnabled != nil {
 		for _, toolID := range req.ToolsEnabled {
 			if err := txQueries.InsertAgentTool(ctx, db.InsertAgentToolParams{
 				UserID:    userID,
 				AgentName: name,
-				Column3:   uuidFromString(toolID),
+				Column3:   shared.UUIDFromString(toolID),
 			}); err != nil {
 				return nil, fmt.Errorf("insert tool %s: %w", toolID, err)
 			}
 		}
 	}
 
-	// Create cron jobs
 	if req.CronJobs != nil {
 		for _, job := range req.CronJobs {
 			if err := txQueries.InsertCronJob(ctx, db.InsertCronJobParams{
@@ -366,7 +355,7 @@ func (s *PGStore) createAgentRow(ctx context.Context, userID int64, name string,
 				AgentName:      name,
 				Time:           job.Time,
 				Frequency:      job.Frequency,
-				CronExpression: pgText(job.CronExpression),
+				CronExpression: shared.PgText(job.CronExpression),
 				Prompt:         job.Prompt,
 			}); err != nil {
 				return nil, fmt.Errorf("insert cron job: %w", err)
@@ -374,7 +363,6 @@ func (s *PGStore) createAgentRow(ctx context.Context, userID int64, name string,
 		}
 	}
 
-	// Commit transaction
 	if err = tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit transaction: %w", err)
 	}

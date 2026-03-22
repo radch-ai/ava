@@ -12,8 +12,8 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/nevaria-ai/backend/config"
+	"github.com/nevaria-ai/backend/internal/api"
 	"github.com/nevaria-ai/backend/internal/server"
-	"github.com/nevaria-ai/backend/internal/user"
 	"github.com/nevaria-ai/backend/internal/webhooks"
 	"github.com/nevaria-ai/zitadel-validate"
 )
@@ -43,20 +43,12 @@ func main() {
 	// Initialize auth
 	zitadelIntr := zitadelvalidate.MustNewIntrospector(ctx, cfg.ZitadelDomain, cfg.ZitadelIntrospectorPrivateKeyPath).WithLogger(logger)
 
-	// Initialize services
-	userStore := user.NewPGStore(dbPool)
-	userService := user.NewService(userStore)
-	userHandler := user.NewHandler(userService, logger)
-
-	// Initialize webhooks
-	webhookHandlers := webhooks.New(cfg, dbPool, logger)
+	// Initialize API and webhooks
+	apiRouter := api.New(dbPool, logger)
+	webhookRouter := webhooks.New(cfg, dbPool, logger)
 
 	// Create and start server
-	srv := server.New(logger, cfg.ServerAddr, cfg.AllowedOrigins, dbPool, zitadelIntr, &server.Handlers{
-		UserHandler: userHandler,
-	}, &server.WebhookHandlers{
-		Router: webhookHandlers.Router(),
-	})
+	srv := server.New(logger, cfg.ServerAddr, cfg.AllowedOrigins, zitadelIntr, apiRouter, webhookRouter)
 	if err := srv.Start(ctx); err != nil {
 		logger.Fatal().Err(err).Msg("Server failed")
 	}

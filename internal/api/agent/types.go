@@ -1,19 +1,15 @@
-// Package user handles agent configuration for users.
+// Package agent handles agent configuration for users.
 //
-// Architecture: Handler → Service → Store (PostgreSQL)
+// Architecture: Handler -> Service -> Store (PostgreSQL)
 //   - Handler: HTTP routing and request/response handling
 //   - Service: Business logic and validation
 //   - Store: Database operations via sqlc-generated code
 //
 // Agent Identity:
 //   - Primary key: (user_id, name) composite key
-//   - Duplicate names auto-suffixed: "agent" → "agent-2" → "agent-3"
+//   - Duplicate names auto-suffixed: "agent" -> "agent-2" -> "agent-3"
 //   - Name is stored as column, not in JSONB config
-package user
-
-// =============================================================================
-// Config Types (stored in agents.config JSONB)
-// =============================================================================
+package agent
 
 // SoulConfig defines the agent's personality and identity.
 type SoulConfig struct {
@@ -31,16 +27,12 @@ type HeartbeatConfig struct {
 
 // CronJob defines a scheduled task for the agent.
 type CronJob struct {
-	ID             string `json:"id"`                       // UUID (server-generated)
-	Time           string `json:"time"`                     // Execution time
-	Frequency      string `json:"frequency"`                // "daily" | "weekly" | "custom"
-	CronExpression string `json:"cronExpression,omitempty"` // Custom cron expression
-	Prompt         string `json:"prompt"`                   // Task prompt
+	ID             string `json:"id"`        // UUID (server-generated)
+	Time           string `json:"time"`      // Execution time
+	Frequency      string `json:"frequency"` // "daily" | "weekly" | "custom"
+	CronExpression string `json:"cronExpression,omitempty"`
+	Prompt         string `json:"prompt"` // Task prompt
 }
-
-// =============================================================================
-// Agent Configuration (full agent state)
-// =============================================================================
 
 // AgentConfiguration is the complete configuration for an agent.
 // This is what GET/PATCH endpoints return/accept.
@@ -55,10 +47,6 @@ type AgentConfiguration struct {
 	Heartbeat             *HeartbeatConfig `json:"heartbeat,omitempty"`   // From heartbeat table
 	CronJobs              []CronJob        `json:"cronJobs"`              // From cron_jobs table
 }
-
-// =============================================================================
-// Request/Response Types
-// =============================================================================
 
 // PatchAgentRequest updates an existing agent. All fields are optional.
 // Note: ToolsEnabled and CronJobs use "full replace" semantics (send entire list).
@@ -90,19 +78,4 @@ type CreateAgentRequest struct {
 // Name may differ from request if auto-suffixed due to duplicate.
 type CreateAgentResponse struct {
 	Name string `json:"name"`
-}
-
-// =============================================================================
-// Agent List Types
-// =============================================================================
-
-// Agent represents a minimal agent for listing.
-type Agent struct {
-	Name string `json:"name"`
-	Icon string `json:"icon"`
-}
-
-// AgentsResponse is the response for GET /user/agents.
-type AgentsResponse struct {
-	Agents []Agent `json:"agents"`
 }

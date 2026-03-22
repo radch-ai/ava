@@ -5,11 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	zitadelvalidate "github.com/nevaria-ai/zitadel-validate"
 	"github.com/rs/zerolog"
-
-	"github.com/nevaria-ai/backend/internal/user"
 )
 
 // Server manages the HTTP server and handlers.
@@ -18,18 +15,15 @@ type Server struct {
 	logger     zerolog.Logger
 }
 
-// Handlers holds the HTTP handlers for the server.
-type Handlers struct {
-	UserHandler *user.Handler
-}
-
-// WebhookHandlers holds the webhook handlers.
-type WebhookHandlers struct {
-	Router http.Handler
-}
-
 // New creates a new Server with all routes configured.
-func New(logger zerolog.Logger, addr string, allowedOrigins []string, dbPool *pgxpool.Pool, introspector *zitadelvalidate.Introspector, handlers *Handlers, webhookHandlers *WebhookHandlers) *Server {
+func New(
+	logger zerolog.Logger,
+	addr string,
+	allowedOrigins []string,
+	introspector *zitadelvalidate.Introspector,
+	apiRouter http.Handler,
+	webhookRouter http.Handler,
+) *Server {
 	mux := http.NewServeMux()
 
 	// Create auth middleware
@@ -46,25 +40,16 @@ func New(logger zerolog.Logger, addr string, allowedOrigins []string, dbPool *pg
 		_, _ = w.Write([]byte("OK"))
 	})
 
-	// Internal webhook routes (no auth, internal network only)
-	if webhookHandlers != nil {
-		mux.Handle("/internal/webhooks/", http.StripPrefix(
-			"/internal/webhooks",
-			webhookHandlers.Router,
-		))
+	// Webhook routes (no auth)
+	if webhookRouter != nil {
+		mux.Handle("/webhooks/", http.StripPrefix("/webhooks", webhookRouter))
 	}
 
-	// Protected routes (require authentication)
-	protectedMux := http.NewServeMux()
-
-	// Agent endpoints: GET /user/agents (list), POST/GET/PATCH /user/agent/{name} (create/get/patch)
-	protectedMux.Handle("/user/agents", http.HandlerFunc(handlers.UserHandler.GetUserAgents))
-	protectedMux.Handle("/user/agent/", http.HandlerFunc(handlers.UserHandler.AgentConfigurationHandler))
-
-	// Mount protected routes under /api prefix with CORS handling for browser clients
+	// Protected API routes (CORS + authentication)
 	corsMiddleware := newCORSMiddleware(allowedOrigins)
-	apiHandler := http.StripPrefix("/api", protectedMux)
+	apiHandler := http.StripPrefix("/api", apiRouter)
 	apiHandler = authMiddleware.Authenticate(apiHandler)
+	// Mount protected routes under /api prefix
 	mux.Handle("/api/", corsMiddleware(apiHandler))
 
 	return &Server{
