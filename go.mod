@@ -3,7 +3,6 @@ module github.com/nevaria-ai/backend
 go 1.25.7
 
 require (
-	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/nevaria-ai/zitadel-validate v0.0.0-20260320014133-db79236bee75
 	github.com/rs/zerolog v1.34.0
