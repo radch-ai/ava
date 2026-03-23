@@ -21,6 +21,7 @@ func New(dbPool *pgxpool.Pool, logger zerolog.Logger) http.Handler {
 
 	mux := http.NewServeMux()
 	mux.Handle("/user/agents", http.HandlerFunc(userHandler.GetUserAgents))
+	mux.Handle("/user/lyla-thread", http.HandlerFunc(userHandler.GetLylaThread))
 	mux.Handle("/user/agent/", http.HandlerFunc(agentHandler.AgentConfigurationHandler))
 
 	return mux

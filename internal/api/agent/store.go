@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nevaria-ai/backend/internal/api/shared"
@@ -17,10 +18,16 @@ import (
 type Store interface {
 	// GetAgentConfiguration retrieves the full configuration for an agent.
 	GetAgentConfiguration(ctx context.Context, userID, agentName string) (*AgentConfiguration, error)
+	GetAgentActivityRuns(ctx context.Context, userID, agentName string, params ActivityParams) ([]ActivityItem, error)
 	// PatchAgentConfiguration performs a partial update of agent configuration in a transaction.
 	PatchAgentConfiguration(ctx context.Context, userID, agentName string, req *PatchAgentRequest) (*AgentConfiguration, error)
 	// CreateAgent creates a new agent with automatic name suffixing.
 	CreateAgent(ctx context.Context, userID string, req *CreateAgentRequest) (*CreateAgentResponse, error)
+}
+
+type ActivityParams struct {
+	Limit  int
+	Cursor *shared.Cursor
 }
 
 // PGStore implements Store using PostgreSQL.
@@ -110,6 +117,70 @@ func (s *PGStore) GetAgentConfiguration(ctx context.Context, userID, agentName s
 	}
 
 	return config, nil
+}
+
+func (s *PGStore) GetAgentActivityRuns(ctx context.Context, userID, agentName string, params ActivityParams) ([]ActivityItem, error) {
+	parsedUserID := shared.ParseUserID(userID)
+
+	if params.Cursor == nil {
+		rows, err := s.queries.ListAgentRunsFirstPage(ctx, db.ListAgentRunsFirstPageParams{
+			UserID:    parsedUserID,
+			AgentName: agentName,
+			Limit:     int32(params.Limit + 1),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("query first activity page: %w", err)
+		}
+		return mapActivityRows(rows), nil
+	}
+
+	cursorID := shared.UUIDFromString(params.Cursor.ID)
+
+	rows, err := s.queries.ListAgentRunsAfterCursor(ctx, db.ListAgentRunsAfterCursorParams{
+		UserID:    parsedUserID,
+		AgentName: agentName,
+		CreatedAt: pgtype.Timestamptz{Time: params.Cursor.CreatedAt, Valid: true},
+		ID:        cursorID,
+		Limit:     int32(params.Limit + 1),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query cursor activity page: %w", err)
+	}
+	return mapActivityCursorRows(rows), nil
+}
+
+// mapActivityRows converts first page rows to activity items.
+// Duplicate of mapActivityCursorRows is intentional - sqlc generates separate types for each query.
+func mapActivityRows(rows []db.ListAgentRunsFirstPageRow) []ActivityItem {
+	items := make([]ActivityItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, ActivityItem{
+			ID:          row.ID.String(),
+			TriggeredBy: row.TriggeredBy,
+			Action:      row.Action,
+			Status:      row.Status,
+			Message:     row.Message,
+			CreatedAt:   row.CreatedAt.Time,
+		})
+	}
+	return items
+}
+
+// mapActivityCursorRows converts cursor page rows to activity items.
+// Duplicate of mapActivityRows is intentional - sqlc generates separate types for each query.
+func mapActivityCursorRows(rows []db.ListAgentRunsAfterCursorRow) []ActivityItem {
+	items := make([]ActivityItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, ActivityItem{
+			ID:          row.ID.String(),
+			TriggeredBy: row.TriggeredBy,
+			Action:      row.Action,
+			Status:      row.Status,
+			Message:     row.Message,
+			CreatedAt:   row.CreatedAt.Time,
+		})
+	}
+	return items
 }
 
 // PatchAgentConfiguration performs a partial update of agent configuration in a transaction.

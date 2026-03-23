@@ -41,3 +41,34 @@ func (h *Handler) GetUserAgents(w http.ResponseWriter, r *http.Request) {
 
 	shared.WriteJSON(h.logger, w, http.StatusOK, GetAgentsResponse{Agents: agents})
 }
+
+// GetLylaThread handles GET /user/lyla-thread.
+func (h *Handler) GetLylaThread(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		shared.WriteError(h.logger, w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	userID := internalctx.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		h.logger.Error().Msg("user ID not found in context")
+		shared.WriteError(h.logger, w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	limit := r.URL.Query().Get("limit")
+	cursor := r.URL.Query().Get("cursor")
+
+	page, err := h.service.GetLylaThread(r.Context(), userID, limit, cursor)
+	if err != nil {
+		if err == shared.ErrInvalidCursor {
+			shared.WriteError(h.logger, w, http.StatusBadRequest, "invalid cursor")
+			return
+		}
+		h.logger.Error().Err(err).Str("user_id", userID).Msg("failed to get lyla thread")
+		shared.WriteError(h.logger, w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	shared.WriteJSON(h.logger, w, http.StatusOK, page)
+}

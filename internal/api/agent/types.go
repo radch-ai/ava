@@ -11,6 +11,8 @@
 //   - Name is stored as column, not in JSONB config
 package agent
 
+import "time"
+
 // SoulConfig defines the agent's personality and identity.
 type SoulConfig struct {
 	Personality string `json:"personality"`
@@ -78,4 +80,18 @@ type CreateAgentRequest struct {
 // Name may differ from request if auto-suffixed due to duplicate.
 type CreateAgentResponse struct {
 	Name string `json:"name"`
+}
+
+type ActivityItem struct {
+	ID          string    `json:"id"`
+	TriggeredBy string    `json:"triggeredBy"`
+	Action      string    `json:"action"`
+	Status      string    `json:"status"`
+	Message     string    `json:"message"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+
+type ActivityPage struct {
+	Items      []ActivityItem `json:"items"`
+	NextCursor *string        `json:"nextCursor"`
 }

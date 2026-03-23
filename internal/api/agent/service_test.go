@@ -2,9 +2,13 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
+	"github.com/nevaria-ai/backend/internal/api/shared"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -292,6 +296,83 @@ func TestNewService(t *testing.T) {
 
 	assert.NotNil(t, svc)
 	assert.Equal(t, store, svc.store)
+}
+
+func TestService_GetActivity_AgentWithNoActivityReturnsEmptyItems(t *testing.T) {
+	store := &MockStore{activityItems: []ActivityItem{}}
+	svc := NewService(store)
+
+	page, err := svc.GetActivity(context.Background(), "123456789", "lyla", "10", "")
+	require.NoError(t, err)
+	require.NotNil(t, page)
+	assert.Empty(t, page.Items)
+	assert.Nil(t, page.NextCursor)
+}
+
+func TestService_GetActivity_NextCursorCalculatedForMultiPageResults(t *testing.T) {
+	now := time.Now().UTC()
+	items := []ActivityItem{
+		{ID: "00000000-0000-0000-0000-000000000001", CreatedAt: now, Message: "1"},
+		{ID: "00000000-0000-0000-0000-000000000002", CreatedAt: now.Add(-time.Minute), Message: "2"},
+		{ID: "00000000-0000-0000-0000-000000000003", CreatedAt: now.Add(-2 * time.Minute), Message: "3"},
+	}
+	store := &MockStore{activityItems: items}
+	svc := NewService(store)
+
+	page, err := svc.GetActivity(context.Background(), "123456789", "lyla", "2", "")
+	require.NoError(t, err)
+	require.Len(t, page.Items, 2)
+	require.NotNil(t, page.NextCursor)
+
+	decoded, err := shared.DecodeCursor(*page.NextCursor)
+	require.NoError(t, err)
+	assert.Equal(t, items[1].ID, decoded.ID)
+	assert.True(t, items[1].CreatedAt.Equal(decoded.CreatedAt))
+}
+
+func TestService_GetActivity_LowNumericLimitsNormalizeTo20(t *testing.T) {
+	items := make([]ActivityItem, 21)
+	base := time.Now().UTC()
+	for i := range items {
+		items[i] = ActivityItem{
+			ID:        fmt.Sprintf("00000000-0000-0000-0000-%012d", i+1),
+			CreatedAt: base.Add(-time.Duration(i) * time.Minute),
+		}
+	}
+	store := &MockStore{activityItems: items}
+	svc := NewService(store)
+
+	page, err := svc.GetActivity(context.Background(), "123456789", "lyla", "0", "")
+	require.NoError(t, err)
+	require.Len(t, page.Items, 20)
+	require.NotNil(t, store.lastActivityParams)
+	assert.Equal(t, 20, store.lastActivityParams.Limit)
+
+	page, err = svc.GetActivity(context.Background(), "123456789", "lyla", "-5", "")
+	require.NoError(t, err)
+	require.Len(t, page.Items, 20)
+	require.NotNil(t, store.lastActivityParams)
+	assert.Equal(t, 20, store.lastActivityParams.Limit)
+}
+
+func TestService_GetActivity_MalformedCursorReturnsInvalidCursor(t *testing.T) {
+	store := &MockStore{}
+	svc := NewService(store)
+
+	_, err := svc.GetActivity(context.Background(), "123456789", "lyla", "10", "invalid-cursor")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, shared.ErrInvalidCursor)
+}
+
+func TestService_GetActivity_DecodableMalformedCursorReturnsInvalidCursor(t *testing.T) {
+	store := &MockStore{}
+	svc := NewService(store)
+
+	rawCursor := base64.URLEncoding.EncodeToString([]byte(`{}`))
+
+	_, err := svc.GetActivity(context.Background(), "123456789", "lyla", "10", rawCursor)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, shared.ErrInvalidCursor)
 }
 
 func ptr(s string) *string {
