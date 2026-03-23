@@ -17,6 +17,17 @@ type Agent struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
+type AgentRun struct {
+	ID          pgtype.UUID        `json:"id"`
+	UserID      int64              `json:"user_id"`
+	AgentName   string             `json:"agent_name"`
+	TriggeredBy string             `json:"triggered_by"`
+	Action      string             `json:"action"`
+	Status      string             `json:"status"`
+	Message     string             `json:"message"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type AgentTool struct {
 	UserID    int64       `json:"user_id"`
 	AgentName string      `json:"agent_name"`
@@ -40,6 +51,14 @@ type Heartbeat struct {
 	Enabled   pgtype.Bool `json:"enabled"`
 	Duration  string      `json:"duration"`
 	Content   string      `json:"content"`
+}
+
+type LylaThread struct {
+	ID        pgtype.UUID        `json:"id"`
+	UserID    int64              `json:"user_id"`
+	Role      string             `json:"role"`
+	Content   string             `json:"content"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type User struct {
