@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/rs/zerolog"
 )
 
 func TestBearerTokenFromRequest(t *testing.T) {
@@ -36,7 +38,8 @@ func TestBearerTokenFromRequest(t *testing.T) {
 
 func TestCORSMiddleware(t *testing.T) {
 	allowedOrigins := []string{"http://localhost:4173", "http://host.docker.internal:4173"}
-	corsMiddleware := newCORSMiddleware(allowedOrigins)
+	logger := zerolog.Nop()
+	corsMiddleware := newCORSMiddleware(allowedOrigins, logger)
 
 	t.Run("handles preflight for allowed origin without calling next handler", func(t *testing.T) {
 		handlerCalled := false

@@ -2,7 +2,14 @@ package server
 
 import (
 	"net/http"
+
+	"github.com/rs/zerolog"
 )
+
+type corsMiddleware struct {
+	originSet map[string]struct{}
+	logger    zerolog.Logger
+}
 
 // newCORSMiddleware returns a middleware that adds CORS headers for browser clients.
 //
@@ -18,24 +25,30 @@ import (
 //   - These requests pass through normally without CORS headers
 //
 // CORS only matters for browser/webview JavaScript clients that enforce CORS policy.
-func newCORSMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
+func newCORSMiddleware(allowedOrigins []string, logger zerolog.Logger) func(http.Handler) http.Handler {
 	originSet := make(map[string]struct{}, len(allowedOrigins))
 	for _, origin := range allowedOrigins {
 		originSet[origin] = struct{}{}
 	}
 
+	m := &corsMiddleware{originSet: originSet, logger: logger}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
 			if _, ok := originSet[origin]; ok {
+				m.logger.Debug().Str("origin", origin).Str("path", r.URL.Path).Msg("CORS allowed")
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Vary", "Origin")
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 				w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS")
 				w.Header().Set("Access-Control-Allow-Headers", "Authorization,Content-Type")
+			} else if origin != "" {
+				m.logger.Debug().Str("origin", origin).Str("path", r.URL.Path).Msg("CORS rejected: origin not allowed")
 			}
 
 			if r.Method == http.MethodOptions {
+				m.logger.Debug().Str("origin", origin).Str("path", r.URL.Path).Msg("CORS preflight")
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}

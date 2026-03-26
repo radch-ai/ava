@@ -54,9 +54,9 @@ func parseList(value string) []string {
 }
 
 // SetupLogger configures the global zerolog logger and returns a service-scoped logger.
-// Reads log level from BACKEND_LOG_LEVEL env var (defaults to "info").
+// Reads log level from LOG_LEVEL env var (defaults to "info").
 func SetupLogger() zerolog.Logger {
-	level := getEnv("BACKEND_LOG_LEVEL", "info")
+	level := getEnv("LOG_LEVEL", "info")
 
 	logLevel, err := zerolog.ParseLevel(level)
 	if err != nil {
@@ -75,11 +75,11 @@ func SetupLogger() zerolog.Logger {
 // Load reads configuration from environment variables and returns a Config.
 // Uses logger for fatal errors on missing required configuration.
 func Load(logger zerolog.Logger) *Config {
-	addr := getEnv("BACKEND_ADDR", ":8080")
-	logLevel := getEnv("BACKEND_LOG_LEVEL", "info")
+	addr := getEnv("ADDR", ":8080")
+	logLevel := getEnv("LOG_LEVEL", "info")
 
 	// AllowedOrigins: required - specific origins only (empty denies all)
-	originsRaw := getEnvRequired("BACKEND_ALLOWED_ORIGINS", logger)
+	originsRaw := getEnvRequired("ALLOWED_ORIGINS", logger)
 	origins := parseList(originsRaw)
 
 	// Zitadel configuration is required for auth

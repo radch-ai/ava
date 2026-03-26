@@ -43,12 +43,10 @@ func (s *Service) GetLylaThread(ctx context.Context, userID, rawLimit, rawCursor
 		return nil, err
 	}
 
-	params := LylaThreadParams{
+	messages, err := s.store.GetLylaThreadMessages(ctx, userID, LylaThreadParams{
 		Limit:  limit,
 		Cursor: cursor,
-	}
-
-	messages, err := s.store.GetLylaThreadMessages(ctx, userID, params)
+	})
 	if err != nil {
 		if errors.Is(err, shared.ErrInvalidCursor) {
 			return nil, shared.ErrInvalidCursor

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/nevaria-ai/zitadel-validate"
+	"github.com/rs/zerolog"
 
 	internalctx "github.com/nevaria-ai/backend/internal/ctx"
 )
@@ -14,12 +15,17 @@ import (
 // AuthMiddleware handles authentication for incoming requests.
 type AuthMiddleware struct {
 	introspector *zitadelvalidate.Introspector
+	logger       zerolog.Logger
 }
 
 // NewAuthMiddleware creates a new authentication middleware with the given introspector.
-func NewAuthMiddleware(introspector *zitadelvalidate.Introspector) *AuthMiddleware {
+func NewAuthMiddleware(introspector *zitadelvalidate.Introspector, logger zerolog.Logger) *AuthMiddleware {
+	if logger.GetLevel() == zerolog.Disabled {
+		logger = zerolog.Nop()
+	}
 	return &AuthMiddleware{
 		introspector: introspector,
+		logger:       logger,
 	}
 }
 
@@ -36,27 +42,37 @@ func NewAuthMiddleware(introspector *zitadelvalidate.Introspector) *AuthMiddlewa
 //   - Real-time revocation checking (no stale cache)
 func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		m.logger.Debug().Str("path", r.URL.Path).Str("method", r.Method).Msg("authenticating request")
+
 		sessionToken := bearerTokenFromRequest(r)
 		if sessionToken == "" {
+			m.logger.Debug().Str("path", r.URL.Path).Msg("no bearer token found")
 			m.writeAuthError(w, "authentication_required", "Valid session required. Please login.")
 			return
 		}
+
+		m.logger.Debug().Str("path", r.URL.Path).Msg("validating session with zitadel")
 
 		// Validate with Zitadel introspection
 		sessionInfo, err := m.introspector.ValidateSession(r.Context(), sessionToken)
 		if err != nil {
 			if errors.Is(err, zitadelvalidate.ErrSessionExpired) {
+				m.logger.Debug().Str("path", r.URL.Path).Msg("session expired")
 				m.writeAuthError(w, "session_expired", "Your session has expired. Please login again.")
 				return
 			}
 			if errors.Is(err, zitadelvalidate.ErrSessionInvalid) {
+				m.logger.Debug().Str("path", r.URL.Path).Msg("invalid session")
 				m.writeAuthError(w, "authentication_required", "Valid session required. Please login.")
 				return
 			}
+			m.logger.Error().Err(err).Str("path", r.URL.Path).Msg("auth service error")
 			// Other errors (timeout, unavailable) - return 503
 			http.Error(w, "Auth service unavailable", http.StatusServiceUnavailable)
 			return
 		}
+
+		m.logger.Debug().Str("path", r.URL.Path).Str("user_id", sessionInfo.UserID).Msg("authentication successful")
 
 		// Add user ID to context and call next handler
 		ctx := internalctx.WithUserID(r.Context(), sessionInfo.UserID)

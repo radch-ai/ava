@@ -8,7 +8,7 @@ import (
 )
 
 func setRequiredEnv() {
-	_ = os.Setenv("BACKEND_ALLOWED_ORIGINS", "http://localhost:4173")
+	_ = os.Setenv("ALLOWED_ORIGINS", "http://localhost:4173")
 	_ = os.Setenv("ZITADEL_DOMAIN", "https://example.zitadel.cloud")
 	_ = os.Setenv("ZITADEL_INTROSPECTOR_PRIVATE_KEY_PATH", "/path/to/key.json")
 	_ = os.Setenv("ZITADEL_WEBHOOK_SIGNING_KEY", "test-signing-key")
@@ -16,9 +16,9 @@ func setRequiredEnv() {
 }
 
 func clearEnv() {
-	_ = os.Unsetenv("BACKEND_ADDR")
-	_ = os.Unsetenv("BACKEND_LOG_LEVEL")
-	_ = os.Unsetenv("BACKEND_ALLOWED_ORIGINS")
+	_ = os.Unsetenv("ADDR")
+	_ = os.Unsetenv("LOG_LEVEL")
+	_ = os.Unsetenv("ALLOWED_ORIGINS")
 	_ = os.Unsetenv("ZITADEL_DOMAIN")
 	_ = os.Unsetenv("ZITADEL_INTROSPECTOR_PRIVATE_KEY_PATH")
 	_ = os.Unsetenv("ZITADEL_WEBHOOK_SIGNING_KEY")
@@ -62,7 +62,7 @@ func TestLoadAllowedOrigins(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			clearEnv()
 			setRequiredEnv()
-			_ = os.Setenv("BACKEND_ALLOWED_ORIGINS", tt.env)
+			_ = os.Setenv("ALLOWED_ORIGINS", tt.env)
 			defer clearEnv()
 
 			cfg := Load(zerolog.Nop())

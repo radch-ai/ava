@@ -28,6 +28,8 @@ func NewHandler(service *Service, logger zerolog.Logger) *Handler {
 
 // AgentConfigurationHandler routes to GET, POST, PATCH, or activity endpoint for a specific agent.
 func (h *Handler) AgentConfigurationHandler(w http.ResponseWriter, r *http.Request) {
+	h.logger.Debug().Str("method", r.Method).Str("path", r.URL.Path).Msg("routing agent configuration request")
+
 	switch r.Method {
 	case http.MethodPost:
 		h.CreateAgent(w, r)
@@ -47,12 +49,15 @@ func (h *Handler) AgentConfigurationHandler(w http.ResponseWriter, r *http.Reque
 
 // GetAgentConfiguration handles GET /user/agent/{name}.
 func (h *Handler) GetAgentConfiguration(w http.ResponseWriter, r *http.Request) {
+	h.logger.Debug().Str("path", r.URL.Path).Msg("handling get agent configuration")
+
 	userID, agentName, status, message := h.extractUserAndAgent(r)
 	if status != 0 {
 		shared.WriteError(h.logger, w, status, message)
 		return
 	}
 
+	h.logger.Debug().Str("user_id", userID).Str("agent_name", agentName).Msg("fetching agent configuration")
 	config, err := h.service.GetAgentConfiguration(r.Context(), userID, agentName)
 	if err != nil {
 		h.logger.Error().Err(err).Str("agent_name", agentName).Msg("agent not found")
@@ -60,11 +65,14 @@ func (h *Handler) GetAgentConfiguration(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	h.logger.Info().Str("user_id", userID).Str("agent_name", agentName).Msg("retrieved agent configuration")
 	shared.WriteJSON(h.logger, w, http.StatusOK, config)
 }
 
 // GetActivity handles GET /user/agent/{name}/activity.
 func (h *Handler) GetActivity(w http.ResponseWriter, r *http.Request) {
+	h.logger.Debug().Str("path", r.URL.Path).Msg("handling get agent activity")
+
 	if r.Method != http.MethodGet {
 		shared.WriteError(h.logger, w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -75,16 +83,22 @@ func (h *Handler) GetActivity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	limit := r.URL.Query().Get("limit")
+	cursor := r.URL.Query().Get("cursor")
+
+	h.logger.Debug().Str("user_id", userID).Str("agent_name", agentName).Str("limit", limit).Bool("has_cursor", cursor != "").Msg("fetching agent activity")
+
 	page, err := h.service.GetActivity(
 		r.Context(),
 		userID,
 		agentName,
-		r.URL.Query().Get("limit"),
-		r.URL.Query().Get("cursor"),
+		limit,
+		cursor,
 	)
 	if err != nil {
 		switch {
 		case errors.Is(err, shared.ErrInvalidCursor):
+			h.logger.Debug().Str("agent_name", agentName).Msg("invalid cursor provided")
 			shared.WriteError(h.logger, w, http.StatusBadRequest, "invalid cursor")
 		default:
 			h.logger.Error().Err(err).Str("agent_name", agentName).Msg("failed to get agent activity")
@@ -93,11 +107,14 @@ func (h *Handler) GetActivity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logger.Info().Str("user_id", userID).Str("agent_name", agentName).Int("item_count", len(page.Items)).Bool("has_next", page.NextCursor != nil).Msg("retrieved agent activity")
 	shared.WriteJSON(h.logger, w, http.StatusOK, page)
 }
 
 // PatchAgentConfiguration handles PATCH /user/agent/{name}.
 func (h *Handler) PatchAgentConfiguration(w http.ResponseWriter, r *http.Request) {
+	h.logger.Debug().Str("path", r.URL.Path).Msg("handling patch agent configuration")
+
 	userID, agentName, status, message := h.extractUserAndAgent(r)
 	if status != 0 {
 		shared.WriteError(h.logger, w, status, message)
@@ -106,10 +123,12 @@ func (h *Handler) PatchAgentConfiguration(w http.ResponseWriter, r *http.Request
 
 	var req PatchAgentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Debug().Str("agent_name", agentName).Err(err).Msg("invalid request body")
 		shared.WriteError(h.logger, w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
+	h.logger.Debug().Str("user_id", userID).Str("agent_name", agentName).Msg("patching agent configuration")
 	config, err := h.service.PatchAgentConfiguration(r.Context(), userID, agentName, &req)
 	if err != nil {
 		h.logger.Error().Err(err).Str("agent_name", agentName).Msg("failed to patch agent")
@@ -117,11 +136,14 @@ func (h *Handler) PatchAgentConfiguration(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	h.logger.Info().Str("user_id", userID).Str("agent_name", agentName).Msg("agent configuration patched")
 	shared.WriteJSON(h.logger, w, http.StatusOK, config)
 }
 
 // CreateAgent handles POST /user/agent/{name}.
 func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
+	h.logger.Debug().Str("path", r.URL.Path).Msg("handling create agent")
+
 	userID, agentName, status, message := h.extractUserAndAgent(r)
 	if status != 0 {
 		shared.WriteError(h.logger, w, status, message)
@@ -130,12 +152,14 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 
 	var req CreateAgentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Debug().Str("agent_name", agentName).Err(err).Msg("invalid request body")
 		shared.WriteError(h.logger, w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	req.Name = agentName
 
+	h.logger.Debug().Str("user_id", userID).Str("agent_name", agentName).Msg("creating agent")
 	resp, err := h.service.CreateAgent(r.Context(), userID, &req)
 	if err != nil {
 		h.logger.Error().Err(err).Str("user_id", userID).Str("agent_name", agentName).Msg("failed to create agent")
@@ -143,6 +167,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logger.Info().Str("user_id", userID).Str("agent_name", resp.Name).Msg("agent created")
 	shared.WriteJSON(h.logger, w, http.StatusCreated, resp)
 }
 

@@ -27,11 +27,12 @@ func New(
 	mux := http.NewServeMux()
 
 	// Create auth middleware
-	authMiddleware := NewAuthMiddleware(introspector)
+	authMiddleware := NewAuthMiddleware(introspector, logger)
 
 	// Health check endpoint (unauthenticated)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			logger.Debug().Str("path", "/health").Str("method", r.Method).Msg("method not allowed")
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
@@ -42,14 +43,16 @@ func New(
 
 	// Webhook routes (no auth)
 	if webhookRouter != nil {
+		logger.Debug().Msg("mounting webhook routes at /webhooks/")
 		mux.Handle("/webhooks/", http.StripPrefix("/webhooks", webhookRouter))
 	}
 
 	// Protected API routes (CORS + authentication)
-	corsMiddleware := newCORSMiddleware(allowedOrigins)
+	corsMiddleware := newCORSMiddleware(allowedOrigins, logger)
 	apiHandler := http.StripPrefix("/api", apiRouter)
 	apiHandler = authMiddleware.Authenticate(apiHandler)
 	// Mount protected routes under /api prefix
+	logger.Debug().Msg("mounting protected API routes at /api/")
 	mux.Handle("/api/", corsMiddleware(apiHandler))
 
 	return &Server{

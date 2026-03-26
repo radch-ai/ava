@@ -53,6 +53,8 @@ func NewHandler(service UserService, logger zerolog.Logger, signingKey string) *
 
 // ServeHTTP handles all Zitadel webhook requests.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.logger.Debug().Str("method", r.Method).Str("path", r.URL.Path).Msg("handling zitadel webhook")
+
 	if r.Method != http.MethodPost {
 		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -75,6 +77,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logger.Debug().Msg("verifying webhook signature")
 	if err := h.verifySignature(bodyBytes, signatureHeader); err != nil {
 		h.logger.Warn().Err(err).Msg("webhook signature verification failed")
 		h.writeError(w, http.StatusUnauthorized, "invalid signature")
@@ -83,9 +86,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var req WebhookRequest
 	if err := json.Unmarshal(bodyBytes, &req); err != nil {
+		h.logger.Debug().Err(err).Msg("failed to parse webhook body")
 		h.writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+
+	h.logger.Debug().Str("event_type", req.EventType).Msg("processing webhook event")
 
 	switch req.EventType {
 	case EventTypeUserHumanAdded:
