@@ -1,6 +1,6 @@
 BINARY_NAME ?= backend
 
-.PHONY: build run test test-unit test-integration test-e2e docker-test-logs
+.PHONY: build run test test-unit test-integration
 .PHONY: clean deps fmt lint help
 .PHONY: migrate sqlc-generate migrate-up migrate-down migrate-version
 .PHONY: install-tools
@@ -28,45 +28,15 @@ test:
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
-## test-unit: Run unit tests only
+## test-unit: Run unit tests only (same as test, for compatibility)
 test-unit:
 	@echo "Running unit tests..."
-	CGO_ENABLED=1 go test -mod=vendor -race -v ./tests/unit/...
+	$(MAKE) test
 
-## test-integration: Run integration tests with Docker compose (auto cleanup)
-## Usage (optional): make test-integration TEST_PATH=./tests/integration
+## test-integration: Run integration tests (uses testcontainers, no external DB needed)
 test-integration:
-	@echo "Starting Docker test services..."
-	@docker compose -f tests/docker-compose.test.yml up -d --wait --quiet-pull
-	@sleep 2
-	@if [ -z "$(TEST_PATH)" ]; then \
-		echo "Running integration tests for all packages..."; \
-		TEST_DATABASE_URL="postgres://test:test@localhost:5433/test?sslmode=disable" \
-			go test -mod=vendor -race -coverprofile=coverage.integration.out -tags=integration -v ./... -timeout 5m; \
-	else \
-		echo "Running integration tests for $(TEST_PATH)..."; \
-		TEST_DATABASE_URL="postgres://test:test@localhost:5433/test?sslmode=disable" \
-			go test -mod=vendor -race -coverprofile=coverage.integration.out -tags=integration -v $(TEST_PATH) -timeout 5m; \
-	fi
-	@go tool cover -html=coverage.integration.out -o coverage.integration.html
-	@echo "Integration coverage report: coverage.integration.html"
-	@echo "Stopping Docker test services..."
-	@docker compose -f tests/docker-compose.test.yml down -v
-
-## test-e2e: Run E2E tests with Docker compose (auto cleanup)
-test-e2e:
-	@echo "Starting Docker test services..."
-	@docker compose -f tests/docker-compose.test.yml up -d --wait --quiet-pull
-	@sleep 2
-	go test -mod=vendor -race -coverprofile=coverage.e2e.out -tags=e2e -v ./tests/e2e/... -timeout 10m
-	@go tool cover -html=coverage.e2e.out -o coverage.e2e.html
-	@echo "E2E coverage report: coverage.e2e.html"
-	@echo "Stopping Docker test services..."
-	@docker compose -f tests/docker-compose.test.yml down -v
-
-## docker-test-logs: Show logs from Docker test services
-docker-test-logs:
-		@docker compose -f tests/docker-compose.test.yml logs --follow
+	@echo "Running integration tests..."
+	CGO_ENABLED=1 go test -mod=vendor -race -v -tags integration ./... -timeout 20m
 
 ## migrate: Run database migrations
 migrate:

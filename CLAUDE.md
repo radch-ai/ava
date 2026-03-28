@@ -15,7 +15,7 @@ Available targets:
 - `make install-tools` - Install dev tools (instead of direct tool installation)
 - `make build` - Build binary (instead of `go build`)
 - `make run` - Run application
-- `make test` / `make test-unit` / `make test-integration` / `make test-e2e` - Testing (instead of `go test`)
+- `make test` / `make test-unit` / `make test-integration` - Testing (instead of `go test`)
 - `make lint` / `make fmt` - Code quality
 - `make generate` - Run code generation (sqlc, etc.)
 - `make help` - Show all available targets

@@ -1,53 +1,20 @@
+//go:build integration
+// +build integration
+
 package user
 
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nevaria-ai/backend/internal/api/shared"
+	"github.com/nevaria-ai/backend/internal/testhelpers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/nevaria-ai/backend/internal/api/shared"
 )
-
-func getTestDBURL() string {
-	return os.Getenv("TEST_DATABASE_URL")
-}
-
-func setupTestDB(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-
-	databaseURL := getTestDBURL()
-	if databaseURL == "" {
-		t.Skip("skipping integration test: TEST_DATABASE_URL not set or database not available")
-		return nil
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	config, err := pgxpool.ParseConfig(databaseURL)
-	require.NoError(t, err)
-
-	pool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		t.Skipf("skipping integration test: cannot connect to test database: %v", err)
-		return nil
-	}
-
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		t.Skipf("skipping integration test: cannot ping test database: %v", err)
-		return nil
-	}
-
-	t.Cleanup(func() { pool.Close() })
-	return pool
-}
 
 func TestPGStore_ImplementsStoreInterface(t *testing.T) {
 	store := &PGStore{}
@@ -55,13 +22,9 @@ func TestPGStore_ImplementsStoreInterface(t *testing.T) {
 }
 
 func TestPGStore_GetAgentsForUser_NonExistentUser(t *testing.T) {
-	pool := setupTestDB(t)
-	if pool == nil {
-		return
-	}
-
 	ctx := context.Background()
-	store := NewPGStore(pool)
+	testDB := testhelpers.SetupTestDB(ctx, t)
+	store := NewPGStore(testDB.Pool)
 
 	agents, err := store.GetAgentsForUser(ctx, "00000000-0000-0000-0000-000000000000")
 	require.NoError(t, err)
@@ -69,13 +32,9 @@ func TestPGStore_GetAgentsForUser_NonExistentUser(t *testing.T) {
 }
 
 func TestPGStore_GetAgentsForUser_InvalidUserID(t *testing.T) {
-	pool := setupTestDB(t)
-	if pool == nil {
-		return
-	}
-
 	ctx := context.Background()
-	store := NewPGStore(pool)
+	testDB := testhelpers.SetupTestDB(ctx, t)
+	store := NewPGStore(testDB.Pool)
 
 	agents, err := store.GetAgentsForUser(ctx, "not-a-valid-id")
 	require.NoError(t, err)
@@ -83,16 +42,12 @@ func TestPGStore_GetAgentsForUser_InvalidUserID(t *testing.T) {
 }
 
 func TestPGStore_GetLylaThreadMessages_FirstPage_OldestFirst(t *testing.T) {
-	pool := setupTestDB(t)
-	if pool == nil {
-		return
-	}
-
 	ctx := context.Background()
-	store := NewPGStore(pool)
+	testDB := testhelpers.SetupTestDB(ctx, t)
+	store := NewPGStore(testDB.Pool)
 
-	cleanupLylaThreadTestData(t, ctx, pool)
-	insertLylaThreadTestData(t, ctx, pool)
+	cleanupLylaThreadTestData(t, ctx, testDB.Pool)
+	insertLylaThreadTestData(t, ctx, testDB.Pool)
 
 	params := LylaThreadParams{Limit: 3, Cursor: nil}
 	messages, err := store.GetLylaThreadMessages(ctx, "123456789", params)
@@ -105,22 +60,18 @@ func TestPGStore_GetLylaThreadMessages_FirstPage_OldestFirst(t *testing.T) {
 }
 
 func TestPGStore_GetLylaThreadMessages_SameCreatedAt_OrdersByID(t *testing.T) {
-	pool := setupTestDB(t)
-	if pool == nil {
-		return
-	}
-
 	ctx := context.Background()
-	store := NewPGStore(pool)
+	testDB := testhelpers.SetupTestDB(ctx, t)
+	store := NewPGStore(testDB.Pool)
 
-	cleanupLylaThreadTestData(t, ctx, pool)
+	cleanupLylaThreadTestData(t, ctx, testDB.Pool)
 
-	_, err := pool.Exec(ctx, `INSERT INTO users (user_id) VALUES ($1) ON CONFLICT DO NOTHING`, int64(123456789))
+	_, err := testDB.Pool.Exec(ctx, `INSERT INTO users (user_id) VALUES ($1) ON CONFLICT DO NOTHING`, int64(123456789))
 	require.NoError(t, err)
 
 	now := time.Now()
 	for i := 3; i >= 1; i-- {
-		_, err := pool.Exec(ctx, `
+		_, err := testDB.Pool.Exec(ctx, `
 			INSERT INTO lyla_thread (user_id, role, content, created_at)
 			VALUES ($1, 'user', $2, $3)
 		`, int64(123456789), fmt.Sprintf("same-time-%d", i), now)
@@ -137,16 +88,12 @@ func TestPGStore_GetLylaThreadMessages_SameCreatedAt_OrdersByID(t *testing.T) {
 }
 
 func TestPGStore_GetLylaThreadMessages_CursorPage_ReturnsNewerRows(t *testing.T) {
-	pool := setupTestDB(t)
-	if pool == nil {
-		return
-	}
-
 	ctx := context.Background()
-	store := NewPGStore(pool)
+	testDB := testhelpers.SetupTestDB(ctx, t)
+	store := NewPGStore(testDB.Pool)
 
-	cleanupLylaThreadTestData(t, ctx, pool)
-	insertLylaThreadTestData(t, ctx, pool)
+	cleanupLylaThreadTestData(t, ctx, testDB.Pool)
+	insertLylaThreadTestData(t, ctx, testDB.Pool)
 
 	params := LylaThreadParams{Limit: 2, Cursor: nil}
 	firstPage, err := store.GetLylaThreadMessages(ctx, "123456789", params)
@@ -167,22 +114,18 @@ func TestPGStore_GetLylaThreadMessages_CursorPage_ReturnsNewerRows(t *testing.T)
 }
 
 func TestPGStore_GetLylaThreadMessages_CursorPage_UsesIDTieBreakForEqualTimestamp(t *testing.T) {
-	pool := setupTestDB(t)
-	if pool == nil {
-		return
-	}
-
 	ctx := context.Background()
-	store := NewPGStore(pool)
+	testDB := testhelpers.SetupTestDB(ctx, t)
+	store := NewPGStore(testDB.Pool)
 
-	cleanupLylaThreadTestData(t, ctx, pool)
+	cleanupLylaThreadTestData(t, ctx, testDB.Pool)
 
-	_, err := pool.Exec(ctx, `INSERT INTO users (user_id) VALUES ($1) ON CONFLICT DO NOTHING`, int64(123456789))
+	_, err := testDB.Pool.Exec(ctx, `INSERT INTO users (user_id) VALUES ($1) ON CONFLICT DO NOTHING`, int64(123456789))
 	require.NoError(t, err)
 
 	createdAt := time.Now().UTC().Truncate(time.Microsecond)
 	for i := 0; i < 3; i++ {
-		_, err = pool.Exec(ctx, `
+		_, err = testDB.Pool.Exec(ctx, `
 			INSERT INTO lyla_thread (user_id, role, content, created_at)
 			VALUES ($1, 'assistant', $2, $3)
 		`, int64(123456789), fmt.Sprintf("same-ts-%d", i), createdAt)
@@ -204,16 +147,12 @@ func TestPGStore_GetLylaThreadMessages_CursorPage_UsesIDTieBreakForEqualTimestam
 }
 
 func TestPGStore_GetLylaThreadMessages_NoDuplicatesAcrossPages(t *testing.T) {
-	pool := setupTestDB(t)
-	if pool == nil {
-		return
-	}
-
 	ctx := context.Background()
-	store := NewPGStore(pool)
+	testDB := testhelpers.SetupTestDB(ctx, t)
+	store := NewPGStore(testDB.Pool)
 
-	cleanupLylaThreadTestData(t, ctx, pool)
-	insertLylaThreadTestData(t, ctx, pool)
+	cleanupLylaThreadTestData(t, ctx, testDB.Pool)
+	insertLylaThreadTestData(t, ctx, testDB.Pool)
 
 	allIDs := make(map[string]bool)
 
