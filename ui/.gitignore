@@ -4,3 +4,6 @@ node_modules
 /package
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# tauri-specta: regenerated via `just bindings` / debug desktop launch
+src/lib/bindings.ts
