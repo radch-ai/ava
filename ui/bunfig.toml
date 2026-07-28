@@ -1,0 +1,5 @@
+[run]
+# Force all `bun run` invocations onto Bun's runtime instead of Node.
+# Equivalent to passing `--bun` on every script. Tools with a `node` shebang
+# (vitest, knip, svelte-check, biome's launcher) get the Bun runtime for free.
+bun = true
