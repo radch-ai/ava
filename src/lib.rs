@@ -1,10 +1,13 @@
 mod commands;
+pub mod error;
 
 #[cfg(debug_assertions)]
 use specta_typescript::Typescript;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    tracing_subscriber::fmt::init();
+
     let builder = commands::specta_builder();
 
     // Idiomatic tauri-specta: export on every debug launch (e.g. `just dev`).
