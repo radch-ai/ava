@@ -1,4 +1,5 @@
 import { sveltekit } from '@sveltejs/kit/vite'
+import tailwindcss from '@tailwindcss/vite'
 import { svelteTesting } from '@testing-library/svelte/vite'
 import { defineConfig } from 'vitest/config'
 
@@ -6,7 +7,7 @@ const host = process.env.TAURI_DEV_HOST
 
 // https://vite.dev/config/
 export default defineConfig({
-	plugins: [sveltekit(), svelteTesting({ autoCleanup: false })],
+	plugins: [tailwindcss(), sveltekit(), svelteTesting({ autoCleanup: false })],
 
 	// Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
 	//

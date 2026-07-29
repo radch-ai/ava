@@ -6,10 +6,14 @@
 			"vite.config.ts",
 			"knip.config.ts",
 			"tsconfig.json",
+			"components.json",
 			"src/**/*.js",
 			"src/**/*.ts",
 			"src/**/*.svelte",
-			"!src/lib/bindings.ts"
+			"!src/lib/bindings.ts",
+			"!src/components/ui",
+			"!src/lib/shadcn/utils.ts",
+			"!src/lib/hooks/is-mobile.svelte.ts"
 		]
 	},
 	"formatter": {
