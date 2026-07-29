@@ -13,7 +13,7 @@ pub fn run() {
     // Idiomatic tauri-specta: export on every debug launch (e.g. `just dev`).
     #[cfg(debug_assertions)]
     builder
-        .export(Typescript::default(), "ui/src/lib/bindings.ts")
+        .export(Typescript::default(), "../src/lib/bindings.ts")
         .expect("Failed to export typescript bindings");
 
     tauri::Builder::default()

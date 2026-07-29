@@ -1,0 +1,39 @@
+set shell := ["/bin/bash", "-euo", "pipefail", "-c"]
+
+tauri_cli := "bun run tauri"
+workspace := ".."
+
+# Regenerate src/lib/bindings.ts (tauri-specta)
+bindings:
+	cargo test -p ava-tauri --manifest-path {{ workspace }}/Cargo.toml --lib commands::tests::export_bindings -- --exact
+
+## --- test ---
+
+# Rust tests.
+test-rs:
+	cargo test -p ava-tauri --manifest-path {{ workspace }}/Cargo.toml
+
+# UI (Vitest) tests. Bindings first so specs can import bindings.ts.
+test-ui: bindings
+	bun run test
+
+## --- validate ---
+
+# svelte-check → knip → biome check --write (auto-fixes format + lint).
+validate-ui:
+	bun run validate
+
+# clippy with warnings as errors → fmt.
+validate-rs:
+	cargo clippy -p ava-tauri --all-targets --manifest-path {{ workspace }}/Cargo.toml -- -D warnings && cargo fmt --manifest-path {{ workspace }}/Cargo.toml
+
+## --- desktop (Tauri) ---
+
+# Vite (port 1420) + desktop app via Tauri CLI
+[default]
+dev:
+	{{ tauri_cli }} dev
+
+# Production UI build + packaged desktop app
+build: bindings
+	{{ tauri_cli }} build

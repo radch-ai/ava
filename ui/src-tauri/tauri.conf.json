@@ -4,16 +4,10 @@
   "version": "0.1.0",
   "identifier": "ai.radch.ava",
   "build": {
-    "beforeDevCommand": {
-      "script": "bun run dev",
-      "cwd": "ui"
-    },
+    "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": {
-      "script": "bun run build",
-      "cwd": "ui"
-    },
-    "frontendDist": "ui/build"
+    "beforeBuildCommand": "bun run build",
+    "frontendDist": "../build"
   },
   "app": {
     "windows": [
@@ -24,18 +18,7 @@
       }
     ],
     "security": {
-      "csp": null,
-      "capabilities": [
-        {
-          "identifier": "default",
-          "description": "Capability for the main window",
-          "windows": ["main"],
-          "permissions": [
-            "core:default",
-            "opener:default"
-          ]
-        }
-      ]
+      "csp": null
     }
   },
   "bundle": {

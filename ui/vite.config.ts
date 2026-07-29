@@ -23,7 +23,11 @@ export default defineConfig({
 					host,
 					port: 1421
 				}
-			: undefined
+			: undefined,
+		watch: {
+			// 3. tell Vite to ignore watching `src-tauri`
+			ignored: ['**/src-tauri/**']
+		}
 	},
 
 	test: {

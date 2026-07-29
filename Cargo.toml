@@ -1,36 +1,5 @@
-[package]
-name = "ava"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[lib]
-# The `_lib` suffix may seem redundant but it is necessary
-# to make the lib name unique and wouldn't conflict with the bin name.
-# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "ava_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
-
-[build-dependencies]
-tauri-build = { version = "2", features = [] }
-
-[dependencies]
-tauri = { version = "2", features = [] }
-specta = "=2.0.0-rc.25"
-specta-typescript = "0.0.12"
-tauri-specta = { version = "=2.0.0-rc.25", features = ["typescript"] }
-tauri-plugin-opener = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tracing = "0.1"
-tracing-subscriber = "0.3"
-thiserror = "2"
-
-[dev-dependencies]
-# `test` feature only for command smoke tests (`tauri::test::mock_app`); not in release.
-tauri = { version = "2", features = ["test"] }
-tempfile = "3"
-
+[workspace]
+resolver = "2"
+members = [
+    "ui/src-tauri",
+]

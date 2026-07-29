@@ -19,12 +19,12 @@ mod tests {
     use super::specta_builder;
     use specta_typescript::Typescript;
 
-    /// Escape hatch: regenerate `ui/src/lib/bindings.ts` without launching the GUI.
+    /// Escape hatch: regenerate `src/lib/bindings.ts` without launching the GUI.
     /// Prefer debug startup export via `just dev` day-to-day; use this for lint/build/CI.
     #[test]
     fn export_bindings() {
         specta_builder()
-            .export(Typescript::default(), "ui/src/lib/bindings.ts")
+            .export(Typescript::default(), "../src/lib/bindings.ts")
             .expect("Failed to export typescript bindings");
     }
 }
