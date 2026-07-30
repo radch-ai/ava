@@ -6,7 +6,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 
-	"github.com/radch-ai/ava/services/backend/config"
+	"github.com/radch-ai/ava/pkg/config"
 	"github.com/radch-ai/ava/services/backend/internal/webhooks/zitadel"
 )
 

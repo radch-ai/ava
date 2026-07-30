@@ -16,6 +16,7 @@ ava/
 ├── justfile              # Repo-root task runner — commands for the Rust workspace and Go module
 ├── .env.example
 ├── pkg/                  # Shared Go libraries
+│   ├── config/
 │   └── zitadelvalidate/
 ├── services/             # Deployable Go services
 │   └── backend/
@@ -41,6 +42,10 @@ ava/
 - Zitadel Actions v2 webhook receiver for back-syncing user/agent state (`internal/webhooks/zitadel`).
 - RevenueCat webhook handling for subscription management (`internal/billing`) — to be added.
 - Per-agent run history for usage tracking and analytics (table exists, queries/code to be added) (`agent_runs`).
+
+### pkg/config
+
+Env-driven config loader. Reads env vars (server addr, allowed origins, Zitadel, DB URL, etc.) into a `Config` struct. Currently shaped around backend's needs; other services can extend or share as they land. See `.env.example` at the repo root for the variables.
 
 ### pkg/zitadelvalidate
 
