@@ -14,6 +14,7 @@ ava/
 ├── Cargo.lock
 ├── go.mod / go.sum       # Single Go module for all Go code under pkg/ and services/
 ├── justfile              # Repo-root task runner — commands for the Rust workspace and Go module
+├── go-services.Dockerfile # Shared Dockerfile for Go services (build via `just docker <service>`)
 ├── .env.example
 ├── pkg/                  # Shared Go libraries
 │   ├── config/

@@ -41,6 +41,11 @@ run service:
     @just sqlc-for {{ service }}
     go run ./services/{{ service }}/main.go
 
+# Build a service Docker image (tag: ava-<service>:latest). Usage: just docker <service>
+docker service:
+    @just validate_service {{ service }}
+    docker build -t ava-{{ service }}:latest -f go-services.Dockerfile --build-arg SERVICE={{ service }} .
+
 ## --- test ---
 
 # Run unit tests with race + coverage for a service.
