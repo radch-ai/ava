@@ -17,6 +17,9 @@
 *.dylib
 bin/
 
+# sqlc-generated query layer (regenerate via `just sqlc-generate`)
+services/*/internal/db/
+
 # Test binary, built with `go test -c`
 *.test
 
