@@ -9,18 +9,25 @@ validate_service name:
     @test "{{ name }}" != "" || { echo "Error: service name required. Allowed: {{ allowed_services }}"; exit 1; }
     @echo "{{ allowed_services }}" | grep -qw "{{ name }}" || { echo "Error: unknown service '{{ name }}'. Allowed: {{ allowed_services }}"; exit 1; }
 
+# Fail with a friendly pointer to install-tools when a required CLI is missing.
+[private]
+require_tool tool:
+    @command -v "{{ tool }}" >/dev/null 2>&1 || { echo "Error: '{{ tool }}' not found on PATH. Run 'just install-tools' first."; exit 1; }
+
 # Ensure a service's sqlc-generated db layer is up to date. Used as a build/test prerequisite.
 [private]
 sqlc-for service:
+    @just require_tool sqlc
     @echo "-> sqlc generate: {{ service }}"
     @cd "services/{{ service }}" && sqlc generate
 
 ## --- tools ---
 
-# Install dev tools (sqlc, golangci-lint) to ~/.local/bin.
+# Install dev tools (sqlc, golang-migrate, golangci-lint) to ~/.local/bin.
 install-tools:
     @mkdir -p ~/.local/bin
     GOBIN=~/.local/bin go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
+    GOBIN=~/.local/bin go install github.com/golang-migrate/migrate/v4/cmd/migrate@latest
     @if ! command -v golangci-lint >/dev/null 2>&1; then \
         curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b ~/.local/bin; \
     fi
@@ -39,7 +46,7 @@ build service:
 run service:
     @just validate_service {{ service }}
     @just sqlc-for {{ service }}
-    go run ./services/{{ service }}/main.go
+    go run ./services/{{ service }}
 
 # Build a service Docker image (tag: ava-<service>:latest). Usage: just docker <service>
 docker service:
@@ -55,9 +62,9 @@ test service test_path="":
     @just sqlc-for {{ service }}
     #!/usr/bin/env bash
     path="{{ test_path }}"
-    CGO_ENABLED=1 go test -race -coverprofile=coverage.out -v ${path:-./services/{{ service }}/...}
-    go tool cover -html=coverage.out -o coverage.html
-    @echo "Coverage report: coverage.html"
+    CGO_ENABLED=1 go test -race -coverprofile=coverage.{{ service }}.out -v ${path:-./services/{{ service }}/...}
+    go tool cover -html=coverage.{{ service }}.out -o coverage.{{ service }}.html
+    @echo "Coverage report: coverage.{{ service }}.html"
 
 # Run integration tests for a service (uses testcontainers, no external DB needed).
 # Usage: just test-integration <service>
@@ -68,17 +75,13 @@ test-integration service:
 
 ## --- migrate / codegen ---
 
-# Run migrations via golang-migrate CLI. Usage: just migrate-cli <up|down|version>. Requires DATABASE_URL.
-migrate-cli direction:
-    #!/usr/bin/env bash
-    case "{{ direction }}" in
-        up|down|version) ;;
-        *) echo "Error: direction must be one of: up down version (got: {{ direction }})"; exit 1 ;;
-    esac
-    if [ -z "${DATABASE_URL:-}" ]; then
-        echo "Error: DATABASE_URL is required"; exit 1
-    fi
-    migrate -database "$DATABASE_URL" -path services/backend/schema/migrations {{ direction }}
+# Run migrations via golang-migrate CLI. Usage: just migrate-cli <service> <up|down|version>. Requires DATABASE_URL.
+migrate-cli service direction:
+    @just validate_service {{ service }}
+    @just require_tool migrate
+    @test "{{ direction }}" = "up" -o "{{ direction }}" = "down" -o "{{ direction }}" = "version" || { echo "Error: direction must be one of: up down version (got: {{ direction }})"; exit 1; }
+    @test -n "${DATABASE_URL:-}" || { echo "Error: DATABASE_URL is required"; exit 1; }
+    migrate -database "$DATABASE_URL" -path services/{{ service }}/schema/migrations {{ direction }}
 
 # Run sqlc generate for every service that uses it (see sqlc_services).
 sqlc-generate:
@@ -90,16 +93,12 @@ sqlc-generate:
 
 # Run golangci-lint with --fix across all Go code.
 lint:
-    @if command -v golangci-lint >/dev/null 2>&1; then \
-        golangci-lint run --fix ./...; \
-    else \
-        echo "golangci-lint not installed."; \
-    fi
+    @just require_tool golangci-lint
+    @golangci-lint run --fix ./...
 
 ## --- clean ---
 
 # Remove root bin/ and coverage artifacts.
 clean:
     @rm -rf bin
-    @rm -f coverage.out coverage.html coverage.integration.out coverage.integration.html
-    @rm -f coverage.e2e.out coverage.e2e.html
+    @rm -f coverage.*
