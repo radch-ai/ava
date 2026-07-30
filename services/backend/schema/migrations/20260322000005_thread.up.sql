@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS lyla_thread (
+CREATE TABLE IF NOT EXISTS thread (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id BIGINT NOT NULL,
     role TEXT NOT NULL,
@@ -8,5 +8,5 @@ CREATE TABLE IF NOT EXISTS lyla_thread (
     CHECK (role IN ('user', 'assistant'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_lyla_thread_user_created
-    ON lyla_thread(user_id, created_at ASC, id ASC);
+CREATE INDEX IF NOT EXISTS idx_thread_user_created
+    ON thread(user_id, created_at ASC, id ASC);

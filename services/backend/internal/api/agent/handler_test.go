@@ -31,7 +31,7 @@ func TestHandler_GetAgentConfiguration(t *testing.T) {
 		{
 			name:   "successful get agent configuration",
 			method: http.MethodGet,
-			path:   "/user/agent/lyla",
+			path:   "/user/agent/ava",
 			setupContext: func(r *http.Request) {
 				ctx := internalctx.WithUserID(r.Context(), "123456789")
 				*r = *r.WithContext(ctx)
@@ -40,7 +40,7 @@ func TestHandler_GetAgentConfiguration(t *testing.T) {
 				return &Service{
 					store: &MockStore{
 						agentConfig: &AgentConfiguration{
-							Name: "lyla",
+							Name: "ava",
 							Icon: "star",
 							Soul: SoulConfig{
 								Personality: "friendly",
@@ -54,7 +54,7 @@ func TestHandler_GetAgentConfiguration(t *testing.T) {
 			},
 			wantStatus: http.StatusOK,
 			wantResponse: &AgentConfiguration{
-				Name: "lyla",
+				Name: "ava",
 				Icon: "star",
 				Soul: SoulConfig{
 					Personality: "friendly",
@@ -85,7 +85,7 @@ func TestHandler_GetAgentConfiguration(t *testing.T) {
 		{
 			name:   "user ID not in context",
 			method: http.MethodGet,
-			path:   "/user/agent/lyla",
+			path:   "/user/agent/ava",
 			setupContext: func(r *http.Request) {
 			},
 			setupService: func() *Service {
@@ -152,7 +152,7 @@ func TestHandler_PatchAgentConfiguration(t *testing.T) {
 		{
 			name:   "successful patch",
 			method: http.MethodPatch,
-			path:   "/user/agent/lyla",
+			path:   "/user/agent/ava",
 			setupContext: func(r *http.Request) {
 				ctx := internalctx.WithUserID(r.Context(), "123456789")
 				*r = *r.WithContext(ctx)
@@ -161,7 +161,7 @@ func TestHandler_PatchAgentConfiguration(t *testing.T) {
 				return &Service{
 					store: &MockStore{
 						agentConfig: &AgentConfiguration{
-							Name: "lyla",
+							Name: "ava",
 							Icon: "star",
 							Soul: SoulConfig{
 								Personality: "updated",
@@ -174,7 +174,7 @@ func TestHandler_PatchAgentConfiguration(t *testing.T) {
 			body:       `{"icon": "star", "soul": {"personality": "updated", "identity": "assistant"}}`,
 			wantStatus: http.StatusOK,
 			wantResponse: &AgentConfiguration{
-				Name: "lyla",
+				Name: "ava",
 				Icon: "star",
 				Soul: SoulConfig{
 					Personality: "updated",
@@ -185,7 +185,7 @@ func TestHandler_PatchAgentConfiguration(t *testing.T) {
 		{
 			name:   "invalid request body",
 			method: http.MethodPatch,
-			path:   "/user/agent/lyla",
+			path:   "/user/agent/ava",
 			setupContext: func(r *http.Request) {
 				ctx := internalctx.WithUserID(r.Context(), "123456789")
 				*r = *r.WithContext(ctx)
@@ -200,7 +200,7 @@ func TestHandler_PatchAgentConfiguration(t *testing.T) {
 		{
 			name:   "service error",
 			method: http.MethodPatch,
-			path:   "/user/agent/lyla",
+			path:   "/user/agent/ava",
 			setupContext: func(r *http.Request) {
 				ctx := internalctx.WithUserID(r.Context(), "123456789")
 				*r = *r.WithContext(ctx)
@@ -487,17 +487,17 @@ func TestHandler_ExtractUserAndAgent(t *testing.T) {
 		},
 		{
 			name:        "missing user id returns internal error",
-			path:        "/user/agent/lyla",
+			path:        "/user/agent/ava",
 			withUserID:  false,
 			wantStatus:  http.StatusInternalServerError,
 			wantMessage: "internal error",
 		},
 		{
 			name:          "non-activity path returns agent name as-is",
-			path:          "/user/agent/lyla",
+			path:          "/user/agent/ava",
 			withUserID:    true,
 			wantUserID:    "123456789",
-			wantAgentName: "lyla",
+			wantAgentName: "ava",
 		},
 		{
 			name:        "empty extracted name returns bad request",
@@ -629,7 +629,7 @@ func TestHandler_GetActivity_PaginatedSuccess(t *testing.T) {
 	}
 
 	handler := NewHandler(NewService(&MockStore{activityItems: items}), zerolog.Nop())
-	req := httptest.NewRequest(http.MethodGet, "/user/agent/lyla/activity?limit=10", nil)
+	req := httptest.NewRequest(http.MethodGet, "/user/agent/ava/activity?limit=10", nil)
 	req = req.WithContext(internalctx.WithUserID(req.Context(), "123456789"))
 
 	w := httptest.NewRecorder()
@@ -642,7 +642,7 @@ func TestHandler_GetActivity_PaginatedSuccess(t *testing.T) {
 	require.Len(t, page.Items, 10)
 	require.NotNil(t, page.NextCursor)
 
-	secondReq := httptest.NewRequest(http.MethodGet, "/user/agent/lyla/activity?limit=10&cursor="+*page.NextCursor, nil)
+	secondReq := httptest.NewRequest(http.MethodGet, "/user/agent/ava/activity?limit=10&cursor="+*page.NextCursor, nil)
 	secondReq = secondReq.WithContext(internalctx.WithUserID(secondReq.Context(), "123456789"))
 	secondW := httptest.NewRecorder()
 	handler.GetActivity(secondW, secondReq)
@@ -668,7 +668,7 @@ func TestHandler_GetActivity_ErrorsAndDefaults(t *testing.T) {
 		{
 			name:        "invalid cursor returns bad request",
 			method:      http.MethodGet,
-			path:        "/user/agent/lyla/activity?cursor=invalid-cursor",
+			path:        "/user/agent/ava/activity?cursor=invalid-cursor",
 			store:       &MockStore{},
 			wantStatus:  http.StatusBadRequest,
 			wantErrBody: "invalid cursor",
@@ -676,7 +676,7 @@ func TestHandler_GetActivity_ErrorsAndDefaults(t *testing.T) {
 		{
 			name:       "agent with no activity returns empty items",
 			method:     http.MethodGet,
-			path:       "/user/agent/lyla/activity",
+			path:       "/user/agent/ava/activity",
 			store:      &MockStore{activityItems: []ActivityItem{}},
 			wantStatus: http.StatusOK,
 			wantItems:  0,
@@ -684,7 +684,7 @@ func TestHandler_GetActivity_ErrorsAndDefaults(t *testing.T) {
 		{
 			name:       "low invalid limits fall back to default behavior",
 			method:     http.MethodGet,
-			path:       "/user/agent/lyla/activity?limit=abc",
+			path:       "/user/agent/ava/activity?limit=abc",
 			store:      &MockStore{activityItems: makeActivityItems(15)},
 			wantStatus: http.StatusOK,
 			wantItems:  15,
@@ -692,7 +692,7 @@ func TestHandler_GetActivity_ErrorsAndDefaults(t *testing.T) {
 		{
 			name:        "POST method not allowed",
 			method:      http.MethodPost,
-			path:        "/user/agent/lyla/activity",
+			path:        "/user/agent/ava/activity",
 			store:       &MockStore{},
 			wantStatus:  http.StatusMethodNotAllowed,
 			wantErrBody: "method not allowed",

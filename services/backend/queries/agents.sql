@@ -10,5 +10,5 @@
 SELECT name, icon
 FROM agents
 WHERE user_id = $1
-  AND name != 'lyla'
+  AND name != 'ava'
 ORDER BY name;

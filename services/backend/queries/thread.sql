@@ -1,13 +1,13 @@
--- name: ListLylaThreadFirstPage :many
+-- name: ListThreadFirstPage :many
 SELECT id, role, content, created_at
-FROM lyla_thread
+FROM thread
 WHERE user_id = $1
 ORDER BY created_at ASC, id ASC
 LIMIT $2;
 
--- name: ListLylaThreadAfterCursor :many
+-- name: ListThreadAfterCursor :many
 SELECT id, role, content, created_at
-FROM lyla_thread
+FROM thread
 WHERE user_id = $1
   AND (
     created_at > $2

@@ -31,8 +31,8 @@ func (s *Service) GetAgents(ctx context.Context, userID string) ([]AgentSummary,
 	return agents, nil
 }
 
-// GetLylaThread retrieves paginated messages from the user's Lyla thread.
-func (s *Service) GetLylaThread(ctx context.Context, userID, rawLimit, rawCursor string) (*LylaThreadPage, error) {
+// GetThread retrieves paginated messages from the user's thread.
+func (s *Service) GetThread(ctx context.Context, userID, rawLimit, rawCursor string) (*ThreadPage, error) {
 	limit := shared.NormalizeLimit(rawLimit)
 
 	cursor, err := shared.DecodeCursor(rawCursor)
@@ -43,7 +43,7 @@ func (s *Service) GetLylaThread(ctx context.Context, userID, rawLimit, rawCursor
 		return nil, err
 	}
 
-	messages, err := s.store.GetLylaThreadMessages(ctx, userID, LylaThreadParams{
+	messages, err := s.store.GetThreadMessages(ctx, userID, ThreadParams{
 		Limit:  limit,
 		Cursor: cursor,
 	})
@@ -51,11 +51,11 @@ func (s *Service) GetLylaThread(ctx context.Context, userID, rawLimit, rawCursor
 		if errors.Is(err, shared.ErrInvalidCursor) {
 			return nil, shared.ErrInvalidCursor
 		}
-		return nil, fmt.Errorf("get lyla thread: %w", err)
+		return nil, fmt.Errorf("get thread: %w", err)
 	}
 
 	if len(messages) == 0 {
-		return &LylaThreadPage{Items: []LylaThreadMessage{}, NextCursor: nil}, nil
+		return &ThreadPage{Items: []ThreadMessage{}, NextCursor: nil}, nil
 	}
 
 	var nextCursor *string
@@ -69,7 +69,7 @@ func (s *Service) GetLylaThread(ctx context.Context, userID, rawLimit, rawCursor
 		nextCursor = &encoded
 	}
 
-	return &LylaThreadPage{
+	return &ThreadPage{
 		Items:      items,
 		NextCursor: nextCursor,
 	}, nil

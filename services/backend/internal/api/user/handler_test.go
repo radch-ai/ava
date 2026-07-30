@@ -37,7 +37,7 @@ func TestHandler_GetUserAgents(t *testing.T) {
 				return &Service{
 					store: &MockStore{
 						agents: []AgentSummary{
-							{Name: "lyla", Icon: "star"},
+							{Name: "ava", Icon: "star"},
 							{Name: "worker", Icon: "gear"},
 							{Name: "assistant", Icon: "robot"},
 						},
@@ -47,7 +47,7 @@ func TestHandler_GetUserAgents(t *testing.T) {
 			wantStatus: http.StatusOK,
 			wantResponse: &GetAgentsResponse{
 				Agents: []AgentSummary{
-					{Name: "lyla", Icon: "star"},
+					{Name: "ava", Icon: "star"},
 					{Name: "worker", Icon: "gear"},
 					{Name: "assistant", Icon: "robot"},
 				},
@@ -143,11 +143,11 @@ func TestNewHandler_NilLogger(t *testing.T) {
 	assert.NotNil(t, handler)
 }
 
-func TestHandler_GetLylaThread_Success(t *testing.T) {
+func TestHandler_GetThread_Success(t *testing.T) {
 	now := time.Now()
-	messages := make([]LylaThreadMessage, 15)
+	messages := make([]ThreadMessage, 15)
 	for i := 0; i < 15; i++ {
-		messages[i] = LylaThreadMessage{
+		messages[i] = ThreadMessage{
 			ID:        string(rune('a' + i)),
 			Role:      "assistant",
 			Content:   "message",
@@ -184,7 +184,7 @@ func TestHandler_GetLylaThread_Success(t *testing.T) {
 				*r = *r.WithContext(ctx)
 			},
 			setupStore: func() *MockStore {
-				return &MockStore{threadMessages: []LylaThreadMessage{}}
+				return &MockStore{threadMessages: []ThreadMessage{}}
 			},
 			wantStatus: http.StatusOK,
 			wantItems:  0,
@@ -282,11 +282,11 @@ func TestHandler_GetLylaThread_Success(t *testing.T) {
 			service := NewService(store)
 			handler := NewHandler(service, logger)
 
-			req := httptest.NewRequest(http.MethodGet, "/user/lyla-thread"+tt.query, nil)
+			req := httptest.NewRequest(http.MethodGet, "/user/thread"+tt.query, nil)
 			tt.setupContext(req)
 
 			w := httptest.NewRecorder()
-			handler.GetLylaThread(w, req)
+			handler.GetThread(w, req)
 
 			assert.Equal(t, tt.wantStatus, w.Code)
 
@@ -298,7 +298,7 @@ func TestHandler_GetLylaThread_Success(t *testing.T) {
 			}
 
 			if tt.wantItems >= 0 && tt.wantErrBody == "" {
-				var response LylaThreadPage
+				var response ThreadPage
 				err := json.NewDecoder(w.Body).Decode(&response)
 				require.NoError(t, err)
 				assert.Len(t, response.Items, tt.wantItems)
@@ -307,11 +307,11 @@ func TestHandler_GetLylaThread_Success(t *testing.T) {
 	}
 }
 
-func TestHandler_GetLylaThread_CursorPage(t *testing.T) {
+func TestHandler_GetThread_CursorPage(t *testing.T) {
 	now := time.Now()
-	messages := make([]LylaThreadMessage, 25)
+	messages := make([]ThreadMessage, 25)
 	for i := 0; i < 25; i++ {
-		messages[i] = LylaThreadMessage{
+		messages[i] = ThreadMessage{
 			ID:        fmt.Sprintf("00000000-0000-0000-0000-%012d", i+1),
 			Role:      "assistant",
 			Content:   fmt.Sprintf("message-%d", i),
@@ -324,30 +324,30 @@ func TestHandler_GetLylaThread_CursorPage(t *testing.T) {
 	service := NewService(store)
 	handler := NewHandler(service, logger)
 
-	req := httptest.NewRequest(http.MethodGet, "/user/lyla-thread?limit=10", nil)
+	req := httptest.NewRequest(http.MethodGet, "/user/thread?limit=10", nil)
 	ctx := internalctx.WithUserID(req.Context(), "user123")
 	req = req.WithContext(ctx)
 
 	w := httptest.NewRecorder()
-	handler.GetLylaThread(w, req)
+	handler.GetThread(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code)
 
-	var firstPage LylaThreadPage
+	var firstPage ThreadPage
 	err := json.NewDecoder(w.Body).Decode(&firstPage)
 	require.NoError(t, err)
 	require.Len(t, firstPage.Items, 10)
 	require.NotNil(t, firstPage.NextCursor)
 
-	cursorReq := httptest.NewRequest(http.MethodGet, "/user/lyla-thread?limit=10&cursor="+*firstPage.NextCursor, nil)
+	cursorReq := httptest.NewRequest(http.MethodGet, "/user/thread?limit=10&cursor="+*firstPage.NextCursor, nil)
 	cursorReq = cursorReq.WithContext(ctx)
 
 	w2 := httptest.NewRecorder()
-	handler.GetLylaThread(w2, cursorReq)
+	handler.GetThread(w2, cursorReq)
 
 	require.Equal(t, http.StatusOK, w2.Code)
 
-	var secondPage LylaThreadPage
+	var secondPage ThreadPage
 	err = json.NewDecoder(w2.Body).Decode(&secondPage)
 	require.NoError(t, err)
 	require.Len(t, secondPage.Items, 10)
@@ -356,18 +356,18 @@ func TestHandler_GetLylaThread_CursorPage(t *testing.T) {
 	assert.True(t, secondPage.Items[0].CreatedAt.After(firstPage.Items[len(firstPage.Items)-1].CreatedAt))
 }
 
-func TestHandler_GetLylaThread_StoreError(t *testing.T) {
+func TestHandler_GetThread_StoreError(t *testing.T) {
 	logger := zerolog.Nop()
 	store := &MockStore{err: errors.New("db error")}
 	service := NewService(store)
 	handler := NewHandler(service, logger)
 
-	req := httptest.NewRequest(http.MethodGet, "/user/lyla-thread", nil)
+	req := httptest.NewRequest(http.MethodGet, "/user/thread", nil)
 	ctx := internalctx.WithUserID(req.Context(), "user123")
 	req = req.WithContext(ctx)
 
 	w := httptest.NewRecorder()
-	handler.GetLylaThread(w, req)
+	handler.GetThread(w, req)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	var response map[string]string
@@ -376,18 +376,18 @@ func TestHandler_GetLylaThread_StoreError(t *testing.T) {
 	assert.Equal(t, "internal error", response["error"])
 }
 
-func TestHandler_GetLylaThread_MethodNotAllowed(t *testing.T) {
+func TestHandler_GetThread_MethodNotAllowed(t *testing.T) {
 	logger := zerolog.Nop()
 	store := &MockStore{}
 	service := NewService(store)
 	handler := NewHandler(service, logger)
 
-	req := httptest.NewRequest(http.MethodPost, "/user/lyla-thread", nil)
+	req := httptest.NewRequest(http.MethodPost, "/user/thread", nil)
 	ctx := internalctx.WithUserID(req.Context(), "user123")
 	req = req.WithContext(ctx)
 
 	w := httptest.NewRecorder()
-	handler.GetLylaThread(w, req)
+	handler.GetThread(w, req)
 
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 	var response map[string]string
@@ -399,7 +399,7 @@ func TestHandler_GetLylaThread_MethodNotAllowed(t *testing.T) {
 // MockStore implements Store for testing
 type MockStore struct {
 	agents         []AgentSummary
-	threadMessages []LylaThreadMessage
+	threadMessages []ThreadMessage
 	err            error
 }
 
@@ -410,7 +410,7 @@ func (m *MockStore) GetAgentsForUser(ctx context.Context, userID string) ([]Agen
 	return m.agents, nil
 }
 
-func (m *MockStore) GetLylaThreadMessages(ctx context.Context, userID string, params LylaThreadParams) ([]LylaThreadMessage, error) {
+func (m *MockStore) GetThreadMessages(ctx context.Context, userID string, params ThreadParams) ([]ThreadMessage, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -428,7 +428,7 @@ func (m *MockStore) GetLylaThreadMessages(ctx context.Context, userID string, pa
 		}
 	}
 	if start >= len(m.threadMessages) {
-		return []LylaThreadMessage{}, nil
+		return []ThreadMessage{}, nil
 	}
 	end := start + params.Limit + 1
 	if end > len(m.threadMessages) {

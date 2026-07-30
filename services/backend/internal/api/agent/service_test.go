@@ -26,11 +26,11 @@ func TestService_GetAgentConfiguration(t *testing.T) {
 		{
 			name:      "successful get",
 			userID:    "123456789",
-			agentName: "lyla",
+			agentName: "ava",
 			setupStore: func() *MockStore {
 				return &MockStore{
 					agentConfig: &AgentConfiguration{
-						Name: "lyla",
+						Name: "ava",
 						Icon: "star",
 						Soul: SoulConfig{
 							Personality: "friendly",
@@ -40,7 +40,7 @@ func TestService_GetAgentConfiguration(t *testing.T) {
 				}
 			},
 			wantConfig: &AgentConfiguration{
-				Name: "lyla",
+				Name: "ava",
 				Icon: "star",
 				Soul: SoulConfig{
 					Personality: "friendly",
@@ -64,7 +64,7 @@ func TestService_GetAgentConfiguration(t *testing.T) {
 		{
 			name:      "empty user ID",
 			userID:    "",
-			agentName: "lyla",
+			agentName: "ava",
 			setupStore: func() *MockStore {
 				return &MockStore{}
 			},
@@ -116,7 +116,7 @@ func TestService_PatchAgentConfiguration(t *testing.T) {
 		{
 			name:      "successful patch",
 			userID:    "123456789",
-			agentName: "lyla",
+			agentName: "ava",
 			req: &PatchAgentRequest{
 				Icon: ptr("star"),
 				Soul: &SoulConfig{
@@ -127,7 +127,7 @@ func TestService_PatchAgentConfiguration(t *testing.T) {
 			setupStore: func() *MockStore {
 				return &MockStore{
 					agentConfig: &AgentConfiguration{
-						Name: "lyla",
+						Name: "ava",
 						Icon: "star",
 						Soul: SoulConfig{
 							Personality: "updated",
@@ -137,7 +137,7 @@ func TestService_PatchAgentConfiguration(t *testing.T) {
 				}
 			},
 			wantConfig: &AgentConfiguration{
-				Name: "lyla",
+				Name: "ava",
 				Icon: "star",
 				Soul: SoulConfig{
 					Personality: "updated",
@@ -149,7 +149,7 @@ func TestService_PatchAgentConfiguration(t *testing.T) {
 		{
 			name:      "store error",
 			userID:    "123456789",
-			agentName: "lyla",
+			agentName: "ava",
 			req:       &PatchAgentRequest{Icon: ptr("star")},
 			setupStore: func() *MockStore {
 				return &MockStore{
@@ -162,7 +162,7 @@ func TestService_PatchAgentConfiguration(t *testing.T) {
 		{
 			name:        "empty user ID",
 			userID:      "",
-			agentName:   "lyla",
+			agentName:   "ava",
 			req:         &PatchAgentRequest{Icon: ptr("star")},
 			setupStore:  func() *MockStore { return &MockStore{} },
 			wantErr:     true,
@@ -302,7 +302,7 @@ func TestService_GetActivity_AgentWithNoActivityReturnsEmptyItems(t *testing.T) 
 	store := &MockStore{activityItems: []ActivityItem{}}
 	svc := NewService(store)
 
-	page, err := svc.GetActivity(context.Background(), "123456789", "lyla", "10", "")
+	page, err := svc.GetActivity(context.Background(), "123456789", "ava", "10", "")
 	require.NoError(t, err)
 	require.NotNil(t, page)
 	assert.Empty(t, page.Items)
@@ -319,7 +319,7 @@ func TestService_GetActivity_NextCursorCalculatedForMultiPageResults(t *testing.
 	store := &MockStore{activityItems: items}
 	svc := NewService(store)
 
-	page, err := svc.GetActivity(context.Background(), "123456789", "lyla", "2", "")
+	page, err := svc.GetActivity(context.Background(), "123456789", "ava", "2", "")
 	require.NoError(t, err)
 	require.Len(t, page.Items, 2)
 	require.NotNil(t, page.NextCursor)
@@ -342,13 +342,13 @@ func TestService_GetActivity_LowNumericLimitsNormalizeTo20(t *testing.T) {
 	store := &MockStore{activityItems: items}
 	svc := NewService(store)
 
-	page, err := svc.GetActivity(context.Background(), "123456789", "lyla", "0", "")
+	page, err := svc.GetActivity(context.Background(), "123456789", "ava", "0", "")
 	require.NoError(t, err)
 	require.Len(t, page.Items, 20)
 	require.NotNil(t, store.lastActivityParams)
 	assert.Equal(t, 20, store.lastActivityParams.Limit)
 
-	page, err = svc.GetActivity(context.Background(), "123456789", "lyla", "-5", "")
+	page, err = svc.GetActivity(context.Background(), "123456789", "ava", "-5", "")
 	require.NoError(t, err)
 	require.Len(t, page.Items, 20)
 	require.NotNil(t, store.lastActivityParams)
@@ -359,7 +359,7 @@ func TestService_GetActivity_MalformedCursorReturnsInvalidCursor(t *testing.T) {
 	store := &MockStore{}
 	svc := NewService(store)
 
-	_, err := svc.GetActivity(context.Background(), "123456789", "lyla", "10", "invalid-cursor")
+	_, err := svc.GetActivity(context.Background(), "123456789", "ava", "10", "invalid-cursor")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, shared.ErrInvalidCursor)
 }
@@ -370,7 +370,7 @@ func TestService_GetActivity_DecodableMalformedCursorReturnsInvalidCursor(t *tes
 
 	rawCursor := base64.URLEncoding.EncodeToString([]byte(`{}`))
 
-	_, err := svc.GetActivity(context.Background(), "123456789", "lyla", "10", rawCursor)
+	_, err := svc.GetActivity(context.Background(), "123456789", "ava", "10", rawCursor)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, shared.ErrInvalidCursor)
 }

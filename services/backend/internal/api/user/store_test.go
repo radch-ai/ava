@@ -41,16 +41,16 @@ func TestPGStore_GetAgentsForUser_InvalidUserID(t *testing.T) {
 	assert.Empty(t, agents)
 }
 
-func TestPGStore_GetLylaThreadMessages_FirstPage_OldestFirst(t *testing.T) {
+func TestPGStore_GetThreadMessages_FirstPage_OldestFirst(t *testing.T) {
 	ctx := context.Background()
 	testDB := testhelpers.SetupTestDB(ctx, t)
 	store := NewPGStore(testDB.Pool)
 
-	cleanupLylaThreadTestData(t, ctx, testDB.Pool)
-	insertLylaThreadTestData(t, ctx, testDB.Pool)
+	cleanupThreadTestData(t, ctx, testDB.Pool)
+	insertThreadTestData(t, ctx, testDB.Pool)
 
-	params := LylaThreadParams{Limit: 3, Cursor: nil}
-	messages, err := store.GetLylaThreadMessages(ctx, "123456789", params)
+	params := ThreadParams{Limit: 3, Cursor: nil}
+	messages, err := store.GetThreadMessages(ctx, "123456789", params)
 	require.NoError(t, err)
 	require.Len(t, messages, 3)
 
@@ -59,12 +59,12 @@ func TestPGStore_GetLylaThreadMessages_FirstPage_OldestFirst(t *testing.T) {
 	assert.Equal(t, "third message", messages[2].Content)
 }
 
-func TestPGStore_GetLylaThreadMessages_SameCreatedAt_OrdersByID(t *testing.T) {
+func TestPGStore_GetThreadMessages_SameCreatedAt_OrdersByID(t *testing.T) {
 	ctx := context.Background()
 	testDB := testhelpers.SetupTestDB(ctx, t)
 	store := NewPGStore(testDB.Pool)
 
-	cleanupLylaThreadTestData(t, ctx, testDB.Pool)
+	cleanupThreadTestData(t, ctx, testDB.Pool)
 
 	_, err := testDB.Pool.Exec(ctx, `INSERT INTO users (user_id) VALUES ($1) ON CONFLICT DO NOTHING`, int64(123456789))
 	require.NoError(t, err)
@@ -72,14 +72,14 @@ func TestPGStore_GetLylaThreadMessages_SameCreatedAt_OrdersByID(t *testing.T) {
 	now := time.Now()
 	for i := 3; i >= 1; i-- {
 		_, err := testDB.Pool.Exec(ctx, `
-			INSERT INTO lyla_thread (user_id, role, content, created_at)
+			INSERT INTO thread (user_id, role, content, created_at)
 			VALUES ($1, 'user', $2, $3)
 		`, int64(123456789), fmt.Sprintf("same-time-%d", i), now)
 		require.NoError(t, err)
 	}
 
-	params := LylaThreadParams{Limit: 10, Cursor: nil}
-	messages, err := store.GetLylaThreadMessages(ctx, "123456789", params)
+	params := ThreadParams{Limit: 10, Cursor: nil}
+	messages, err := store.GetThreadMessages(ctx, "123456789", params)
 	require.NoError(t, err)
 	require.Len(t, messages, 3)
 
@@ -87,16 +87,16 @@ func TestPGStore_GetLylaThreadMessages_SameCreatedAt_OrdersByID(t *testing.T) {
 	assert.True(t, messages[1].ID < messages[2].ID, "IDs should be in ascending order")
 }
 
-func TestPGStore_GetLylaThreadMessages_CursorPage_ReturnsNewerRows(t *testing.T) {
+func TestPGStore_GetThreadMessages_CursorPage_ReturnsNewerRows(t *testing.T) {
 	ctx := context.Background()
 	testDB := testhelpers.SetupTestDB(ctx, t)
 	store := NewPGStore(testDB.Pool)
 
-	cleanupLylaThreadTestData(t, ctx, testDB.Pool)
-	insertLylaThreadTestData(t, ctx, testDB.Pool)
+	cleanupThreadTestData(t, ctx, testDB.Pool)
+	insertThreadTestData(t, ctx, testDB.Pool)
 
-	params := LylaThreadParams{Limit: 2, Cursor: nil}
-	firstPage, err := store.GetLylaThreadMessages(ctx, "123456789", params)
+	params := ThreadParams{Limit: 2, Cursor: nil}
+	firstPage, err := store.GetThreadMessages(ctx, "123456789", params)
 	require.NoError(t, err)
 	require.Len(t, firstPage, 3)
 
@@ -105,20 +105,20 @@ func TestPGStore_GetLylaThreadMessages_CursorPage_ReturnsNewerRows(t *testing.T)
 		ID:        firstPage[1].ID,
 	}
 
-	params = LylaThreadParams{Limit: 2, Cursor: cursor}
-	secondPage, err := store.GetLylaThreadMessages(ctx, "123456789", params)
+	params = ThreadParams{Limit: 2, Cursor: cursor}
+	secondPage, err := store.GetThreadMessages(ctx, "123456789", params)
 	require.NoError(t, err)
 	require.Len(t, secondPage, 1)
 
 	assert.Equal(t, "third message", secondPage[0].Content)
 }
 
-func TestPGStore_GetLylaThreadMessages_CursorPage_UsesIDTieBreakForEqualTimestamp(t *testing.T) {
+func TestPGStore_GetThreadMessages_CursorPage_UsesIDTieBreakForEqualTimestamp(t *testing.T) {
 	ctx := context.Background()
 	testDB := testhelpers.SetupTestDB(ctx, t)
 	store := NewPGStore(testDB.Pool)
 
-	cleanupLylaThreadTestData(t, ctx, testDB.Pool)
+	cleanupThreadTestData(t, ctx, testDB.Pool)
 
 	_, err := testDB.Pool.Exec(ctx, `INSERT INTO users (user_id) VALUES ($1) ON CONFLICT DO NOTHING`, int64(123456789))
 	require.NoError(t, err)
@@ -126,18 +126,18 @@ func TestPGStore_GetLylaThreadMessages_CursorPage_UsesIDTieBreakForEqualTimestam
 	createdAt := time.Now().UTC().Truncate(time.Microsecond)
 	for i := 0; i < 3; i++ {
 		_, err = testDB.Pool.Exec(ctx, `
-			INSERT INTO lyla_thread (user_id, role, content, created_at)
+			INSERT INTO thread (user_id, role, content, created_at)
 			VALUES ($1, 'assistant', $2, $3)
 		`, int64(123456789), fmt.Sprintf("same-ts-%d", i), createdAt)
 		require.NoError(t, err)
 	}
 
-	firstPage, err := store.GetLylaThreadMessages(ctx, "123456789", LylaThreadParams{Limit: 2})
+	firstPage, err := store.GetThreadMessages(ctx, "123456789", ThreadParams{Limit: 2})
 	require.NoError(t, err)
 	require.Len(t, firstPage, 3)
 
 	cursor := &shared.Cursor{CreatedAt: firstPage[1].CreatedAt, ID: firstPage[1].ID}
-	secondPage, err := store.GetLylaThreadMessages(ctx, "123456789", LylaThreadParams{Limit: 2, Cursor: cursor})
+	secondPage, err := store.GetThreadMessages(ctx, "123456789", ThreadParams{Limit: 2, Cursor: cursor})
 	require.NoError(t, err)
 	require.Len(t, secondPage, 1)
 
@@ -146,18 +146,18 @@ func TestPGStore_GetLylaThreadMessages_CursorPage_UsesIDTieBreakForEqualTimestam
 	assert.NotEqual(t, cursor.ID, secondPage[0].ID)
 }
 
-func TestPGStore_GetLylaThreadMessages_NoDuplicatesAcrossPages(t *testing.T) {
+func TestPGStore_GetThreadMessages_NoDuplicatesAcrossPages(t *testing.T) {
 	ctx := context.Background()
 	testDB := testhelpers.SetupTestDB(ctx, t)
 	store := NewPGStore(testDB.Pool)
 
-	cleanupLylaThreadTestData(t, ctx, testDB.Pool)
-	insertLylaThreadTestData(t, ctx, testDB.Pool)
+	cleanupThreadTestData(t, ctx, testDB.Pool)
+	insertThreadTestData(t, ctx, testDB.Pool)
 
 	allIDs := make(map[string]bool)
 
-	params := LylaThreadParams{Limit: 2, Cursor: nil}
-	firstPage, err := store.GetLylaThreadMessages(ctx, "123456789", params)
+	params := ThreadParams{Limit: 2, Cursor: nil}
+	firstPage, err := store.GetThreadMessages(ctx, "123456789", params)
 	require.NoError(t, err)
 
 	for _, msg := range firstPage[:2] {
@@ -169,8 +169,8 @@ func TestPGStore_GetLylaThreadMessages_NoDuplicatesAcrossPages(t *testing.T) {
 		ID:        firstPage[1].ID,
 	}
 
-	params = LylaThreadParams{Limit: 2, Cursor: cursor}
-	secondPage, err := store.GetLylaThreadMessages(ctx, "123456789", params)
+	params = ThreadParams{Limit: 2, Cursor: cursor}
+	secondPage, err := store.GetThreadMessages(ctx, "123456789", params)
 	require.NoError(t, err)
 
 	for _, msg := range secondPage {
@@ -179,34 +179,34 @@ func TestPGStore_GetLylaThreadMessages_NoDuplicatesAcrossPages(t *testing.T) {
 	}
 }
 
-func cleanupLylaThreadTestData(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+func cleanupThreadTestData(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
-	_, err := pool.Exec(ctx, "DELETE FROM lyla_thread WHERE user_id = $1", int64(123456789))
+	_, err := pool.Exec(ctx, "DELETE FROM thread WHERE user_id = $1", int64(123456789))
 	require.NoError(t, err)
 	_, err = pool.Exec(ctx, "DELETE FROM users WHERE user_id = $1", int64(123456789))
 	require.NoError(t, err)
 }
 
-func insertLylaThreadTestData(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+func insertThreadTestData(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 
 	_, err := pool.Exec(ctx, `INSERT INTO users (user_id) VALUES ($1) ON CONFLICT DO NOTHING`, int64(123456789))
 	require.NoError(t, err)
 
 	_, err = pool.Exec(ctx, `
-		INSERT INTO lyla_thread (user_id, role, content, created_at)
+		INSERT INTO thread (user_id, role, content, created_at)
 		VALUES ($1, 'assistant', 'first message', NOW() - INTERVAL '2 seconds')
 	`, int64(123456789))
 	require.NoError(t, err)
 
 	_, err = pool.Exec(ctx, `
-		INSERT INTO lyla_thread (user_id, role, content, created_at)
+		INSERT INTO thread (user_id, role, content, created_at)
 		VALUES ($1, 'user', 'second message', NOW() - INTERVAL '1 second')
 	`, int64(123456789))
 	require.NoError(t, err)
 
 	_, err = pool.Exec(ctx, `
-		INSERT INTO lyla_thread (user_id, role, content, created_at)
+		INSERT INTO thread (user_id, role, content, created_at)
 		VALUES ($1, 'assistant', 'third message', NOW())
 	`, int64(123456789))
 	require.NoError(t, err)

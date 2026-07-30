@@ -3,7 +3,7 @@
 -- Design:
 --   - Composite PK (user_id, name) - no UUID for agent ID
 --   - user_id is Zitadel's Sonyflake ID (BIGINT)
---   - name is user-friendly string (e.g., "lyla", "worker-1")
+--   - name is user-friendly string (e.g., "ava", "worker-1")
 --   - Duplicate names auto-suffixed: name-2, name-3, etc.
 --   - Icon stored as separate column (optional)
 --   - Config stored as JSONB for flexibility

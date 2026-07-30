@@ -14,16 +14,16 @@ type GetAgentsResponse struct {
 	Agents []AgentSummary `json:"agents"`
 }
 
-// LylaThreadMessage represents a single message in the Lyla thread.
-type LylaThreadMessage struct {
+// ThreadMessage represents a single message in the thread.
+type ThreadMessage struct {
 	ID        string    `json:"id"`
 	Role      string    `json:"role"`
 	Content   string    `json:"content"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-// LylaThreadPage represents a paginated response of Lyla thread messages.
-type LylaThreadPage struct {
-	Items      []LylaThreadMessage `json:"items"`
-	NextCursor *string             `json:"nextCursor"`
+// ThreadPage represents a paginated response of thread messages.
+type ThreadPage struct {
+	Items      []ThreadMessage `json:"items"`
+	NextCursor *string         `json:"nextCursor"`
 }

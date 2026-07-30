@@ -40,14 +40,14 @@ func TestService_GetAgents(t *testing.T) {
 			setupStore: func() *MockStore {
 				return &MockStore{
 					agents: []AgentSummary{
-						{Name: "lyla", Icon: "star"},
+						{Name: "ava", Icon: "star"},
 						{Name: "worker-1", Icon: "gear"},
 						{Name: "assistant", Icon: "robot"},
 					},
 				}
 			},
 			wantAgents: []AgentSummary{
-				{Name: "lyla", Icon: "star"},
+				{Name: "ava", Icon: "star"},
 				{Name: "worker-1", Icon: "gear"},
 				{Name: "assistant", Icon: "robot"},
 			},
@@ -107,11 +107,11 @@ func TestService_GetAgents(t *testing.T) {
 	}
 }
 
-func TestService_GetLylaThread_FirstPage_WithNextCursor(t *testing.T) {
+func TestService_GetThread_FirstPage_WithNextCursor(t *testing.T) {
 	now := time.Now()
-	messages := make([]LylaThreadMessage, 11)
+	messages := make([]ThreadMessage, 11)
 	for i := 0; i < 11; i++ {
-		messages[i] = LylaThreadMessage{
+		messages[i] = ThreadMessage{
 			ID:        string(rune('a' + i)),
 			Role:      "assistant",
 			Content:   "message",
@@ -121,17 +121,17 @@ func TestService_GetLylaThread_FirstPage_WithNextCursor(t *testing.T) {
 	store := &MockStore{threadMessages: messages}
 	svc := NewService(store)
 
-	page, err := svc.GetLylaThread(context.Background(), "123", "10", "")
+	page, err := svc.GetThread(context.Background(), "123", "10", "")
 	require.NoError(t, err)
 	require.Len(t, page.Items, 10)
 	require.NotNil(t, page.NextCursor)
 }
 
-func TestService_GetLylaThread_ExactLimit_NoNextCursor(t *testing.T) {
+func TestService_GetThread_ExactLimit_NoNextCursor(t *testing.T) {
 	now := time.Now()
-	messages := make([]LylaThreadMessage, 10)
+	messages := make([]ThreadMessage, 10)
 	for i := 0; i < 10; i++ {
-		messages[i] = LylaThreadMessage{
+		messages[i] = ThreadMessage{
 			ID:        string(rune('a' + i)),
 			Role:      "assistant",
 			Content:   "message",
@@ -142,44 +142,44 @@ func TestService_GetLylaThread_ExactLimit_NoNextCursor(t *testing.T) {
 	store := &MockStore{threadMessages: messages}
 	svc := NewService(store)
 
-	page, err := svc.GetLylaThread(context.Background(), "123", "10", "")
+	page, err := svc.GetThread(context.Background(), "123", "10", "")
 	require.NoError(t, err)
 	require.Len(t, page.Items, 10)
 	assert.Nil(t, page.NextCursor)
 }
 
-func TestService_GetLylaThread_LastPage_NoNextCursor(t *testing.T) {
+func TestService_GetThread_LastPage_NoNextCursor(t *testing.T) {
 	now := time.Now()
 	store := &MockStore{
-		threadMessages: []LylaThreadMessage{
+		threadMessages: []ThreadMessage{
 			{ID: "msg-1", Role: "assistant", Content: "only message", CreatedAt: now},
 		},
 	}
 	svc := NewService(store)
 
-	page, err := svc.GetLylaThread(context.Background(), "123", "10", "")
+	page, err := svc.GetThread(context.Background(), "123", "10", "")
 	require.NoError(t, err)
 	require.Len(t, page.Items, 1)
 	assert.Nil(t, page.NextCursor)
 }
 
-func TestService_GetLylaThread_EmptyThread_ReturnsEmptyItems(t *testing.T) {
+func TestService_GetThread_EmptyThread_ReturnsEmptyItems(t *testing.T) {
 	store := &MockStore{
-		threadMessages: []LylaThreadMessage{},
+		threadMessages: []ThreadMessage{},
 	}
 	svc := NewService(store)
 
-	page, err := svc.GetLylaThread(context.Background(), "123", "10", "")
+	page, err := svc.GetThread(context.Background(), "123", "10", "")
 	require.NoError(t, err)
 	assert.Empty(t, page.Items)
 	assert.Nil(t, page.NextCursor)
 }
 
-func TestService_GetLylaThread_LowLimit_NormalizesTo20(t *testing.T) {
+func TestService_GetThread_LowLimit_NormalizesTo20(t *testing.T) {
 	now := time.Now()
-	messages := make([]LylaThreadMessage, 25)
+	messages := make([]ThreadMessage, 25)
 	for i := 0; i < 25; i++ {
-		messages[i] = LylaThreadMessage{
+		messages[i] = ThreadMessage{
 			ID:        string(rune('a' + i)),
 			Role:      "user",
 			Content:   "message",
@@ -189,56 +189,56 @@ func TestService_GetLylaThread_LowLimit_NormalizesTo20(t *testing.T) {
 	store := &MockStore{threadMessages: messages}
 	svc := NewService(store)
 
-	page, err := svc.GetLylaThread(context.Background(), "123", "0", "")
+	page, err := svc.GetThread(context.Background(), "123", "0", "")
 	require.NoError(t, err)
 	assert.Len(t, page.Items, 20)
 	assert.NotNil(t, page.NextCursor)
 
-	page, err = svc.GetLylaThread(context.Background(), "123", "-5", "")
+	page, err = svc.GetThread(context.Background(), "123", "-5", "")
 	require.NoError(t, err)
 	assert.Len(t, page.Items, 20)
 	assert.NotNil(t, page.NextCursor)
 }
 
-func TestService_GetLylaThread_InvalidCursor_ReturnsError(t *testing.T) {
+func TestService_GetThread_InvalidCursor_ReturnsError(t *testing.T) {
 	store := &MockStore{}
 	svc := NewService(store)
 
-	_, err := svc.GetLylaThread(context.Background(), "123", "10", "invalid-cursor")
+	_, err := svc.GetThread(context.Background(), "123", "10", "invalid-cursor")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, shared.ErrInvalidCursor)
 }
 
-func TestService_GetLylaThread_DecodableEmptyCursor_ReturnsError(t *testing.T) {
+func TestService_GetThread_DecodableEmptyCursor_ReturnsError(t *testing.T) {
 	store := &CursorValidationStore{}
 	svc := NewService(store)
 
 	rawCursor := base64.URLEncoding.EncodeToString([]byte(`{}`))
 
-	_, err := svc.GetLylaThread(context.Background(), "123", "10", rawCursor)
+	_, err := svc.GetThread(context.Background(), "123", "10", rawCursor)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, shared.ErrInvalidCursor)
 	assert.False(t, store.called)
 }
 
-func TestService_GetLylaThread_DecodableBadUUIDCursor_ReturnsError(t *testing.T) {
+func TestService_GetThread_DecodableBadUUIDCursor_ReturnsError(t *testing.T) {
 	store := &CursorValidationStore{}
 	svc := NewService(store)
 
 	rawCursor, err := shared.EncodeCursor(time.Now(), "not-a-uuid")
 	require.NoError(t, err)
 
-	_, err = svc.GetLylaThread(context.Background(), "123", "10", rawCursor)
+	_, err = svc.GetThread(context.Background(), "123", "10", rawCursor)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, shared.ErrInvalidCursor)
 	assert.False(t, store.called)
 }
 
-func TestService_GetLylaThread_CursorPage_AdvancesPastFirstPage(t *testing.T) {
+func TestService_GetThread_CursorPage_AdvancesPastFirstPage(t *testing.T) {
 	now := time.Now()
-	messages := make([]LylaThreadMessage, 12)
+	messages := make([]ThreadMessage, 12)
 	for i := 0; i < 12; i++ {
-		messages[i] = LylaThreadMessage{
+		messages[i] = ThreadMessage{
 			ID:        fmt.Sprintf("00000000-0000-0000-0000-%012d", i+1),
 			Role:      "assistant",
 			Content:   fmt.Sprintf("message-%d", i),
@@ -249,12 +249,12 @@ func TestService_GetLylaThread_CursorPage_AdvancesPastFirstPage(t *testing.T) {
 	store := &MockStore{threadMessages: messages}
 	svc := NewService(store)
 
-	firstPage, err := svc.GetLylaThread(context.Background(), "123", "5", "")
+	firstPage, err := svc.GetThread(context.Background(), "123", "5", "")
 	require.NoError(t, err)
 	require.Len(t, firstPage.Items, 5)
 	require.NotNil(t, firstPage.NextCursor)
 
-	secondPage, err := svc.GetLylaThread(context.Background(), "123", "5", *firstPage.NextCursor)
+	secondPage, err := svc.GetThread(context.Background(), "123", "5", *firstPage.NextCursor)
 	require.NoError(t, err)
 	require.Len(t, secondPage.Items, 5)
 
@@ -271,7 +271,7 @@ func (s *CursorValidationStore) GetAgentsForUser(ctx context.Context, userID str
 	return nil, nil
 }
 
-func (s *CursorValidationStore) GetLylaThreadMessages(ctx context.Context, userID string, params LylaThreadParams) ([]LylaThreadMessage, error) {
+func (s *CursorValidationStore) GetThreadMessages(ctx context.Context, userID string, params ThreadParams) ([]ThreadMessage, error) {
 	s.called = true
-	return []LylaThreadMessage{}, nil
+	return []ThreadMessage{}, nil
 }

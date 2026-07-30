@@ -46,9 +46,9 @@ func (h *Handler) GetUserAgents(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(h.logger, w, http.StatusOK, GetAgentsResponse{Agents: agents})
 }
 
-// GetLylaThread handles GET /user/lyla-thread.
-func (h *Handler) GetLylaThread(w http.ResponseWriter, r *http.Request) {
-	h.logger.Debug().Str("method", r.Method).Str("path", r.URL.Path).Msg("handling get lyla thread request")
+// GetThread handles GET /user/thread.
+func (h *Handler) GetThread(w http.ResponseWriter, r *http.Request) {
+	h.logger.Debug().Str("method", r.Method).Str("path", r.URL.Path).Msg("handling get thread request")
 
 	if r.Method != http.MethodGet {
 		shared.WriteError(h.logger, w, http.StatusMethodNotAllowed, "method not allowed")
@@ -65,20 +65,20 @@ func (h *Handler) GetLylaThread(w http.ResponseWriter, r *http.Request) {
 	limit := r.URL.Query().Get("limit")
 	cursor := r.URL.Query().Get("cursor")
 
-	h.logger.Debug().Str("user_id", userID).Str("limit", limit).Bool("has_cursor", cursor != "").Msg("fetching lyla thread")
+	h.logger.Debug().Str("user_id", userID).Str("limit", limit).Bool("has_cursor", cursor != "").Msg("fetching thread")
 
-	page, err := h.service.GetLylaThread(r.Context(), userID, limit, cursor)
+	page, err := h.service.GetThread(r.Context(), userID, limit, cursor)
 	if err != nil {
 		if err == shared.ErrInvalidCursor {
 			h.logger.Debug().Str("user_id", userID).Msg("invalid cursor provided")
 			shared.WriteError(h.logger, w, http.StatusBadRequest, "invalid cursor")
 			return
 		}
-		h.logger.Error().Err(err).Str("user_id", userID).Msg("failed to get lyla thread")
+		h.logger.Error().Err(err).Str("user_id", userID).Msg("failed to get thread")
 		shared.WriteError(h.logger, w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
-	h.logger.Info().Str("user_id", userID).Int("message_count", len(page.Items)).Bool("has_next", page.NextCursor != nil).Msg("retrieved lyla thread")
+	h.logger.Info().Str("user_id", userID).Int("message_count", len(page.Items)).Bool("has_next", page.NextCursor != nil).Msg("retrieved thread")
 	shared.WriteJSON(h.logger, w, http.StatusOK, page)
 }
