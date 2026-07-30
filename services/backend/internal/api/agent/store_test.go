@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/nevaria-ai/backend/internal/api/shared"
-	"github.com/nevaria-ai/backend/internal/testhelpers"
+	"github.com/radch-ai/ava/services/backend/internal/api/shared"
+	"github.com/radch-ai/ava/services/backend/internal/testhelpers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

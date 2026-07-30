@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/nevaria-ai/backend/internal/api/shared"
+	"github.com/radch-ai/ava/services/backend/internal/api/shared"
 )
 
 // Service orchestrates business logic for user agent list operations.

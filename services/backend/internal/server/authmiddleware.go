@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/nevaria-ai/zitadel-validate"
+	"github.com/radch-ai/ava/pkg/zitadelvalidate"
 	"github.com/rs/zerolog"
 
-	internalctx "github.com/nevaria-ai/backend/internal/ctx"
+	internalctx "github.com/radch-ai/ava/services/backend/internal/ctx"
 )
 
 // AuthMiddleware handles authentication for incoming requests.

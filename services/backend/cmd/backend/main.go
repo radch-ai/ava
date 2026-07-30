@@ -11,11 +11,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 
-	"github.com/nevaria-ai/backend/config"
-	"github.com/nevaria-ai/backend/internal/api"
-	"github.com/nevaria-ai/backend/internal/server"
-	"github.com/nevaria-ai/backend/internal/webhooks"
-	"github.com/nevaria-ai/zitadel-validate"
+	"github.com/radch-ai/ava/services/backend/config"
+	"github.com/radch-ai/ava/services/backend/internal/api"
+	"github.com/radch-ai/ava/services/backend/internal/server"
+	"github.com/radch-ai/ava/services/backend/internal/webhooks"
+	"github.com/radch-ai/ava/pkg/zitadelvalidate"
 )
 
 func main() {

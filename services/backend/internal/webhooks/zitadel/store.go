@@ -6,7 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/nevaria-ai/backend/internal/db"
+	"github.com/radch-ai/ava/services/backend/internal/db"
 )
 
 // =============================================================================

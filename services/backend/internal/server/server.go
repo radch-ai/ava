@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	zitadelvalidate "github.com/nevaria-ai/zitadel-validate"
+	zitadelvalidate "github.com/radch-ai/ava/pkg/zitadelvalidate"
 	"github.com/rs/zerolog"
 )
 

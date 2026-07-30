@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	internalctx "github.com/nevaria-ai/backend/internal/ctx"
+	internalctx "github.com/radch-ai/ava/services/backend/internal/ctx"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

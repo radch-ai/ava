@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nevaria-ai/backend/internal/api/shared"
+	"github.com/radch-ai/ava/services/backend/internal/api/shared"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -6,8 +6,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 
-	"github.com/nevaria-ai/backend/internal/api/agent"
-	"github.com/nevaria-ai/backend/internal/api/user"
+	"github.com/radch-ai/ava/services/backend/internal/api/agent"
+	"github.com/radch-ai/ava/services/backend/internal/api/user"
 )
 
 func New(dbPool *pgxpool.Pool, logger zerolog.Logger) http.Handler {

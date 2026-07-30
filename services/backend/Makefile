@@ -102,17 +102,6 @@ deps:
 	go mod tidy
 	go mod vendor
 
-## update-zitadel-validate: Update private zitadel-validate dependency
-update-zitadel-validate:
-	@echo "Updating github.com/nevaria-ai/zitadel-validate..."
-	GOPRIVATE=github.com/nevaria-ai/* \
-	GIT_CONFIG_COUNT=1 \
-	GIT_CONFIG_KEY_0=url.git@github.com:.insteadOf \
-	GIT_CONFIG_VALUE_0=https://github.com/ \
-		go get github.com/nevaria-ai/zitadel-validate@main
-	go mod tidy
-	go mod vendor
-
 ## fmt: Format code
 fmt:
 	@echo "Formatting code..."

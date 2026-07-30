@@ -9,8 +9,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/nevaria-ai/backend/internal/api/shared"
-	"github.com/nevaria-ai/backend/internal/db"
+	"github.com/radch-ai/ava/services/backend/internal/api/shared"
+	"github.com/radch-ai/ava/services/backend/internal/db"
 )
 
 type Store interface {
