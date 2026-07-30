@@ -1,6 +1,6 @@
-module github.com/nevaria-ai/zitadel-validate
+module github.com/radch-ai/ava
 
-go 1.25.7
+go 1.26.5
 
 require (
 	github.com/rs/zerolog v1.34.0
