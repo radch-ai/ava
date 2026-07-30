@@ -12,10 +12,10 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/radch-ai/ava/pkg/config"
+	"github.com/radch-ai/ava/pkg/zitadelvalidate"
 	"github.com/radch-ai/ava/services/backend/internal/api"
 	"github.com/radch-ai/ava/services/backend/internal/server"
 	"github.com/radch-ai/ava/services/backend/internal/webhooks"
-	"github.com/radch-ai/ava/pkg/zitadelvalidate"
 )
 
 func main() {

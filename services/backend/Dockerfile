@@ -19,7 +19,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags="-w -s -extldflags '-static'" \
     -trimpath \
     -o /bin/app \
-    ./cmd/backend
+    .
 
 # ── Stage 2: Run ─────────────────────────────────────────────────────────────
 FROM alpine:3.23

@@ -33,13 +33,13 @@ build service:
     @just validate_service {{ service }}
     @just sqlc-for {{ service }}
     @mkdir -p bin
-    go build -o bin/{{ service }} ./services/{{ service }}/cmd/{{ service }}
+    go build -o bin/{{ service }} ./services/{{ service }}
 
 # Run a service. Usage: just run <service>
 run service:
     @just validate_service {{ service }}
     @just sqlc-for {{ service }}
-    go run ./services/{{ service }}/cmd/{{ service }}/main.go
+    go run ./services/{{ service }}/main.go
 
 ## --- test ---
 
