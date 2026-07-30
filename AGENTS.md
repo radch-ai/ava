@@ -12,15 +12,46 @@
 ava/
 ├── Cargo.toml            # Rust workspace manifest (member: ui/src-tauri)
 ├── Cargo.lock
+├── go.mod / go.sum       # Single Go module for all Go code under pkg/ and services/
+├── justfile              # Repo-root task runner — commands for the Rust workspace and Go module
 ├── .env.example
+├── pkg/                  # Shared Go libraries
+│   └── zitadelvalidate/
+├── services/             # Deployable Go services
+│   └── backend/
 └── ui/                   # tauri app root — see ui/AGENTS.md
+    ├── justfile          # ui-side/tauri task runner
     ├── package.json      # ava-ui (SvelteKit)
     └── src-tauri/        # ava-tauri (workspace member)
 ```
 
-| Path | Role |
-|------|------|
-| `Cargo.toml` | Rust workspace manifest. |
-| `ui/` | Desktop app. Has its own `AGENTS.md` — prefer launching agents directly in `ui/` so they load it and run from there automatically. |
+## Go
+
+**Module:** `github.com/radch-ai/ava` (single module at repo root; no nested `go.mod` files). Go 1.26+.
+
+### Commands
+
+`go mod tidy` and `go fmt ./...` are independent Go commands — run them directly. For everything else, use `just` recipes from the repo root (run `just --list` to see available recipes); do not invoke `go build` / `go test` / `go run` or others directly when a recipe covers the task.
+
+### services/backend
+
+- REST API for user and agent configuration (soul, agents, threads) (`internal/api/{user,agent}`).
+- PostgreSQL database with migrations under `services/backend/schema/migrations/`; sqlc-generated query layer (`internal/db`), `testcontainers-go` for integration tests.
+- HTTP server with CORS and Zitadel auth middleware (`internal/server`).
+- Zitadel Actions v2 webhook receiver for back-syncing user/agent state (`internal/webhooks/zitadel`).
+- RevenueCat webhook handling for subscription management (`internal/billing`) — to be added.
+- Per-agent run history for usage tracking and analytics (table exists, queries/code to be added) (`agent_runs`).
+
+### pkg/zitadelvalidate
+
+Shared Zitadel OIDC token-introspection helper used by backend and gateway. Provides auth: token introspection and webhook signature verification.
+
+## Service relationships
+
+How services depend on and call each other. Add new services here as they land.
+
+- **backend** ↔ **gateway**: backend is the central API; gateway calls backend for user config loading.
+- **gateway** ← **ui**: the desktop app talks to gateway over WebSocket for real-time agent communication.
+- **gateway** → **llm-proxy**: gateway routes LLM calls (quota enforcement, model routing) through llm-proxy for agent runs.
 
 **UI / Tauri:** launch agents in `ui/` (auto-loads its `AGENTS.md`).
