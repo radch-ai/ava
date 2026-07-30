@@ -9,21 +9,21 @@ BINARY_NAME ?= backend
 build:
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p bin
-	go build -mod=vendor -o bin/$(BINARY_NAME) ./cmd/backend
+	go build -o bin/$(BINARY_NAME) ./cmd/backend
 
 ## run: Run the application
 run:
 	@echo "Running $(BINARY_NAME)..."
-	go run -mod=vendor ./cmd/backend/main.go
+	go run ./cmd/backend/main.go
 
 ## test: Run unit tests with race and coverage
 test:
 	@if [ -z "$(TEST_PATH)" ]; then \
 		echo "Running unit tests for all packages..."; \
-		CGO_ENABLED=1 go test -mod=vendor -race -coverprofile=coverage.out -v ./...; \
+		CGO_ENABLED=1 go test -race -coverprofile=coverage.out -v ./...; \
 	else \
 		echo "Running unit tests for $(TEST_PATH)..."; \
-		CGO_ENABLED=1 go test -mod=vendor -race -coverprofile=coverage.out -v $(TEST_PATH); \
+		CGO_ENABLED=1 go test -race -coverprofile=coverage.out -v $(TEST_PATH); \
 	fi
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
@@ -36,7 +36,7 @@ test-unit:
 ## test-integration: Run integration tests (uses testcontainers, no external DB needed)
 test-integration:
 	@echo "Running integration tests..."
-	CGO_ENABLED=1 go test -mod=vendor -race -v -tags integration ./... -timeout 20m
+	CGO_ENABLED=1 go test -race -v -tags integration ./... -timeout 20m
 
 ## migrate: Run database migrations
 migrate:
@@ -45,7 +45,7 @@ migrate:
 		echo "Error: DATABASE_URL is required"; \
 		exit 1; \
 	fi
-	go run -mod=vendor ./cmd/backend/main.go --migrate
+	go run ./cmd/backend/main.go --migrate
 
 ## sqlc-generate: Generate Go code from SQL queries
 sqlc-generate:
@@ -96,11 +96,10 @@ clean:
 	@rm -f coverage.out coverage.html coverage.integration.out coverage.integration.html
 	@rm -f coverage.e2e.out coverage.e2e.html
 
-## deps: Update vendor directory
+## deps: Tidy and download module dependencies
 deps:
-	@echo "Updating vendor directory..."
+	@echo "Tidying module dependencies..."
 	go mod tidy
-	go mod vendor
 
 ## fmt: Format code
 fmt:
