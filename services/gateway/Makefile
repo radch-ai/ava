@@ -7,12 +7,12 @@ BINARY_NAME ?= gateway
 build:
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p bin
-	go build -o bin/$(BINARY_NAME) ./cmd/gateway
+	go build -o bin/$(BINARY_NAME) .
 
 ## run: Run the application
 run:
 	@echo "Running $(BINARY_NAME)..."
-	go run ./cmd/gateway/main.go
+	go run .
 
  ## test: Run unit tests with race and coverage
 test:
