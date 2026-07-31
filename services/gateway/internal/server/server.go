@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/nevaria-ai/gateway/internal/websocket"
-	"github.com/nevaria-ai/zitadel-validate"
+	"github.com/radch-ai/ava/services/gateway/internal/websocket"
+	"github.com/radch-ai/ava/pkg/zitadelvalidate"
 	"github.com/rs/zerolog"
 )
 

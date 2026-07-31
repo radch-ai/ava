@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nevaria-ai/gateway/internal/agent"
-	"github.com/nevaria-ai/gateway/internal/wsconn"
+	"github.com/radch-ai/ava/services/gateway/internal/agent"
+	"github.com/radch-ai/ava/services/gateway/internal/wsconn"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

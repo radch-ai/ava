@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/nevaria-ai/gateway/internal/agent"
+	"github.com/radch-ai/ava/services/gateway/internal/agent"
 )
 
 // Turn represents a complete turn in the conversation.

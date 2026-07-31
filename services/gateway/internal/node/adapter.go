@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/nevaria-ai/gateway/internal/agent"
+	"github.com/radch-ai/ava/services/gateway/internal/agent"
 )
 
 // ToolAdapter bridges node tools with the agent's tool execution system.

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/nevaria-ai/gateway/internal/agent"
-	"github.com/nevaria-ai/gateway/internal/wsconn"
+	"github.com/radch-ai/ava/services/gateway/internal/agent"
+	"github.com/radch-ai/ava/services/gateway/internal/wsconn"
 	"github.com/rs/zerolog"
 )
 

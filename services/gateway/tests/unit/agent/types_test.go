@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nevaria-ai/gateway/internal/agent"
+	"github.com/radch-ai/ava/services/gateway/internal/agent"
 )
 
 func TestRoleValues(t *testing.T) {

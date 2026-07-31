@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/nevaria-ai/gateway/config"
+	"github.com/radch-ai/ava/services/gateway/config"
 	"github.com/rs/zerolog"
 )
 

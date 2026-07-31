@@ -12,9 +12,9 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/google/uuid"
-	"github.com/nevaria-ai/gateway/internal/agent"
-	internalctx "github.com/nevaria-ai/gateway/internal/ctx"
-	"github.com/nevaria-ai/gateway/internal/wsconn"
+	"github.com/radch-ai/ava/services/gateway/internal/agent"
+	internalctx "github.com/radch-ai/ava/services/gateway/internal/ctx"
+	"github.com/radch-ai/ava/services/gateway/internal/wsconn"
 	"github.com/rs/zerolog"
 )
 

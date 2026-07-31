@@ -3,7 +3,7 @@ package lane_test
 import (
 	"testing"
 
-	"github.com/nevaria-ai/gateway/internal/lane"
+	"github.com/radch-ai/ava/services/gateway/internal/lane"
 )
 
 func TestDedupCache_ResponseCache(t *testing.T) {

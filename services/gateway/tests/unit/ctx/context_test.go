@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/nevaria-ai/gateway/internal/ctx"
+	"github.com/radch-ai/ava/services/gateway/internal/ctx"
 )
 
 func TestWithAgentID(t *testing.T) {

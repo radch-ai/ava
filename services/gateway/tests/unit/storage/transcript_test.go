@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nevaria-ai/gateway/internal/agent"
-	"github.com/nevaria-ai/gateway/internal/storage"
+	"github.com/radch-ai/ava/services/gateway/internal/agent"
+	"github.com/radch-ai/ava/services/gateway/internal/storage"
 )
 
 func TestWriteTurn(t *testing.T) {

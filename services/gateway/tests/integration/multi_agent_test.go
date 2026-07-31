@@ -8,11 +8,11 @@ import (
 	"path"
 	"testing"
 
-	"github.com/nevaria-ai/gateway/internal/agent"
-	ctxpkg "github.com/nevaria-ai/gateway/internal/ctx"
-	"github.com/nevaria-ai/gateway/internal/mem0"
-	"github.com/nevaria-ai/gateway/internal/storage"
-	"github.com/nevaria-ai/gateway/internal/websocket"
+	"github.com/radch-ai/ava/services/gateway/internal/agent"
+	ctxpkg "github.com/radch-ai/ava/services/gateway/internal/ctx"
+	"github.com/radch-ai/ava/services/gateway/internal/mem0"
+	"github.com/radch-ai/ava/services/gateway/internal/storage"
+	"github.com/radch-ai/ava/services/gateway/internal/websocket"
 	"github.com/rs/zerolog"
 )
 

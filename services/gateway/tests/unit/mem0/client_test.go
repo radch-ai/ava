@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nevaria-ai/gateway/internal/mem0"
+	"github.com/radch-ai/ava/services/gateway/internal/mem0"
 )
 
 func TestMockMem0ClientSearch(t *testing.T) {

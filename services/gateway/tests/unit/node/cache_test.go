@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nevaria-ai/gateway/internal/node"
+	"github.com/radch-ai/ava/services/gateway/internal/node"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

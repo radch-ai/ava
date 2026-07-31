@@ -9,14 +9,14 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/nevaria-ai/zitadel-validate"
+	"github.com/radch-ai/ava/pkg/zitadelvalidate"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 
-	"github.com/nevaria-ai/gateway/config"
-	"github.com/nevaria-ai/gateway/internal/agent"
-	"github.com/nevaria-ai/gateway/internal/server"
-	"github.com/nevaria-ai/gateway/internal/websocket"
+	"github.com/radch-ai/ava/services/gateway/config"
+	"github.com/radch-ai/ava/services/gateway/internal/agent"
+	"github.com/radch-ai/ava/services/gateway/internal/server"
+	"github.com/radch-ai/ava/services/gateway/internal/websocket"
 )
 
 func main() {

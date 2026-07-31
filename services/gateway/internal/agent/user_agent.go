@@ -12,8 +12,8 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/coder/websocket"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/nevaria-ai/gateway/internal/agent/tools"
-	"github.com/nevaria-ai/gateway/internal/wsconn"
+	"github.com/radch-ai/ava/services/gateway/internal/agent/tools"
+	"github.com/radch-ai/ava/services/gateway/internal/wsconn"
 	"github.com/rs/zerolog"
 )
 

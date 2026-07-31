@@ -3,7 +3,7 @@ package unit
 import (
 	"testing"
 
-	"github.com/nevaria-ai/gateway/config"
+	"github.com/radch-ai/ava/services/gateway/config"
 )
 
 func TestGetPlan(t *testing.T) {

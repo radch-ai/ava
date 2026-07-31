@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/nevaria-ai/gateway/internal/agent"
+	"github.com/radch-ai/ava/services/gateway/internal/agent"
 )
 
 // MessageType represents the type of message sent between node and gateway.

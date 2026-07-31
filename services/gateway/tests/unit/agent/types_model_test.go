@@ -4,7 +4,7 @@ package agent_test
 import (
 	"testing"
 
-	"github.com/nevaria-ai/gateway/internal/agent"
+	"github.com/radch-ai/ava/services/gateway/internal/agent"
 )
 
 // TestThinkingLevelValues validates all thinking level constants.

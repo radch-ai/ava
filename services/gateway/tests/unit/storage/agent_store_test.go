@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/nevaria-ai/gateway/internal/storage"
+	"github.com/radch-ai/ava/services/gateway/internal/storage"
 )
 
 func TestMockAgentStore_GetNonExistent(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 
 	coderws "github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
-	"github.com/nevaria-ai/gateway/internal/websocket"
+	"github.com/radch-ai/ava/services/gateway/internal/websocket"
 	"github.com/rs/zerolog"
 )
 

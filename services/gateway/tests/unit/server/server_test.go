@@ -11,10 +11,10 @@ import (
 	"time"
 
 	coderws "github.com/coder/websocket"
-	"github.com/nevaria-ai/gateway/internal/agent"
+	"github.com/radch-ai/ava/services/gateway/internal/agent"
 	"github.com/rs/zerolog"
 
-	"github.com/nevaria-ai/gateway/internal/websocket"
+	"github.com/radch-ai/ava/services/gateway/internal/websocket"
 )
 
 // TestServerHealthEndpoint tests the health check endpoint without auth.

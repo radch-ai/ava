@@ -13,8 +13,8 @@ import (
 	"time"
 
 	coderws "github.com/coder/websocket"
-	"github.com/nevaria-ai/gateway/internal/agent"
-	wspkg "github.com/nevaria-ai/gateway/internal/websocket"
+	"github.com/radch-ai/ava/services/gateway/internal/agent"
+	wspkg "github.com/radch-ai/ava/services/gateway/internal/websocket"
 	"github.com/rs/zerolog"
 )
 

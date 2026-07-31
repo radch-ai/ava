@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nevaria-ai/gateway/internal/agent"
+	"github.com/radch-ai/ava/services/gateway/internal/agent"
 	"github.com/rs/zerolog"
 )
 
