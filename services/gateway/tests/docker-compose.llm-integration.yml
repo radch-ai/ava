@@ -1,0 +1,101 @@
+# Docker Compose for Gateway LLM Integration Testing
+#
+# This docker-compose file is used for integration tests that require LLM providers.
+# Tests can run with real API keys (set via environment variables) or with mock services.
+#
+# IMPORTANT TIPS:
+# - Always use down -v to remove volumes and start fresh
+# - API keys should be set as environment variables before running tests
+# - Mock services are provided for testing without API keys
+#
+# Usage:
+#   export OPENAI_API_KEY=sk-...  # Optional: for OpenAI tests
+#   export ANTHROPIC_API_KEY=sk-ant-...  # Optional: for Anthropic tests
+#   docker compose -f tests/docker-compose.llm-integration.yml up -d --wait
+#   docker compose -f tests/docker-compose.llm-integration.yml down -v
+#
+# Running LLM integration tests:
+#   go test -tags=integration -v ./tests/integration/llm/...
+#
+# Services exposed on host (for debugging):
+#   - Redis: localhost:6381
+
+services:
+  # Redis for LLM caching and selector cache tests (required)
+  redis-llm-test:
+    image: docker.io/redis:7-alpine
+    container_name: gateway-redis-llm-test
+    command: >
+      sh -c '
+      redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --save "" --appendonly no
+      '
+    ports:
+      - "6381:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+    networks:
+      - gateway_llm_test_network
+
+  # Mock OpenAI-compatible API server (for testing without API keys)
+  # This can be used to test OpenAI client implementation with mock responses
+  mock-openai-api:
+    image: docker.io/mockserver/mockserver:5.15.0
+    container_name: gateway-mock-openai
+    environment:
+      MOCKSERVER_INITIALIZATION_JSON_PATH: /config/mock-openai.json
+      MOCKSERVER_LOG_LEVEL: INFO
+    volumes:
+      - ./mocks/llm/mock-openai.json:/config/mock-openai.json:ro
+    ports:
+      - "1080:1080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:1080/mockserver/status"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+    networks:
+      - gateway_llm_test_network
+
+  # Mock Anthropic-compatible API server (for testing without API keys)
+  mock-anthropic-api:
+    image: docker.io/mockserver/mockserver:5.15.0
+    container_name: gateway-mock-anthropic
+    environment:
+      MOCKSERVER_INITIALIZATION_JSON_PATH: /config/mock-anthropic.json
+      MOCKSERVER_LOG_LEVEL: INFO
+    volumes:
+      - ./mocks/llm/mock-anthropic.json:/config/mock-anthropic.json:ro
+    ports:
+      - "1081:1080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:1080/mockserver/status"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+    networks:
+      - gateway_llm_test_network
+
+  # Mock NotDiamond API server for model selection tests
+  mock-notdiamond-api:
+    build:
+      context: ./mocks
+      dockerfile: Dockerfile.notdiamond
+    container_name: gateway-mock-notdiamond
+    environment:
+      PORT: "1082"
+    ports:
+      - "1082:1082"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:1082/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+    networks:
+      - gateway_llm_test_network
+
+networks:
+  gateway_llm_test_network:
+    driver: bridge
