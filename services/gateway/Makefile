@@ -1,35 +1,23 @@
-BINARY_NAME ?= gateway
+# Gateway-specific test and docker-compose targets.
+# For build, run, test, validate, docker, and clean, use the repo-root justfile:
+#   just --list   (from repo root)
 
-.PHONY: build run test test-unit test-integration test-e2e clean deps fmt lint help
-.PHONY: docker-test-logs docker-build-test
+.PHONY: help test-integration test-e2e docker-test-logs docker-build-test
 
-## build: Build the application binary
-build:
-	@echo "Building $(BINARY_NAME)..."
-	@mkdir -p bin
-	go build -o bin/$(BINARY_NAME) .
-
-## run: Run the application
-run:
-	@echo "Running $(BINARY_NAME)..."
-	go run .
-
- ## test: Run unit tests with race and coverage
-test:
-	@if [ -z "$(TEST_PATH)" ]; then \
-		echo "Running unit tests for all packages..."; \
-		CGO_ENABLED=1 go test -race -coverprofile=coverage.out -v ./...; \
-	else \
-		echo "Running unit tests for $(TEST_PATH)..."; \
-		CGO_ENABLED=1 go test -race -coverprofile=coverage.out -v $(TEST_PATH); \
-	fi
-	@go tool cover -html=coverage.out -o coverage.html
-	@echo "Coverage report: coverage.html"
-
- ## test-unit: Run unit tests only
-test-unit:
-	@echo "Running unit tests..."
-	CGO_ENABLED=1 go test -race -v ./tests/unit/...
+## help: Show this help message
+help:
+	@echo 'Usage: make [target] [TEST_PATH=...]'
+	@echo ''
+	@echo 'Repo-root equivalents (run from repo root):'
+	@echo '  just build gateway          Build binary'
+	@echo '  just run gateway            Run server'
+	@echo '  just test gateway           Unit tests with coverage'
+	@echo '  just validate               Format + lint'
+	@echo '  just docker gateway         Build Docker image'
+	@echo '  just clean                  Remove bin/ and coverage artifacts'
+	@echo ''
+	@echo 'Gateway-specific targets (run from services/gateway):'
+	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/## /  /'
 
 ## test-integration: Run integration tests with Docker compose (auto cleanup)
 ## Usage (optional): make test-integration TEST_PATH=./tests/integration
@@ -69,38 +57,4 @@ docker-test-logs:
 ## docker-build-test: Build Docker image to verify Dockerfile
 docker-build-test:
 	@echo "Building Docker image..."
-	docker build -t $(BINARY_NAME):latest .
-
-## clean: Clean build artifacts
-clean:
-	@echo "Cleaning..."
-	@rm -rf bin
-	@rm -f coverage.out coverage.html coverage.integration.out coverage.integration.html
-	@rm -f coverage.e2e.out coverage.e2e.html
-
-## deps: Download dependencies
-deps:
-	@echo "Downloading dependencies..."
-	go mod download
-	go mod tidy
-
-## fmt: Format code
-fmt:
-	@echo "Formatting code..."
-	go fmt ./...
-
-## lint: Run linter with auto-fix
-lint:
-	@echo "Running linter with fixes..."
-	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run --fix ./...; \
-	else \
-		echo "golangci-lint not installed."; \
-	fi
-
-## help: Show this help message
-help:
-	@echo "Usage: make [target] [TEST_PATH=...]"
-	@echo ""
-	@echo "Available targets:"
-	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/## /  /'
+	docker build -t gateway:latest .

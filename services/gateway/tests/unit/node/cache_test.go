@@ -10,9 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/radch-ai/ava/services/gateway/internal/node"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/radch-ai/ava/services/gateway/internal/node"
 )
 
 // mockCache is an in-memory mock implementation of server.Cache for testing.

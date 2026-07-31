@@ -12,9 +12,10 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/coder/websocket"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog"
+
 	"github.com/radch-ai/ava/services/gateway/internal/agent/tools"
 	"github.com/radch-ai/ava/services/gateway/internal/wsconn"
-	"github.com/rs/zerolog"
 )
 
 const (

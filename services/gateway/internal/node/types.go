@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
 	"github.com/radch-ai/ava/services/gateway/internal/agent"
 )
 

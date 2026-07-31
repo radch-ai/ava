@@ -11,11 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/radch-ai/ava/services/backend/internal/api/shared"
-	internalctx "github.com/radch-ai/ava/services/backend/internal/ctx"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/radch-ai/ava/services/backend/internal/api/shared"
+	internalctx "github.com/radch-ai/ava/services/backend/internal/ctx"
 )
 
 func TestHandler_GetUserAgents(t *testing.T) {

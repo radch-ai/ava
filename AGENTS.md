@@ -33,7 +33,7 @@ ava/
 
 ### Commands
 
-`go mod tidy` and `go fmt ./...` are independent Go commands — run them directly. For everything else, use `just` recipes from the repo root (run `just --list` to see available recipes); do not invoke `go build` / `go test` / `go run` or others directly when a recipe covers the task.
+Use `just` recipes from the repo root (run `just --list`). After every change: `just validate && just test <service>` (plus `just test-integration <service>` if the service has integration tests). Do not invoke `go build` / `go test` / `go run` / `go mod tidy` / `go fmt` or others directly when a recipe covers the task.
 
 ### services/backend
 

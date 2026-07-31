@@ -11,10 +11,11 @@ import (
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
-	"github.com/radch-ai/ava/services/gateway/internal/agent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+
+	"github.com/radch-ai/ava/services/gateway/internal/agent"
 )
 
 type ADKMockToolCallingChatModel struct {

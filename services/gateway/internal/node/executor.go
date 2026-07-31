@@ -13,8 +13,9 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
-	"github.com/radch-ai/ava/services/gateway/internal/agent"
 	"github.com/rs/zerolog"
+
+	"github.com/radch-ai/ava/services/gateway/internal/agent"
 )
 
 var (

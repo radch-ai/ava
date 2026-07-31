@@ -10,9 +10,10 @@ import (
 	"time"
 
 	coderws "github.com/coder/websocket"
-	"github.com/radch-ai/ava/services/gateway/internal/node"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/radch-ai/ava/services/gateway/internal/node"
 )
 
 // TestNewRegistry verifies registry initialization.

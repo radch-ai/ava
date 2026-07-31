@@ -4,9 +4,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/rs/zerolog"
+
 	"github.com/radch-ai/ava/services/gateway/internal/agent"
 	"github.com/radch-ai/ava/services/gateway/internal/wsconn"
-	"github.com/rs/zerolog"
 )
 
 func TestUserAgentManagerCreation(t *testing.T) {

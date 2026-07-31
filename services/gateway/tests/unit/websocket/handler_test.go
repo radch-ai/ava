@@ -12,9 +12,10 @@ import (
 
 	coderws "github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	"github.com/rs/zerolog"
+
 	"github.com/radch-ai/ava/services/gateway/internal/agent"
 	"github.com/radch-ai/ava/services/gateway/internal/websocket"
-	"github.com/rs/zerolog"
 )
 
 func TestWebSocketUpgrade(t *testing.T) {

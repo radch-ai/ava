@@ -6,11 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/radch-ai/ava/services/gateway/internal/agent"
-	"github.com/radch-ai/ava/services/gateway/internal/wsconn"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/radch-ai/ava/services/gateway/internal/agent"
+	"github.com/radch-ai/ava/services/gateway/internal/wsconn"
 )
 
 func TestUserAgent_SubmitMsg_Success(t *testing.T) {

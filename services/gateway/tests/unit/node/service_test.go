@@ -11,11 +11,12 @@ import (
 	"time"
 
 	coderws "github.com/coder/websocket"
-	"github.com/radch-ai/ava/services/gateway/internal/agent"
-	"github.com/radch-ai/ava/services/gateway/internal/node"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/radch-ai/ava/services/gateway/internal/agent"
+	"github.com/radch-ai/ava/services/gateway/internal/node"
 )
 
 // Mock implementations for testing

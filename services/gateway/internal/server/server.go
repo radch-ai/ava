@@ -5,9 +5,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/radch-ai/ava/services/gateway/internal/websocket"
-	"github.com/radch-ai/ava/pkg/zitadelvalidate"
 	"github.com/rs/zerolog"
+
+	"github.com/radch-ai/ava/pkg/zitadelvalidate"
+	"github.com/radch-ai/ava/services/gateway/internal/websocket"
 )
 
 // Server manages the HTTP server and WebSocket handlers.

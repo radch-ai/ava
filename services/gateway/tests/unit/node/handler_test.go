@@ -14,12 +14,13 @@ import (
 	"time"
 
 	coderws "github.com/coder/websocket"
-	"github.com/radch-ai/ava/services/gateway/internal/agent"
-	"github.com/radch-ai/ava/services/gateway/internal/node"
-	zitadelvalidate "github.com/radch-ai/ava/pkg/zitadelvalidate"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	zitadelvalidate "github.com/radch-ai/ava/pkg/zitadelvalidate"
+	"github.com/radch-ai/ava/services/gateway/internal/agent"
+	"github.com/radch-ai/ava/services/gateway/internal/node"
 )
 
 const _ = zerolog.DebugLevel // Force zerolog import for testLogger return type

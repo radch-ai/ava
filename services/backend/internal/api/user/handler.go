@@ -4,9 +4,10 @@ package user
 import (
 	"net/http"
 
+	"github.com/rs/zerolog"
+
 	"github.com/radch-ai/ava/services/backend/internal/api/shared"
 	internalctx "github.com/radch-ai/ava/services/backend/internal/ctx"
-	"github.com/rs/zerolog"
 )
 
 // Handler serves user agent list endpoints.

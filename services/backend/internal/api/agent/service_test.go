@@ -8,9 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/radch-ai/ava/services/backend/internal/api/shared"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/radch-ai/ava/services/backend/internal/api/shared"
 )
 
 func TestService_GetAgentConfiguration(t *testing.T) {

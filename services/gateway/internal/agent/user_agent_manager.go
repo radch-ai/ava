@@ -5,8 +5,9 @@ import (
 	"sync"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/radch-ai/ava/services/gateway/internal/wsconn"
 	"github.com/rs/zerolog"
+
+	"github.com/radch-ai/ava/services/gateway/internal/wsconn"
 )
 
 // UserAgentManagerOptions configures a new UserAgentManager.

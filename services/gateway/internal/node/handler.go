@@ -12,8 +12,9 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	zitadelvalidate "github.com/radch-ai/ava/pkg/zitadelvalidate"
 	"github.com/rs/zerolog"
+
+	zitadelvalidate "github.com/radch-ai/ava/pkg/zitadelvalidate"
 )
 
 var (

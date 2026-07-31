@@ -7,8 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/radch-ai/ava/services/gateway/internal/agent"
 	"github.com/rs/zerolog"
+
+	"github.com/radch-ai/ava/services/gateway/internal/agent"
 )
 
 // Service manages node connections and integrates them with agents.

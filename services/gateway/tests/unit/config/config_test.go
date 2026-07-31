@@ -4,8 +4,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/radch-ai/ava/services/gateway/config"
 	"github.com/rs/zerolog"
+
+	"github.com/radch-ai/ava/services/gateway/config"
 )
 
 // Set required env vars for tests that need successful load

@@ -13,9 +13,10 @@ import (
 	"time"
 
 	coderws "github.com/coder/websocket"
+	"github.com/rs/zerolog"
+
 	"github.com/radch-ai/ava/services/gateway/internal/agent"
 	wspkg "github.com/radch-ai/ava/services/gateway/internal/websocket"
-	"github.com/rs/zerolog"
 )
 
 // wsClient is a test helper for WebSocket connections.
