@@ -20,7 +20,8 @@ ava/
 │   ├── config/
 │   └── zitadelvalidate/
 ├── services/             # Deployable Go services
-│   └── backend/
+│   ├── backend/
+│   └── gateway/
 └── ui/                   # tauri app root — see ui/AGENTS.md
     ├── justfile          # ui-side/tauri task runner
     ├── package.json      # ava-ui (SvelteKit)
@@ -33,7 +34,7 @@ ava/
 
 ### Commands
 
-`go mod tidy` and `go fmt ./...` are independent Go commands — run them directly. For everything else, use `just` recipes from the repo root (run `just --list` to see available recipes); do not invoke `go build` / `go test` / `go run` or others directly when a recipe covers the task.
+Use `just` recipes from the repo root (run `just --list`). After every change: `just validate && just test <service>` (plus `just test-integration <service>` if the service has integration tests). Do not invoke `go build` / `go test` / `go run` / `go mod tidy` / `go fmt` or others directly when a recipe covers the task.
 
 ### services/backend
 
@@ -43,6 +44,15 @@ ava/
 - Zitadel Actions v2 webhook receiver for back-syncing user/agent state (`internal/webhooks/zitadel`).
 - RevenueCat webhook handling for subscription management (`internal/billing`) — to be added.
 - Per-agent run history for usage tracking and analytics (table exists, queries/code to be added) (`agent_runs`).
+
+### services/gateway
+
+WebSocket gateway between the UI and the agent runtime. Operational details (env vars, endpoints, dev commands) in `services/gateway/README.md`.
+
+- WebSocket server with Zitadel session-cookie auth middleware (`internal/server`, `internal/websocket`); UI connects to `/ws` for real-time agent runs. UI connections are routed to per-user agents (`internal/agent`).
+- Agent runtime built on **Eino ADK** (`cloudwego/eino/adk`); LLM calls go through the **Bifrost** gateway (env `BIFROST_BASEURL`) using per-user virtual keys (subscription VK + top-up VK) loaded from the database.
+- Distributed node execution: user devices register tools over a separate WebSocket and execute them locally (`internal/node`), surfaced to agents via an adapter.
+- Session lane dedup (`internal/lane`, ristretto-backed), Mem0 memory client (`internal/mem0`, mocked), and S3/Postgres storage for transcripts and agent state (`internal/storage`).
 
 ### pkg/config
 

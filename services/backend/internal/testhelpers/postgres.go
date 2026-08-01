@@ -70,7 +70,7 @@ func SetupTestDB(ctx context.Context, t *testing.T) *TestDB {
 	if err != nil {
 		t.Fatalf("failed to connect to postgres: %v", err)
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 
 	_, err = conn.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", dbName))
 	if err != nil {

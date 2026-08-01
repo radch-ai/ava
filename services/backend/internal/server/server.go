@@ -5,8 +5,9 @@ import (
 	"net/http"
 	"time"
 
-	zitadelvalidate "github.com/radch-ai/ava/pkg/zitadelvalidate"
 	"github.com/rs/zerolog"
+
+	zitadelvalidate "github.com/radch-ai/ava/pkg/zitadelvalidate"
 )
 
 // Server manages the HTTP server and handlers.

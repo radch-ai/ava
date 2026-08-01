@@ -10,10 +10,11 @@ import (
 	"testing"
 	"time"
 
-	internalctx "github.com/radch-ai/ava/services/backend/internal/ctx"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	internalctx "github.com/radch-ai/ava/services/backend/internal/ctx"
 )
 
 func TestHandler_GetAgentConfiguration(t *testing.T) {

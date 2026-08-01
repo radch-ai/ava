@@ -1,6 +1,7 @@
 set shell := ["/bin/bash", "-euo", "pipefail", "-c"]
+set guards
 
-allowed_services := "backend"
+allowed_services := "backend gateway"
 sqlc_services := "backend"
 
 # Validate that a service name is in allowed_services. Used by service-arg recipes.
@@ -15,19 +16,22 @@ require_tool tool:
     @command -v "{{ tool }}" >/dev/null 2>&1 || { echo "Error: '{{ tool }}' not found on PATH. Run 'just install-tools' first."; exit 1; }
 
 # Ensure a service's sqlc-generated db layer is up to date. Used as a build/test prerequisite.
+# No-op for services not in sqlc_services (via the `?` guard, requires `set guards`).
 [private]
 sqlc-for service:
+    ?@echo "{{ sqlc_services }}" | grep -qw "{{ service }}"
     @just require_tool sqlc
     @echo "-> sqlc generate: {{ service }}"
     @cd "services/{{ service }}" && sqlc generate
 
 ## --- tools ---
 
-# Install dev tools (sqlc, golang-migrate, golangci-lint) to ~/.local/bin.
+# Install dev tools (sqlc, golang-migrate, goimports, golangci-lint) to ~/.local/bin.
 install-tools:
     @mkdir -p ~/.local/bin
     GOBIN=~/.local/bin go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
     GOBIN=~/.local/bin go install github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+    GOBIN=~/.local/bin go install golang.org/x/tools/cmd/goimports@latest
     @if ! command -v golangci-lint >/dev/null 2>&1; then \
         curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b ~/.local/bin; \
     fi
@@ -89,12 +93,16 @@ sqlc-generate:
         just sqlc-for "$$svc" || exit 1; \
     done
 
-## --- quality ---
+## --- validate ---
 
-# Run golangci-lint with --fix across all Go code.
-lint:
+# go mod tidy → golangci-lint --fix → go fmt → goimports.
+validate:
     @just require_tool golangci-lint
-    @golangci-lint run --fix ./...
+    @just require_tool goimports
+    go mod tidy
+    golangci-lint run --fix ./...
+    go fmt ./...
+    goimports -w -local github.com/radch-ai/ava .
 
 ## --- clean ---
 

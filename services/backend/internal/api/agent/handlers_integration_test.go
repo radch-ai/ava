@@ -14,10 +14,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/radch-ai/ava/services/backend/internal/testhelpers"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/radch-ai/ava/services/backend/internal/testhelpers"
 
 	internalctx "github.com/radch-ai/ava/services/backend/internal/ctx"
 )

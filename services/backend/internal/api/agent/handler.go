@@ -7,9 +7,10 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/rs/zerolog"
+
 	"github.com/radch-ai/ava/services/backend/internal/api/shared"
 	internalctx "github.com/radch-ai/ava/services/backend/internal/ctx"
-	"github.com/rs/zerolog"
 )
 
 // Handler serves agent configuration endpoints.
