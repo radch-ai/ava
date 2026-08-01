@@ -15,7 +15,8 @@ func setRequiredEnv() {
 	_ = os.Setenv("REDIS_ADDR", "localhost:6379")
 	_ = os.Setenv("REDIS_PASSWORD", "test-password")
 	_ = os.Setenv("ZITADEL_DOMAIN", "https://example.zitadel.cloud")
-	_ = os.Setenv("ZITADEL_KEY_PATH", "/path/to/key.json")
+	_ = os.Setenv("ZITADEL_INTROSPECTOR_PRIVATE_KEY_PATH", "/path/to/key.json")
+	_ = os.Setenv("BIFROST_BASEURL", "http://localhost:8080/v1")
 	_ = os.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/testdb")
 }
 
@@ -28,7 +29,8 @@ func clearEnv() {
 	_ = os.Unsetenv("REDIS_ADDR")
 	_ = os.Unsetenv("REDIS_PASSWORD")
 	_ = os.Unsetenv("ZITADEL_DOMAIN")
-	_ = os.Unsetenv("ZITADEL_KEY_PATH")
+	_ = os.Unsetenv("ZITADEL_INTROSPECTOR_PRIVATE_KEY_PATH")
+	_ = os.Unsetenv("BIFROST_BASEURL")
 	_ = os.Unsetenv("DATABASE_URL")
 }
 
@@ -36,17 +38,12 @@ func TestLoadFromEnv(t *testing.T) {
 	clearEnv()
 	setRequiredEnv()
 	_ = os.Setenv("GATEWAY_ADDR", ":9000")
-	_ = os.Setenv("GATEWAY_LOG_LEVEL", "debug")
 	defer clearEnv()
 
 	cfg := config.Load(zerolog.Nop())
 
 	if cfg.ServerAddr != ":9000" {
 		t.Errorf("expected addr :9000, got %s", cfg.ServerAddr)
-	}
-
-	if cfg.LogLevel != "debug" {
-		t.Errorf("expected log level debug, got %s", cfg.LogLevel)
 	}
 }
 
@@ -59,10 +56,6 @@ func TestDefaultValues(t *testing.T) {
 
 	if cfg.ServerAddr != ":8080" {
 		t.Errorf("expected default addr :8080, got %s", cfg.ServerAddr)
-	}
-
-	if cfg.LogLevel != "info" {
-		t.Errorf("expected default log level info, got %s", cfg.LogLevel)
 	}
 
 	// MaxConns defaults to 10000
@@ -174,11 +167,7 @@ func TestValidConfig(t *testing.T) {
 	if cfg.ZitadelKeyPath != "/path/to/key.json" {
 		t.Errorf("expected ZitadelKeyPath /path/to/key.json, got %s", cfg.ZitadelKeyPath)
 	}
-}
-
-func TestSetupLogger(t *testing.T) {
-	// Test that SetupLogger returns a valid logger
-	logger := config.SetupLogger()
-	// Verify we can use it without panic
-	logger.Info().Msg("test logger works")
+	if cfg.BifrostBaseURL != "http://localhost:8080/v1" {
+		t.Errorf("expected BifrostBaseURL http://localhost:8080/v1, got %s", cfg.BifrostBaseURL)
+	}
 }

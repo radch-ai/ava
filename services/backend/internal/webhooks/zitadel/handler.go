@@ -35,11 +35,14 @@ type UserService interface {
 type Handler struct {
 	service    UserService
 	logger     zerolog.Logger
-	signingKey string // optional: if set, signature verification is required
+	signingKey string
 }
 
 // NewHandler creates a new Zitadel webhook handler.
-// If signingKey is provided, incoming requests must have a valid ZITADEL-Signature header.
+//
+// signingKey authenticates incoming webhooks via Zitadel Actions v2 signature
+// verification — proving the request originated from Zitadel. Requests must
+// carry a valid ZITADEL-Signature header.
 func NewHandler(service UserService, logger zerolog.Logger, signingKey string) *Handler {
 	if logger.GetLevel() == zerolog.Disabled {
 		logger = zerolog.Nop()

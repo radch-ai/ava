@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"time"
 
@@ -29,6 +30,15 @@ var (
 	ErrInvalidAuthResponse = errors.New("invalid response from auth service")
 	ErrContextCanceled     = errors.New("context canceled")
 )
+
+// ValidateDomain returns an error if raw is not a valid http or https URL.
+func ValidateDomain(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return fmt.Errorf("invalid zitadel domain %q: must be a valid http or https URL", raw)
+	}
+	return nil
+}
 
 // Introspector holds the Zitadel resource server client for token introspection.
 type Introspector struct {

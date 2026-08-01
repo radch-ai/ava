@@ -12,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 
+	pkgconfig "github.com/radch-ai/ava/pkg/config"
 	"github.com/radch-ai/ava/pkg/zitadelvalidate"
 
 	"github.com/radch-ai/ava/services/gateway/config"
@@ -21,8 +22,8 @@ import (
 )
 
 func main() {
-	// Setup logging first (reads GATEWAY_LOG_LEVEL from env)
-	logger := config.SetupLogger()
+	// Setup logging first (reads log level from env)
+	logger := pkgconfig.SetupLogger("ava-gateway", "GATEWAY")
 
 	// Load configuration (uses logger for fatal errors)
 	cfg := config.Load(logger)

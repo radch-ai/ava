@@ -11,8 +11,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 
-	"github.com/radch-ai/ava/pkg/config"
+	pkgconfig "github.com/radch-ai/ava/pkg/config"
 	"github.com/radch-ai/ava/pkg/zitadelvalidate"
+	"github.com/radch-ai/ava/services/backend/config"
 	"github.com/radch-ai/ava/services/backend/internal/api"
 	"github.com/radch-ai/ava/services/backend/internal/server"
 	"github.com/radch-ai/ava/services/backend/internal/webhooks"
@@ -20,7 +21,7 @@ import (
 
 func main() {
 	// Setup logging first (reads log level from env)
-	logger := config.SetupLogger()
+	logger := pkgconfig.SetupLogger("ava-backend", "BACKEND")
 
 	// Load configuration
 	cfg := config.Load(logger)

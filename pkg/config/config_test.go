@@ -7,42 +7,52 @@ import (
 	"github.com/rs/zerolog"
 )
 
-func setRequiredEnv() {
-	_ = os.Setenv("ALLOWED_ORIGINS", "http://localhost:4173")
-	_ = os.Setenv("ZITADEL_DOMAIN", "https://example.zitadel.cloud")
-	_ = os.Setenv("ZITADEL_INTROSPECTOR_PRIVATE_KEY_PATH", "/path/to/key.json")
-	_ = os.Setenv("ZITADEL_WEBHOOK_SIGNING_KEY", "test-signing-key")
-	_ = os.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/testdb")
+func TestGetEnv(t *testing.T) {
+	t.Run("returns value when set", func(t *testing.T) {
+		t.Setenv("AVA_TEST_GETENV", "hello")
+		if got := GetEnv("AVA_TEST_GETENV", "default"); got != "hello" {
+			t.Errorf("expected hello, got %s", got)
+		}
+	})
+
+	t.Run("returns default when unset", func(t *testing.T) {
+		_ = os.Unsetenv("AVA_TEST_GETENV_MISSING")
+		if got := GetEnv("AVA_TEST_GETENV_MISSING", "default"); got != "default" {
+			t.Errorf("expected default, got %s", got)
+		}
+	})
+
+	t.Run("returns default when empty", func(t *testing.T) {
+		t.Setenv("AVA_TEST_GETENV_EMPTY", "")
+		if got := GetEnv("AVA_TEST_GETENV_EMPTY", "default"); got != "default" {
+			t.Errorf("expected default for empty value, got %s", got)
+		}
+	})
 }
 
-func clearEnv() {
-	_ = os.Unsetenv("ADDR")
-	_ = os.Unsetenv("LOG_LEVEL")
-	_ = os.Unsetenv("ALLOWED_ORIGINS")
-	_ = os.Unsetenv("ZITADEL_DOMAIN")
-	_ = os.Unsetenv("ZITADEL_INTROSPECTOR_PRIVATE_KEY_PATH")
-	_ = os.Unsetenv("ZITADEL_WEBHOOK_SIGNING_KEY")
-	_ = os.Unsetenv("DATABASE_URL")
-}
-
-func TestLoadAllowedOrigins(t *testing.T) {
+func TestParseList(t *testing.T) {
 	tests := []struct {
 		name     string
 		env      string
 		expected []string
 	}{
 		{
-			name:     "single origin",
+			name:     "empty returns nil",
+			env:      "",
+			expected: nil,
+		},
+		{
+			name:     "single entry",
 			env:      "http://localhost:4173",
 			expected: []string{"http://localhost:4173"},
 		},
 		{
-			name:     "multiple origins with comma",
+			name:     "multiple entries with comma",
 			env:      "http://localhost:4173,http://host.docker.internal:4173",
 			expected: []string{"http://localhost:4173", "http://host.docker.internal:4173"},
 		},
 		{
-			name:     "origins with spaces trimmed",
+			name:     "entries trimmed",
 			env:      "http://localhost:4173 , http://host.docker.internal:4173  ",
 			expected: []string{"http://localhost:4173", "http://host.docker.internal:4173"},
 		},
@@ -52,30 +62,72 @@ func TestLoadAllowedOrigins(t *testing.T) {
 			expected: []string{"http://localhost:4173", "http://host.docker.internal:4173"},
 		},
 		{
-			name:     "whitespace-only env results in empty slice",
+			name:     "whitespace-only env returns nil",
 			env:      "   ",
 			expected: nil,
+		},
+		{
+			name:     "wildcard preserved",
+			env:      "*",
+			expected: []string{"*"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			clearEnv()
-			setRequiredEnv()
-			_ = os.Setenv("ALLOWED_ORIGINS", tt.env)
-			defer clearEnv()
-
-			cfg := Load(zerolog.Nop())
-
-			if len(cfg.AllowedOrigins) != len(tt.expected) {
-				t.Errorf("expected %d origins, got %d", len(tt.expected), len(cfg.AllowedOrigins))
+			got := ParseList(tt.env)
+			if len(got) != len(tt.expected) {
+				t.Errorf("expected %d entries, got %d (%v)", len(tt.expected), len(got), got)
+				return
 			}
-
-			for i, origin := range cfg.AllowedOrigins {
-				if origin != tt.expected[i] {
-					t.Errorf("origin %d: expected %s, got %s", i, tt.expected[i], origin)
+			for i, v := range got {
+				if v != tt.expected[i] {
+					t.Errorf("entry %d: expected %s, got %s", i, tt.expected[i], v)
 				}
 			}
 		})
+	}
+}
+
+func TestLoadBase(t *testing.T) {
+	t.Setenv("AVA_TEST_ADDR", ":9999")
+	t.Setenv("AVA_TEST_ALLOWED_ORIGINS", "https://a.com, https://b.com")
+
+	base := LoadBase("AVA_TEST", zerolog.Nop())
+
+	if base.ServerAddr != ":9999" {
+		t.Errorf("expected addr :9999, got %s", base.ServerAddr)
+	}
+	if len(base.AllowedOrigins) != 2 || base.AllowedOrigins[0] != "https://a.com" {
+		t.Errorf("unexpected origins: %v", base.AllowedOrigins)
+	}
+}
+
+func TestLoadBaseDefaults(t *testing.T) {
+	_ = os.Unsetenv("AVA_TEST_DEFAULT_ADDR")
+	t.Setenv("AVA_TEST_DEFAULT_ALLOWED_ORIGINS", "https://example.com")
+
+	base := LoadBase("AVA_TEST_DEFAULT", zerolog.Nop())
+
+	if base.ServerAddr != ":8080" {
+		t.Errorf("expected default addr :8080, got %s", base.ServerAddr)
+	}
+}
+
+func TestSetupLogger(t *testing.T) {
+	t.Setenv("AVA_TEST_LOG_LEVEL", "info")
+	logger := SetupLogger("ava-test", "AVA_TEST")
+	// Verify we can use it without panic. (Level is set on the global zerolog
+	// state, not on the returned logger, so we don't assert on logger.GetLevel().)
+	logger.Info().Msg("test logger works")
+}
+
+func TestSetupLogger_SetsGlobalLevel(t *testing.T) {
+	t.Setenv("AVA_TEST_LOG_LEVEL", "warn")
+
+	_ = SetupLogger("ava-test", "AVA_TEST")
+
+	if zerolog.GlobalLevel() != zerolog.WarnLevel {
+		t.Errorf("global zerolog level = %v, want %v", zerolog.GlobalLevel(), zerolog.WarnLevel)
 	}
 }

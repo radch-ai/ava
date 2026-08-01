@@ -1,35 +1,54 @@
-// Package config provides configuration loading for the backend.
+// Package config provides shared configuration primitives used by Ava services.
+//
+// Env var convention:
+//   - Service-level vars (per-instance values like addr, log level, allowed
+//     origins) are prefixed with the service name.
+//   - External dependencies that are the same regardless of which service
+//     connects (DATABASE_URL, ZITADEL_*) are unprefixed; services read them
+//     directly from their own config package.
+//   - When two services need different instances of the same kind of
+//     dependency, the var is namespaced to be distinguishable. This mirrors
+//     the case of one service having multiple instances (or environments like
+//     dev/staging/prod) of the same dependency, extended across services.
+//     Disambiguation can be by prefix (BACKEND_DATABASE_URL,
+//     GATEWAY_DATABASE_URL) or any other distinguishing naming — the
+//     requirement is just that the names not collide.
 package config
 
 import (
-	"net/url"
 	"os"
 	"strings"
 
 	"github.com/rs/zerolog"
 )
 
-// Config holds the application configuration.
-type Config struct {
-	ServerAddr                        string
-	LogLevel                          string
-	AllowedOrigins                    []string
-	ZitadelDomain                     string // Zitadel instance URL for OAuth token introspection
-	ZitadelIntrospectorPrivateKeyPath string // Path to application key JSON file for Private Key JWT auth
-	ZitadelWebhookSigningKey          string // Signing key for Zitadel Actions v2 webhook signature verification (optional)
-	DatabaseURL                       string // PostgreSQL connection URL
+// BaseConfig holds the server-level fields common to every service.
+type BaseConfig struct {
+	ServerAddr     string
+	AllowedOrigins []string
 }
 
-// getEnv returns the environment variable value or a default.
-func getEnv(key, defaultValue string) string {
+// LoadBase reads <prefix>_ADDR and <prefix>_ALLOWED_ORIGINS from env.
+func LoadBase(prefix string, logger zerolog.Logger) BaseConfig {
+	addr := GetEnv(prefix+"_ADDR", ":8080")
+	originsRaw := GetEnvRequired(prefix+"_ALLOWED_ORIGINS", logger)
+
+	return BaseConfig{
+		ServerAddr:     addr,
+		AllowedOrigins: ParseList(originsRaw),
+	}
+}
+
+// GetEnv returns the environment variable value or a default.
+func GetEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
 	return defaultValue
 }
 
-// getEnvRequired returns the environment variable value or fatals with logger.
-func getEnvRequired(key string, logger zerolog.Logger) string {
+// GetEnvRequired returns the environment variable value or fatals with logger.
+func GetEnvRequired(key string, logger zerolog.Logger) string {
 	value := os.Getenv(key)
 	if value == "" {
 		logger.Fatal().Str("env_var", key).Msg("required environment variable is not set")
@@ -37,9 +56,9 @@ func getEnvRequired(key string, logger zerolog.Logger) string {
 	return value
 }
 
-// parseList parses a comma-separated list into a string slice.
+// ParseList parses a comma-separated list into a string slice.
 // Returns nil for empty strings (deny all for origins).
-func parseList(value string) []string {
+func ParseList(value string) []string {
 	if value == "" {
 		return nil
 	}
@@ -53,14 +72,14 @@ func parseList(value string) []string {
 	return result
 }
 
-// SetupLogger configures the global zerolog logger and returns a service-scoped logger.
-// Reads log level from LOG_LEVEL env var (defaults to "info").
-func SetupLogger() zerolog.Logger {
-	level := getEnv("LOG_LEVEL", "info")
+// SetupLogger configures the global zerolog level from <prefix>_LOG_LEVEL and
+// returns a logger tagged with the service name.
+func SetupLogger(service, prefix string) zerolog.Logger {
+	level := GetEnv(prefix+"_LOG_LEVEL", "info")
 
 	logLevel, err := zerolog.ParseLevel(level)
 	if err != nil {
-		// Use stderr directly since logger isn't set up yet
+		// Configured logger isn't constructed yet; use a throwaway one to report.
 		logger := zerolog.New(os.Stderr).With().Timestamp().Logger()
 		logger.Fatal().
 			Str("level", level).
@@ -69,41 +88,5 @@ func SetupLogger() zerolog.Logger {
 	}
 	zerolog.SetGlobalLevel(logLevel)
 
-	return zerolog.New(os.Stderr).With().Timestamp().Str("service", "ava-backend").Logger()
-}
-
-// Load reads configuration from environment variables and returns a Config.
-// Uses logger for fatal errors on missing required configuration.
-func Load(logger zerolog.Logger) *Config {
-	addr := getEnv("ADDR", ":8080")
-	logLevel := getEnv("LOG_LEVEL", "info")
-
-	// AllowedOrigins: required - specific origins only (empty denies all)
-	originsRaw := getEnvRequired("ALLOWED_ORIGINS", logger)
-	origins := parseList(originsRaw)
-
-	// Zitadel configuration is required for auth
-	zitadelDomain := getEnvRequired("ZITADEL_DOMAIN", logger)
-	parsedURL, err := url.Parse(zitadelDomain)
-	if err != nil || parsedURL.Scheme == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
-		logger.Fatal().Str("value", zitadelDomain).Msg("ZITADEL_DOMAIN must be a valid URL with http or https scheme")
-	}
-
-	zitadelIntrospectorPrivateKeyPath := getEnvRequired("ZITADEL_INTROSPECTOR_PRIVATE_KEY_PATH", logger)
-
-	// Database URL is required
-	databaseURL := getEnvRequired("DATABASE_URL", logger)
-
-	// Zitadel webhook signing key is required for Actions v2 signature verification
-	zitadelWebhookSigningKey := getEnvRequired("ZITADEL_WEBHOOK_SIGNING_KEY", logger)
-
-	return &Config{
-		ServerAddr:                        addr,
-		LogLevel:                          logLevel,
-		AllowedOrigins:                    origins,
-		ZitadelDomain:                     zitadelDomain,
-		ZitadelIntrospectorPrivateKeyPath: zitadelIntrospectorPrivateKeyPath,
-		ZitadelWebhookSigningKey:          zitadelWebhookSigningKey,
-		DatabaseURL:                       databaseURL,
-	}
+	return zerolog.New(os.Stderr).With().Timestamp().Str("service", service).Logger()
 }

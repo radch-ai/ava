@@ -554,3 +554,35 @@ func TestSessionInfoExpiry(t *testing.T) {
 		t.Errorf("Expiry = %v, want %v", info.Expiry, future)
 	}
 }
+
+func TestValidateDomain(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		wantErr bool
+	}{
+		{name: "valid https URL", raw: "https://example.zitadel.cloud", wantErr: false},
+		{name: "valid http URL", raw: "http://localhost:8080", wantErr: false},
+		{name: "valid https URL with path", raw: "https://example.zitadel.cloud/path", wantErr: false},
+		{name: "missing scheme rejected", raw: "example.zitadel.cloud", wantErr: true},
+		{name: "ftp scheme rejected", raw: "ftp://example.zitadel.cloud", wantErr: true},
+		{name: "empty string rejected", raw: "", wantErr: true},
+		{name: "whitespace-only rejected", raw: "   ", wantErr: true},
+		{name: "javascript scheme rejected", raw: "javascript:alert(1)", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateDomain(tt.raw)
+			if tt.wantErr && err == nil {
+				t.Errorf("ValidateDomain(%q) expected error, got nil", tt.raw)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("ValidateDomain(%q) unexpected error: %v", tt.raw, err)
+			}
+			if err != nil && !strings.Contains(err.Error(), "invalid zitadel domain") {
+				t.Errorf("error message should mention invalid zitadel domain, got: %v", err)
+			}
+		})
+	}
+}
