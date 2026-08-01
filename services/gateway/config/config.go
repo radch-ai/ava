@@ -73,7 +73,7 @@ func SetupLogger() zerolog.Logger {
 	}
 	zerolog.SetGlobalLevel(logLevel)
 
-	return zerolog.New(os.Stderr).With().Timestamp().Str("service", "nevaria-gateway").Logger()
+	return zerolog.New(os.Stderr).With().Timestamp().Str("service", "ava-gateway").Logger()
 }
 
 // Load reads configuration from environment variables and returns a Config.

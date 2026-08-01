@@ -1,6 +1,6 @@
 # Gateway
 
-WebSocket gateway for Nevaria agents with authentication, LLM proxy, and distributed tool execution.
+WebSocket gateway for Ava agents with authentication, LLM proxy, and distributed tool execution.
 
 ## Quick Start
 
