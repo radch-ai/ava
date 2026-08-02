@@ -19,9 +19,14 @@ import (
 	"github.com/radch-ai/ava/services/backend/internal/webhooks"
 )
 
+// Version is set at build time via -ldflags `-X main.Version=<tag>`.
+var Version = "dev"
+
 func main() {
 	// Setup logging first (reads log level from env)
 	logger := pkgconfig.SetupLogger("ava-backend", "BACKEND")
+
+	logger.Info().Str("version", Version).Msg("starting ava-backend")
 
 	// Load configuration
 	cfg := config.Load(logger)

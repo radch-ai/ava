@@ -21,9 +21,14 @@ import (
 	"github.com/radch-ai/ava/services/gateway/internal/websocket"
 )
 
+// Version is set at build time via -ldflags `-X main.Version=<tag>`.
+var Version = "dev"
+
 func main() {
 	// Setup logging first (reads log level from env)
 	logger := pkgconfig.SetupLogger("ava-gateway", "GATEWAY")
+
+	logger.Info().Str("version", Version).Msg("starting ava-gateway")
 
 	// Load configuration (uses logger for fatal errors)
 	cfg := config.Load(logger)

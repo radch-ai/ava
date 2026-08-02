@@ -55,7 +55,11 @@ run service:
 # Build a service Docker image (tag: ava-<service>:latest). Usage: just docker <service>
 docker service:
     @just validate_service {{ service }}
-    docker build -t ava-{{ service }}:latest -f go-services.Dockerfile --build-arg SERVICE={{ service }} .
+    #!/usr/bin/env bash
+    go_version=$(awk '/^go /{print $$2; exit}' go.mod)
+    docker build -t ava-{{ service }}:latest -f services/{{ service }}/Dockerfile \
+        --build-arg GO_VERSION="$$go_version" \
+        .
 
 ## --- test ---
 
@@ -95,10 +99,11 @@ sqlc-generate:
 
 ## --- validate ---
 
-# go mod tidy → golangci-lint --fix → go fmt → goimports.
+# sqlc-generate → go mod tidy → golangci-lint --fix → go fmt → goimports.
 validate:
     @just require_tool golangci-lint
     @just require_tool goimports
+    @just sqlc-generate
     go mod tidy
     golangci-lint run --fix ./...
     go fmt ./...

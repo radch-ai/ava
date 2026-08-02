@@ -4,6 +4,23 @@
 .gitignore
 docker-compose*.yml
 
+# Monorepo paths unused by Go service image builds
+ui/
+Cargo.toml
+Cargo.lock
+.github/
+justfile
+AGENTS.md
+.env.example
+
+# Per-service noise (tests/docs/assets not needed to compile)
+services/*/tests/
+services/*/docs/
+services/*/Makefile
+services/*/README.md
+services/*/models.json
+services/*/.claude/
+
 # --- Below mirrors .gitignore ---
 
 .DS_Store

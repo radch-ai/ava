@@ -1,0 +1,39 @@
+name: Service matrix
+
+# Reads allowed_services and sqlc_services from the justfile as JSON arrays.
+
+on:
+  workflow_call:
+    outputs:
+      services:
+        description: JSON array of allowed_services
+        value: ${{ jobs.matrix.outputs.services }}
+      sqlc_services:
+        description: JSON array of sqlc_services
+        value: ${{ jobs.matrix.outputs.sqlc_services }}
+
+jobs:
+  matrix:
+    name: Build service matrix
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.services.outputs.services }}
+      sqlc_services: ${{ steps.services.outputs.sqlc_services }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install just
+        # taiki-e/install-action@v2.85.5
+        uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf
+        with:
+          tool: just
+
+      - name: Read service lists from justfile
+        id: services
+        run: |
+          services=$(just --evaluate allowed_services | tr ' ' '\n' | jq -R . | jq -sc)
+          sqlc=$(just --evaluate sqlc_services   | tr ' ' '\n' | jq -R . | jq -sc)
+          echo "services=$services"      >> "$GITHUB_OUTPUT"
+          echo "sqlc_services=$sqlc"     >> "$GITHUB_OUTPUT"
+          echo "services=$services sqlc=$sqlc"

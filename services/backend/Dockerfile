@@ -1,14 +1,13 @@
 # syntax=docker/dockerfile:1
 
-# Shared Dockerfile for Go services under services/. Build via `just docker <service>`.
+# Build args: GO_VERSION (required), VERSION (optional, -ldflags → main.Version)
 
-ARG SERVICE
+ARG GO_VERSION
 
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
-FROM golang:1.26.5-alpine AS builder
-ARG SERVICE
+FROM golang:${GO_VERSION}-alpine AS builder
+ARG VERSION=dev
 
-# Install build dependencies
 RUN apk add --no-cache git ca-certificates tzdata
 
 ENV GOTOOLCHAIN=auto
@@ -17,36 +16,33 @@ WORKDIR /app
 
 # Copy module files first for layer caching
 COPY go.mod go.sum ./
+RUN go mod download
 
-# Copy the whole repo so internal cross-package builds resolve, then build
-# only the requested service.
-COPY . .
+COPY pkg/ ./pkg/
+COPY services/backend/ ./services/backend/
 
-# Generate the sqlc query layer (untracked in repo; produced fresh here).
+# sqlc query layer is untracked; generate it here
 RUN go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 && \
-    cd services/${SERVICE} && sqlc generate
+    cd services/backend && sqlc generate
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-    -ldflags="-w -s -extldflags '-static'" \
+    -ldflags="-s -w -extldflags '-static' -X main.Version=${VERSION}" \
     -trimpath \
-    -o /bin/${SERVICE} \
-    ./services/${SERVICE}
+    -o /bin/backend \
+    ./services/backend
 
 # ── Stage 2: Run ─────────────────────────────────────────────────────────────
 FROM alpine:3.23
-ARG SERVICE
 
-# ca-certificates for TLS, tzdata for time zones
 RUN apk add --no-cache ca-certificates tzdata && \
     addgroup -S app && adduser -S -G app app
 
 WORKDIR /app
 
-ENV SERVICE=${SERVICE}
-COPY --from=builder /bin/${SERVICE} /app/${SERVICE}
+COPY --from=builder /bin/backend /app/backend
 
 USER app
 
 EXPOSE 8080
 
-ENTRYPOINT /app/${SERVICE}
+ENTRYPOINT ["/app/backend"]

@@ -1,0 +1,102 @@
+name: CI
+
+# Check-only: go mod tidy, go fmt, goimports, and golangci-lint must be clean.
+# Tests run per service from service-matrix.yml (justfile allowed_services).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  matrix:
+    name: Build service matrix
+    uses: ./.github/workflows/service-matrix.yml
+
+  validate:
+    name: Validate (format + lint)
+    needs: matrix
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install goimports
+        run: go install golang.org/x/tools/cmd/goimports@latest
+
+      - name: Generate sqlc layer
+        run: |
+          go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0
+          for svc in $(echo '${{ needs.matrix.outputs.sqlc_services }}' | jq -r '.[]'); do
+            (cd "services/$svc" && sqlc generate)
+          done
+
+      - name: Check go mod tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: Check go fmt
+        run: |
+          go fmt ./...
+          git diff --exit-code --name-only -- '*.go' || {
+            echo "::error::Files above need 'go fmt'. Run 'just validate' locally."
+            exit 1
+          }
+
+      - name: Check goimports
+        run: |
+          if [ -n "$(goimports -l -local github.com/radch-ai/ava .)" ]; then
+            goimports -l -local github.com/radch-ai/ava .
+            echo "::error::Files above need 'goimports'. Run 'just validate' locally."
+            exit 1
+          fi
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.6
+          args: --timeout=5m
+
+  test:
+    name: Test
+    needs: matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.matrix.outputs.services) }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Generate sqlc layer
+        if: contains(fromJson(needs.matrix.outputs.sqlc_services), matrix.service)
+        run: |
+          go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0
+          cd services/${{ matrix.service }} && sqlc generate
+
+      - name: Run tests
+        run: |
+          CGO_ENABLED=1 go test -race -v -coverprofile=coverage.${{ matrix.service }}.out ./services/${{ matrix.service }}/...
+
+      - name: Upload coverage
+        if: success()
+        uses: codecov/codecov-action@v7
+        with:
+          files: ./coverage.${{ matrix.service }}.out
+          flags: ${{ matrix.service }}
