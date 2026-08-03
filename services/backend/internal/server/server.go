@@ -20,7 +20,6 @@ type Server struct {
 func New(
 	logger zerolog.Logger,
 	addr string,
-	allowedOrigins []string,
 	introspector *zitadelvalidate.Introspector,
 	apiRouter http.Handler,
 	webhookRouter http.Handler,
@@ -48,13 +47,12 @@ func New(
 		mux.Handle("/webhooks/", http.StripPrefix("/webhooks", webhookRouter))
 	}
 
-	// Protected API routes (CORS + authentication)
-	corsMiddleware := newCORSMiddleware(allowedOrigins, logger)
+	// Protected API routes via authentication
 	apiHandler := http.StripPrefix("/api", apiRouter)
 	apiHandler = authMiddleware.Authenticate(apiHandler)
 	// Mount protected routes under /api prefix
 	logger.Debug().Msg("mounting protected API routes at /api/")
-	mux.Handle("/api/", corsMiddleware(apiHandler))
+	mux.Handle("/api/", apiHandler)
 
 	return &Server{
 		httpServer: &http.Server{

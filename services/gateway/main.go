@@ -54,16 +54,6 @@ func main() {
 	})
 	_ = rdb // TODO: Wire pub/sub handler
 
-	// Warn on insecure origins configuration:
-	// - Empty origins denies all requests (secure but likely misconfigured)
-	// - Wildcard "*" allows all (insecure for production)
-	// - Warnings logged to force explicit production configuration
-	if len(cfg.AllowedOrigins) == 0 {
-		logger.Warn().Msg("GATEWAY_ALLOWED_ORIGINS is empty - all requests will be denied")
-	} else if len(cfg.AllowedOrigins) == 1 && cfg.AllowedOrigins[0] == "*" {
-		logger.Warn().Msg("GATEWAY_ALLOWED_ORIGINS='*' allows all origins - not recommended for production!")
-	}
-
 	logger.Info().
 		Str("bifrost_url", cfg.BifrostBaseURL).
 		Str("database", maskURL(cfg.DatabaseURL)).
@@ -73,7 +63,7 @@ func main() {
 	// Create WebSocket handler:
 	// - UserAgentManager creates agents with Bifrost connection
 	// - Model selection ("auto") is handled by Bifrost
-	wsHandler := websocket.NewHandler(logger, cfg.AllowedOrigins, cfg.MaxConns, &agent.UserAgentManagerOptions{
+	wsHandler := websocket.NewHandler(logger, cfg.MaxConns, &agent.UserAgentManagerOptions{
 		BifrostBaseURL: cfg.BifrostBaseURL,
 		DBPool:         dbPool,
 	})

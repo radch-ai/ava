@@ -54,7 +54,7 @@ func main() {
 	webhookRouter := webhooks.New(cfg, dbPool, logger)
 
 	// Create and start server
-	srv := server.New(logger, cfg.ServerAddr, cfg.AllowedOrigins, zitadelIntr, apiRouter, webhookRouter)
+	srv := server.New(logger, cfg.ServerAddr, zitadelIntr, apiRouter, webhookRouter)
 	if err := srv.Start(ctx); err != nil {
 		logger.Fatal().Err(err).Msg("Server failed")
 	}

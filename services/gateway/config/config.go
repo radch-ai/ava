@@ -31,7 +31,7 @@ func Load(logger zerolog.Logger) *Config {
 	}
 
 	return &Config{
-		BaseConfig:     pkgconfig.LoadBase("GATEWAY", logger),
+		BaseConfig:     pkgconfig.LoadBase("GATEWAY"),
 		MaxConns:       loadMaxConns(logger),
 		RedisAddr:      pkgconfig.GetEnvRequired("REDIS_ADDR", logger),
 		RedisPassword:  pkgconfig.GetEnvRequired("REDIS_PASSWORD", logger),

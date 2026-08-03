@@ -21,7 +21,7 @@ import (
 func TestWebSocketUpgrade(t *testing.T) {
 	t.Skip("requires LLM backend - needs Bifrost URL and DB pool")
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
+	handler := websocket.NewHandler(logger, 100, &agent.UserAgentManagerOptions{})
 
 	// Create test server
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
@@ -74,7 +74,7 @@ func TestWebSocketUpgrade(t *testing.T) {
 
 func TestWebSocketMessageLogging(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
+	handler := websocket.NewHandler(logger, 100, &agent.UserAgentManagerOptions{})
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
 
@@ -97,45 +97,29 @@ func TestWebSocketMessageLogging(t *testing.T) {
 func TestWebSocketOriginValidation(t *testing.T) {
 	tests := []struct {
 		name          string
-		allowedOrigin string
 		requestOrigin string
 		shouldAllow   bool
 	}{
 		{
-			name:          "allows matching origin",
-			allowedOrigin: "https://example.com",
-			requestOrigin: "https://example.com",
+			name:          "allows when no origin header",
+			requestOrigin: "",
 			shouldAllow:   true,
 		},
 		{
-			name:          "rejects non-matching origin",
-			allowedOrigin: "https://example.com",
+			name:          "rejects cross-origin browser request",
 			requestOrigin: "https://evil.com",
 			shouldAllow:   false,
-		},
-		{
-			name:          "wildcard allows all",
-			allowedOrigin: "*",
-			requestOrigin: "https://any.com",
-			shouldAllow:   true,
-		},
-		{
-			name:          "allows when no origin header",
-			allowedOrigin: "https://example.com",
-			requestOrigin: "",
-			shouldAllow:   true, // non-browser clients
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			logger := zerolog.New(os.Stderr)
-			handler := websocket.NewHandler(logger, []string{tt.allowedOrigin}, 100, &agent.UserAgentManagerOptions{})
+			handler := websocket.NewHandler(logger, 100, &agent.UserAgentManagerOptions{})
 
 			server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 			defer server.Close()
 
-			// Create request with Origin header
 			wsURL := "ws" + server.URL[4:] + "/ws"
 			opts := &coderws.DialOptions{}
 			if tt.requestOrigin != "" {
@@ -169,7 +153,7 @@ func TestWebSocketOriginValidation(t *testing.T) {
 func TestWebSocketConnectionLimit(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
 	maxConns := 2
-	handler := websocket.NewHandler(logger, []string{"*"}, maxConns, &agent.UserAgentManagerOptions{})
+	handler := websocket.NewHandler(logger, maxConns, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -205,7 +189,7 @@ func TestWebSocketConnectionLimit(t *testing.T) {
 
 func TestWebSocketBinaryMessage(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
+	handler := websocket.NewHandler(logger, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -256,7 +240,7 @@ func TestWebSocketBinaryMessage(t *testing.T) {
 
 func TestWebSocketPingPong(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
+	handler := websocket.NewHandler(logger, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -308,7 +292,7 @@ func TestWebSocketPingPong(t *testing.T) {
 
 func TestWebSocketCloseOnClientDisconnect(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
+	handler := websocket.NewHandler(logger, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -343,7 +327,7 @@ func TestWebSocketCloseOnClientDisconnect(t *testing.T) {
 
 func TestActiveConns(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
+	handler := websocket.NewHandler(logger, 100, &agent.UserAgentManagerOptions{})
 
 	if handler.ActiveConns() != 0 {
 		t.Errorf("expected 0 active connections initially, got %d", handler.ActiveConns())
@@ -352,7 +336,7 @@ func TestActiveConns(t *testing.T) {
 
 func TestWebSocketMessageSizeLimit(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
+	handler := websocket.NewHandler(logger, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -392,7 +376,7 @@ func TestWebSocketMessageSizeLimit(t *testing.T) {
 
 func TestWebSocketLargeMessageEcho(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
+	handler := websocket.NewHandler(logger, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -444,7 +428,7 @@ func TestWebSocketLargeMessageEcho(t *testing.T) {
 func TestWebSocketHealthEndpoint(t *testing.T) {
 	// This tests that /health works correctly when handler is used in a full server setup
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
+	handler := websocket.NewHandler(logger, 100, &agent.UserAgentManagerOptions{})
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -476,7 +460,7 @@ func TestWebSocketHealthEndpoint(t *testing.T) {
 func TestNewHandlerLogger(t *testing.T) {
 	// Test with zero logger (should create default)
 	var zeroLogger zerolog.Logger
-	handler := websocket.NewHandler(zeroLogger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
+	handler := websocket.NewHandler(zeroLogger, 100, &agent.UserAgentManagerOptions{})
 
 	if handler == nil {
 		t.Error("expected non-nil handler")
@@ -486,7 +470,7 @@ func TestNewHandlerLogger(t *testing.T) {
 func TestWebSocketConcurrentMessages(t *testing.T) {
 	t.Skip("requires LLM backend - needs Bifrost URL and DB pool")
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
+	handler := websocket.NewHandler(logger, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -543,7 +527,7 @@ func TestWebSocketConcurrentMessages(t *testing.T) {
 // TestWebSocketClientClose verifies proper cleanup when client closes connection
 func TestWebSocketClientClose(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
+	handler := websocket.NewHandler(logger, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -577,7 +561,7 @@ func TestWebSocketClientClose(t *testing.T) {
 // TestWebSocketMessageRequiresAgentID verifies that prompt messages must include agent_id
 func TestWebSocketMessageRequiresAgentID(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
+	handler := websocket.NewHandler(logger, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -622,7 +606,7 @@ func TestWebSocketMessageRequiresAgentID(t *testing.T) {
 func TestWebSocketMessageWithAgentID(t *testing.T) {
 	t.Skip("requires LLM backend - needs Bifrost URL and DB pool")
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
+	handler := websocket.NewHandler(logger, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -673,7 +657,7 @@ func TestWebSocketMessageWithAgentID(t *testing.T) {
 // TestWebSocketConnectedEventHasUserID verifies that connected event includes user_id
 func TestWebSocketConnectedEventHasUserID(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
+	handler := websocket.NewHandler(logger, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -724,7 +708,7 @@ func TestWebSocketConnectedEventHasUserID(t *testing.T) {
 func TestWebSocketMultipleAgentsPerConnection(t *testing.T) {
 	t.Skip("requires LLM backend - needs Bifrost URL and DB pool")
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
+	handler := websocket.NewHandler(logger, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -792,7 +776,7 @@ func TestWebSocketMultipleAgentsPerConnection(t *testing.T) {
 func TestWebSocketStatusMessage(t *testing.T) {
 	t.Skip("requires LLM backend - needs Bifrost URL and DB pool")
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
+	handler := websocket.NewHandler(logger, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -837,7 +821,7 @@ func TestWebSocketStatusMessage(t *testing.T) {
 func TestWebSocketSteerMessage(t *testing.T) {
 	t.Skip("requires LLM backend - needs Bifrost URL and DB pool")
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
+	handler := websocket.NewHandler(logger, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -894,7 +878,7 @@ func TestWebSocketSteerMessage(t *testing.T) {
 // TestWebSocketUnknownMessageType tests that unknown message types are handled gracefully
 func TestWebSocketUnknownMessageType(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
+	handler := websocket.NewHandler(logger, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()
@@ -938,7 +922,7 @@ func TestWebSocketUnknownMessageType(t *testing.T) {
 // TestWebSocketInvalidJSON tests that invalid JSON is handled gracefully
 func TestWebSocketInvalidJSON(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
+	handler := websocket.NewHandler(logger, 100, &agent.UserAgentManagerOptions{})
 
 	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer server.Close()

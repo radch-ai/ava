@@ -20,8 +20,7 @@ All configuration is via environment variables.
 |----------|---------|-------------|
 | `GATEWAY_ADDR` | `:8080` | Server bind address |
 | `GATEWAY_LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
-| `GATEWAY_ALLOWED_ORIGINS` | (empty) | Comma-separated CORS origins for WebSocket |
-| `GATEWAY_MAX_CONNS` | `0` | Max concurrent WebSocket connections (0 = unlimited) |
+| `GATEWAY_MAX_CONNS` | `10000` | Max concurrent WebSocket connections |
 
 ### Authentication
 
@@ -49,7 +48,6 @@ All configuration is via environment variables.
 ```bash
 export GATEWAY_ADDR="0.0.0.0:8080"
 export GATEWAY_LOG_LEVEL="info"
-export GATEWAY_ALLOWED_ORIGINS="https://app.example.com"
 export GATEWAY_MAX_CONNS="10000"
 
 export ZETIDAL_URL="http://zetidal:8081"

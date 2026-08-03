@@ -11,7 +11,6 @@ import (
 
 // Set required env vars for tests that need successful load
 func setRequiredEnv() {
-	_ = os.Setenv("GATEWAY_ALLOWED_ORIGINS", "https://example.com")
 	_ = os.Setenv("REDIS_ADDR", "localhost:6379")
 	_ = os.Setenv("REDIS_PASSWORD", "test-password")
 	_ = os.Setenv("ZITADEL_DOMAIN", "https://example.zitadel.cloud")
@@ -24,7 +23,6 @@ func setRequiredEnv() {
 func clearEnv() {
 	_ = os.Unsetenv("GATEWAY_ADDR")
 	_ = os.Unsetenv("GATEWAY_LOG_LEVEL")
-	_ = os.Unsetenv("GATEWAY_ALLOWED_ORIGINS")
 	_ = os.Unsetenv("GATEWAY_MAX_CONNS")
 	_ = os.Unsetenv("REDIS_ADDR")
 	_ = os.Unsetenv("REDIS_PASSWORD")
@@ -61,56 +59,6 @@ func TestDefaultValues(t *testing.T) {
 	// MaxConns defaults to 10000
 	if cfg.MaxConns != 10000 {
 		t.Errorf("expected max conns 10000, got %d", cfg.MaxConns)
-	}
-}
-
-func TestLoadAllowedOrigins(t *testing.T) {
-	tests := []struct {
-		name     string
-		env      string
-		expected []string
-	}{
-		{
-			name:     "single origin",
-			env:      "https://example.com",
-			expected: []string{"https://example.com"},
-		},
-		{
-			name:     "multiple origins with comma",
-			env:      "https://example.com,https://test.com",
-			expected: []string{"https://example.com", "https://test.com"},
-		},
-		{
-			name:     "origins with spaces trimmed",
-			env:      "https://example.com , https://test.com  ",
-			expected: []string{"https://example.com", "https://test.com"},
-		},
-		{
-			name:     "wildcard origin",
-			env:      "*",
-			expected: []string{"*"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			clearEnv()
-			setRequiredEnv()
-			_ = os.Setenv("GATEWAY_ALLOWED_ORIGINS", tt.env)
-			defer clearEnv()
-
-			cfg := config.Load(zerolog.Nop())
-
-			if len(cfg.AllowedOrigins) != len(tt.expected) {
-				t.Errorf("expected %d origins, got %d", len(tt.expected), len(cfg.AllowedOrigins))
-			}
-
-			for i, origin := range cfg.AllowedOrigins {
-				if origin != tt.expected[i] {
-					t.Errorf("origin %d: expected %s, got %s", i, tt.expected[i], origin)
-				}
-			}
-		})
 	}
 }
 

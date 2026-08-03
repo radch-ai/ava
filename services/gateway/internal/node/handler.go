@@ -33,7 +33,6 @@ type Handler struct {
 	connSem     chan struct{}
 	activeConns int
 	connMu      sync.RWMutex
-	acceptOpts  websocket.AcceptOptions
 }
 
 // AuthClient defines the interface for validating sessions.
@@ -49,9 +48,6 @@ func NewHandler(service *Service, authClient AuthClient, logger *zerolog.Logger,
 		logger:     logger,
 		maxConns:   maxConns,
 		connSem:    make(chan struct{}, maxConns),
-		acceptOpts: websocket.AcceptOptions{
-			OriginPatterns: []string{"*"}, // TODO: Configure proper origin checking
-		},
 	}
 }
 
@@ -95,7 +91,7 @@ func (h *Handler) HandleNodeConnect(w http.ResponseWriter, r *http.Request) {
 	h.logger.Info().Str("user_id", userID).Msg("Node connection authenticated")
 
 	// 4. Upgrade to WebSocket
-	conn, err := websocket.Accept(w, r, &h.acceptOpts)
+	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to upgrade WebSocket")
 		h.releaseConn()

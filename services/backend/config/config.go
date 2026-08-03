@@ -25,7 +25,7 @@ func Load(logger zerolog.Logger) *Config {
 	}
 
 	return &Config{
-		BaseConfig:                        pkgconfig.LoadBase("BACKEND", logger),
+		BaseConfig:                        pkgconfig.LoadBase("BACKEND"),
 		DatabaseURL:                       pkgconfig.GetEnvRequired("DATABASE_URL", logger),
 		ZitadelDomain:                     zitadelDomain,
 		ZitadelIntrospectorPrivateKeyPath: pkgconfig.GetEnvRequired("ZITADEL_INTROSPECTOR_PRIVATE_KEY_PATH", logger),

@@ -1,8 +1,8 @@
 // Package config provides shared configuration primitives used by Ava services.
 //
 // Env var convention:
-//   - Service-level vars (per-instance values like addr, log level, allowed
-//     origins) are prefixed with the service name.
+//   - Service-level vars (per-instance values like addr, log level) are
+//     prefixed with the service name.
 //   - External dependencies that are the same regardless of which service
 //     connects (DATABASE_URL, ZITADEL_*) are unprefixed; services read them
 //     directly from their own config package.
@@ -17,25 +17,19 @@ package config
 
 import (
 	"os"
-	"strings"
 
 	"github.com/rs/zerolog"
 )
 
 // BaseConfig holds the server-level fields common to every service.
 type BaseConfig struct {
-	ServerAddr     string
-	AllowedOrigins []string
+	ServerAddr string
 }
 
-// LoadBase reads <prefix>_ADDR and <prefix>_ALLOWED_ORIGINS from env.
-func LoadBase(prefix string, logger zerolog.Logger) BaseConfig {
-	addr := GetEnv(prefix+"_ADDR", ":8080")
-	originsRaw := GetEnvRequired(prefix+"_ALLOWED_ORIGINS", logger)
-
+// LoadBase reads <prefix>_ADDR from env (default ":8080").
+func LoadBase(prefix string) BaseConfig {
 	return BaseConfig{
-		ServerAddr:     addr,
-		AllowedOrigins: ParseList(originsRaw),
+		ServerAddr: GetEnv(prefix+"_ADDR", ":8080"),
 	}
 }
 
@@ -54,22 +48,6 @@ func GetEnvRequired(key string, logger zerolog.Logger) string {
 		logger.Fatal().Str("env_var", key).Msg("required environment variable is not set")
 	}
 	return value
-}
-
-// ParseList parses a comma-separated list into a string slice.
-// Returns nil for empty strings (deny all for origins).
-func ParseList(value string) []string {
-	if value == "" {
-		return nil
-	}
-	var result []string
-	for _, item := range strings.Split(value, ",") {
-		item = strings.TrimSpace(item)
-		if item != "" {
-			result = append(result, item)
-		}
-	}
-	return result
 }
 
 // SetupLogger configures the global zerolog level from <prefix>_LOG_LEVEL and

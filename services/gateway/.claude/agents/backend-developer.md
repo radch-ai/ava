@@ -31,7 +31,6 @@ API design requirements:
 - Request/response validation
 - API versioning strategy
 - Rate limiting implementation
-- CORS configuration
 - Pagination for list endpoints
 - Standardized error responses
 

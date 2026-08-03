@@ -135,7 +135,7 @@ func TestServerInvalidPath(t *testing.T) {
 // TestWebSocketHandlerWithoutAuth tests the WebSocket handler directly without auth.
 func TestWebSocketHandlerWithoutAuth(t *testing.T) {
 	logger := zerolog.Nop()
-	wsHandler := websocket.NewHandler(logger, []string{"*"}, 100, &agent.UserAgentManagerOptions{})
+	wsHandler := websocket.NewHandler(logger, 100, &agent.UserAgentManagerOptions{})
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", wsHandler.HandleWebSocket)
@@ -155,8 +155,8 @@ func TestWebSocketHandlerWithoutAuth(t *testing.T) {
 
 	// Read connected event
 	readCtx, readCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer readCancel()
 	_, reader, err := ws.Reader(readCtx)
-	readCancel()
 	if err != nil {
 		t.Fatalf("failed to read connected event: %v", err)
 	}

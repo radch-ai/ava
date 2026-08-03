@@ -39,7 +39,7 @@ Use `just` recipes from the repo root (run `just --list`). After every change: `
 
 - REST API for user and agent configuration (soul, agents, threads) (`internal/api/{user,agent}`).
 - PostgreSQL database with migrations under `services/backend/schema/migrations/`; sqlc-generated query layer (`internal/db`), `testcontainers-go` for integration tests.
-- HTTP server with CORS and Zitadel auth middleware (`internal/server`).
+- HTTP server with Zitadel auth middleware (`internal/server`).
 - Zitadel Actions v2 webhook receiver for back-syncing user/agent state (`internal/webhooks/zitadel`).
 - RevenueCat webhook handling for subscription management (`internal/billing`) — to be added.
 - Per-agent run history for usage tracking and analytics (table exists, queries/code to be added) (`agent_runs`).
@@ -55,7 +55,7 @@ WebSocket gateway between the UI and the agent runtime. Operational details (env
 
 ### pkg/config
 
-Env-driven config loader. Reads env vars (server addr, allowed origins, Zitadel, DB URL, etc.) into a `Config` struct. Currently shaped around backend's needs; other services can extend or share as they land. See `.env.example` at the repo root for the variables.
+Env-driven config loader. Reads env vars (server addr, Zitadel, DB URL, etc.) into a `Config` struct. Currently shaped around backend's needs; other services can extend or share as they land. See `.env.example` at the repo root for the variables.
 
 ### pkg/zitadelvalidate
 

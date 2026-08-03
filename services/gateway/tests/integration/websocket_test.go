@@ -150,7 +150,7 @@ func TestAgentManagerCreation(t *testing.T) {
 // TestAgentCreationOnConnect tests that connection is established.
 func TestAgentCreationOnConnect(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := wspkg.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := wspkg.NewHandler(logger, 100, nil)
 	srv := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer srv.Close()
 
@@ -200,7 +200,7 @@ func TestAgentCreationOnConnect(t *testing.T) {
 // TestAgentEventForwarding tests that agent events are forwarded to the WebSocket.
 func TestAgentEventForwarding(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := wspkg.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := wspkg.NewHandler(logger, 100, nil)
 	srv := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer srv.Close()
 
@@ -223,7 +223,7 @@ func TestAgentEventForwarding(t *testing.T) {
 // TestPromptHandling tests that incoming prompts trigger agent processing.
 func TestPromptHandling(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := wspkg.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := wspkg.NewHandler(logger, 100, nil)
 	srv := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer srv.Close()
 
@@ -246,7 +246,7 @@ func TestPromptHandling(t *testing.T) {
 // TestAgentCleanupOnDisconnect tests that agents are cleaned up when connection closes.
 func TestAgentCleanupOnDisconnect(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := wspkg.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := wspkg.NewHandler(logger, 100, nil)
 	srv := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer srv.Close()
 
@@ -366,7 +366,7 @@ func TestAgentManagerRemoveAgent(t *testing.T) {
 // TestInvalidMessageType tests handling of invalid message types.
 func TestInvalidMessageType(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := wspkg.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := wspkg.NewHandler(logger, 100, nil)
 	srv := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer srv.Close()
 
@@ -400,7 +400,7 @@ func TestInvalidMessageType(t *testing.T) {
 // TestInvalidPromptMessage tests handling of prompt messages without text.
 func TestInvalidPromptMessage(t *testing.T) {
 	logger := zerolog.New(os.Stderr)
-	handler := wspkg.NewHandler(logger, []string{"*"}, 100, nil)
+	handler := wspkg.NewHandler(logger, 100, nil)
 	srv := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
 	defer srv.Close()
 

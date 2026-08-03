@@ -30,84 +30,20 @@ func TestGetEnv(t *testing.T) {
 	})
 }
 
-func TestParseList(t *testing.T) {
-	tests := []struct {
-		name     string
-		env      string
-		expected []string
-	}{
-		{
-			name:     "empty returns nil",
-			env:      "",
-			expected: nil,
-		},
-		{
-			name:     "single entry",
-			env:      "http://localhost:4173",
-			expected: []string{"http://localhost:4173"},
-		},
-		{
-			name:     "multiple entries with comma",
-			env:      "http://localhost:4173,http://host.docker.internal:4173",
-			expected: []string{"http://localhost:4173", "http://host.docker.internal:4173"},
-		},
-		{
-			name:     "entries trimmed",
-			env:      "http://localhost:4173 , http://host.docker.internal:4173  ",
-			expected: []string{"http://localhost:4173", "http://host.docker.internal:4173"},
-		},
-		{
-			name:     "whitespace-only entries ignored",
-			env:      "http://localhost:4173,  ,http://host.docker.internal:4173",
-			expected: []string{"http://localhost:4173", "http://host.docker.internal:4173"},
-		},
-		{
-			name:     "whitespace-only env returns nil",
-			env:      "   ",
-			expected: nil,
-		},
-		{
-			name:     "wildcard preserved",
-			env:      "*",
-			expected: []string{"*"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := ParseList(tt.env)
-			if len(got) != len(tt.expected) {
-				t.Errorf("expected %d entries, got %d (%v)", len(tt.expected), len(got), got)
-				return
-			}
-			for i, v := range got {
-				if v != tt.expected[i] {
-					t.Errorf("entry %d: expected %s, got %s", i, tt.expected[i], v)
-				}
-			}
-		})
-	}
-}
-
 func TestLoadBase(t *testing.T) {
 	t.Setenv("AVA_TEST_ADDR", ":9999")
-	t.Setenv("AVA_TEST_ALLOWED_ORIGINS", "https://a.com, https://b.com")
 
-	base := LoadBase("AVA_TEST", zerolog.Nop())
+	base := LoadBase("AVA_TEST")
 
 	if base.ServerAddr != ":9999" {
 		t.Errorf("expected addr :9999, got %s", base.ServerAddr)
-	}
-	if len(base.AllowedOrigins) != 2 || base.AllowedOrigins[0] != "https://a.com" {
-		t.Errorf("unexpected origins: %v", base.AllowedOrigins)
 	}
 }
 
 func TestLoadBaseDefaults(t *testing.T) {
 	_ = os.Unsetenv("AVA_TEST_DEFAULT_ADDR")
-	t.Setenv("AVA_TEST_DEFAULT_ALLOWED_ORIGINS", "https://example.com")
 
-	base := LoadBase("AVA_TEST_DEFAULT", zerolog.Nop())
+	base := LoadBase("AVA_TEST_DEFAULT")
 
 	if base.ServerAddr != ":8080" {
 		t.Errorf("expected default addr :8080, got %s", base.ServerAddr)

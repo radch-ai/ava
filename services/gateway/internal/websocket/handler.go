@@ -34,10 +34,9 @@ const (
 	pingInterval = 30 * time.Second
 )
 
-// Handler manages WebSocket connections with connection limiting and origin validation.
+// Handler manages WebSocket connections with connection limiting.
 type Handler struct {
 	logger       zerolog.Logger
-	acceptOpts   websocket.AcceptOptions
 	connSem      chan struct{} // Semaphore for connection limiting
 	maxConns     int
 	activeConns  int32 // atomic counter
@@ -45,13 +44,10 @@ type Handler struct {
 }
 
 // NewHandler creates a new WebSocket handler with connection limiting.
-func NewHandler(logger zerolog.Logger, allowedOrigins []string, maxConns int, agentOpts *agent.UserAgentManagerOptions) *Handler {
+func NewHandler(logger zerolog.Logger, maxConns int, agentOpts *agent.UserAgentManagerOptions) *Handler {
 	sem := make(chan struct{}, maxConns)
 	return &Handler{
-		logger: logger,
-		acceptOpts: websocket.AcceptOptions{
-			OriginPatterns: allowedOrigins,
-		},
+		logger:       logger,
 		connSem:      sem,
 		maxConns:     maxConns,
 		agentManager: agent.NewUserAgentManager(logger, agentOpts),
@@ -81,7 +77,7 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer atomic.AddInt32(&h.activeConns, -1)
 
 	// Upgrade to WebSocket
-	conn, err := websocket.Accept(w, r, &h.acceptOpts)
+	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		h.logger.Error().Err(err).Msg("websocket upgrade failed")
 		return
