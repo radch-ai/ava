@@ -1,12 +1,18 @@
 # Playwright Coverage
 
-`bun test:e2e` runs browser-level coverage from `tests/e2e/specs/` against the built app preview and the Docker Chromium instance configured in `playwright.config.ts`.
+`bun run test:e2e` runs browser-level coverage from `tests/e2e/specs/` against the built app preview and the Chromium instance configured in `playwright.config.ts`.
+
+## Testing Conventions
+
+- E2E is integration testing: the specs run against the **real backend** (`E2E_BACKEND_API_URL`) and a real browser. They never use mocks.
+- Unit-level correctness against the mock API belongs in Vitest — see `docs/vitest.md`.
+- To author or debug a spec without a backend, run the preview with `VITE_USE_MOCKS=true` (mock configuration is documented in `.env.example`); CI always runs against the real backend.
 
 ## Coverage Model
 
-- Playwright covers the real app shell served during E2E runs; a running backend provides the API the specs exercise.
 - The suite exercises browser routing, UI interaction, network requests, and backend-facing flows together.
-- This is the place to check whether a user can actually complete a flow in the running app, not just whether a component or helper behaves in isolation.
+- This is the place to check whether a user can actually complete a flow in the running app, not just whether a component or service behaves in isolation.
+- Until the backend serves the API, the specs document the intended flows; they become executable as backend endpoints land.
 
 ## What It Covers
 
@@ -28,8 +34,8 @@
 
 ## Shared Test Infrastructure
 
-- `tests/e2e/setup/fixtures.ts` re-exports the base Playwright test and `expect` so specs share a single import point.
-- `playwright.config.ts` runs the built preview app against the Docker browser and points the frontend at the backend URL used during E2E runs.
+- `tests/e2e/setup/fixtures.ts` re-exports the base Playwright test so specs share a single import point.
+- `playwright.config.ts` runs the built preview app against the remote browser and points the frontend at the backend URL used during E2E runs.
 
 ## What This Does Not Try To Replace
 
@@ -38,9 +44,9 @@
 
 ## Overlap With Vitest
 
-- There is intentional overlap in feature areas like superagent, agent detail, agent creation, and agent configuration.
-- The difference is level: Playwright proves the whole browser-to-app flow works together, while Vitest proves smaller units and mocked boundaries behave correctly.
-- If a check can be expressed without real browser bootstrapping, routing, or network interaction, it usually belongs in Vitest instead of being duplicated here.
+- There is intentional overlap in feature areas like agent detail, agent creation, and agent configuration.
+- The difference is level: Playwright proves the whole browser-to-backend flow works together, while Vitest proves smaller units and mocked boundaries behave correctly.
+- If a check can be expressed without real browser routing, network interaction, or backend integration, it usually belongs in Vitest instead of being duplicated here.
 
 ## Current Scope Snapshot
 

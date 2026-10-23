@@ -20,7 +20,7 @@ Run from `ui/web/` with [bun](https://bun.sh):
 
 ### UI verification
 
-After changing anything user-facing (routes, components, styles, interactions), verify in a real browser before reporting done: run `bun run dev`, open the changed surface, and confirm the behavior visually (requires a running backend at `VITE_BACKEND_API_URL`). Use Paseo's browser tools (browser_new_tab / browser_snapshot / browser_click / browser_screenshot) to drive and inspect the page — they are already available. Unit and component tests are not a substitute for this check.
+After changing anything user-facing (routes, components, styles, interactions), verify in a real browser before reporting done: run `bun run dev`, open the changed surface, and confirm the behavior visually. With `VITE_USE_MOCKS=true` the dev server itself serves a deterministic mock API (no backend needed; log in with the token `ava-mock-token`) — otherwise point `VITE_BACKEND_API_URL` at a running backend. Use Paseo's browser tools (browser_new_tab / browser_snapshot / browser_click / browser_screenshot) to drive and inspect the page — they are already available. Unit and component tests are not a substitute for this check.
 
 ## Svelte MCP
 
