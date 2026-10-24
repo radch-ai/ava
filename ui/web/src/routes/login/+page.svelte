@@ -1,6 +1,7 @@
 <script lang="ts">
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle'
 	import { goto } from '$app/navigation'
+	import { resolve } from '$app/paths'
 	import { Button } from '$components/ui/button'
 	import { Input } from '$components/ui/input'
 	import { Label } from '$components/ui/label'
@@ -18,7 +19,7 @@
 		submitting = true
 		try {
 			await authStore.submitToken(token.trim())
-			await goto('/')
+			await goto(resolve('/'))
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Login failed'
 		} finally {

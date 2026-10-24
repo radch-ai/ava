@@ -1,4 +1,5 @@
 import { goto } from '$app/navigation'
+import { resolve } from '$app/paths'
 import { api } from '../services/api'
 
 /**
@@ -29,7 +30,7 @@ export class AuthStore {
 
 	/** Send the user to the login surface. */
 	async login(): Promise<void> {
-		await goto('/login')
+		await goto(resolve('/login'))
 	}
 
 	/** Exchange a long-lived token for the session cookie. Token-provider only. */

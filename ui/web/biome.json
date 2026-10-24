@@ -52,7 +52,16 @@
 		"rules": {
 			"preset": "recommended",
 			"nursery": {
-				"useTailwindSortedClasses": "error"
+				"useTailwindSortedClasses": "error",
+				"useSvelteKitResolve": "warn",
+				"noSvelteAtDebugTags": "warn",
+				"noSvelteAtHtmlTags": "warn",
+				"noSvelteInspect": "warn",
+				"noSvelteInternal": "warn",
+				"noSvelteObjectInTextMustaches": "warn",
+				"noSvelteUnnecessaryStateWrap": "warn",
+				"useSvelteRequireEachKey": "warn",
+				"useSvelteShorthandDirective": "warn"
 			}
 		}
 	}
