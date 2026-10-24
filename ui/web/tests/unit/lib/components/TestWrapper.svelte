@@ -1,14 +1,14 @@
 <script lang="ts">
-	import * as Tooltip from '$components/ui/tooltip';
-	import AgentShell from '$components/agent/AgentShell.svelte';
-	import type { ActivityFeed } from '$lib/services/agent';
-	import type { Agent } from '$lib/types/agent';
-	import type { Snippet } from 'svelte';
+	import type { Snippet } from 'svelte'
+	import AgentShell from '$components/agent/AgentShell.svelte'
+	import * as Tooltip from '$components/ui/tooltip'
+	import type { ActivityFeed } from '$lib/services/agent'
+	import type { Agent } from '$lib/types/agent'
 
 	interface ThreadItem {
-		id: string;
-		role: 'user' | 'assistant';
-		content: string;
+		id: string
+		role: 'user' | 'assistant'
+		content: string
 	}
 
 	let {
@@ -28,22 +28,22 @@
 		onActivityLoadMore,
 		children
 	}: {
-		agent: Agent;
-		activeTab?: 'conversation' | 'activity';
-		onTabChange?: (tab: 'conversation' | 'activity') => void;
-		threadItems?: ThreadItem[];
-		threadError?: string | null;
-		isLoadingThread?: boolean;
-		threadNextCursor?: string | null;
-		threadIsLoadingMore?: boolean;
-		threadLoadMoreError?: string | null;
-		onThreadLoadMore?: () => void;
-		activityFeed?: ActivityFeed | null;
-		activityError?: string | null;
-		isLoadingActivity?: boolean;
-		onActivityLoadMore?: (feed: ActivityFeed) => void;
-		children?: Snippet;
-	} = $props();
+		agent: Agent
+		activeTab?: 'conversation' | 'activity'
+		onTabChange?: (tab: 'conversation' | 'activity') => void
+		threadItems?: ThreadItem[]
+		threadError?: string | null
+		isLoadingThread?: boolean
+		threadNextCursor?: string | null
+		threadIsLoadingMore?: boolean
+		threadLoadMoreError?: string | null
+		onThreadLoadMore?: () => void
+		activityFeed?: ActivityFeed | null
+		activityError?: string | null
+		isLoadingActivity?: boolean
+		onActivityLoadMore?: (feed: ActivityFeed) => void
+		children?: Snippet
+	} = $props()
 </script>
 
 <Tooltip.Provider>
@@ -63,6 +63,8 @@
 		{isLoadingActivity}
 		{onActivityLoadMore}
 	>
-		{#if children}{@render children()}{/if}
+		{#if children}
+			{@render children()}
+		{/if}
 	</AgentShell>
 </Tooltip.Provider>

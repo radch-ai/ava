@@ -1,17 +1,17 @@
 <script lang="ts">
-	import * as Tooltip from '$components/ui/tooltip';
-	import AgentHeader from '$components/agent/AgentHeader.svelte';
-	import type { Agent } from '$lib/types/agent';
+	import AgentHeader from '$components/agent/AgentHeader.svelte'
+	import * as Tooltip from '$components/ui/tooltip'
+	import type { Agent } from '$lib/types/agent'
 
 	let {
 		agent,
 		activeTab,
 		onTabChange
 	}: {
-		agent: Agent;
-		activeTab?: 'conversation' | 'activity';
-		onTabChange?: (tab: 'conversation' | 'activity') => void;
-	} = $props();
+		agent: Agent
+		activeTab?: 'conversation' | 'activity'
+		onTabChange?: (tab: 'conversation' | 'activity') => void
+	} = $props()
 </script>
 
 <Tooltip.Provider>

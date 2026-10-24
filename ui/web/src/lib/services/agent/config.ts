@@ -1,14 +1,16 @@
-import { api } from '../api';
-import type { AgentConfiguration } from '$lib/types/agent';
+import type { AgentConfiguration } from '$lib/types/agent'
+import { api } from '../api'
 
 export interface CreateAgentResponse {
-	name: string;
+	name: string
 }
 
-const AGENT_PATH = 'user/agent';
+const AGENT_PATH = 'user/agent'
 
-export async function getAgentConfiguration(agentName: string): Promise<AgentConfiguration> {
-	return api.get(`${AGENT_PATH}/${agentName}`).json<AgentConfiguration>();
+export async function getAgentConfiguration(
+	agentName: string
+): Promise<AgentConfiguration> {
+	return api.get(`${AGENT_PATH}/${agentName}`).json<AgentConfiguration>()
 }
 
 export async function updateAgentConfiguration(
@@ -17,12 +19,12 @@ export async function updateAgentConfiguration(
 ): Promise<AgentConfiguration> {
 	const response = await api
 		.patch(`${AGENT_PATH}/${agentName}`, { json: configuration })
-		.json<{ data?: AgentConfiguration } | AgentConfiguration>();
+		.json<{ data?: AgentConfiguration } | AgentConfiguration>()
 
 	if (response && typeof response === 'object' && 'data' in response) {
-		return response.data as AgentConfiguration;
+		return response.data as AgentConfiguration
 	}
-	return response as AgentConfiguration;
+	return response as AgentConfiguration
 }
 
 export async function createAgent(
@@ -31,5 +33,5 @@ export async function createAgent(
 ): Promise<CreateAgentResponse> {
 	return api
 		.post(`${AGENT_PATH}/${agentName}`, { json: configuration })
-		.json<CreateAgentResponse>();
+		.json<CreateAgentResponse>()
 }

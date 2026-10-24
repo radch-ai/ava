@@ -3,8 +3,8 @@
  * @see https://lucide.dev/icons/
  */
 
-export type IconNode = [string, Record<string, string>][];
-export type IconName = keyof typeof WORKER_ICONS;
+export type IconNode = [string, Record<string, string>][]
+export type IconName = keyof typeof WORKER_ICONS
 
 export const WORKER_ICONS = {
 	// Communication
@@ -161,8 +161,16 @@ export const WORKER_ICONS = {
 		['path', { d: 'M16 17H8' }]
 	],
 	files: [
-		['path', { d: 'M15 2h-4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8' }],
-		['path', { d: 'M16.706 2.706A2.4 2.4 0 0 0 15 2v5a1 1 0 0 0 1 1h5a2.4 2.4 0 0 0-.706-1.706z' }],
+		[
+			'path',
+			{ d: 'M15 2h-4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8' }
+		],
+		[
+			'path',
+			{
+				d: 'M16.706 2.706A2.4 2.4 0 0 0 15 2v5a1 1 0 0 0 1 1h5a2.4 2.4 0 0 0-.706-1.706z'
+			}
+		],
 		['path', { d: 'M5 7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h8a2 2 0 0 0 1.732-1' }]
 	],
 	'folder-open': [
@@ -195,10 +203,20 @@ export const WORKER_ICONS = {
 		['line', { x1: '6', x2: '6.01', y1: '6', y2: '6' }],
 		['line', { x1: '6', x2: '6.01', y1: '18', y2: '18' }]
 	],
-	cloud: [['path', { d: 'M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z' }]],
+	cloud: [
+		['path', { d: 'M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z' }]
+	],
 	webhook: [
-		['path', { d: 'M18 16.98h-5.99c-1.1 0-1.95.94-2.48 1.9A4 4 0 0 1 2 17c.01-.7.2-1.4.57-2' }],
-		['path', { d: 'm6 17 3.13-5.78c.53-.97.1-2.18-.5-3.1a4 4 0 1 1 6.89-4.06' }],
+		[
+			'path',
+			{
+				d: 'M18 16.98h-5.99c-1.1 0-1.95.94-2.48 1.9A4 4 0 0 1 2 17c.01-.7.2-1.4.57-2'
+			}
+		],
+		[
+			'path',
+			{ d: 'm6 17 3.13-5.78c.53-.97.1-2.18-.5-3.1a4 4 0 1 1 6.89-4.06' }
+		],
 		['path', { d: 'm12 6 3.13 5.73C15.66 12.7 16.9 13 18 13a4 4 0 0 1 0 8' }]
 	],
 
@@ -225,7 +243,10 @@ export const WORKER_ICONS = {
 		['path', { d: 'M7 11V7a5 5 0 0 1 10 0v4' }]
 	],
 	key: [
-		['path', { d: 'm15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4' }],
+		[
+			'path',
+			{ d: 'm15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4' }
+		],
 		['path', { d: 'm21 2-9.6 9.6' }],
 		['circle', { cx: '7.5', cy: '15.5', r: '5.5' }]
 	],
@@ -308,7 +329,12 @@ export const WORKER_ICONS = {
 		['path', { d: 'm21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21' }]
 	],
 	video: [
-		['path', { d: 'm16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5' }],
+		[
+			'path',
+			{
+				d: 'm16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5'
+			}
+		],
 		['rect', { x: '2', y: '6', width: '14', height: '12', rx: '2' }]
 	],
 	'audio-lines': [
@@ -347,11 +373,17 @@ export const WORKER_ICONS = {
 		['path', { d: 'M12 19V5' }]
 	],
 	'chevron-right': [['path', { d: 'm9 18 6-6-6-6' }]]
-} as const satisfies Record<string, IconNode>;
+} as const satisfies Record<string, IconNode>
 
 // Icon categories for UI grouping (e.g., icon picker)
 export const ICON_CATEGORIES = {
-	communication: ['message-square', 'message-circle', 'mail', 'phone', 'headset'],
+	communication: [
+		'message-square',
+		'message-circle',
+		'mail',
+		'phone',
+		'headset'
+	],
 	ai: ['bot', 'brain', 'sparkles', 'zap', 'cpu', 'circuit-board', 'code'],
 	data: ['chart-column', 'chart-line', 'chart-bar', 'trending-up', 'database'],
 	files: ['file-text', 'files', 'folder-open', 'folder', 'pencil'],
@@ -363,7 +395,7 @@ export const ICON_CATEGORIES = {
 	media: ['image', 'video', 'audio-lines'],
 	time: ['clock', 'calendar', 'timer'],
 	navigation: ['arrow-right', 'arrow-up', 'chevron-right']
-} as const;
+} as const
 
 // Helper to get all icon names as array
-export const ALL_ICON_NAMES = Object.keys(WORKER_ICONS) as IconName[];
+export const ALL_ICON_NAMES = Object.keys(WORKER_ICONS) as IconName[]

@@ -1,40 +1,40 @@
 <script lang="ts">
-	import { Switch } from '$components/ui/switch';
-	import { Label } from '$components/ui/label';
-	import type { Tool } from '$lib/types/tool';
+	import { Label } from '$components/ui/label'
+	import { Switch } from '$components/ui/switch'
+	import type { Tool } from '$lib/types/tool'
 
 	interface Props {
 		/** All available tools */
-		tools: Tool[];
+		tools: Tool[]
 		/** IDs of enabled tools */
-		enabledToolIds: string[];
+		enabledToolIds: string[]
 	}
 
-	let { tools, enabledToolIds = $bindable() }: Props = $props();
+	let { tools, enabledToolIds = $bindable() }: Props = $props()
 
 	function toggleTool(toolId: string) {
 		if (enabledToolIds.includes(toolId)) {
-			enabledToolIds = enabledToolIds.filter((id) => id !== toolId);
+			enabledToolIds = enabledToolIds.filter((id) => id !== toolId)
 		} else {
-			enabledToolIds = [...enabledToolIds, toolId];
+			enabledToolIds = [...enabledToolIds, toolId]
 		}
 	}
 
 	function isToolEnabled(toolId: string): boolean {
-		return enabledToolIds.includes(toolId);
+		return enabledToolIds.includes(toolId)
 	}
 </script>
 
 <div class="space-y-4">
 	{#if tools.length === 0}
-		<p class="text-sm text-muted-foreground">
+		<p class="text-muted-foreground text-sm">
 			No tools available. Add tools to your account first.
 		</p>
 	{:else}
 		<div class="space-y-3">
 			{#each tools as tool (tool.id)}
 				<div
-					class="flex items-center justify-between rounded-lg border bg-muted/30 p-3"
+					class="bg-muted/30 flex items-center justify-between rounded-lg border p-3"
 					class:ring-2={isToolEnabled(tool.id)}
 					class:ring-primary={isToolEnabled(tool.id)}
 				>
@@ -43,7 +43,7 @@
 							{tool.name}
 						</Label>
 						{#if tool.description}
-							<p class="text-sm text-muted-foreground">{tool.description}</p>
+							<p class="text-muted-foreground text-sm">{tool.description}</p>
 						{/if}
 					</div>
 					<Switch

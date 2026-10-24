@@ -1,17 +1,22 @@
 <script lang="ts">
-	import { goto, beforeNavigate } from '$app/navigation';
-	import { resolve } from '$app/paths';
-	import type { BeforeNavigate } from '@sveltejs/kit';
-	import { Bot } from 'lucide-svelte';
-	import { AgentConfigEditor } from '$components/agentconfig';
-	import UnsavedChangesDialog from '$components/agentconfig/UnsavedChangesDialog.svelte';
-	import { createAgent } from '$lib/services/agent';
-	import { addAgent } from '$lib/user';
-	import { createDefaultWorkerConfiguration, type WorkerConfiguration } from '$lib/types/agent';
-	import type { IconName } from '$lib/icons';
+	import type { BeforeNavigate } from '@sveltejs/kit'
+	import { Bot } from 'lucide-svelte'
+	import { beforeNavigate, goto } from '$app/navigation'
+	import { resolve } from '$app/paths'
+	import { AgentConfigEditor } from '$components/agentconfig'
+	import UnsavedChangesDialog from '$components/agentconfig/UnsavedChangesDialog.svelte'
+	import type { IconName } from '$lib/icons'
+	import { createAgent } from '$lib/services/agent'
+	import {
+		createDefaultWorkerConfiguration,
+		type WorkerConfiguration
+	} from '$lib/types/agent'
+	import { addAgent } from '$lib/user'
 
-	let configuration = $state<WorkerConfiguration>(createDefaultWorkerConfiguration());
-	let hasChanges = $state(false);
+	let configuration = $state<WorkerConfiguration>(
+		createDefaultWorkerConfiguration()
+	)
+	let hasChanges = $state(false)
 
 	// ============================================================
 	// UNSAVED CHANGES NAVIGATION PROTECTION
@@ -28,16 +33,16 @@
 	//    beforeunload event (not our custom dialog).
 
 	// Flag to bypass protection when navigation is intentional
-	let isNavigating = $state(false);
+	let isNavigating = $state(false)
 
 	// State for navigation confirmation dialog
-	let showNavDialog = $state(false);
-	let pendingNavigation: BeforeNavigate | null = $state(null);
+	let showNavDialog = $state(false)
+	let pendingNavigation: BeforeNavigate | null = $state(null)
 
 	// Browser-level protection: Shows native browser dialog on refresh/close
 	function handleBeforeUnload(e: BeforeUnloadEvent) {
 		if (hasChanges && !isNavigating) {
-			e.preventDefault();
+			e.preventDefault()
 		}
 	}
 
@@ -45,26 +50,26 @@
 	// 'leave' type = browser refresh/close, handled by beforeunload above
 	beforeNavigate((navigation) => {
 		if (hasChanges && !isNavigating && navigation.type !== 'leave') {
-			navigation.cancel();
-			pendingNavigation = navigation;
-			showNavDialog = true;
+			navigation.cancel()
+			pendingNavigation = navigation
+			showNavDialog = true
 		}
-	});
+	})
 
 	function handleNavKeepEditing() {
-		showNavDialog = false;
-		pendingNavigation = null;
+		showNavDialog = false
+		pendingNavigation = null
 	}
 
 	function handleNavDiscard() {
-		showNavDialog = false;
+		showNavDialog = false
 		if (pendingNavigation?.to?.url) {
-			isNavigating = true;
-			const url = pendingNavigation.to.url;
+			isNavigating = true
+			const url = pendingNavigation.to.url
 			// @ts-expect-error - Dynamic route not typed
-			goto(resolve(url.pathname + url.search));
+			goto(resolve(url.pathname + url.search))
 		}
-		pendingNavigation = null;
+		pendingNavigation = null
 	}
 
 	// ============================================================
@@ -72,27 +77,30 @@
 	// ============================================================
 
 	function handleCancel() {
-		isNavigating = true;
-		history.back();
+		isNavigating = true
+		history.back()
 	}
 
 	async function handleSave(config: WorkerConfiguration) {
-		const name = config.name.trim();
-		if (!name) return;
+		const name = config.name.trim()
+		if (!name) return
 
 		try {
 			// Generate agent name from display name (lowercase, replace spaces with dashes)
 			const agentName = name
 				.toLowerCase()
 				.replace(/[^a-z0-9]+/g, '-')
-				.replace(/^-+|-+$/g, '');
+				.replace(/^-+|-+$/g, '')
 
-			const createdAgent = await createAgent(agentName, config);
-			addAgent({ name: createdAgent.name, icon: (config.icon ?? 'bot') as IconName });
-			isNavigating = true;
-			await goto(resolve(`/agent/${createdAgent.name}`));
+			const createdAgent = await createAgent(agentName, config)
+			addAgent({
+				name: createdAgent.name,
+				icon: (config.icon ?? 'bot') as IconName
+			})
+			isNavigating = true
+			await goto(resolve(`/agent/${createdAgent.name}`))
 		} catch (error) {
-			console.error('Failed to create agent:', error);
+			console.error('Failed to create agent:', error)
 		}
 	}
 </script>

@@ -1,35 +1,35 @@
 <script lang="ts">
-	import { ArrowUp, Plus } from 'lucide-svelte';
-	import { Button } from '$components/ui/button';
-	import { Textarea } from '$components/ui/textarea';
+	import { ArrowUp, Plus } from 'lucide-svelte'
+	import { Button } from '$components/ui/button'
+	import { Textarea } from '$components/ui/textarea'
 
-	let { onsubmit }: { onsubmit?: () => void } = $props();
+	let { onsubmit }: { onsubmit?: () => void } = $props()
 
-	let input = $state('');
-	let isSendButtonDisabled = $derived(input.trim() === '');
+	let input = $state('')
+	let isSendButtonDisabled = $derived(input.trim() === '')
 
 	function handleKeydown(event: KeyboardEvent) {
 		if (event.key === 'Enter' && !event.shiftKey) {
-			handleSubmit(event);
+			handleSubmit(event)
 		}
 	}
 
 	function handleSubmit(e: KeyboardEvent | MouseEvent) {
-		e.preventDefault();
+		e.preventDefault()
 		if (input.trim()) {
-			onsubmit?.();
-			input = '';
+			onsubmit?.()
+			input = ''
 		}
 	}
 
 	function handleAttach() {
 		// TODO: Implement file attachment (images, documents)
-		console.log('Attach file');
+		console.log('Attach file')
 	}
 </script>
 
 <!-- Horizontal layout: + button | textarea | send button -->
-<div class="flex items-end rounded-3xl bg-overlay-dark/70 transition-colors">
+<div class="bg-overlay-dark/70 flex items-end rounded-3xl transition-colors">
 	<Button
 		size="icon"
 		variant="ghost"

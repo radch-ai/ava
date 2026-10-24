@@ -1,8 +1,8 @@
-export { getAgents } from './agents';
-export type { Agent } from '$lib/types/agent';
+export type { Agent } from '$lib/types/agent'
+export { getAgents } from './agents'
 export {
 	getSuperagentThread,
 	mergePastSuperagentThread,
-	type SuperagentThreadMessage,
-	type SuperagentThread
-} from './superagent-thread';
+	type SuperagentThread,
+	type SuperagentThreadMessage
+} from './superagent-thread'

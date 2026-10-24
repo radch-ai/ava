@@ -1,67 +1,67 @@
 <script lang="ts">
-	import { Button } from '$components/ui/button';
-	import { Input } from '$components/ui/input';
-	import { Textarea } from '$components/ui/textarea';
-	import * as Select from '$components/ui/select';
-	import { Plus, Pencil, X } from 'lucide-svelte';
-	import type { CronJob } from '$lib/types/agent';
-	import ModelSelector from '$components/ModelSelector.svelte';
-	import { defaultModel } from '$lib/models';
+	import { Pencil, Plus, X } from 'lucide-svelte'
+	import ModelSelector from '$components/ModelSelector.svelte'
+	import { Button } from '$components/ui/button'
+	import { Input } from '$components/ui/input'
+	import * as Select from '$components/ui/select'
+	import { Textarea } from '$components/ui/textarea'
+	import { defaultModel } from '$lib/models'
+	import type { CronJob } from '$lib/types/agent'
 
-	type Frequency = CronJob['frequency'];
+	type Frequency = CronJob['frequency']
 
 	interface Props {
-		jobs: CronJob[];
+		jobs: CronJob[]
 	}
 
-	let { jobs = $bindable([]) }: Props = $props();
+	let { jobs = $bindable([]) }: Props = $props()
 
 	// Editor state
-	let editingId = $state<string | null>(null);
-	let isAddingNew = $state(false);
+	let editingId = $state<string | null>(null)
+	let isAddingNew = $state(false)
 
 	// Form state with defaults
-	const DEFAULT_TIME = '09:00';
-	const DEFAULT_FREQUENCY: Frequency = 'daily';
+	const DEFAULT_TIME = '09:00'
+	const DEFAULT_FREQUENCY: Frequency = 'daily'
 
-	let editTime = $state(DEFAULT_TIME);
-	let editFrequency = $state<Frequency>(DEFAULT_FREQUENCY);
-	let editCronExpression = $state('');
-	let editModel = $state(defaultModel);
-	let editPrompt = $state('');
+	let editTime = $state(DEFAULT_TIME)
+	let editFrequency = $state<Frequency>(DEFAULT_FREQUENCY)
+	let editCronExpression = $state('')
+	let editModel = $state(defaultModel)
+	let editPrompt = $state('')
 
 	// Reset form to defaults
 	function resetForm() {
-		editTime = DEFAULT_TIME;
-		editFrequency = DEFAULT_FREQUENCY;
-		editCronExpression = '';
-		editModel = defaultModel;
-		editPrompt = '';
+		editTime = DEFAULT_TIME
+		editFrequency = DEFAULT_FREQUENCY
+		editCronExpression = ''
+		editModel = defaultModel
+		editPrompt = ''
 	}
 
 	// Start adding new job
 	function startAdd() {
-		editingId = null;
-		isAddingNew = true;
-		resetForm();
+		editingId = null
+		isAddingNew = true
+		resetForm()
 	}
 
 	// Start editing existing job
 	function startEdit(job: CronJob) {
-		editingId = job.id;
-		isAddingNew = false;
-		editTime = job.time;
-		editFrequency = job.frequency;
-		editCronExpression = job.cronExpression ?? '';
-		editModel = job.model || defaultModel;
-		editPrompt = job.prompt;
+		editingId = job.id
+		isAddingNew = false
+		editTime = job.time
+		editFrequency = job.frequency
+		editCronExpression = job.cronExpression ?? ''
+		editModel = job.model || defaultModel
+		editPrompt = job.prompt
 	}
 
 	// Cancel editing
 	function cancelEdit() {
-		editingId = null;
-		isAddingNew = false;
-		resetForm();
+		editingId = null
+		isAddingNew = false
+		resetForm()
 	}
 
 	// Build cron job from current form state
@@ -70,60 +70,71 @@
 			id: editingId ?? crypto.randomUUID(),
 			time: editTime,
 			frequency: editFrequency,
-			cronExpression: editFrequency === 'custom' ? editCronExpression.trim() : undefined,
+			cronExpression:
+				editFrequency === 'custom' ? editCronExpression.trim() : undefined,
 			model: editModel,
 			prompt: editPrompt.trim()
-		};
+		}
 	}
 
 	// Save job
 	function saveJob() {
-		if (!editPrompt.trim()) return;
-		if (editFrequency === 'custom' && !editCronExpression.trim()) return;
+		if (!editPrompt.trim()) return
+		if (editFrequency === 'custom' && !editCronExpression.trim()) return
 
-		const job = buildCronJob();
+		const job = buildCronJob()
 		if (isAddingNew) {
-			jobs = [...jobs, job];
+			jobs = [...jobs, job]
 		} else {
-			jobs = jobs.map((j) => (j.id === job.id ? job : j));
+			jobs = jobs.map((j) => (j.id === job.id ? job : j))
 		}
-		cancelEdit();
+		cancelEdit()
 	}
 
 	// Delete job
 	function handleDelete(id: string) {
-		jobs = jobs.filter((j) => j.id !== id);
+		jobs = jobs.filter((j) => j.id !== id)
 	}
 
 	// Derived state
 	let canSave = $derived(
 		editPrompt.trim().length > 0 &&
 			(editFrequency !== 'custom' || editCronExpression.trim().length > 0)
-	);
-	let isEditing = $derived(isAddingNew || editingId !== null);
+	)
+	let isEditing = $derived(isAddingNew || editingId !== null)
 </script>
 
 <div class="space-y-3">
 	{#if !isEditing}
-		<p class="text-sm text-muted-foreground">
+		<p class="text-muted-foreground text-sm">
 			Add scheduled prompts that will be sent automatically at specified times.
 		</p>
 		<!-- List of existing jobs -->
 		{#if jobs.length === 0}
-			<p class="text-sm text-muted-foreground">No scheduled prompts yet. Add one to get started.</p>
+			<p class="text-muted-foreground text-sm">
+				No scheduled prompts yet. Add one to get started.
+			</p>
 		{:else}
 			<div class="space-y-2">
 				{#each jobs as job (job.id)}
-					<div class="flex items-center gap-3 rounded-lg border bg-muted/30 p-3 text-sm">
-						<span class="font-mono text-xs text-muted-foreground">{job.time}</span>
-						<span class="rounded bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary">
-							{job.frequency === 'custom' ? (job.cronExpression ?? 'custom') : job.frequency}
+					<div
+						class="bg-muted/30 flex items-center gap-3 rounded-lg border p-3 text-sm"
+					>
+						<span class="text-muted-foreground font-mono text-xs"
+							>{job.time}</span
+						>
+						<span
+							class="bg-primary/10 text-primary rounded px-1.5 py-0.5 text-xs font-medium"
+						>
+							{job.frequency === 'custom'
+								? (job.cronExpression ?? 'custom')
+								: job.frequency}
 						</span>
 						<span class="flex-1 truncate">{job.prompt}</span>
 						<div class="flex gap-1">
 							<button
 								type="button"
-								class="rounded p-1 hover:bg-accent/10"
+								class="hover:bg-accent/10 rounded p-1"
 								onclick={() => startEdit(job)}
 								aria-label="Edit"
 							>
@@ -131,7 +142,7 @@
 							</button>
 							<button
 								type="button"
-								class="rounded p-1 hover:bg-destructive/10"
+								class="hover:bg-destructive/10 rounded p-1"
 								onclick={() => handleDelete(job.id)}
 								aria-label="Delete"
 							>
@@ -150,10 +161,12 @@
 		</Button>
 	{:else}
 		<!-- Inline editor -->
-		<div class="space-y-3 rounded-lg border bg-muted/20 p-4">
+		<div class="bg-muted/20 space-y-3 rounded-lg border p-4">
 			<div class="grid grid-cols-2 gap-3">
 				<div>
-					<label for="cron-time" class="mb-1.5 block text-sm font-medium">Time</label>
+					<label for="cron-time" class="mb-1.5 block text-sm font-medium"
+						>Time</label
+					>
 					<Input
 						id="cron-time"
 						type="time"
@@ -164,7 +177,9 @@
 					/>
 				</div>
 				<div>
-					<label for="cron-frequency" class="mb-1.5 block text-sm font-medium">Frequency</label>
+					<label for="cron-frequency" class="mb-1.5 block text-sm font-medium"
+						>Frequency</label
+					>
 					<Select.Root
 						type="single"
 						value={editFrequency}
@@ -183,7 +198,9 @@
 			</div>
 
 			<div>
-				<label for="cron-model" class="mb-1.5 block text-sm font-medium">Model</label>
+				<label for="cron-model" class="mb-1.5 block text-sm font-medium"
+					>Model</label
+				>
 				<ModelSelector bind:value={editModel} />
 			</div>
 
@@ -200,17 +217,18 @@
 						class="font-mono"
 						aria-label="Cron Expression"
 					/>
-					<p class="mt-1 text-xs text-muted-foreground">
-						Format: minute hour day-of-month month day-of-week (e.g., <code class="font-mono"
-							>0 9 * * 1-5</code
-						>
+					<p class="text-muted-foreground mt-1 text-xs">
+						Format: minute hour day-of-month month day-of-week (e.g.,
+						<code class="font-mono">0 9 * * 1-5</code>
 						for weekdays at 9am)
 					</p>
 				</div>
 			{/if}
 
 			<div>
-				<label for="cron-prompt" class="mb-1.5 block text-sm font-medium">Prompt</label>
+				<label for="cron-prompt" class="mb-1.5 block text-sm font-medium"
+					>Prompt</label
+				>
 				<Textarea
 					id="cron-prompt"
 					value={editPrompt}

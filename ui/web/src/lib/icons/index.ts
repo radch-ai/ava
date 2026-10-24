@@ -1,9 +1,9 @@
 // Re-export everything for convenient imports
-export { default as Icon } from './Icon.svelte';
+export { default as Icon } from './Icon.svelte'
 export {
-	WORKER_ICONS,
-	ICON_CATEGORIES,
 	ALL_ICON_NAMES,
+	ICON_CATEGORIES,
 	type IconName,
-	type IconNode
-} from './worker-icons';
+	type IconNode,
+	WORKER_ICONS
+} from './worker-icons'

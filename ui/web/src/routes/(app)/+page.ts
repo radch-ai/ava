@@ -1,17 +1,18 @@
-import type { PageLoad } from './$types';
-import { getSuperagentThread, type SuperagentThread } from '$lib/services/user';
+import { getSuperagentThread, type SuperagentThread } from '$lib/services/user'
+import type { PageLoad } from './$types'
 
 interface PageLoadResult {
-	thread: SuperagentThread | null;
-	threadError: string | null;
+	thread: SuperagentThread | null
+	threadError: string | null
 }
 
 export const load: PageLoad<PageLoadResult> = async () => {
 	try {
-		const thread = await getSuperagentThread();
-		return { thread, threadError: null };
+		const thread = await getSuperagentThread()
+		return { thread, threadError: null }
 	} catch (error) {
-		const threadError = error instanceof Error ? error.message : 'Failed to load conversation';
-		return { thread: null, threadError };
+		const threadError =
+			error instanceof Error ? error.message : 'Failed to load conversation'
+		return { thread: null, threadError }
 	}
-};
+}

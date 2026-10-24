@@ -1,3 +1,1 @@
-import { authStore } from './store.svelte';
-
-export { authStore, AuthStore } from './store.svelte';
+export { AuthStore, authStore } from './store.svelte'

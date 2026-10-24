@@ -1,52 +1,51 @@
 <script lang="ts">
-	import { Settings } from 'lucide-svelte';
-	import { AgentConfigSheet } from '$components/agentconfig';
-	import { Button, buttonVariants } from '$components/ui/button';
-	import * as Tooltip from '$components/ui/tooltip';
-	import { getAgentConfiguration } from '$lib/services/agent';
-	import { Icon } from '$lib/icons';
-	import { SUPERAGENT_NAME } from '$lib/config';
-	import type { Agent } from '$lib/types/agent';
-	import type { AgentConfiguration } from '$lib/types/agent';
-	import type { Tool } from '$lib/types/tool';
+	import { Settings } from 'lucide-svelte'
+	import { AgentConfigSheet } from '$components/agentconfig'
+	import { Button, buttonVariants } from '$components/ui/button'
+	import * as Tooltip from '$components/ui/tooltip'
+	import { SUPERAGENT_NAME } from '$lib/config'
+	import { Icon } from '$lib/icons'
+	import { getAgentConfiguration } from '$lib/services/agent'
+	import type { Agent, AgentConfiguration } from '$lib/types/agent'
+	import type { Tool } from '$lib/types/tool'
 
 	let {
 		agent,
 		activeTab,
 		onTabChange
 	}: {
-		agent: Agent;
-		activeTab?: 'conversation' | 'activity';
-		onTabChange?: (tab: 'conversation' | 'activity') => void;
-	} = $props();
+		agent: Agent
+		activeTab?: 'conversation' | 'activity'
+		onTabChange?: (tab: 'conversation' | 'activity') => void
+	} = $props()
 
-	let configSheetOpen = $state(false);
-	let configuration = $state<AgentConfiguration>();
-	let isLoading = $state(false);
+	let configSheetOpen = $state(false)
+	let configuration = $state<AgentConfiguration>()
+	let isLoading = $state(false)
 
 	function handleTabChange(tab: 'conversation' | 'activity') {
 		// Only call onTabChange if switching to a different tab (idempotency)
 		if (activeTab !== tab && onTabChange) {
-			onTabChange(tab);
+			onTabChange(tab)
 		}
 	}
 
 	// TODO: Fetch available tools from API
-	const availableTools: Tool[] = [];
+	const availableTools: Tool[] = []
 
 	async function openSettings() {
 		if (!configuration && !isLoading) {
-			isLoading = true;
+			isLoading = true
 			try {
-				configuration = await getAgentConfiguration(agent.name);
+				configuration = await getAgentConfiguration(agent.name)
 			} catch {
 				// API unreachable - ky logs to console
 			} finally {
-				isLoading = false;
+				isLoading = false
 			}
 		}
 		if (configuration) {
-			configSheetOpen = true;
+			configSheetOpen = true
 		}
 	}
 </script>
@@ -58,10 +57,12 @@
 	</div>
 	<div class="flex items-center gap-6">
 		<div class="flex items-center gap-2">
-			{#if agent.name === SUPERAGENT_NAME.toLowerCase() && activeTab && onTabChange}
+			{#if agent.name === SUPERAGENT_NAME.toLowerCase() &&
+				activeTab &&
+				onTabChange}
 				<!-- Tabs for superagent -->
 				<div role="tablist" class="ml-4 flex gap-4">
-					{#each ['conversation', 'activity'] as tab ('tab-' + tab)}
+					{#each ['conversation', 'activity'] as tab (`tab-${tab}`)}
 						<Button
 							variant="link"
 							size="sm"
@@ -72,8 +73,9 @@
 							disabled={activeTab === tab}
 							class={activeTab === tab
 								? 'disabled:text-foreground disabled:opacity-100'
-								: 'cursor-pointer text-muted-foreground hover:text-primary'}
-							onclick={() => handleTabChange(tab as 'conversation' | 'activity')}
+								: 'text-muted-foreground hover:text-primary cursor-pointer'}
+							onclick={() =>
+								handleTabChange(tab as 'conversation' | 'activity')}
 						>
 							{tab.charAt(0).toUpperCase() + tab.slice(1)}
 						</Button>

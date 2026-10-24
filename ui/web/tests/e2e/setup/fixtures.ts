@@ -4,8 +4,8 @@
  * Re-exports the base Playwright test so specs share a single import point.
  */
 
-import { test as base } from '@playwright/test';
+import { test as base } from '@playwright/test'
 
-export const test = base;
+export const test = base
 
-export { expect } from '@playwright/test';
+export { expect } from '@playwright/test'

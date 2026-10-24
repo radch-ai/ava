@@ -1,25 +1,25 @@
-import type { LayoutLoad } from './$types';
-import { authStore } from '$lib/auth';
-import { getAgents } from '$lib/services/user';
-import { setAgents } from '$lib/user';
+import { authStore } from '$lib/auth'
+import { getAgents } from '$lib/services/user'
+import { setAgents } from '$lib/user'
+import type { LayoutLoad } from './$types'
 
 export const load: LayoutLoad = async () => {
-	await authStore.initialize();
+	await authStore.initialize()
 	if (!authStore.isAuthenticated) {
 		// No session — the layout guard sends the user to login; skip the
 		// agent list, which would just 401.
-		return { agentsError: null };
+		return { agentsError: null }
 	}
 
-	let agentsError: string | null = null;
+	let agentsError: string | null = null
 
 	try {
-		const agents = await getAgents();
-		setAgents(agents);
+		const agents = await getAgents()
+		setAgents(agents)
 	} catch (e) {
-		setAgents([]);
-		agentsError = e instanceof Error ? e.message : 'Failed to load agents';
+		setAgents([])
+		agentsError = e instanceof Error ? e.message : 'Failed to load agents'
 	}
 
-	return { agentsError };
-};
+	return { agentsError }
+}

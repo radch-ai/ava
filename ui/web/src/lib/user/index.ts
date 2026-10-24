@@ -1,1 +1,1 @@
-export * from './agents.svelte';
+export * from './agents.svelte'

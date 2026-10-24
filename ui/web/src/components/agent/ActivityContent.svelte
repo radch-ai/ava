@@ -1,8 +1,8 @@
 <script lang="ts">
-	import type { AgentActivityItem } from '$lib/services/agent';
-	import { formatRelativeTime } from '$lib/utils/date';
+	import type { AgentActivityItem } from '$lib/services/agent'
+	import { formatRelativeTime } from '$lib/utils/date'
 
-	let { items }: { items: AgentActivityItem[] } = $props();
+	let { items }: { items: AgentActivityItem[] } = $props()
 </script>
 
 {#each items as activity (activity.id)}
@@ -15,7 +15,7 @@
 				: 'border-l-primary bg-overlay-dark/70 hover:bg-overlay-dark/90'}"
 	>
 		<div class="flex items-start justify-between gap-3">
-			<p class="text-sm text-muted-foreground">
+			<p class="text-muted-foreground text-sm">
 				{activity.triggeredBy} <span class="mx-1 opacity-50">•</span>
 				{formatRelativeTime(activity.createdAt)}
 			</p>
@@ -32,21 +32,23 @@
 						<span
 							class="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-500 opacity-75"
 						></span>
-						<span class="relative inline-flex size-2 rounded-full bg-amber-500"></span>
+						<span
+							class="relative inline-flex size-2 rounded-full bg-amber-500"
+						></span>
 					</span>
 				{:else if activity.status === 'failed'}
-					<span class="size-1.5 rounded-full bg-destructive"></span>
+					<span class="bg-destructive size-1.5 rounded-full"></span>
 				{:else}
-					<span class="size-1.5 rounded-full bg-primary"></span>
+					<span class="bg-primary size-1.5 rounded-full"></span>
 				{/if}
 				{activity.status}
 			</div>
 		</div>
-		<p class="mt-2 text-sm font-medium text-foreground/90">
+		<p class="text-foreground/90 mt-2 text-sm font-medium">
 			{activity.action}
 		</p>
 		{#if activity.message}
-			<p class="mt-1 text-sm whitespace-pre-wrap text-foreground/80">
+			<p class="text-foreground/80 mt-1 text-sm whitespace-pre-wrap">
 				{activity.message}
 			</p>
 		{/if}

@@ -1,29 +1,29 @@
 <script lang="ts">
-	import type { PageData } from './$types';
-	import { SUPERAGENT_NAME } from '$lib/config';
-	import AgentShell from '$components/agent/AgentShell.svelte';
-	import { ArrowRight } from 'lucide-svelte';
-	import { Button } from '$components/ui/button';
-	import { resolve } from '$app/paths';
-	import type { ActivityFeed } from '$lib/services/agent';
+	import { ArrowRight } from 'lucide-svelte'
+	import { resolve } from '$app/paths'
+	import AgentShell from '$components/agent/AgentShell.svelte'
+	import { Button } from '$components/ui/button'
+	import { SUPERAGENT_NAME } from '$lib/config'
+	import type { ActivityFeed } from '$lib/services/agent'
+	import type { PageData } from './$types'
 
-	let { data }: { data: PageData } = $props();
+	let { data }: { data: PageData } = $props()
 
-	let activityFeed = $state<ActivityFeed | null>(null);
-	let activityError = $state<string | null>(null);
+	let activityFeed = $state<ActivityFeed | null>(null)
+	let activityError = $state<string | null>(null)
 
 	$effect(() => {
-		activityFeed = data.activityFeed;
-		activityError = data.activityError;
-	});
+		activityFeed = data.activityFeed
+		activityError = data.activityError
+	})
 
 	const ctaHref = $derived(
 		`${resolve('/')}?prompt=${encodeURIComponent(`Use the ${data.agent.label} agent to...`)}`
-	);
+	)
 
 	function handleActivityLoadMore(feed: ActivityFeed) {
-		activityFeed = feed;
-		activityError = null;
+		activityFeed = feed
+		activityError = null
 	}
 </script>
 
@@ -36,7 +36,7 @@
 	<div class="mx-auto max-w-[var(--content-max-width)]">
 		<Button
 			href={ctaHref}
-			class="w-full rounded-3xl bg-overlay-dark/70 py-6 text-foreground hover:bg-overlay-light"
+			class="bg-overlay-dark/70 text-foreground hover:bg-overlay-light w-full rounded-3xl py-6"
 			variant="outline"
 		>
 			Ask {SUPERAGENT_NAME} about this agent

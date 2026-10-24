@@ -1,12 +1,12 @@
 <script lang="ts">
-	import { Textarea } from '$components/ui/textarea';
-	import { SOUL_FIELD_CONFIGS, type SoulConfig } from '$lib/types/agent';
+	import { Textarea } from '$components/ui/textarea'
+	import { SOUL_FIELD_CONFIGS, type SoulConfig } from '$lib/types/agent'
 
 	interface Props {
-		soul: SoulConfig;
+		soul: SoulConfig
 	}
 
-	let { soul = $bindable() }: Props = $props();
+	let { soul = $bindable() }: Props = $props()
 </script>
 
 <div class="space-y-4">
@@ -14,7 +14,7 @@
 		<label for="soul-personality" class="mb-2 block text-sm font-medium"
 			>{SOUL_FIELD_CONFIGS.personality.label}</label
 		>
-		<p class="mb-2 text-sm text-muted-foreground">
+		<p class="text-muted-foreground mb-2 text-sm">
 			{SOUL_FIELD_CONFIGS.personality.description}
 		</p>
 		<Textarea
@@ -29,7 +29,7 @@
 		<label for="soul-identity" class="mb-2 block text-sm font-medium"
 			>{SOUL_FIELD_CONFIGS.identity.label}</label
 		>
-		<p class="mb-2 text-sm text-muted-foreground">
+		<p class="text-muted-foreground mb-2 text-sm">
 			{SOUL_FIELD_CONFIGS.identity.description}
 		</p>
 		<Textarea

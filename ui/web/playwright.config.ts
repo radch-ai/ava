@@ -1,9 +1,9 @@
-import 'dotenv/config';
-import { defineConfig } from '@playwright/test';
+import 'dotenv/config'
+import { defineConfig } from '@playwright/test'
 
-const backendApiUrl = process.env.E2E_BACKEND_API_URL || 'http://127.0.0.1:8080';
-const chromiumWsUrl = process.env.TEST_CHROMIUM_WS_URL || 'ws://127.0.0.1:9223';
-const baseUrl = process.env.E2E_APP_BASE_URL || 'http://127.0.0.1:4173';
+const backendApiUrl = process.env.E2E_BACKEND_API_URL || 'http://127.0.0.1:8080'
+const chromiumWsUrl = process.env.TEST_CHROMIUM_WS_URL || 'ws://127.0.0.1:9223'
+const baseUrl = process.env.E2E_APP_BASE_URL || 'http://127.0.0.1:4173'
 
 export default defineConfig({
 	webServer: {
@@ -22,4 +22,4 @@ export default defineConfig({
 			wsEndpoint: chromiumWsUrl
 		}
 	}
-});
+})

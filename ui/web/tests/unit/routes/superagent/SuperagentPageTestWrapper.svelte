@@ -1,21 +1,22 @@
 <script lang="ts">
-	import * as Tooltip from '$components/ui/tooltip';
-	import SuperagentPage from '$routes/+page.svelte';
-	import type { SuperagentThread } from '$lib/services/user';
-	import type { Agent } from '$lib/types/agent';
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	type AnyComponent = any;
+	import type { Component } from 'svelte'
+	import * as Tooltip from '$components/ui/tooltip'
+	import type { SuperagentThread } from '$lib/services/user'
+	import type { Agent } from '$lib/types/agent'
+	import SuperagentPage from '$routes/+page.svelte'
 
 	interface TestPageData {
-		agents: Agent[];
-		thread: SuperagentThread | null;
-		threadError: string | null;
+		agents: Agent[]
+		thread: SuperagentThread | null
+		threadError: string | null
 	}
 
-	let { data }: { data: TestPageData } = $props();
+	let { data }: { data: TestPageData } = $props()
 
-	// Cast SuperagentPage to accept any data prop for testing purposes
-	const TestSuperagentPage = SuperagentPage as unknown as AnyComponent;
+	// page's real data prop is wider than TestPageData; cast for test rendering
+	const TestSuperagentPage = SuperagentPage as unknown as Component<{
+		data: TestPageData
+	}>
 </script>
 
 <Tooltip.Provider>

@@ -10,8 +10,8 @@
  * At runtime: SELECT * FROM user_tools WHERE id = ANY(agent.tools_enabled)
  */
 
-import { SUPERAGENT_NAME } from '$lib/config';
-import { ALL_ICON_NAMES, type IconName } from '$lib/icons';
+import { SUPERAGENT_NAME } from '$lib/config'
+import { ALL_ICON_NAMES, type IconName } from '$lib/icons'
 
 // ============================================================================
 // RUNTIME AGENT TYPE (for UI routing)
@@ -21,9 +21,9 @@ import { ALL_ICON_NAMES, type IconName } from '$lib/icons';
  * Agent displayed in UI - uses icon name string for flexibility
  */
 export interface Agent {
-	name: string;
-	label: string;
-	icon: IconName;
+	name: string
+	label: string
+	icon: IconName
 }
 
 /**
@@ -33,7 +33,7 @@ export const SUPERAGENT_AGENT: Agent = {
 	name: SUPERAGENT_NAME.toLowerCase(),
 	label: `Chat with ${SUPERAGENT_NAME}`,
 	icon: 'message-square'
-};
+}
 
 // ============================================================================
 // SEPARATE TABLE ENTITIES
@@ -43,24 +43,24 @@ export const SUPERAGENT_AGENT: Agent = {
  * Heartbeat configuration (stored in separate heartbeat table)
  */
 export interface HeartbeatConfig {
-	id?: string;
-	model: string;
-	enabled: boolean;
-	duration: '30m' | '1hr' | '2hr';
-	content: string;
+	id?: string
+	model: string
+	enabled: boolean
+	duration: '30m' | '1hr' | '2hr'
+	content: string
 }
 
 /**
  * Cron job item (stored in separate cron table)
  */
 export interface CronJob {
-	id: string;
-	time: string;
-	frequency: 'daily' | 'weekly' | 'custom';
+	id: string
+	time: string
+	frequency: 'daily' | 'weekly' | 'custom'
 	/** Custom cron expression (used when frequency is 'custom') */
-	cronExpression?: string;
-	model: string;
-	prompt: string;
+	cronExpression?: string
+	model: string
+	prompt: string
 }
 
 // ============================================================================
@@ -73,9 +73,9 @@ export interface CronJob {
  */
 export interface SoulConfig {
 	/** Personality traits and behavioral characteristics */
-	personality: string;
+	personality: string
 	/** Identity definition and core characteristics */
-	identity: string;
+	identity: string
 }
 
 // ============================================================================
@@ -87,40 +87,40 @@ export interface SoulConfig {
  */
 export interface AgentConfigBase {
 	/** Display name for the agent */
-	name: string;
+	name: string
 	/** Icon for the agent (from worker-icons set) */
-	icon?: string;
+	icon?: string
 	/** Agent personality/identity (stored as JSONB) */
-	soul: SoulConfig;
+	soul: SoulConfig
 	/** Operating rules, priorities, and behavioral guidelines */
-	operatingInstructions: string;
+	operatingInstructions: string
 	/** Notes about local tools, conventions, and integrations */
-	toolsContext: string;
+	toolsContext: string
 	/** Array of tool IDs that this agent can use */
-	toolsEnabled: string[];
+	toolsEnabled: string[]
 }
 
 /**
  * superagent agent configuration (includes heartbeat and cron job references)
  */
 export interface SuperagentConfiguration extends AgentConfigBase {
-	heartbeat?: HeartbeatConfig;
-	cronJobs: CronJob[];
+	heartbeat?: HeartbeatConfig
+	cronJobs: CronJob[]
 	/** Information about the user and their preferences */
-	userContext: string;
+	userContext: string
 }
 
 /**
  * Worker agent configuration
  */
 export interface WorkerConfiguration extends AgentConfigBase {
-	heartbeat?: HeartbeatConfig;
+	heartbeat?: HeartbeatConfig
 }
 
 /**
  * Union type for all agent configurations
  */
-export type AgentConfiguration = SuperagentConfiguration | WorkerConfiguration;
+export type AgentConfiguration = SuperagentConfiguration | WorkerConfiguration
 
 // ============================================================================
 // FIELD CONFIGS FOR UI
@@ -130,9 +130,9 @@ export type AgentConfiguration = SuperagentConfiguration | WorkerConfiguration;
  * Field configuration for UI rendering
  */
 export interface FieldConfig {
-	label: string;
-	description: string;
-	placeholder: string;
+	label: string
+	description: string
+	placeholder: string
 }
 
 /**
@@ -149,7 +149,7 @@ export const SOUL_FIELD_CONFIGS: Record<keyof SoulConfig, FieldConfig> = {
 		description: 'Core identity and defining characteristics',
 		placeholder: 'Define the core identity and what makes this agent unique...'
 	}
-};
+}
 
 /**
  * Field configs for agent configuration form
@@ -173,12 +173,14 @@ export const FIELD_CONFIGS: Record<string, FieldConfig> = {
 	userContext: {
 		label: 'User Context',
 		description: 'Information about who you are and your preferences',
-		placeholder: 'Describe who you are, your role, and how you prefer to communicate...'
+		placeholder:
+			'Describe who you are, your role, and how you prefer to communicate...'
 	},
 	operatingInstructions: {
 		label: 'Operating Instructions',
 		description: 'Operating rules, priorities, and behavioral guidelines',
-		placeholder: "Define operating rules, priorities, and do/don't guidelines..."
+		placeholder:
+			"Define operating rules, priorities, and do/don't guidelines..."
 	},
 	toolsContext: {
 		label: 'Tools Context',
@@ -200,7 +202,7 @@ export const FIELD_CONFIGS: Record<string, FieldConfig> = {
 		description: 'Add scheduled prompts that run at specified times',
 		placeholder: ''
 	}
-};
+}
 
 /**
  * Field display order for each agent type
@@ -224,13 +226,14 @@ export const AGENT_FIELDS = {
 		'toolsEnabled',
 		'heartbeat'
 	] as const
-};
+}
 
 /**
  * All possible configuration field names (union of all agent types)
  */
 export type ConfigFieldName =
-	(typeof AGENT_FIELDS.superagent)[number] | (typeof AGENT_FIELDS.worker)[number];
+	| (typeof AGENT_FIELDS.superagent)[number]
+	| (typeof AGENT_FIELDS.worker)[number]
 
 // ============================================================================
 // DEFAULT FACTORIES
@@ -240,7 +243,7 @@ export type ConfigFieldName =
  * Get a random icon name
  */
 function getRandomIcon(): string {
-	return ALL_ICON_NAMES[Math.floor(Math.random() * ALL_ICON_NAMES.length)];
+	return ALL_ICON_NAMES[Math.floor(Math.random() * ALL_ICON_NAMES.length)]
 }
 
 /**
@@ -250,7 +253,7 @@ export function createDefaultSoulConfig(): SoulConfig {
 	return {
 		personality: '',
 		identity: ''
-	};
+	}
 }
 
 /**
@@ -266,7 +269,7 @@ export function createDefaultSuperagentConfiguration(): SuperagentConfiguration 
 		toolsContext: '',
 		toolsEnabled: [],
 		cronJobs: []
-	};
+	}
 }
 
 /**
@@ -281,7 +284,7 @@ export function createDefaultWorkerConfiguration(): WorkerConfiguration {
 		toolsContext: '',
 		toolsEnabled: [],
 		heartbeat: createDefaultHeartbeatConfig()
-	};
+	}
 }
 
 /**
@@ -293,7 +296,7 @@ export function createDefaultHeartbeatConfig(): HeartbeatConfig {
 		enabled: false,
 		duration: '1hr',
 		content: ''
-	};
+	}
 }
 
 // ============================================================================
@@ -303,8 +306,10 @@ export function createDefaultHeartbeatConfig(): HeartbeatConfig {
 /**
  * Deep clone configuration object
  */
-export function cloneConfiguration<T extends AgentConfiguration>(configuration: T): T {
-	return JSON.parse(JSON.stringify(configuration));
+export function cloneConfiguration<T extends AgentConfiguration>(
+	configuration: T
+): T {
+	return JSON.parse(JSON.stringify(configuration))
 }
 
 /**
@@ -314,7 +319,7 @@ export function getConfigurationField(
 	configuration: AgentConfiguration,
 	field: ConfigFieldName
 ): unknown {
-	return (configuration as unknown as Record<string, unknown>)[field];
+	return (configuration as unknown as Record<string, unknown>)[field]
 }
 
 /**
@@ -325,5 +330,5 @@ export function setConfigurationField(
 	field: ConfigFieldName,
 	value: unknown
 ): void {
-	(configuration as unknown as Record<string, unknown>)[field] = value;
+	;(configuration as unknown as Record<string, unknown>)[field] = value
 }

@@ -9,7 +9,7 @@
  * User tool definition
  */
 export interface Tool {
-	id: string;
-	name: string;
-	description?: string;
+	id: string
+	name: string
+	description?: string
 }

@@ -1,15 +1,17 @@
 <script lang="ts">
-	import { WORKER_ICONS, type IconName } from './worker-icons';
+	import { type IconName, WORKER_ICONS } from './worker-icons'
 
 	interface Props {
-		name?: IconName | string | null;
-		size?: number;
-		class?: string;
+		name?: IconName | string | null
+		size?: number
+		class?: string
 	}
 
-	let { name, size = 24, class: className }: Props = $props();
+	let { name, size = 24, class: className }: Props = $props()
 
-	let safeName: IconName = $derived(name && name in WORKER_ICONS ? (name as IconName) : 'bot');
+	let safeName: IconName = $derived(
+		name && name in WORKER_ICONS ? (name as IconName) : 'bot'
+	)
 </script>
 
 <svg
@@ -23,6 +25,7 @@
 	stroke-linecap="round"
 	stroke-linejoin="round"
 	class={className}
+	aria-hidden="true"
 >
 	{#each WORKER_ICONS[safeName] as [tag, attrs], i (`icon-${safeName}-${i}`)}
 		<svelte:element this={tag} {...attrs} />

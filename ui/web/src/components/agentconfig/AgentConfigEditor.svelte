@@ -1,58 +1,61 @@
 <script lang="ts">
-	import { SvelteSet } from 'svelte/reactivity';
-	import { Button } from '$components/ui/button';
-	import CronJobEditor from './CronJobEditor.svelte';
-	import SoulEditor from './SoulEditor.svelte';
-	import HeartbeatEditor from './HeartbeatEditor.svelte';
-	import ConfigTextField from './ConfigTextField.svelte';
-	import ToolsEditor from './ToolsEditor.svelte';
-	import UnsavedChangesDialog from './UnsavedChangesDialog.svelte';
-	import NameIconEditor from './NameIconEditor.svelte';
+	import { SvelteSet } from 'svelte/reactivity'
+	import { Button } from '$components/ui/button'
+	import { SUPERAGENT_NAME } from '$lib/config'
 	import {
-		type AgentConfiguration,
-		type SuperagentConfiguration,
-		type HeartbeatConfig,
-		type ConfigFieldName,
-		FIELD_CONFIGS,
 		AGENT_FIELDS,
+		type AgentConfiguration,
+		type ConfigFieldName,
 		cloneConfiguration,
-		getConfigurationField
-	} from '$lib/types/agent';
-	import { SUPERAGENT_NAME } from '$lib/config';
-	import type { Tool } from '$lib/types/tool';
+		FIELD_CONFIGS,
+		getConfigurationField,
+		type HeartbeatConfig,
+		type SuperagentConfiguration
+	} from '$lib/types/agent'
+	import type { Tool } from '$lib/types/tool'
+	import ConfigTextField from './ConfigTextField.svelte'
+	import CronJobEditor from './CronJobEditor.svelte'
+	import HeartbeatEditor from './HeartbeatEditor.svelte'
+	import NameIconEditor from './NameIconEditor.svelte'
+	import SoulEditor from './SoulEditor.svelte'
+	import ToolsEditor from './ToolsEditor.svelte'
+	import UnsavedChangesDialog from './UnsavedChangesDialog.svelte'
 
 	/**
 	 * Compare soul configs
 	 */
-	function soulEquals(a: AgentConfiguration['soul'], b: AgentConfiguration['soul']): boolean {
-		return JSON.stringify(a) === JSON.stringify(b);
+	function soulEquals(
+		a: AgentConfiguration['soul'],
+		b: AgentConfiguration['soul']
+	): boolean {
+		return JSON.stringify(a) === JSON.stringify(b)
 	}
 
 	/**
 	 * Compare name field (ignoring icon)
 	 */
 	function nameEquals(a: AgentConfiguration, b: AgentConfiguration): boolean {
-		return a.name === b.name;
+		return a.name === b.name
 	}
 
 	interface Props {
-		configuration: AgentConfiguration;
+		configuration: AgentConfiguration
 		/** All available tools for this user */
-		availableTools?: Tool[];
+		availableTools?: Tool[]
 		/** Called when save is clicked with the configuration */
-		onSave: (config: AgentConfiguration) => void | Promise<void>;
+		onSave: (config: AgentConfiguration) => void | Promise<void>
 		/** Called when cancel is confirmed (no changes or user discarded) */
-		onCancel: () => void;
+		onCancel: () => void
 		/** Label for the save button */
-		saveLabel?: string;
+		saveLabel?: string
 		/** Label for the cancel button */
-		cancelLabel?: string;
+		cancelLabel?: string
 		/** Helper text shown above buttons */
-		helperText?: string;
+		helperText?: string
 		/** Bindable flag for tracking changes */
-		hasChanges?: boolean;
+		hasChanges?: boolean
 		/** Explicitly set agent type (overrides route detection) */
-		isSuperagent?: boolean;
+		isSuperagent?: boolean
 	}
 
 	let {
@@ -63,114 +66,116 @@
 		saveLabel = 'Save',
 		cancelLabel = 'Cancel',
 		helperText = 'Please review and edit the options above, then click Save to apply your changes.',
-		// eslint-disable-next-line no-useless-assignment -- bindable prop synced to parent via $effect
+		// bindable prop synced to parent via $effect
 		hasChanges = $bindable(),
 		isSuperagent: isSuperagentProp
-	}: Props = $props();
+	}: Props = $props()
 
 	// Determine agent type from prop or configuration name
 	const isSuperagent = $derived(
 		isSuperagentProp ?? configuration.name === SUPERAGENT_NAME.toLowerCase()
-	);
-	const fields = $derived(isSuperagent ? AGENT_FIELDS.superagent : AGENT_FIELDS.worker);
+	)
+	const fields = $derived(
+		isSuperagent ? AGENT_FIELDS.superagent : AGENT_FIELDS.worker
+	)
 
 	// Local working copy of configuration
-	let localConfiguration = $state<AgentConfiguration>();
+	let localConfiguration = $state<AgentConfiguration>()
 
 	// Initialize local configuration when component mounts or configuration changes
 	$effect(() => {
 		if (!localConfiguration && configuration) {
-			localConfiguration = cloneConfiguration(configuration);
+			localConfiguration = cloneConfiguration(configuration)
 		}
-	});
+	})
 
 	// Detect if there are unsaved changes by comparing to prop (internal derived)
 	const hasLocalChanges = $derived.by(() => {
-		if (!localConfiguration || !configuration) return false;
+		if (!localConfiguration || !configuration) return false
 
 		// Compare name (without icon - icon changes don't count)
-		if (!nameEquals(localConfiguration, configuration)) return true;
+		if (!nameEquals(localConfiguration, configuration)) return true
 
 		// Compare soul
-		if (!soulEquals(localConfiguration.soul, configuration.soul)) return true;
+		if (!soulEquals(localConfiguration.soul, configuration.soul)) return true
 
 		// Compare other fields
 		for (const field of fields) {
-			if (field === 'name' || field === 'soul') continue; // Already compared above
-			const localValue = getConfigurationField(localConfiguration, field);
-			const originalValue = getConfigurationField(configuration, field);
+			if (field === 'name' || field === 'soul') continue // Already compared above
+			const localValue = getConfigurationField(localConfiguration, field)
+			const originalValue = getConfigurationField(configuration, field)
 			if (JSON.stringify(localValue) !== JSON.stringify(originalValue)) {
-				return true;
+				return true
 			}
 		}
-		return false;
-	});
+		return false
+	})
 
 	// Sync to bindable prop
 	$effect(() => {
-		hasChanges = hasLocalChanges;
-	});
+		hasChanges = hasLocalChanges
+	})
 
 	// Track which specific fields have unsaved changes
 	let dirtyFields = $derived.by(() => {
-		const dirty = new SvelteSet<ConfigFieldName>();
-		if (!localConfiguration || !configuration) return dirty;
+		const dirty = new SvelteSet<ConfigFieldName>()
+		if (!localConfiguration || !configuration) return dirty
 
 		for (const field of fields) {
 			if (field === 'name') {
 				// Compare name without icon
 				if (!nameEquals(localConfiguration, configuration)) {
-					dirty.add(field);
+					dirty.add(field)
 				}
 			} else if (field === 'soul') {
 				if (!soulEquals(localConfiguration.soul, configuration.soul)) {
-					dirty.add(field);
+					dirty.add(field)
 				}
 			} else {
-				const localValue = getConfigurationField(localConfiguration, field);
-				const originalValue = getConfigurationField(configuration, field);
+				const localValue = getConfigurationField(localConfiguration, field)
+				const originalValue = getConfigurationField(configuration, field)
 				if (JSON.stringify(localValue) !== JSON.stringify(originalValue)) {
-					dirty.add(field);
+					dirty.add(field)
 				}
 			}
 		}
-		return dirty;
-	});
+		return dirty
+	})
 
 	// Currently selected field
-	let selectedField = $state<ConfigFieldName | undefined>();
+	let selectedField = $state<ConfigFieldName | undefined>()
 
 	// Confirmation dialog state
-	let showConfirmDialog = $state(false);
+	let showConfirmDialog = $state(false)
 
 	// Initialize selected field when fields are available
 	$effect(() => {
 		if (!selectedField && fields.length > 0) {
-			selectedField = fields[0];
+			selectedField = fields[0]
 		}
-	});
+	})
 
 	async function handleSave() {
 		if (localConfiguration) {
-			await onSave(localConfiguration);
+			await onSave(localConfiguration)
 		}
 	}
 
 	function handleCancel() {
 		if (hasLocalChanges) {
-			showConfirmDialog = true;
+			showConfirmDialog = true
 		} else {
-			onCancel();
+			onCancel()
 		}
 	}
 
 	function handleKeepEditing() {
-		showConfirmDialog = false;
+		showConfirmDialog = false
 	}
 
 	function handleDiscardChanges() {
-		showConfirmDialog = false;
-		onCancel();
+		showConfirmDialog = false
+		onCancel()
 	}
 </script>
 
@@ -182,7 +187,8 @@
 			{#each fields as field (field)}
 				<button
 					type="button"
-					class="w-full px-4 py-2.5 text-left text-sm transition-colors {selectedField === field
+					class="w-full px-4 py-2.5 text-left text-sm transition-colors {selectedField ===
+					field
 						? 'active-field'
 						: 'hover-field'}"
 					onclick={() => (selectedField = field)}
@@ -198,19 +204,23 @@
 		</div>
 
 		<!-- Right panel: Content area -->
-		<div class="flex-1 overflow-y-auto bg-background p-4">
+		<div class="bg-background flex-1 overflow-y-auto p-4">
 			{#if localConfiguration}
 				{#if selectedField === 'name'}
 					<NameIconEditor bind:config={localConfiguration} />
 				{:else if selectedField === 'soul'}
 					<SoulEditor bind:soul={localConfiguration.soul} />
 				{:else if selectedField === 'heartbeat'}
-					<HeartbeatEditor bind:heartbeat={localConfiguration.heartbeat as HeartbeatConfig} />
+					<HeartbeatEditor
+						bind:heartbeat={localConfiguration.heartbeat as HeartbeatConfig}
+					/>
 				{:else if selectedField === 'cronJobs' && isSuperagent}
-					{@const superagentConfig = localConfiguration as SuperagentConfiguration}
+					{@const superagentConfig =
+						localConfiguration as SuperagentConfiguration}
 					<CronJobEditor bind:jobs={superagentConfig.cronJobs} />
 				{:else if selectedField === 'userContext' && isSuperagent}
-					{@const superagentConfig = localConfiguration as SuperagentConfiguration}
+					{@const superagentConfig =
+						localConfiguration as SuperagentConfiguration}
 					<ConfigTextField
 						value={superagentConfig.userContext}
 						config={FIELD_CONFIGS.userContext}
@@ -226,7 +236,8 @@
 						value={localConfiguration.operatingInstructions}
 						config={FIELD_CONFIGS.operatingInstructions}
 						onchange={(v) => {
-							if (localConfiguration) localConfiguration.operatingInstructions = v;
+							if (localConfiguration)
+								localConfiguration.operatingInstructions = v
 						}}
 					/>
 				{:else if selectedField === 'toolsContext'}
@@ -234,7 +245,7 @@
 						value={localConfiguration.toolsContext}
 						config={FIELD_CONFIGS.toolsContext}
 						onchange={(v) => {
-							if (localConfiguration) localConfiguration.toolsContext = v;
+							if (localConfiguration) localConfiguration.toolsContext = v
 						}}
 					/>
 				{/if}
@@ -242,13 +253,22 @@
 		</div>
 	</div>
 	<!-- Action buttons at bottom -->
-	<div class="mr-1 mb-2 flex flex-col items-end gap-6 border-t border-border/50">
-		<p class="text-xs text-muted-foreground">
+	<div
+		class="border-border/50 mr-1 mb-2 flex flex-col items-end gap-6 border-t"
+	>
+		<p class="text-muted-foreground text-xs">
 			{helperText}
 		</p>
 		<div class="flex gap-4">
-			<Button size="lg" class="sm:min-w-36" onclick={handleSave}>{saveLabel}</Button>
-			<Button variant="outline" size="lg" class="sm:min-w-36" onclick={handleCancel}>
+			<Button size="lg" class="sm:min-w-36" onclick={handleSave}
+				>{saveLabel}</Button
+			>
+			<Button
+				variant="outline"
+				size="lg"
+				class="sm:min-w-36"
+				onclick={handleCancel}
+			>
 				{cancelLabel}
 			</Button>
 		</div>
@@ -264,12 +284,12 @@
 
 <style>
 	.active-field {
-		background-color: var(--sidebar-active) !important;
-		color: var(--sidebar-active-foreground) !important;
+		background-color: var(--sidebar-active);
+		color: var(--sidebar-active-foreground);
 	}
 
 	.hover-field:hover {
-		background-color: var(--sidebar-accent) !important;
-		color: var(--sidebar-accent-foreground) !important;
+		background-color: var(--sidebar-accent);
+		color: var(--sidebar-accent-foreground);
 	}
 </style>

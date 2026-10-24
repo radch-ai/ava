@@ -17,17 +17,18 @@
  * - Request timeout
  * - Auth signal on 401
  */
-import ky from 'ky';
-import type { ResponsePromise } from 'ky';
-import { authStore } from '$lib/auth';
+
+import type { ResponsePromise } from 'ky'
+import ky from 'ky'
+import { authStore } from '$lib/auth'
 
 /** What every `api.*` request method returns: a chainable ky response promise. */
-export type ApiResponsePromise = ResponsePromise;
+export type ApiResponsePromise = ResponsePromise
 
-const rawBackendApiUrl = import.meta.env.VITE_BACKEND_API_URL;
+const rawBackendApiUrl = import.meta.env.VITE_BACKEND_API_URL
 const BACKEND_API_URL = rawBackendApiUrl.endsWith('/api')
 	? rawBackendApiUrl
-	: `${rawBackendApiUrl.replace(/\/$/, '')}/api`;
+	: `${rawBackendApiUrl.replace(/\/$/, '')}/api`
 
 /**
  * Configured ky instance for API requests
@@ -54,9 +55,9 @@ export const api = ky.create({
 				if (response.status === 401) {
 					// Session gone mid-app: flip the store so the layout guard
 					// sends the user back to the login surface
-					authStore.handleSessionExpired();
+					authStore.handleSessionExpired()
 				}
-				return response;
+				return response
 			}
 		],
 
@@ -67,12 +68,12 @@ export const api = ky.create({
 					.clone()
 					.json()
 					.catch(() => ({}))) as {
-					message?: string;
-					error?: string;
-				};
-				error.message = body.message || body.error || error.message;
-				return error;
+					message?: string
+					error?: string
+				}
+				error.message = body.message || body.error || error.message
+				return error
 			}
 		]
 	}
-});
+})

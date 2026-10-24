@@ -1,13 +1,13 @@
 // src/lib/models.ts
 
 export interface Model {
-	id: string;
-	name: string;
+	id: string
+	name: string
 }
 
 export interface ModelGroup {
-	provider: string;
-	models: Model[];
+	provider: string
+	models: Model[]
 }
 
 const modelsConfig = {
@@ -36,7 +36,7 @@ const modelsConfig = {
 			models: [{ id: 'grok-1', name: 'Grok-1' }]
 		}
 	]
-};
+}
 
-export const defaultModel = modelsConfig.defaultModel;
-export const modelGroups: ModelGroup[] = modelsConfig.providers;
+export const defaultModel = modelsConfig.defaultModel
+export const modelGroups: ModelGroup[] = modelsConfig.providers

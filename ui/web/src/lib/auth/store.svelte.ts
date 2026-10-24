@@ -1,5 +1,5 @@
-import { goto } from '$app/navigation';
-import { api } from '../services/api';
+import { goto } from '$app/navigation'
+import { api } from '../services/api'
 
 /**
  * Token-session auth store.
@@ -11,7 +11,7 @@ import { api } from '../services/api';
  * - credential = HttpOnly `ava_session` cookie set by `POST /auth/exchange`
  */
 export class AuthStore {
-	isAuthenticated = $state(false);
+	isAuthenticated = $state(false)
 
 	/** Restore state from an existing session cookie, or start clean. */
 	async initialize(): Promise<void> {
@@ -20,32 +20,32 @@ export class AuthStore {
 			// JS, so asking the server is the only way to check it. ky
 			// throws on non-2xx, so the line below only runs after a 2xx —
 			// any failure skips it and lands in the catch.
-			await api.get('auth/me');
-			this.isAuthenticated = true;
+			await api.get('auth/me')
+			this.isAuthenticated = true
 		} catch {
-			this.#clear();
+			this.#clear()
 		}
 	}
 
 	/** Send the user to the login surface. */
 	async login(): Promise<void> {
-		await goto('/login');
+		await goto('/login')
 	}
 
 	/** Exchange a long-lived token for the session cookie. Token-provider only. */
 	async submitToken(token: string): Promise<void> {
-		await api.post('auth/exchange', { json: { token } });
-		this.isAuthenticated = true;
+		await api.post('auth/exchange', { json: { token } })
+		this.isAuthenticated = true
 	}
 
 	/** Revoke the session; the layout guard handles navigation once state clears. */
 	async logout(): Promise<void> {
 		try {
-			await api.post('auth/logout');
+			await api.post('auth/logout')
 		} catch {
 			// Session already gone server-side — clearing locally is still correct.
 		}
-		this.#clear();
+		this.#clear()
 	}
 
 	/**
@@ -53,12 +53,12 @@ export class AuthStore {
 	 * layout guard, which sends the user back to the login surface.
 	 */
 	handleSessionExpired(): void {
-		this.#clear();
+		this.#clear()
 	}
 
 	#clear(): void {
-		this.isAuthenticated = false;
+		this.isAuthenticated = false
 	}
 }
 
-export const authStore = new AuthStore();
+export const authStore = new AuthStore()

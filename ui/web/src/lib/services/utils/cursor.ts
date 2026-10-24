@@ -1,6 +1,6 @@
 export interface CursorPage<T> {
-	items: T[];
-	nextCursor: string | null;
+	items: T[]
+	nextCursor: string | null
 }
 
 /**
@@ -16,7 +16,8 @@ export function mergePastPages<T extends { id: string }>(
 	past: CursorPage<T>
 ): CursorPage<T> {
 	const items = [...past.items, ...current.items].filter(
-		(item, index, all) => all.findIndex((candidate) => candidate.id === item.id) === index
-	);
-	return { items, nextCursor: past.nextCursor };
+		(item, index, all) =>
+			all.findIndex((candidate) => candidate.id === item.id) === index
+	)
+	return { items, nextCursor: past.nextCursor }
 }

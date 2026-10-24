@@ -1,124 +1,136 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('$lib/services/api', () => ({
 	api: {
 		get: vi.fn()
 	}
-}));
+}))
 
-import { getAgents } from '$lib/services/user/agents';
-import { api, type ApiResponsePromise } from '$lib/services/api';
+import { type ApiResponsePromise, api } from '$lib/services/api'
+import { getAgents } from '$lib/services/user/agents'
 
 describe('user/agents service', () => {
 	beforeEach(() => {
-		vi.clearAllMocks();
-	});
+		vi.clearAllMocks()
+	})
 
 	describe('getAgents', () => {
 		it('fetches the current user agent list', async () => {
 			const mockAgents = [
 				{ name: 'ava', icon: 'message-square', label: 'Ava' },
 				{ name: 'worker-1', icon: 'bot', label: 'Worker 1' }
-			];
+			]
 
 			vi.mocked(api.get).mockReturnValue({
 				json: async () => ({ agents: mockAgents })
-			} as ApiResponsePromise);
+			} as ApiResponsePromise)
 
-			const result = await getAgents();
+			const result = await getAgents()
 
-			expect(api.get).toHaveBeenCalledWith('user/agents');
-			expect(result).toEqual(mockAgents);
-		});
+			expect(api.get).toHaveBeenCalledWith('user/agents')
+			expect(result).toEqual(mockAgents)
+		})
 
 		it('returns empty array when no agents', async () => {
 			vi.mocked(api.get).mockReturnValue({
 				json: async () => ({ agents: [] })
-			} as ApiResponsePromise);
+			} as ApiResponsePromise)
 
-			const result = await getAgents();
+			const result = await getAgents()
 
-			expect(result).toEqual([]);
-		});
+			expect(result).toEqual([])
+		})
 
 		it('propagates errors from api', async () => {
-			const error = new Error('Network error');
+			const error = new Error('Network error')
 
 			vi.mocked(api.get).mockReturnValue({
 				json: async () => Promise.reject(error)
-			} as ApiResponsePromise);
+			} as ApiResponsePromise)
 
-			await expect(getAgents()).rejects.toThrow('Network error');
-		});
+			await expect(getAgents()).rejects.toThrow('Network error')
+		})
 
 		it('preserves existing label when provided by API', async () => {
-			const mockAgents = [{ name: 'custom-agent', label: 'Custom Agent', icon: 'bot' }];
+			const mockAgents = [
+				{ name: 'custom-agent', label: 'Custom Agent', icon: 'bot' }
+			]
 
 			vi.mocked(api.get).mockReturnValue({
 				json: async () => ({ agents: mockAgents })
-			} as ApiResponsePromise);
+			} as ApiResponsePromise)
 
-			const result = await getAgents();
+			const result = await getAgents()
 
-			expect(result).toEqual([{ name: 'custom-agent', label: 'Custom Agent', icon: 'bot' }]);
-		});
+			expect(result).toEqual([
+				{ name: 'custom-agent', label: 'Custom Agent', icon: 'bot' }
+			])
+		})
 
 		it('handles large agent lists', async () => {
 			const mockAgents = Array.from({ length: 50 }, (_, i) => ({
 				name: `agent-${i}`,
 				icon: 'bot',
 				label: `Agent ${i}`
-			}));
+			}))
 
 			vi.mocked(api.get).mockReturnValue({
 				json: async () => ({ agents: mockAgents })
-			} as ApiResponsePromise);
+			} as ApiResponsePromise)
 
-			const result = await getAgents();
+			const result = await getAgents()
 
-			expect(result).toHaveLength(50);
-			expect(result[0]).toEqual({ name: 'agent-0', icon: 'bot', label: 'Agent 0' });
-			expect(result[49]).toEqual({ name: 'agent-49', icon: 'bot', label: 'Agent 49' });
-		});
+			expect(result).toHaveLength(50)
+			expect(result[0]).toEqual({
+				name: 'agent-0',
+				icon: 'bot',
+				label: 'Agent 0'
+			})
+			expect(result[49]).toEqual({
+				name: 'agent-49',
+				icon: 'bot',
+				label: 'Agent 49'
+			})
+		})
 
 		it('handles timeout errors', async () => {
-			const error = new Error('Request timeout');
+			const error = new Error('Request timeout')
 
 			vi.mocked(api.get).mockReturnValue({
 				json: async () => Promise.reject(error)
-			} as ApiResponsePromise);
+			} as ApiResponsePromise)
 
-			await expect(getAgents()).rejects.toThrow('Request timeout');
-		});
+			await expect(getAgents()).rejects.toThrow('Request timeout')
+		})
 
 		it('handles unauthorized errors', async () => {
-			const error = new Error('Unauthorized');
+			const error = new Error('Unauthorized')
 
 			vi.mocked(api.get).mockReturnValue({
 				json: async () => Promise.reject(error)
-			} as ApiResponsePromise);
+			} as ApiResponsePromise)
 
-			await expect(getAgents()).rejects.toThrow('Unauthorized');
-		});
+			await expect(getAgents()).rejects.toThrow('Unauthorized')
+		})
 
 		it('handles malformed (non-JSON) response', async () => {
 			vi.mocked(api.get).mockReturnValue({
 				json: async () => {
-					throw new SyntaxError('Unexpected token');
+					throw new SyntaxError('Unexpected token')
 				}
-			} as unknown as ApiResponsePromise);
+			} as unknown as ApiResponsePromise)
 
-			await expect(getAgents()).rejects.toThrow();
-		});
+			await expect(getAgents()).rejects.toThrow()
+		})
 
 		it('handles HTTP 500 error', async () => {
 			vi.mocked(api.get).mockReturnValue({
 				json: async () => {
-					throw new Error('Internal server error');
+					throw new Error('Internal server error')
 				}
-			} as unknown as ApiResponsePromise);
+			} as unknown as ApiResponsePromise)
 
-			await expect(getAgents()).rejects.toThrow('Internal server error');
-		});
-	});
-});
+			await expect(getAgents()).rejects.toThrow('Internal server error')
+		})
+	})
+})

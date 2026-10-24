@@ -1,38 +1,43 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
-	import { resolve } from '$app/paths';
-	import { ArrowLeftToLine, ArrowRightFromLine, LogOut, Plus } from 'lucide-svelte';
-	import * as Sidebar from '$components/ui/sidebar';
-	import { Button } from '$components/ui/button';
-	import * as Tooltip from '$components/ui/tooltip';
-	import { Icon } from '$lib/icons';
-	import { APP_NAME } from '$lib/config';
-	import { SUPERAGENT_AGENT } from '$lib/types/agent';
-	import { authStore } from '$lib/auth';
-	import { agents } from '$lib/user';
+	import {
+		ArrowLeftToLine,
+		ArrowRightFromLine,
+		LogOut,
+		Plus
+	} from 'lucide-svelte'
+	import { onMount } from 'svelte'
+	import { resolve } from '$app/paths'
+	import { page } from '$app/stores'
+	import { Button } from '$components/ui/button'
+	import * as Sidebar from '$components/ui/sidebar'
+	import * as Tooltip from '$components/ui/tooltip'
+	import { authStore } from '$lib/auth'
+	import { APP_NAME } from '$lib/config'
+	import { Icon } from '$lib/icons'
+	import { SUPERAGENT_AGENT } from '$lib/types/agent'
+	import { agents } from '$lib/user'
 
-	const sidebar = Sidebar.useSidebar();
+	const sidebar = Sidebar.useSidebar()
 
 	// Persist sidebar state to localStorage (only store when collapsed)
-	const SIDEBAR_STATE_KEY = `${APP_NAME.toLowerCase()}-sidebar-state`;
+	const SIDEBAR_STATE_KEY = `${APP_NAME.toLowerCase()}-sidebar-state`
 
 	function saveOrDeleteSidebarState(): void {
-		if (typeof window === 'undefined') return;
+		if (typeof window === 'undefined') return
 		if (sidebar.open) {
-			localStorage.removeItem(SIDEBAR_STATE_KEY);
+			localStorage.removeItem(SIDEBAR_STATE_KEY)
 		} else {
-			localStorage.setItem(SIDEBAR_STATE_KEY, 'collapsed');
+			localStorage.setItem(SIDEBAR_STATE_KEY, 'collapsed')
 		}
 	}
 
 	// Initialize sidebar state from localStorage
 	onMount(() => {
-		const stored = localStorage.getItem(SIDEBAR_STATE_KEY);
+		const stored = localStorage.getItem(SIDEBAR_STATE_KEY)
 		if (stored === 'collapsed' && sidebar.open) {
-			sidebar.toggle();
+			sidebar.toggle()
 		}
-	});
+	})
 </script>
 
 <Sidebar.Root collapsible="icon">
@@ -48,10 +53,10 @@
 			<Tooltip.Trigger>
 				<button
 					type="button"
-					class="cursor-pointer rounded-md p-2.5 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+					class="hover:bg-sidebar-accent hover:text-sidebar-accent-foreground cursor-pointer rounded-md p-2.5 transition-colors"
 					onclick={() => {
-						sidebar.toggle();
-						saveOrDeleteSidebarState();
+						sidebar.toggle()
+						saveOrDeleteSidebarState()
 					}}
 					aria-label={sidebar.open ? 'Collapse sidebar' : 'Expand sidebar'}
 				>
@@ -100,7 +105,9 @@
 				<Sidebar.Menu>
 					{#each agents as agent (agent.name)}
 						<Sidebar.MenuItem>
-							<Sidebar.MenuButton isActive={$page.url.pathname === `/agent/${agent.name}`}>
+							<Sidebar.MenuButton
+								isActive={$page.url.pathname === `/agent/${agent.name}`}
+							>
 								{#snippet child({ props })}
 									<a href={resolve(`/agent/${agent.name}`)} {...props}>
 										<Icon
@@ -108,7 +115,9 @@
 											size={18}
 											class="group-data-[collapsible=icon]:size-5"
 										/>
-										<span class="group-data-[collapsible=icon]:hidden">{agent.label}</span>
+										<span class="group-data-[collapsible=icon]:hidden"
+											>{agent.label}</span
+										>
 									</a>
 								{/snippet}
 							</Sidebar.MenuButton>
@@ -125,7 +134,9 @@
 								: 'opacity-50 hover:opacity-100'}"
 						>
 							<Plus class="size-4" />
-							<span class="group-data-[collapsible=icon]:hidden">New Agent</span>
+							<span class="group-data-[collapsible=icon]:hidden"
+								>New Agent</span
+							>
 						</Button>
 					</Sidebar.MenuItem>
 				</Sidebar.Menu>
@@ -138,10 +149,12 @@
 			type="button"
 			aria-label="Logout"
 			onclick={() => void authStore.logout()}
-			class="flex w-full cursor-pointer items-center gap-2 rounded-lg p-2 text-sm group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-1.5 hover:bg-sidebar-accent hover:!ring-1 hover:!ring-ring"
+			class="hover:bg-sidebar-accent hover:!ring-ring flex w-full cursor-pointer items-center gap-2 rounded-lg p-2 text-sm group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-1.5 hover:!ring-1"
 		>
 			<LogOut class="size-4 shrink-0" />
-			<span class="font-semibold group-data-[collapsible=icon]:hidden">Logout</span>
+			<span class="font-semibold group-data-[collapsible=icon]:hidden"
+				>Logout</span
+			>
 		</button>
 	</Sidebar.Footer>
 </Sidebar.Root>
