@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Pencil, Plus, X } from 'lucide-svelte'
+	import { Pencil, Plus, X } from '@lucide/svelte'
 	import ModelSelector from '#components/ModelSelector.svelte'
 	import { Button } from '#components/ui/button'
 	import { Input } from '#components/ui/input'

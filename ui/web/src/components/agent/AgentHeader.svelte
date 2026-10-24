@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Settings } from 'lucide-svelte'
+	import { Settings } from '@lucide/svelte'
 	import { AgentConfigSheet } from '#components/agentconfig'
 	import { Button, buttonVariants } from '#components/ui/button'
 	import * as Tooltip from '#components/ui/tooltip'

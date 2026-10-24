@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ArrowRight } from 'lucide-svelte'
+	import { ArrowRight } from '@lucide/svelte'
 	import AgentShell from '#components/agent/AgentShell.svelte'
 	import { Button } from '#components/ui/button'
 	import { SUPERAGENT_NAME } from '#lib/config'

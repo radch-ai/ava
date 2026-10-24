@@ -7,10 +7,10 @@
  */
 
 import { type HttpHandler, HttpResponse, http } from 'msw'
-import type { IconName } from '../icons'
-import type { CursorPage } from '../services/utils/cursor'
-import type { Agent, AgentConfiguration } from '../types/agent'
-import type { MockStore } from './data'
+import type { IconName } from '../icons/index.ts'
+import type { CursorPage } from '../services/utils/cursor.ts'
+import type { Agent, AgentConfiguration } from '../types/agent.ts'
+import type { MockStore } from './data.ts'
 
 interface CursorItem {
 	id: string

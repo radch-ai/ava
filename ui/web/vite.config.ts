@@ -8,8 +8,8 @@ import { playwright } from '@vitest/browser-playwright'
 import { getResponse } from 'msw'
 import type { Plugin } from 'vite'
 import { defineConfig } from 'vitest/config'
-import { createSeedData } from './src/lib/mocks/data'
-import { createHandlers } from './src/lib/mocks/handlers'
+import { createSeedData } from './src/lib/mocks/data.ts'
+import { createHandlers } from './src/lib/mocks/handlers.ts'
 
 const allowedHosts = new Set<string>()
 const e2eAppBaseUrl = process.env.E2E_APP_BASE_URL || 'http://127.0.0.1:4173'

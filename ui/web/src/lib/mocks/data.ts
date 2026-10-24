@@ -6,10 +6,10 @@
  * are reproducible: no randomness, no clocks.
  */
 
-import { SUPERAGENT_NAME } from '../config'
-import type { AgentActivityItem } from '../services/agent/activity'
-import type { Message } from '../services/user/superagent-thread'
-import type { Agent, AgentConfiguration } from '../types/agent'
+import { SUPERAGENT_NAME } from '../config.ts'
+import type { AgentActivityItem } from '../services/agent/activity.ts'
+import type { Message } from '../services/user/superagent-thread.ts'
+import type { Agent, AgentConfiguration } from '../types/agent.ts'
 
 /** Mutable in-memory state the mock handlers read from and write to. */
 export interface MockStore {

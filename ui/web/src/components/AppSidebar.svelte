@@ -4,7 +4,7 @@
 		ArrowRightFromLine,
 		LogOut,
 		Plus
-	} from 'lucide-svelte'
+	} from '@lucide/svelte'
 	import { onMount } from 'svelte'
 	import { Button } from '#components/ui/button'
 	import * as Sidebar from '#components/ui/sidebar'

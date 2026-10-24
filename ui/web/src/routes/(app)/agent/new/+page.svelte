@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Bot } from 'lucide-svelte'
+	import { Bot } from '@lucide/svelte'
 	import { AgentConfigEditor } from '#components/agentconfig'
 	import UnsavedChangesDialog from '#components/agentconfig/UnsavedChangesDialog.svelte'
 	import type { IconName } from '#lib/icons'
