@@ -1,0 +1,59 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.6.3/schema.json",
+	"files": {
+		"includes": [
+			"package.json",
+			"svelte.config.js",
+			"vite.config.ts",
+			"playwright.config.ts",
+			"tsconfig.json",
+			"components.json",
+			"src/**/*.js",
+			"src/**/*.ts",
+			"src/**/*.svelte",
+			"tests/**/*.js",
+			"tests/**/*.ts",
+			"tests/**/*.svelte",
+			"!src/components/ui",
+			"!src/lib/utils.ts",
+			"!src/lib/hooks/is-mobile.svelte.ts"
+		]
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"lineWidth": 80
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "single",
+			"semicolons": "asNeeded",
+			"trailingCommas": "none"
+		}
+	},
+	"json": {
+		"formatter": {
+			"indentStyle": "tab",
+			"lineWidth": 80
+		}
+	},
+	"css": {
+		"parser": { "tailwindDirectives": true }
+	},
+	"html": {
+		"experimentalFullSupportEnabled": true,
+		"formatter": {
+			"enabled": true,
+			"indentScriptAndStyle": true
+		}
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended",
+			"nursery": {
+				"useTailwindSortedClasses": "error"
+			}
+		}
+	}
+}

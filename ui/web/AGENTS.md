@@ -14,7 +14,7 @@ Run from `ui/web/` with [bun](https://bun.sh):
 - `bun run dev` — dev server
 - `bun run build` — production build
 - `bun run check` — svelte-check
-- `bun run lint` — prettier + eslint
+- `bun run biome-check` — biome (lint + format check; `bun run biome-write` auto-fixes)
 - `bun run test:unit` — vitest (unit + component)
 - `bun run test:e2e` — Playwright e2e (requires a running backend and Chromium at `TEST_CHROMIUM_WS_URL`)
 
