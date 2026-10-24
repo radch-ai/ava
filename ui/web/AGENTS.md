@@ -18,6 +18,10 @@ Run from `ui/web/` with [bun](https://bun.sh):
 - `bun run test:unit` — vitest (unit + component)
 - `bun run test:e2e` — Playwright e2e (requires a running backend and Chromium at `TEST_CHROMIUM_WS_URL`)
 
+### UI verification
+
+After changing anything user-facing (routes, components, styles, interactions), verify in a real browser before reporting done: run `bun run dev`, open the changed surface, and confirm the behavior visually (requires a running backend at `VITE_BACKEND_API_URL`). Use Paseo's browser tools (browser_new_tab / browser_snapshot / browser_click / browser_screenshot) to drive and inspect the page — they are already available. Unit and component tests are not a substitute for this check.
+
 ## Svelte MCP
 
 `.mcp.json` registers the official Svelte MCP server, run locally over stdio via `npx -y @sveltejs/mcp` ([local setup](https://svelte.dev/docs/ai/local-setup)). You are able to use it, giving you access to comprehensive Svelte 5 and SvelteKit documentation. Here's how to use the available tools effectively:
