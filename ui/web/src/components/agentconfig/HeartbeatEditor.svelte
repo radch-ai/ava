@@ -1,8 +1,8 @@
 <script lang="ts">
-	import ModelSelector from '$components/ModelSelector.svelte'
-	import { Textarea } from '$components/ui/textarea'
-	import type { HeartbeatConfig } from '$lib/types/agent'
-	import { FIELD_CONFIGS } from '$lib/types/agent'
+	import ModelSelector from '#components/ModelSelector.svelte'
+	import { Textarea } from '#components/ui/textarea'
+	import type { HeartbeatConfig } from '#lib/types/agent'
+	import { FIELD_CONFIGS } from '#lib/types/agent'
 
 	interface Props {
 		heartbeat: HeartbeatConfig

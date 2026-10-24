@@ -20,7 +20,7 @@
 
 import type { ResponsePromise } from 'ky'
 import ky from 'ky'
-import { authStore } from '$lib/auth'
+import { authStore } from '#lib/auth'
 
 /** What every `api.*` request method returns: a chainable ky response promise. */
 export type ApiResponsePromise = ResponsePromise

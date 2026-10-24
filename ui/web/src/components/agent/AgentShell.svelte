@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { type Snippet, tick } from 'svelte'
-	import { Button } from '$components/ui/button'
-	import { Separator } from '$components/ui/separator'
-	import { SUPERAGENT_NAME } from '$lib/config'
+	import { Button } from '#components/ui/button'
+	import { Separator } from '#components/ui/separator'
+	import { SUPERAGENT_NAME } from '#lib/config'
 	import {
 		type ActivityFeed,
 		getAgentActivityFeed,
 		mergePastFeed
-	} from '$lib/services/agent'
-	import type { Agent } from '$lib/types/agent'
+	} from '#lib/services/agent'
+	import type { Agent } from '#lib/types/agent'
 	import ActivityContent from './ActivityContent.svelte'
 	import AgentHeader from './AgentHeader.svelte'
 	import ThreadContent from './ThreadContent.svelte'

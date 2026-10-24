@@ -1,5 +1,5 @@
-import type { IconName } from '$lib/icons'
-import type { Agent } from '$lib/types/agent'
+import type { IconName } from '#lib/icons'
+import type { Agent } from '#lib/types/agent'
 
 type RawAgent = { name: string; label?: string; icon: IconName }
 

@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import { AgentConfigEditor } from '$components/agentconfig'
+import { AgentConfigEditor } from '#components/agentconfig'
 import type {
 	AgentConfiguration,
 	CronJob,
 	SuperagentConfiguration,
 	WorkerConfiguration
-} from '$lib/types/agent'
-import type { Tool } from '$lib/types/tool'
+} from '#lib/types/agent'
+import type { Tool } from '#lib/types/tool'
 
 // Helper to create default superagent configuration
 function createDefaultSuperagentConfig(): SuperagentConfiguration {

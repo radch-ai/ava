@@ -1,19 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Agent } from '$lib/types/agent'
+import type { Agent } from '#lib/types/agent'
 
 const { mockAgents } = vi.hoisted(() => ({
 	mockAgents: [] as Agent[]
 }))
 
-vi.mock('$lib/services/agent', () => ({
+vi.mock('#lib/services/agent', () => ({
 	getAgentActivityFeed: vi.fn()
 }))
 
-vi.mock('$lib/user', () => ({
+vi.mock('#lib/user', () => ({
 	agents: mockAgents
 }))
 
-import { getAgentActivityFeed } from '$lib/services/agent'
+import { getAgentActivityFeed } from '#lib/services/agent'
 import { load } from '../../../../../src/routes/(app)/agent/[agentName]/+page'
 
 const mockGetAgentActivityFeed = vi.mocked(getAgentActivityFeed)

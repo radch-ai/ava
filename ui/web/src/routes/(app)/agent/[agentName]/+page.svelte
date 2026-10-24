@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { ArrowRight } from 'lucide-svelte'
+	import AgentShell from '#components/agent/AgentShell.svelte'
+	import { Button } from '#components/ui/button'
+	import { SUPERAGENT_NAME } from '#lib/config'
+	import type { ActivityFeed } from '#lib/services/agent'
 	import { resolve } from '$app/paths'
-	import AgentShell from '$components/agent/AgentShell.svelte'
-	import { Button } from '$components/ui/button'
-	import { SUPERAGENT_NAME } from '$lib/config'
-	import type { ActivityFeed } from '$lib/services/agent'
 	import type { PageData } from './$types'
 
 	let { data }: { data: PageData } = $props()
@@ -18,7 +18,7 @@
 	})
 
 	const ctaHref = $derived(
-		`${resolve('/')}?prompt=${encodeURIComponent(`Use the ${data.agent.label} agent to...`)}`
+		`${resolve('/(app)')}?prompt=${encodeURIComponent(`Use the ${data.agent.label} agent to...`)}`
 	)
 
 	function handleActivityLoadMore(feed: ActivityFeed) {

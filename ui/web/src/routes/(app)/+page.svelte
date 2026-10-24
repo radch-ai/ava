@@ -1,15 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte'
-	import AgentShell from '$components/agent/AgentShell.svelte'
-	import ModelSelector from '$components/ModelSelector.svelte'
-	import { APP_NAME, SUPERAGENT_NAME } from '$lib/config'
-	import { defaultModel } from '$lib/models'
-	import { type ActivityFeed, getAgentActivityFeed } from '$lib/services/agent'
+	import AgentShell from '#components/agent/AgentShell.svelte'
+	import ModelSelector from '#components/ModelSelector.svelte'
+	import { APP_NAME, SUPERAGENT_NAME } from '#lib/config'
+	import { defaultModel } from '#lib/models'
+	import { type ActivityFeed, getAgentActivityFeed } from '#lib/services/agent'
 	import {
 		getSuperagentThread,
 		mergePastSuperagentThread
-	} from '$lib/services/user'
-	import { SUPERAGENT_AGENT } from '$lib/types/agent'
+	} from '#lib/services/user'
+	import { SUPERAGENT_AGENT } from '#lib/types/agent'
 	import type { PageData } from './$types'
 	import TextArea from './TextArea.svelte'
 

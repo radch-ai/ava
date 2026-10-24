@@ -1,9 +1,9 @@
 <script lang="ts">
 	import type { Component } from 'svelte'
-	import * as Tooltip from '$components/ui/tooltip'
-	import type { SuperagentThread } from '$lib/services/user'
-	import type { Agent } from '$lib/types/agent'
-	import SuperagentPage from '$routes/+page.svelte'
+	import * as Tooltip from '#components/ui/tooltip'
+	import type { SuperagentThread } from '#lib/services/user'
+	import type { Agent } from '#lib/types/agent'
+	import SuperagentPage from '#routes/+page.svelte'
 
 	interface TestPageData {
 		agents: Agent[]

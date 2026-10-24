@@ -1,18 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('$lib/services/api', () => ({
+vi.mock('#lib/services/api', () => ({
 	api: {
 		get: vi.fn()
 	}
 }))
 
-import { type ApiResponsePromise, api } from '$lib/services/api'
+import { type ApiResponsePromise, api } from '#lib/services/api'
 import {
 	getSuperagentThread,
 	mergePastSuperagentThread,
 	type SuperagentThread,
 	type SuperagentThreadMessage
-} from '$lib/services/user'
+} from '#lib/services/user'
 
 function createSuperagentThreadMessage(
 	overrides?: Partial<SuperagentThreadMessage>

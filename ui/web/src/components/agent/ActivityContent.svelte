@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { AgentActivityItem } from '$lib/services/agent'
-	import { formatRelativeTime } from '$lib/utils/date'
+	import type { AgentActivityItem } from '#lib/services/agent'
+	import { formatRelativeTime } from '#lib/utils/date'
 
 	let { items }: { items: AgentActivityItem[] } = $props()
 </script>

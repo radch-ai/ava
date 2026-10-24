@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit'
-import { type ActivityFeed, getAgentActivityFeed } from '$lib/services/agent'
-import type { Agent } from '$lib/types/agent'
-import { agents } from '$lib/user'
+import { type ActivityFeed, getAgentActivityFeed } from '#lib/services/agent'
+import type { Agent } from '#lib/types/agent'
+import { agents } from '#lib/user'
 import type { PageLoad } from './$types'
 
 export const load: PageLoad = async ({ params, parent }) => {

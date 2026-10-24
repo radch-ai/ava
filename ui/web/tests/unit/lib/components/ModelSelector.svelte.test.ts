@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import ModelSelector from '$components/ModelSelector.svelte'
-import type { ModelGroup } from '$lib/models'
+import ModelSelector from '#components/ModelSelector.svelte'
+import type { ModelGroup } from '#lib/models'
 
 describe('ModelSelector', () => {
 	const testModelGroups: ModelGroup[] = [

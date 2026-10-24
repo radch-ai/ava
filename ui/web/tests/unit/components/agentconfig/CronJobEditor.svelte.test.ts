@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import CronJobEditor from '$components/agentconfig/CronJobEditor.svelte'
-import type { CronJob } from '$lib/types/agent'
+import CronJobEditor from '#components/agentconfig/CronJobEditor.svelte'
+import type { CronJob } from '#lib/types/agent'
 
 describe('CronJobEditor', () => {
 	afterEach(async () => {

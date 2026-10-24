@@ -1,7 +1,7 @@
 import { setupServer } from 'msw/node'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { createSeedData } from '$lib/mocks/data'
-import { createHandlers } from '$lib/mocks/handlers'
+import { createSeedData } from '#lib/mocks/data'
+import { createHandlers } from '#lib/mocks/handlers'
 
 const server = setupServer(...createHandlers(createSeedData()))
 

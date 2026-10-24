@@ -1,17 +1,17 @@
 <script lang="ts">
-	import type { BeforeNavigate } from '@sveltejs/kit'
 	import { Bot } from 'lucide-svelte'
-	import { beforeNavigate, goto } from '$app/navigation'
-	import { resolve } from '$app/paths'
-	import { AgentConfigEditor } from '$components/agentconfig'
-	import UnsavedChangesDialog from '$components/agentconfig/UnsavedChangesDialog.svelte'
-	import type { IconName } from '$lib/icons'
-	import { createAgent } from '$lib/services/agent'
+	import { AgentConfigEditor } from '#components/agentconfig'
+	import UnsavedChangesDialog from '#components/agentconfig/UnsavedChangesDialog.svelte'
+	import type { IconName } from '#lib/icons'
+	import { createAgent } from '#lib/services/agent'
 	import {
 		createDefaultWorkerConfiguration,
 		type WorkerConfiguration
-	} from '$lib/types/agent'
-	import { addAgent } from '$lib/user'
+	} from '#lib/types/agent'
+	import { addAgent } from '#lib/user'
+	import { type BeforeNavigate, beforeNavigate, goto } from '$app/navigation'
+	import { resolve } from '$app/paths'
+	import type { PathnameWithSearchOrHash } from '$app/types'
 
 	let configuration = $state<WorkerConfiguration>(
 		createDefaultWorkerConfiguration()
@@ -66,8 +66,7 @@
 		if (pendingNavigation?.to?.url) {
 			isNavigating = true
 			const url = pendingNavigation.to.url
-			// @ts-expect-error - Dynamic route not typed
-			goto(resolve(url.pathname + url.search))
+			goto(resolve((url.pathname + url.search) as PathnameWithSearchOrHash))
 		}
 		pendingNavigation = null
 	}
@@ -98,7 +97,9 @@
 				icon: (config.icon ?? 'bot') as IconName
 			})
 			isNavigating = true
-			await goto(resolve(`/agent/${createdAgent.name}`))
+			await goto(
+				resolve('/(app)/agent/[agentName]', { agentName: createdAgent.name })
+			)
 		} catch (error) {
 			console.error('Failed to create agent:', error)
 		}

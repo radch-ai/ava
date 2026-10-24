@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { APP_NAME } from '$lib/config'
+	import { APP_NAME } from '#lib/config'
 	import '../app.css'
 
 	let { children } = $props()

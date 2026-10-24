@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { Textarea } from '$components/ui/textarea'
-	import { SOUL_FIELD_CONFIGS, type SoulConfig } from '$lib/types/agent'
+	import { Textarea } from '#components/ui/textarea'
+	import { SOUL_FIELD_CONFIGS, type SoulConfig } from '#lib/types/agent'
 
 	interface Props {
 		soul: SoulConfig

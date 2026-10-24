@@ -1,14 +1,14 @@
 <script lang="ts">
-	import * as Sheet from '$components/ui/sheet'
-	import { SUPERAGENT_NAME } from '$lib/config'
-	import { updateAgentConfiguration } from '$lib/services/agent'
+	import * as Sheet from '#components/ui/sheet'
+	import { SUPERAGENT_NAME } from '#lib/config'
+	import { updateAgentConfiguration } from '#lib/services/agent'
 	import {
 		AGENT_FIELDS,
 		type AgentConfiguration,
 		getConfigurationField,
 		setConfigurationField
-	} from '$lib/types/agent'
-	import type { Tool } from '$lib/types/tool'
+	} from '#lib/types/agent'
+	import type { Tool } from '#lib/types/tool'
 	import AgentConfigEditor from './AgentConfigEditor.svelte'
 	import UnsavedChangesDialog from './UnsavedChangesDialog.svelte'
 

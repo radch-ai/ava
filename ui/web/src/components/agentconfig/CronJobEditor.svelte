@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { Pencil, Plus, X } from 'lucide-svelte'
-	import ModelSelector from '$components/ModelSelector.svelte'
-	import { Button } from '$components/ui/button'
-	import { Input } from '$components/ui/input'
-	import * as Select from '$components/ui/select'
-	import { Textarea } from '$components/ui/textarea'
-	import { defaultModel } from '$lib/models'
-	import type { CronJob } from '$lib/types/agent'
+	import ModelSelector from '#components/ModelSelector.svelte'
+	import { Button } from '#components/ui/button'
+	import { Input } from '#components/ui/input'
+	import * as Select from '#components/ui/select'
+	import { Textarea } from '#components/ui/textarea'
+	import { defaultModel } from '#lib/models'
+	import type { CronJob } from '#lib/types/agent'
 
 	type Frequency = CronJob['frequency']
 

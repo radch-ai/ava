@@ -1,6 +1,7 @@
 import 'dotenv/config'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
+import adapter from '@sveltejs/adapter-static'
 import { sveltekit } from '@sveltejs/kit/vite'
 import tailwindcss from '@tailwindcss/vite'
 import { playwright } from '@vitest/browser-playwright'
@@ -98,7 +99,19 @@ function avaApiMocks(): Plugin {
 const useMocks = process.env.VITE_USE_MOCKS === 'true'
 
 export default defineConfig({
-	plugins: [tailwindcss(), sveltekit(), ...(useMocks ? [avaApiMocks()] : [])],
+	plugins: [
+		tailwindcss(),
+		sveltekit({
+			adapter: adapter({
+				fallback: '200.html'
+			}),
+			compilerOptions: {
+				runes: ({ filename }) =>
+					filename.includes('node_modules') ? undefined : true
+			}
+		}),
+		...(useMocks ? [avaApiMocks()] : [])
+	],
 	preview: {
 		host: '0.0.0.0',
 		port: 4173,

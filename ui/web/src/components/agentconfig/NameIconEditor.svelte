@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { Input } from '$components/ui/input'
-	import type { IconName } from '$lib/icons'
-	import { type AgentConfiguration, FIELD_CONFIGS } from '$lib/types/agent'
+	import { Input } from '#components/ui/input'
+	import type { IconName } from '#lib/icons'
+	import { type AgentConfiguration, FIELD_CONFIGS } from '#lib/types/agent'
 	import IconPicker from './IconPicker.svelte'
 
 	interface Props {

@@ -1,9 +1,9 @@
 <script lang="ts">
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle'
 	import type { Snippet } from 'svelte'
-	import AppSidebar from '$components/AppSidebar.svelte'
-	import { SidebarProvider, useSidebar } from '$components/ui/sidebar'
-	import { authStore } from '$lib/auth'
+	import AppSidebar from '#components/AppSidebar.svelte'
+	import { SidebarProvider, useSidebar } from '#components/ui/sidebar'
+	import { authStore } from '#lib/auth'
 	import type { LayoutData } from './$types'
 
 	let { data, children }: { data: LayoutData; children: Snippet } = $props()

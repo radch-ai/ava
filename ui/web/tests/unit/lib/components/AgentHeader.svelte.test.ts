@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import type { Agent, SuperagentConfiguration } from '$lib/types/agent'
+import type { Agent, SuperagentConfiguration } from '#lib/types/agent'
 import AgentHeaderPairTestWrapper from './AgentHeaderPairTestWrapper.svelte'
 import AgentHeaderTestWrapper from './AgentHeaderTestWrapper.svelte'
 
@@ -36,12 +36,12 @@ function createDefaultTestConfig(): SuperagentConfiguration {
 	}
 }
 
-vi.mock('$lib/services/agent', () => ({
+vi.mock('#lib/services/agent', () => ({
 	getAgentConfiguration: vi.fn(),
 	updateAgentConfiguration: vi.fn()
 }))
 
-import { getAgentConfiguration } from '$lib/services/agent'
+import { getAgentConfiguration } from '#lib/services/agent'
 
 const mockGetAgentConfiguration = vi.mocked(getAgentConfiguration)
 

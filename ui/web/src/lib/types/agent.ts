@@ -10,8 +10,8 @@
  * At runtime: SELECT * FROM user_tools WHERE id = ANY(agent.tools_enabled)
  */
 
-import { SUPERAGENT_NAME } from '$lib/config'
-import { ALL_ICON_NAMES, type IconName } from '$lib/icons'
+import { SUPERAGENT_NAME } from '#lib/config'
+import { ALL_ICON_NAMES, type IconName } from '#lib/icons'
 
 // ============================================================================
 // RUNTIME AGENT TYPE (for UI routing)

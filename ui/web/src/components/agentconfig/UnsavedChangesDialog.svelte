@@ -1,5 +1,5 @@
 <script lang="ts">
-	import * as AlertDialog from '$components/ui/alert-dialog'
+	import * as AlertDialog from '#components/ui/alert-dialog'
 
 	interface Props {
 		open: boolean

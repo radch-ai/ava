@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('$lib/services/api', () => ({
+vi.mock('#lib/services/api', () => ({
 	api: {
 		get: vi.fn()
 	}
 }))
 
-import { type ApiResponsePromise, api } from '$lib/services/api'
-import { getAgents } from '$lib/services/user/agents'
+import { type ApiResponsePromise, api } from '#lib/services/api'
+import { getAgents } from '#lib/services/user/agents'
 
 describe('user/agents service', () => {
 	beforeEach(() => {

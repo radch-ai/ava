@@ -1,7 +1,7 @@
 import { HttpResponse, http } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { AuthStore } from '$lib/auth/store.svelte'
+import { AuthStore } from '#lib/auth/store.svelte'
 
 const MOCK_USER = { sub: 'u1', name: 'Ava' }
 

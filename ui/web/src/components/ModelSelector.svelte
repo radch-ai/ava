@@ -1,7 +1,7 @@
 <script lang="ts">
-	import * as Select from '$components/ui/select'
-	import { defaultModel, type ModelGroup, modelGroups } from '$lib/models'
-	import { cn } from '$lib/utils'
+	import * as Select from '#components/ui/select'
+	import { defaultModel, type ModelGroup, modelGroups } from '#lib/models'
+	import { cn } from '#lib/utils'
 
 	let {
 		class: className,

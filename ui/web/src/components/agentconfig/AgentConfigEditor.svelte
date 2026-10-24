@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { SvelteSet } from 'svelte/reactivity'
-	import { Button } from '$components/ui/button'
-	import { SUPERAGENT_NAME } from '$lib/config'
+	import { Button } from '#components/ui/button'
+	import { SUPERAGENT_NAME } from '#lib/config'
 	import {
 		AGENT_FIELDS,
 		type AgentConfiguration,
@@ -11,8 +11,8 @@
 		getConfigurationField,
 		type HeartbeatConfig,
 		type SuperagentConfiguration
-	} from '$lib/types/agent'
-	import type { Tool } from '$lib/types/tool'
+	} from '#lib/types/agent'
+	import type { Tool } from '#lib/types/tool'
 	import ConfigTextField from './ConfigTextField.svelte'
 	import CronJobEditor from './CronJobEditor.svelte'
 	import HeartbeatEditor from './HeartbeatEditor.svelte'

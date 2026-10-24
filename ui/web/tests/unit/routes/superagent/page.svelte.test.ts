@@ -1,18 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import type { IconName } from '$lib/icons'
-import type { SuperagentThread } from '$lib/services/user'
-import type { Agent } from '$lib/types/agent'
+import type { IconName } from '#lib/icons'
+import type { SuperagentThread } from '#lib/services/user'
+import type { Agent } from '#lib/types/agent'
 import SuperagentPage from './SuperagentPageTestWrapper.svelte'
 
-vi.mock('$lib/services/api', () => ({
+vi.mock('#lib/services/api', () => ({
 	api: {
 		get: vi.fn()
 	}
 }))
 
-import { type ApiResponsePromise, api } from '$lib/services/api'
+import { type ApiResponsePromise, api } from '#lib/services/api'
 
 const mockAgents = [
 	{ name: 'ava', icon: 'sparkles' as IconName, label: 'Ava' },

@@ -1,19 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import { AgentConfigSheet } from '$components/agentconfig'
+import { AgentConfigSheet } from '#components/agentconfig'
 import type {
 	AgentConfiguration,
 	SuperagentConfiguration
-} from '$lib/types/agent'
-import type { Tool } from '$lib/types/tool'
+} from '#lib/types/agent'
+import type { Tool } from '#lib/types/tool'
 
 // Mock the agent config service
-vi.mock('$lib/services/agent', () => ({
+vi.mock('#lib/services/agent', () => ({
 	updateAgentConfiguration: vi.fn()
 }))
 
-import { updateAgentConfiguration } from '$lib/services/agent'
+import { updateAgentConfiguration } from '#lib/services/agent'
 
 const mockUpdateAgentConfiguration = vi.mocked(updateAgentConfiguration)
 

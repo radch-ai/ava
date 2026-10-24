@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { IconName } from '$lib/icons'
+import type { IconName } from '#lib/icons'
 import {
 	addAgent,
 	agents,
 	clearAgents,
 	normalizeAgent,
 	setAgents
-} from '$lib/user'
+} from '#lib/user'
 
 const bot: IconName = 'bot'
 const chartColumn: IconName = 'chart-column'

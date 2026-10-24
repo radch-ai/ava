@@ -1,7 +1,7 @@
 <script lang="ts">
-	import AgentHeader from '$components/agent/AgentHeader.svelte'
-	import * as Tooltip from '$components/ui/tooltip'
-	import type { Agent } from '$lib/types/agent'
+	import AgentHeader from '#components/agent/AgentHeader.svelte'
+	import * as Tooltip from '#components/ui/tooltip'
+	import type { Agent } from '#lib/types/agent'
 
 	let {
 		agent,

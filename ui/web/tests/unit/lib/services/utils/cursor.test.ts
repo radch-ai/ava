@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { type CursorPage, mergePastPages } from '$lib/services/utils/cursor'
+import { type CursorPage, mergePastPages } from '#lib/services/utils/cursor'
 
 interface TestItem {
 	id: string

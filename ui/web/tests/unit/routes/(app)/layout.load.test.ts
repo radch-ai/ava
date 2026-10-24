@@ -1,22 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { getAgents } from '$lib/services/user'
-import type { Agent } from '$lib/types/agent'
-import { setAgents } from '$lib/user'
+import { getAgents } from '#lib/services/user'
+import type { Agent } from '#lib/types/agent'
+import { setAgents } from '#lib/user'
 import { load } from '../../../../src/routes/(app)/+layout'
 
 const { mockAuthStore } = vi.hoisted(() => ({
 	mockAuthStore: { isAuthenticated: true, initialize: vi.fn() }
 }))
 
-vi.mock('$lib/auth', () => ({
+vi.mock('#lib/auth', () => ({
 	authStore: mockAuthStore
 }))
 
-vi.mock('$lib/services/user', () => ({
+vi.mock('#lib/services/user', () => ({
 	getAgents: vi.fn()
 }))
 
-vi.mock('$lib/user', () => ({
+vi.mock('#lib/user', () => ({
 	setAgents: vi.fn()
 }))
 

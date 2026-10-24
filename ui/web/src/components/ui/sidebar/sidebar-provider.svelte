@@ -1,6 +1,6 @@
 <script lang="ts">
-	import * as Tooltip from '$components/ui/tooltip/index.js';
-	import { cn, type WithElementRef } from '$lib/utils.js';
+	import * as Tooltip from '#components/ui/tooltip/index.js';
+	import { cn, type WithElementRef } from '#lib/utils.js';
 	import type { HTMLAttributes } from 'svelte/elements';
 	import {
 		SIDEBAR_COOKIE_MAX_AGE,
@@ -9,7 +9,7 @@
 		SIDEBAR_WIDTH_ICON
 	} from './constants.js';
 	import { setSidebar } from './context.svelte.js';
-	import { IsMobile } from '$lib/hooks/is-mobile.svelte.js';
+	import { IsMobile } from '#lib/hooks/is-mobile.svelte.js';
 
 	// Check if mobile to set default collapsed state
 	const isMobile = new IsMobile();

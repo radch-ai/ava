@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { Label } from '$components/ui/label'
-	import { Switch } from '$components/ui/switch'
-	import type { Tool } from '$lib/types/tool'
+	import { Label } from '#components/ui/label'
+	import { Switch } from '#components/ui/switch'
+	import type { Tool } from '#lib/types/tool'
 
 	interface Props {
 		/** All available tools */

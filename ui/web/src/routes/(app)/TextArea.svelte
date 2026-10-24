@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { ArrowUp, Plus } from 'lucide-svelte'
-	import { Button } from '$components/ui/button'
-	import { Textarea } from '$components/ui/textarea'
+	import { Button } from '#components/ui/button'
+	import { Textarea } from '#components/ui/textarea'
 
 	let { onsubmit }: { onsubmit?: () => void } = $props()
 

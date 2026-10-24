@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import ThreadContent from '$components/agent/ThreadContent.svelte'
+import ThreadContent from '#components/agent/ThreadContent.svelte'
 
 interface ThreadItem {
 	id: string

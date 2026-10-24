@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { Textarea } from '$components/ui/textarea'
-	import type { FieldConfig } from '$lib/types/agent'
+	import { Textarea } from '#components/ui/textarea'
+	import type { FieldConfig } from '#lib/types/agent'
 
 	interface Props {
 		value: string

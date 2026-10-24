@@ -1,4 +1,4 @@
-import type { Agent } from '$lib/types/agent'
+import type { Agent } from '#lib/types/agent'
 import { api } from '../api'
 
 export async function getAgents(): Promise<Agent[]> {

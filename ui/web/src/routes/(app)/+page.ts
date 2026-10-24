@@ -1,4 +1,4 @@
-import { getSuperagentThread, type SuperagentThread } from '$lib/services/user'
+import { getSuperagentThread, type SuperagentThread } from '#lib/services/user'
 import type { PageLoad } from './$types'
 
 interface PageLoadResult {

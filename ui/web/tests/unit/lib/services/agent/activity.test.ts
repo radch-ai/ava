@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('$lib/services/api', () => ({
+vi.mock('#lib/services/api', () => ({
 	api: {
 		get: vi.fn()
 	}
@@ -10,9 +10,9 @@ import {
 	type ActivityFeed,
 	getAgentActivityFeed,
 	mergePastFeed
-} from '$lib/services/agent'
-import type { AgentActivityItem } from '$lib/services/agent/activity'
-import { type ApiResponsePromise, api } from '$lib/services/api'
+} from '#lib/services/agent'
+import type { AgentActivityItem } from '#lib/services/agent/activity'
+import { type ApiResponsePromise, api } from '#lib/services/api'
 
 function createActivityItem(
 	overrides?: Partial<AgentActivityItem>

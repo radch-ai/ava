@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import ModelSelector from '$components/ModelSelector.svelte'
+import ModelSelector from '#components/ModelSelector.svelte'
 
 describe('ModelSelector', () => {
 	afterEach(async () => {

@@ -1,6 +1,6 @@
-import { authStore } from '$lib/auth'
-import { getAgents } from '$lib/services/user'
-import { setAgents } from '$lib/user'
+import { authStore } from '#lib/auth'
+import { getAgents } from '#lib/services/user'
+import { setAgents } from '#lib/user'
 import type { LayoutLoad } from './$types'
 
 export const load: LayoutLoad = async () => {

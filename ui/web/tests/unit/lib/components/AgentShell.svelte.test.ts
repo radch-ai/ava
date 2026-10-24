@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import type { ActivityFeed, AgentActivityItem } from '$lib/services/agent'
-import type { Agent } from '$lib/types/agent'
+import type { ActivityFeed, AgentActivityItem } from '#lib/services/agent'
+import type { Agent } from '#lib/types/agent'
 import TestWrapper from './TestWrapper.svelte'
 
-vi.mock('$lib/services/agent', () => ({
+vi.mock('#lib/services/agent', () => ({
 	getAgentActivityFeed: vi.fn(),
 	mergePastFeed: vi.fn(),
 	getAgentConfiguration: vi.fn(),
@@ -16,8 +16,8 @@ import {
 	getAgentActivityFeed,
 	getAgentConfiguration,
 	mergePastFeed
-} from '$lib/services/agent'
-import type { SuperagentConfiguration } from '$lib/types/agent'
+} from '#lib/services/agent'
+import type { SuperagentConfiguration } from '#lib/types/agent'
 
 const mockGetAgentActivityFeed = vi.mocked(getAgentActivityFeed)
 const mockMergePastFeed = vi.mocked(mergePastFeed)

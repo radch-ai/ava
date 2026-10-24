@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { Settings } from 'lucide-svelte'
-	import { AgentConfigSheet } from '$components/agentconfig'
-	import { Button, buttonVariants } from '$components/ui/button'
-	import * as Tooltip from '$components/ui/tooltip'
-	import { SUPERAGENT_NAME } from '$lib/config'
-	import { Icon } from '$lib/icons'
-	import { getAgentConfiguration } from '$lib/services/agent'
-	import type { Agent, AgentConfiguration } from '$lib/types/agent'
-	import type { Tool } from '$lib/types/tool'
+	import { AgentConfigSheet } from '#components/agentconfig'
+	import { Button, buttonVariants } from '#components/ui/button'
+	import * as Tooltip from '#components/ui/tooltip'
+	import { SUPERAGENT_NAME } from '#lib/config'
+	import { Icon } from '#lib/icons'
+	import { getAgentConfiguration } from '#lib/services/agent'
+	import type { Agent, AgentConfiguration } from '#lib/types/agent'
+	import type { Tool } from '#lib/types/tool'
 
 	let {
 		agent,

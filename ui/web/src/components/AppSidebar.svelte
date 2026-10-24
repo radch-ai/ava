@@ -6,16 +6,16 @@
 		Plus
 	} from 'lucide-svelte'
 	import { onMount } from 'svelte'
+	import { Button } from '#components/ui/button'
+	import * as Sidebar from '#components/ui/sidebar'
+	import * as Tooltip from '#components/ui/tooltip'
+	import { authStore } from '#lib/auth'
+	import { APP_NAME } from '#lib/config'
+	import { Icon } from '#lib/icons'
+	import { SUPERAGENT_AGENT } from '#lib/types/agent'
+	import { agents } from '#lib/user'
 	import { resolve } from '$app/paths'
-	import { page } from '$app/stores'
-	import { Button } from '$components/ui/button'
-	import * as Sidebar from '$components/ui/sidebar'
-	import * as Tooltip from '$components/ui/tooltip'
-	import { authStore } from '$lib/auth'
-	import { APP_NAME } from '$lib/config'
-	import { Icon } from '$lib/icons'
-	import { SUPERAGENT_AGENT } from '$lib/types/agent'
-	import { agents } from '$lib/user'
+	import { page } from '$app/state'
 
 	const sidebar = Sidebar.useSidebar()
 
@@ -79,11 +79,11 @@
 				<Sidebar.MenuItem>
 					<Sidebar.MenuButton
 						size="lg"
-						isActive={$page.url.pathname === '/'}
+						isActive={page.url.pathname === '/'}
 						class="group-data-[collapsible=icon]:justify-center"
 					>
 						{#snippet child({ props })}
-							<a href={resolve('/')} {...props}>
+							<a href={resolve('/(app)')} {...props}>
 								<Icon
 									name={SUPERAGENT_AGENT.icon}
 									size={18}
@@ -106,10 +106,15 @@
 					{#each agents as agent (agent.name)}
 						<Sidebar.MenuItem>
 							<Sidebar.MenuButton
-								isActive={$page.url.pathname === `/agent/${agent.name}`}
+								isActive={page.url.pathname === `/agent/${agent.name}`}
 							>
 								{#snippet child({ props })}
-									<a href={resolve(`/agent/${agent.name}`)} {...props}>
+									<a
+										href={resolve('/(app)/agent/[agentName]', {
+											agentName: agent.name
+										})}
+										{...props}
+									>
 										<Icon
 											name={agent.icon}
 											size={18}
@@ -127,8 +132,8 @@
 					<Sidebar.MenuItem class="mt-2">
 						<Button
 							size="sm"
-							href={resolve('/agent/new')}
-							class="w-full justify-start gap-2 group-data-[collapsible=icon]:justify-center {$page
+							href={resolve('/(app)/agent/new')}
+							class="w-full justify-start gap-2 group-data-[collapsible=icon]:justify-center {page
 								.url.pathname === '/agent/new'
 								? ''
 								: 'opacity-50 hover:opacity-100'}"

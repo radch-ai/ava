@@ -1,4 +1,4 @@
-import type { AgentConfiguration } from '$lib/types/agent'
+import type { AgentConfiguration } from '#lib/types/agent'
 import { api } from '../api'
 
 export interface CreateAgentResponse {

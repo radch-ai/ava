@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import TextArea from '$routes/TextArea.svelte'
+import TextArea from '#routes/TextArea.svelte'
 
 describe('TextArea', () => {
 	afterEach(async () => {

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import { authStore } from '$lib/auth'
-import type { Agent } from '$lib/types/agent'
+import { authStore } from '#lib/auth'
+import type { Agent } from '#lib/types/agent'
 import AppSidebarTestWrapper from './AppSidebarTestWrapper.svelte'
 
 const { agents, mockSetAgents, mockGetAgents } = vi.hoisted(() => {
@@ -42,7 +42,7 @@ const { pageStore, setPathname } = vi.hoisted(() => {
 	}
 })
 
-vi.mock('$lib/user', () => ({
+vi.mock('#lib/user', () => ({
 	agents,
 	getAgents: mockGetAgents,
 	setAgents: mockSetAgents
@@ -57,15 +57,15 @@ vi.mock('$app/paths', () => ({
 	resolve: (path: string) => path
 }))
 
-vi.mock('$lib/config', () => ({
+vi.mock('#lib/config', () => ({
 	APP_NAME: 'TestApp'
 }))
 
-vi.mock('$lib/auth', () => ({
+vi.mock('#lib/auth', () => ({
 	authStore: { logout: vi.fn() }
 }))
 
-vi.mock('$lib/types/agent', () => ({
+vi.mock('#lib/types/agent', () => ({
 	SUPERAGENT_AGENT: {
 		name: 'ava',
 		label: 'Chat with Ava',

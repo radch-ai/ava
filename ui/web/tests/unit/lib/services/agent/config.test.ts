@@ -3,9 +3,9 @@ import type {
 	CronJob,
 	HeartbeatConfig,
 	SuperagentConfiguration
-} from '$lib/types/agent'
+} from '#lib/types/agent'
 
-vi.mock('$lib/services/api', () => ({
+vi.mock('#lib/services/api', () => ({
 	api: {
 		get: vi.fn(),
 		patch: vi.fn(),
@@ -17,8 +17,8 @@ import {
 	createAgent,
 	getAgentConfiguration,
 	updateAgentConfiguration
-} from '$lib/services/agent'
-import { type ApiResponsePromise, api } from '$lib/services/api'
+} from '#lib/services/agent'
+import { type ApiResponsePromise, api } from '#lib/services/api'
 
 function createTestConfig(
 	overrides?: Partial<SuperagentConfiguration>

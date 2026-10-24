@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import { AgentConfigSheet } from '$components/agentconfig'
+import { AgentConfigSheet } from '#components/agentconfig'
 import type {
 	AgentConfiguration,
 	SuperagentConfiguration,
 	WorkerConfiguration
-} from '$lib/types/agent'
-import type { Tool } from '$lib/types/tool'
+} from '#lib/types/agent'
+import type { Tool } from '#lib/types/tool'
 
 // Helper to create default superagent configuration
 function createDefaultSuperagentConfig(): SuperagentConfiguration {
@@ -70,13 +70,13 @@ function createProps(
 }
 
 // Mock agent config service
-vi.mock('$lib/services/agent', () => ({
+vi.mock('#lib/services/agent', () => ({
 	updateAgentConfiguration: vi.fn(),
 	createAgent: vi.fn(),
 	getAgentConfiguration: vi.fn()
 }))
 
-import { updateAgentConfiguration } from '$lib/services/agent'
+import { updateAgentConfiguration } from '#lib/services/agent'
 
 const mockUpdateAgentConfiguration = vi.mocked(updateAgentConfiguration)
 
