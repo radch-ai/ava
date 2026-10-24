@@ -1,0 +1,15 @@
+# Package Managers
+bun.lock
+bun.lockb
+
+# Miscellaneous
+/static/
+
+# Custom
+node_modules
+build
+dist
+public
+
+# UI Components (shadcn)
+src/lib/ui-components/
