@@ -156,7 +156,6 @@
 				{/if}
 				<!-- Content -->
 				<div class="flex flex-col gap-4">
-					<!-- prettier-ignore -->
 					{#if isConversation}
 						{#if !threadItems?.length}
 							<p class="text-muted-foreground text-center">
