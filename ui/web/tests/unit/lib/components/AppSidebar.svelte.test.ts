@@ -152,7 +152,7 @@ describe('AppSidebar', () => {
 			render(AppSidebarTestWrapper)
 
 			await expect
-				.element(page.getByRole('button', { name: 'Logout' }))
+				.element(page.getByRole('button', { name: 'Sign Out' }))
 				.toBeVisible()
 		})
 
@@ -160,7 +160,7 @@ describe('AppSidebar', () => {
 			mockSetAgents(createMockAgents())
 			render(AppSidebarTestWrapper)
 
-			await page.getByRole('button', { name: 'Logout' }).click()
+			await page.getByRole('button', { name: 'Sign Out' }).click()
 
 			expect(vi.mocked(authStore.logout)).toHaveBeenCalledTimes(1)
 		})

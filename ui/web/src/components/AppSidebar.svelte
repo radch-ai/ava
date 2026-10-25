@@ -150,16 +150,20 @@
 	</Sidebar.Content>
 	<Sidebar.Separator />
 	<Sidebar.Footer>
-		<button
-			type="button"
-			aria-label="Logout"
-			onclick={() => void authStore.logout()}
-			class="hover:bg-sidebar-accent hover:!ring-ring flex w-full cursor-pointer items-center gap-2 rounded-lg p-2 text-sm group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-1.5 hover:!ring-1"
-		>
-			<LogOut class="size-4 shrink-0" />
-			<span class="font-semibold group-data-[collapsible=icon]:hidden"
-				>Logout</span
-			>
-		</button>
+		<Sidebar.Menu>
+			<Sidebar.MenuItem>
+				<Sidebar.MenuButton
+					size="sm"
+					aria-label="Sign Out"
+					class="cursor-pointer"
+					onclick={() => void authStore.logout()}
+				>
+					<LogOut />
+					<span class="font-medium group-data-[collapsible=icon]:hidden"
+						>Sign Out</span
+					>
+				</Sidebar.MenuButton>
+			</Sidebar.MenuItem>
+		</Sidebar.Menu>
 	</Sidebar.Footer>
 </Sidebar.Root>
