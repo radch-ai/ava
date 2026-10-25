@@ -19,26 +19,13 @@ const { agents, mockSetAgents, mockGetAgents } = vi.hoisted(() => {
 	}
 })
 
-const { pageStore, setPathname } = vi.hoisted(() => {
-	const pageState = { url: { pathname: '/' } }
-	const subscribers = new Set<(value: typeof pageState) => void>()
-
-	const store = {
-		subscribe(run: (value: typeof pageState) => void) {
-			run(pageState)
-			subscribers.add(run)
-			return () => subscribers.delete(run)
-		}
-	}
-
-	const updatePathname = (pathname: string) => {
-		pageState.url.pathname = pathname
-		for (const run of subscribers) run(pageState)
-	}
-
+const { pageState, setPathname } = vi.hoisted(() => {
+	const state = { url: { pathname: '/' } }
 	return {
-		pageStore: store,
-		setPathname: updatePathname
+		pageState: state,
+		setPathname: (pathname: string) => {
+			state.url.pathname = pathname
+		}
 	}
 })
 
@@ -49,12 +36,22 @@ vi.mock('#lib/user', () => ({
 }))
 
 // Mock stores and modules
-vi.mock('$app/stores', () => ({
-	page: pageStore
+vi.mock('$app/state', () => ({
+	page: {
+		get url() {
+			return pageState.url
+		}
+	}
 }))
 
 vi.mock('$app/paths', () => ({
-	resolve: (path: string) => path
+	resolve: (path: string, params?: Record<string, string>) =>
+		path
+			.replace(/^\/\(app\)/, '')
+			.replace(
+				/\[([a-zA-Z]+)\]/g,
+				(_, key: string) => params?.[key] ?? `[${key}]`
+			) || '/'
 }))
 
 vi.mock('#lib/config', () => ({

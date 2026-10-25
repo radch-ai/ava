@@ -10,13 +10,13 @@
 
 Run from `ui/web/` with [bun](https://bun.sh):
 
-- `bun install`
+- `bun install` — installs deps; the postinstall hook provisions the local test Chromium. Prerequisite once per system (root, usually baked into the dev image): `sudo bunx playwright install-deps chromium`
 - `bun run dev` — dev server
 - `bun run build` — production build
 - `bun run check` — svelte-check
 - `bun run biome-check` — biome (lint + format check; `bun run biome-write` auto-fixes)
 - `bun run test:unit` — vitest (unit + component)
-- `bun run test:e2e` — Playwright e2e (requires a running backend and Chromium at `TEST_CHROMIUM_WS_URL`)
+- `bun run test:e2e` — Playwright e2e (requires a running backend; the Playwright browser launches locally and is provisioned automatically by the postinstall hook)
 
 ### UI verification
 

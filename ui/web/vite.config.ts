@@ -130,13 +130,8 @@ export default defineConfig({
 					name: 'client',
 					browser: {
 						enabled: true,
-						provider: playwright({
-							connectOptions: {
-								wsEndpoint:
-									process.env.TEST_CHROMIUM_WS_URL || 'ws://127.0.0.1:9223',
-								exposeNetwork: '<loopback>'
-							}
-						}),
+						viewport: { width: 1280, height: 720 },
+						provider: playwright(),
 						instances: [{ browser: 'chromium', headless: true }]
 					},
 					include: ['tests/unit/**/*.svelte.{test,spec}.{js,ts}']

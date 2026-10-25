@@ -2,7 +2,7 @@
 
 `bun run test:unit` runs two Vitest projects from `vite.config.ts`:
 
-- `client`: browser-mode Svelte tests under `tests/unit/**/*.svelte.{test,spec}.ts` (needs a Chromium WebSocket at `TEST_CHROMIUM_WS_URL`)
+- `client`: browser-mode Svelte tests under `tests/unit/**/*.svelte.{test,spec}.ts` (launches the local Chromium via Playwright)
 - `server`: Node-based tests under `tests/unit/**/*.{test,spec}.ts`
 
 ## Testing Conventions

@@ -35,7 +35,7 @@
 ## Shared Test Infrastructure
 
 - `tests/e2e/setup/fixtures.ts` re-exports the base Playwright test so specs share a single import point.
-- `playwright.config.ts` runs the built preview app against the remote browser and points the frontend at the backend URL used during E2E runs.
+- `playwright.config.ts` runs the built preview app in a locally launched Chromium and points the frontend at the backend URL used during E2E runs.
 
 ## What This Does Not Try To Replace
 
