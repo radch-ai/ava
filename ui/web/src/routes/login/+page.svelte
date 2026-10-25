@@ -1,5 +1,6 @@
 <script lang="ts">
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle'
+	import { onMount, tick } from 'svelte'
 	import { Button } from '#components/ui/button'
 	import { Input } from '#components/ui/input'
 	import { Label } from '#components/ui/label'
@@ -11,6 +12,9 @@
 	let token = $state('')
 	let error = $state<string | null>(null)
 	let submitting = $state(false)
+	let tokenInput = $state<HTMLInputElement | null>(null)
+
+	onMount(() => tokenInput?.focus())
 
 	async function submit(event: SubmitEvent): Promise<void> {
 		event.preventDefault()
@@ -24,6 +28,10 @@
 			error = e instanceof Error ? e.message : 'Login failed'
 		} finally {
 			submitting = false
+			if (error) {
+				await tick()
+				tokenInput?.focus()
+			}
 		}
 	}
 </script>
@@ -46,6 +54,7 @@
 					autocomplete="off"
 					placeholder="Paste your token"
 					bind:value={token}
+					bind:ref={tokenInput}
 					disabled={submitting}
 				/>
 			</div>
