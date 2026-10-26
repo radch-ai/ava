@@ -27,14 +27,14 @@ describe('ModelSelector', () => {
 		it('renders the selector', async () => {
 			render(ModelSelector, { modelGroups: testModelGroups })
 
-			const button = page.getByRole('button')
+			const button = page.getByRole('combobox')
 			await expect.element(button).toBeVisible()
 		})
 
 		it('shows default model (auto) when no value is provided', async () => {
 			render(ModelSelector, { modelGroups: testModelGroups })
 
-			const button = page.getByRole('button')
+			const button = page.getByRole('combobox')
 			await expect.element(button).toHaveTextContent('auto')
 		})
 
@@ -44,7 +44,7 @@ describe('ModelSelector', () => {
 				modelGroups: testModelGroups
 			})
 
-			const button = page.getByRole('button')
+			const button = page.getByRole('combobox')
 			await expect.element(button).toHaveTextContent('GPT-4')
 		})
 
@@ -54,7 +54,7 @@ describe('ModelSelector', () => {
 				modelGroups: testModelGroups
 			})
 
-			const button = page.getByRole('button')
+			const button = page.getByRole('combobox')
 			await expect.element(button).toHaveTextContent('Select model')
 		})
 
@@ -64,7 +64,7 @@ describe('ModelSelector', () => {
 				modelGroups: testModelGroups
 			})
 
-			const button = page.getByRole('button')
+			const button = page.getByRole('combobox')
 			const buttonElement = button.element()
 			expect(buttonElement.className).toContain('custom-class')
 		})
@@ -74,7 +74,7 @@ describe('ModelSelector', () => {
 		it('opens dropdown on click', async () => {
 			render(ModelSelector, { modelGroups: testModelGroups })
 
-			const button = page.getByRole('button')
+			const button = page.getByRole('combobox')
 			await button.click()
 
 			await expect.element(page.getByText('OpenAI')).toBeVisible()
@@ -83,7 +83,7 @@ describe('ModelSelector', () => {
 		it('shows available models in dropdown', async () => {
 			render(ModelSelector, { modelGroups: testModelGroups })
 
-			const button = page.getByRole('button')
+			const button = page.getByRole('combobox')
 			await button.click()
 
 			await expect.element(page.getByText('GPT-4')).toBeVisible()
@@ -94,7 +94,7 @@ describe('ModelSelector', () => {
 		it('shows provider group headings', async () => {
 			render(ModelSelector, { modelGroups: testModelGroups })
 
-			const button = page.getByRole('button')
+			const button = page.getByRole('combobox')
 			await button.click()
 
 			await expect.element(page.getByText('OpenAI')).toBeVisible()
@@ -107,7 +107,7 @@ describe('ModelSelector', () => {
 				showDefault: true
 			})
 
-			const button = page.getByRole('button')
+			const button = page.getByRole('combobox')
 			await button.click()
 
 			const autoOption = page.getByRole('option', { name: 'auto' })
@@ -121,7 +121,7 @@ describe('ModelSelector', () => {
 				value: 'gpt-4'
 			})
 
-			const button = page.getByRole('button')
+			const button = page.getByRole('combobox')
 			await button.click()
 
 			await expect
@@ -138,7 +138,7 @@ describe('ModelSelector', () => {
 		it('selects model on click and updates display', async () => {
 			render(ModelSelector, { modelGroups: testModelGroups })
 
-			const button = page.getByRole('button')
+			const button = page.getByRole('combobox')
 			await button.click()
 
 			const gpt4Option = page.getByText('GPT-4')
@@ -150,7 +150,7 @@ describe('ModelSelector', () => {
 		it('closes dropdown after selection', async () => {
 			render(ModelSelector, { modelGroups: testModelGroups })
 
-			const button = page.getByRole('button')
+			const button = page.getByRole('combobox')
 			await button.click()
 
 			await expect
@@ -167,7 +167,7 @@ describe('ModelSelector', () => {
 		it('selects different models in sequence', async () => {
 			render(ModelSelector, { modelGroups: testModelGroups })
 
-			const button = page.getByRole('button')
+			const button = page.getByRole('combobox')
 
 			await button.click()
 			await page.getByText('GPT-3.5 Turbo').click()
@@ -183,7 +183,7 @@ describe('ModelSelector', () => {
 		it('has aria-haspopup listbox attribute', async () => {
 			render(ModelSelector, { modelGroups: testModelGroups })
 
-			const button = page.getByRole('button')
+			const button = page.getByRole('combobox')
 			const buttonElement = button.element() as HTMLButtonElement
 			expect(buttonElement.getAttribute('aria-haspopup')).toBe('listbox')
 		})
@@ -191,7 +191,7 @@ describe('ModelSelector', () => {
 		it('has aria-expanded attribute that changes on click', async () => {
 			render(ModelSelector, { modelGroups: testModelGroups })
 
-			const button = page.getByRole('button')
+			const button = page.getByRole('combobox')
 			const buttonElement = button.element() as HTMLButtonElement
 			expect(buttonElement.getAttribute('aria-expanded')).toBe('false')
 

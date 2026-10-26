@@ -86,10 +86,13 @@ describe('SuperagentPage', () => {
 		it('renders model selector', async () => {
 			render(SuperagentPage, { data: createMockData() })
 
-			const modelButton = page.getByRole('button', {
-				name: /auto|GPT|Claude|Gemini|Grok/i
-			})
+			// role=combobox is nameFrom:author — its accessible name is empty, so
+			// match the visible label via text content instead
+			const modelButton = page.getByRole('combobox')
 			await expect.element(modelButton).toBeVisible()
+			await expect
+				.element(modelButton)
+				.toHaveTextContent(/auto|GPT|Claude|Gemini|Grok/i)
 		})
 
 		it('renders text area', async () => {
@@ -117,10 +120,11 @@ describe('SuperagentPage', () => {
 			)
 			expect(modelSelectorContainer).toBeInTheDocument()
 
-			const modelButton = page.getByRole('button', {
-				name: /auto|GPT|Claude|Gemini|Grok/i
-			})
+			const modelButton = page.getByRole('combobox')
 			await expect.element(modelButton).toBeVisible()
+			await expect
+				.element(modelButton)
+				.toHaveTextContent(/auto|GPT|Claude|Gemini|Grok/i)
 
 			const textarea = page.getByPlaceholder('Enter your query!')
 			await expect.element(textarea).toBeVisible()

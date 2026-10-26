@@ -8,9 +8,9 @@ describe('ModelSelector', () => {
 		cleanup()
 	})
 
-	// Helper to get trigger button (stable regardless of text content)
+	// Helper to get trigger (role=combobox is nameFrom:author, so no name filter)
 	function getTrigger() {
-		return page.getByRole('button', { name: /auto|GPT|Claude|Gemini|Grok/i })
+		return page.getByRole('combobox')
 	}
 
 	it('renders with default model selected (auto)', async () => {
