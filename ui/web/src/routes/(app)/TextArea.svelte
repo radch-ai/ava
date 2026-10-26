@@ -3,7 +3,7 @@
 	import { Button } from '#components/ui/button'
 	import { Textarea } from '#components/ui/textarea'
 
-	let { onsubmit }: { onsubmit?: () => void } = $props()
+	let { onsubmit }: { onsubmit?: (text: string) => void } = $props()
 
 	let input = $state('')
 	let isSendButtonDisabled = $derived(input.trim() === '')
@@ -17,7 +17,7 @@
 	function handleSubmit(e: KeyboardEvent | MouseEvent) {
 		e.preventDefault()
 		if (input.trim()) {
-			onsubmit?.()
+			onsubmit?.(input.trim())
 			input = ''
 		}
 	}

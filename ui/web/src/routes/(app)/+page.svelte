@@ -86,7 +86,10 @@
 		activeTab = tab
 	}
 
-	function handleComposerSubmit() {
+	// biome-ignore lint/correctness/noUnusedFunctionParameters: used once the message-send API lands
+	function handleComposerSubmit(text: string) {
+		// TODO: send text as the agent prompt and refresh the thread
+		// (message-send API not implemented yet)
 		activeTab = 'conversation'
 	}
 

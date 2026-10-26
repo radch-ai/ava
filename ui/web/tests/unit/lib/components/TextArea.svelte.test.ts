@@ -69,7 +69,7 @@ describe('TextArea', () => {
 			await textarea.click()
 			await userEvent.type(textarea, 'Test message{Enter}')
 
-			expect(mockSubmit).toHaveBeenCalledWith()
+			expect(mockSubmit).toHaveBeenCalledWith('Test message')
 		})
 
 		it('does NOT submit on Shift+Enter (allows newlines)', async () => {
@@ -132,7 +132,7 @@ describe('TextArea', () => {
 	})
 
 	describe('onsubmit callback', () => {
-		it('calls onsubmit once for whitespace-padded input', async () => {
+		it('calls onsubmit with trimmed text', async () => {
 			const mockSubmit = vi.fn()
 			render(TextArea, { onsubmit: mockSubmit })
 
@@ -140,7 +140,7 @@ describe('TextArea', () => {
 			await textarea.click()
 			await userEvent.type(textarea, '  Hello world  {Enter}')
 
-			expect(mockSubmit).toHaveBeenCalledWith()
+			expect(mockSubmit).toHaveBeenCalledWith('Hello world')
 		})
 
 		it('calls onsubmit when send button is clicked', async () => {
@@ -153,7 +153,7 @@ describe('TextArea', () => {
 			const sendButton = page.getByRole('button').nth(1)
 			await sendButton.click()
 
-			expect(mockSubmit).toHaveBeenCalledWith()
+			expect(mockSubmit).toHaveBeenCalledWith('Test message')
 		})
 
 		it('does not throw when onsubmit is not provided', async () => {
