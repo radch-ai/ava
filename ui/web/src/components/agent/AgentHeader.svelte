@@ -54,7 +54,7 @@
 <header class="flex w-full items-center justify-between p-2">
 	<div class="flex items-center gap-2 text-sm">
 		<AgentIcon name={agent.icon} size={16} />
-		<span>{agent.label}</span>
+		<span>{agent.name}</span>
 	</div>
 	<div class="flex items-center gap-6">
 		<div class="flex items-center gap-2">

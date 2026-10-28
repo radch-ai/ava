@@ -17,10 +17,9 @@ const agentsList: Agent[] = [
 	{
 		id: '_superagent',
 		name: 'Ava',
-		label: 'Chat with Ava',
 		icon: 'message-square'
 	},
-	{ id: 'support', name: 'Support', label: 'Support Bot', icon: 'bot' }
+	{ id: 'support', name: 'Support', icon: 'bot' }
 ]
 
 type ParentData = { agents: Agent[]; agentsError: string | null }

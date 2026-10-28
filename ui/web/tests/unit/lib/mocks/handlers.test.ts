@@ -35,7 +35,7 @@ describe('mock API handlers', () => {
 			'Sentinel'
 		])
 		for (const agent of body.agents) {
-			expect(typeof agent.label).toBe('string')
+			expect(typeof agent.name).toBe('string')
 			expect(typeof agent.icon).toBe('string')
 		}
 	})
@@ -190,7 +190,6 @@ describe('mock API handlers', () => {
 		}
 		const entry = list.agents.find((agent) => agent.id === 'scribe')
 		expect(entry?.name).toBe('Scribe Two')
-		expect(entry?.label).toBe('Scribe Two')
 		expect(entry?.icon).toBe('bot')
 	})
 
@@ -218,7 +217,6 @@ describe('mock API handlers', () => {
 		}
 		const entry = list.agents.find((agent) => agent.id === 'research-team')
 		expect(entry?.name).toBe('Research Team')
-		expect(typeof entry?.label).toBe('string')
 
 		const config = (await (
 			await fetch(`${BASE}/agent/research-team`)

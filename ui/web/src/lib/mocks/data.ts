@@ -26,9 +26,9 @@ const minutesAgo = (minutes: number): string =>
 	new Date(ANCHOR - minutes * 60_000).toISOString()
 
 const WORKER_AGENTS: Agent[] = [
-	{ id: 'research', name: 'Research', label: 'Research', icon: 'globe' },
-	{ id: 'scribe', name: 'Scribe', label: 'Scribe', icon: 'pencil' },
-	{ id: 'sentinel', name: 'Sentinel', label: 'Sentinel', icon: 'shield' }
+	{ id: 'research', name: 'Research', icon: 'globe' },
+	{ id: 'scribe', name: 'Scribe', icon: 'pencil' },
+	{ id: 'sentinel', name: 'Sentinel', icon: 'shield' }
 ]
 
 /** Configuration seeds keyed by agent id (`_superagent` is system-reserved). */

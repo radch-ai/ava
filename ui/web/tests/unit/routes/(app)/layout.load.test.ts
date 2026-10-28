@@ -38,35 +38,22 @@ describe('app layout load', () => {
 		expect(event.depends).toHaveBeenCalledWith('app:agents')
 	})
 
-	it('fetches agents and returns them normalized', async () => {
-		mockGetAgents.mockResolvedValueOnce([
+	it('fetches agents and returns them as-is', async () => {
+		const agents: Agent[] = [
 			{
 				id: '_superagent',
 				name: 'Ava',
-				label: 'Chat with Ava',
 				icon: 'message-square'
 			},
-			{ id: 'support-bot', name: 'support-bot', icon: 'bot' }
-		] as Agent[])
+			{ id: 'support-bot', name: 'Support Bot', icon: 'bot' }
+		]
+		mockGetAgents.mockResolvedValueOnce(agents)
 
 		const result = (await load(loadEvent())) as LayoutResult
 
 		expect(mockGetAgents).toHaveBeenCalled()
 		expect(result.agentsError).toBeNull()
-		expect(result.agents).toEqual([
-			{
-				id: '_superagent',
-				name: 'Ava',
-				label: 'Chat with Ava',
-				icon: 'message-square'
-			},
-			{
-				id: 'support-bot',
-				name: 'support-bot',
-				label: 'Support Bot',
-				icon: 'bot'
-			}
-		])
+		expect(result.agents).toEqual(agents)
 	})
 
 	it('returns empty agents and the error when getAgents fails', async () => {

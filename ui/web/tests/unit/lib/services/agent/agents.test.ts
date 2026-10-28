@@ -20,10 +20,9 @@ describe('agents service', () => {
 				{
 					id: '_superagent',
 					name: 'Ava',
-					icon: 'message-square',
-					label: 'Chat with Ava'
+					icon: 'message-square'
 				},
-				{ id: 'research', name: 'Research', icon: 'bot', label: 'Research' }
+				{ id: 'research', name: 'Research', icon: 'bot' }
 			]
 
 			vi.mocked(api.get).mockReturnValue({

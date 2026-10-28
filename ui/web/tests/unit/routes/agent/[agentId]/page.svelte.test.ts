@@ -33,13 +33,11 @@ const workerAgents: Record<string, Agent> = {
 	support: {
 		id: 'support',
 		name: 'Support',
-		label: 'Support Bot',
 		icon: 'bot'
 	},
 	analyst: {
 		id: 'analyst',
 		name: 'Analyst',
-		label: 'Data Analyst',
 		icon: 'chart-column'
 	}
 }
@@ -93,7 +91,7 @@ describe('AgentPage (worker branch)', () => {
 				data: createPageData({ agent: workerAgents.support })
 			})
 
-			await expect.element(page.getByText('Support Bot')).toBeVisible()
+			await expect.element(page.getByText('Support')).toBeVisible()
 		})
 
 		it('renders analyst agent header', async () => {
@@ -101,7 +99,7 @@ describe('AgentPage (worker branch)', () => {
 				data: createPageData({ agent: workerAgents.analyst })
 			})
 
-			await expect.element(page.getByText('Data Analyst')).toBeVisible()
+			await expect.element(page.getByText('Analyst')).toBeVisible()
 		})
 
 		it('does not render tabs for workers', async () => {

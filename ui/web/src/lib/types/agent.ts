@@ -30,7 +30,6 @@ export interface Agent {
 	/** Agent id used in URLs and API paths; `_`-prefixed ids are system-reserved. */
 	id: string
 	name: string
-	label: string
 	icon: AgentIconName
 }
 
@@ -40,7 +39,6 @@ export interface Agent {
 export const SUPERAGENT_AGENT: Agent = {
 	id: SUPERAGENT_AGENT_ID,
 	name: SUPERAGENT_NAME,
-	label: `Chat with ${SUPERAGENT_NAME}`,
 	icon: 'message-square'
 }
 

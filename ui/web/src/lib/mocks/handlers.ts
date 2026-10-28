@@ -151,7 +151,6 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 					? {
 							...agent,
 							name: next.name,
-							label: next.name,
 							icon: (next.icon ?? agent.icon) as AgentIconName
 						}
 					: agent
@@ -190,7 +189,6 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			const agent: Agent = {
 				id,
 				name,
-				label: name,
 				icon: (configuration.icon ?? 'bot') as AgentIconName
 			}
 			store.agents.push(agent)

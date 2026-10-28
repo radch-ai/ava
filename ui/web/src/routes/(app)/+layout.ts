@@ -1,4 +1,3 @@
-import { normalizeAgent } from '#lib/agents'
 import { authStore } from '#lib/auth'
 import { getAgents } from '#lib/services/agent'
 import type { LayoutLoad } from './$types'
@@ -17,7 +16,7 @@ export const load: LayoutLoad = async ({ depends }) => {
 
 	try {
 		const agents = await getAgents()
-		return { agents: agents.map(normalizeAgent), agentsError: null }
+		return { agents, agentsError: null }
 	} catch (e) {
 		return {
 			agents: [],

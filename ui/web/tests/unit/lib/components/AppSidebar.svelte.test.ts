@@ -54,7 +54,6 @@ vi.mock('#lib/types/agent', () => ({
 	SUPERAGENT_AGENT: {
 		id: '_superagent',
 		name: 'Ava',
-		label: 'Chat with Ava',
 		icon: 'message-square'
 	}
 }))
@@ -73,14 +72,12 @@ function createMockAgents(overrides: Partial<Agent>[] = []): Agent[] {
 		{
 			id: 'support',
 			name: 'Support',
-			label: 'Support Bot',
 			icon: 'bot',
 			...overrides[0]
 		},
 		{
 			id: 'analyst',
 			name: 'Analyst',
-			label: 'Data Analyst',
 			icon: 'chart-column',
 			...overrides[1]
 		}
@@ -128,8 +125,8 @@ describe('AppSidebar', () => {
 			renderSidebar()
 
 			await expect.element(page.getByText('Agents')).toBeVisible()
-			await expect.element(page.getByText('Support Bot')).toBeVisible()
-			await expect.element(page.getByText('Data Analyst')).toBeVisible()
+			await expect.element(page.getByText('Support')).toBeVisible()
+			await expect.element(page.getByText('Analyst')).toBeVisible()
 		})
 
 		it('renders New Agent button', async () => {
@@ -241,9 +238,7 @@ describe('AppSidebar', () => {
 			await expect.element(page.getByText('New Agent')).toBeVisible()
 
 			// Worker Agents section should be empty
-			await expect
-				.element(page.getByText('Support Bot'))
-				.not.toBeInTheDocument()
+			await expect.element(page.getByText('Support')).not.toBeInTheDocument()
 		})
 	})
 
@@ -251,12 +246,12 @@ describe('AppSidebar', () => {
 		it('generates correct links for agents', async () => {
 			renderSidebar()
 
-			const supportLink = page.getByRole('link', { name: 'Support Bot' })
+			const supportLink = page.getByRole('link', { name: 'Support' })
 			await expect
 				.element(supportLink)
 				.toHaveAttribute('href', '/agent/support')
 
-			const analystLink = page.getByRole('link', { name: 'Data Analyst' })
+			const analystLink = page.getByRole('link', { name: 'Analyst' })
 			await expect
 				.element(analystLink)
 				.toHaveAttribute('href', '/agent/analyst')

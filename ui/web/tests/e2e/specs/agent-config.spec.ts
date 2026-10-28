@@ -165,7 +165,7 @@ test.describe('agent configuration', () => {
 			).toHaveValue(testValue)
 		})
 
-		test('should refresh the sidebar label after renaming, without a reload', async ({
+		test('should refresh the sidebar name after renaming, without a reload', async ({
 			page
 		}) => {
 			const agentName = `Config Rename ${Date.now()}`

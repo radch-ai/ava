@@ -108,7 +108,7 @@
 									class="group-data-[collapsible=icon]:size-5"
 								/>
 								<span class="font-medium group-data-[collapsible=icon]:hidden"
-									>{superagent.label}</span
+									>Chat with {superagent.name}</span
 								>
 							</a>
 						{/snippet}
@@ -140,7 +140,7 @@
 											class="group-data-[collapsible=icon]:size-5"
 										/>
 										<span class="group-data-[collapsible=icon]:hidden"
-											>{agent.label}</span
+											>{agent.name}</span
 										>
 									</a>
 								{/snippet}

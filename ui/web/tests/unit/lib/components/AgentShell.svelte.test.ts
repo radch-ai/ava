@@ -35,14 +35,12 @@ interface ThreadItem {
 const superagent: Agent = {
 	id: '_superagent',
 	name: 'Ava',
-	label: 'Chat with Ava',
 	icon: 'message-square'
 }
 
 const workerAgent: Agent = {
 	id: 'support',
 	name: 'Support',
-	label: 'Support Bot',
 	icon: 'bot'
 }
 
@@ -108,7 +106,7 @@ describe('AgentShell', () => {
 				agent: superagent
 			})
 
-			await expect.element(page.getByText('Chat with Ava')).toBeVisible()
+			await expect.element(page.getByText('Ava')).toBeVisible()
 		})
 
 		it('renders separator', async () => {
@@ -125,7 +123,7 @@ describe('AgentShell', () => {
 				agent: workerAgent
 			})
 
-			await expect.element(page.getByText('Support Bot')).toBeVisible()
+			await expect.element(page.getByText('Support')).toBeVisible()
 		})
 	})
 

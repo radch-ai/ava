@@ -72,7 +72,7 @@ describe('AgentPage (superagent branch)', () => {
 		it('renders agent header with superagent name', async () => {
 			render(AgentPageTestWrapper, { data: createMockData() })
 
-			await expect.element(page.getByText('Chat with Ava')).toBeVisible()
+			await expect.element(page.getByText('Ava')).toBeVisible()
 		})
 
 		it('renders model selector', async () => {
@@ -224,7 +224,7 @@ describe('AgentPage (superagent branch)', () => {
 				})
 			})
 
-			await expect.element(page.getByText('Chat with Ava')).toBeVisible()
+			await expect.element(page.getByText('Ava')).toBeVisible()
 			const textarea = page.getByPlaceholder('Enter your query!')
 			await expect.element(textarea).toBeVisible()
 		})

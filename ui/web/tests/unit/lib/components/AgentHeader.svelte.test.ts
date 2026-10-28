@@ -8,14 +8,12 @@ import AgentHeaderTestWrapper from './AgentHeaderTestWrapper.svelte'
 const superagent: Agent = {
 	id: '_superagent',
 	name: 'Ava',
-	label: 'Chat with Ava',
 	icon: 'message-square'
 }
 
 const workerAgent: Agent = {
 	id: 'support',
 	name: 'Support',
-	label: 'Support Bot',
 	icon: 'bot'
 }
 
@@ -61,18 +59,18 @@ describe('AgentHeader', () => {
 	})
 
 	describe('rendering', () => {
-		it('displays agent label', async () => {
+		it('displays agent name', async () => {
 			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
 			render(AgentHeaderTestWrapper, { agent: superagent })
 
-			await expect.element(page.getByText('Chat with Ava')).toBeVisible()
+			await expect.element(page.getByText('Ava')).toBeVisible()
 		})
 
-		it('displays worker agent label', async () => {
+		it('displays worker agent name', async () => {
 			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
 			render(AgentHeaderTestWrapper, { agent: workerAgent })
 
-			await expect.element(page.getByText('Support Bot')).toBeVisible()
+			await expect.element(page.getByText('Support')).toBeVisible()
 		})
 
 		it('renders exactly one settings button with accessible name', async () => {
@@ -106,10 +104,7 @@ describe('AgentHeader', () => {
 		it('uses a unique tooltip id for each settings button', async () => {
 			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
 			render(AgentHeaderPairTestWrapper, {
-				agents: [
-					workerAgent,
-					{ ...workerAgent, name: 'support-two', label: 'Support Bot Two' }
-				]
+				agents: [workerAgent, { ...workerAgent, name: 'support-two' }]
 			})
 
 			const settingsButtons = page.getByLabelText('Open agent configuration')
