@@ -2,7 +2,7 @@
 	import { type Snippet, tick } from 'svelte'
 	import { Button } from '#components/ui/button'
 	import { Separator } from '#components/ui/separator'
-	import { SUPERAGENT_NAME } from '#lib/config'
+	import { SUPERAGENT_AGENT_ID } from '#lib/config'
 	import {
 		type ActivityFeed,
 		getAgentActivityFeed,
@@ -55,9 +55,9 @@
 		children
 	}: Props = $props()
 
-	const agentName = $derived(agent.name)
+	const agentId = $derived(agent.id)
 	const isConversation = $derived(
-		agentName === SUPERAGENT_NAME.toLowerCase() && activeTab === 'conversation'
+		agentId === SUPERAGENT_AGENT_ID && activeTab === 'conversation'
 	)
 	const error = $derived(isConversation ? threadError : activityError)
 	const isLoading = $derived(
@@ -82,7 +82,7 @@
 
 		try {
 			const olderPage = await getAgentActivityFeed(
-				agentName,
+				agentId,
 				20,
 				activityFeed.nextCursor
 			)

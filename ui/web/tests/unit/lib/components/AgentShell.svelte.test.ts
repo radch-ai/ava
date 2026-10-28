@@ -8,8 +8,11 @@ import TestWrapper from './TestWrapper.svelte'
 vi.mock('#lib/services/agent', () => ({
 	getAgentActivityFeed: vi.fn(),
 	mergePastFeed: vi.fn(),
+	getAgentThread: vi.fn(),
+	mergePastThread: vi.fn(),
 	getAgentConfiguration: vi.fn(),
-	updateAgentConfiguration: vi.fn()
+	updateAgentConfiguration: vi.fn(),
+	createAgent: vi.fn()
 }))
 
 import {
@@ -30,13 +33,15 @@ interface ThreadItem {
 }
 
 const superagent: Agent = {
-	name: 'ava',
+	id: '_superagent',
+	name: 'Ava',
 	label: 'Chat with Ava',
 	icon: 'message-square'
 }
 
 const workerAgent: Agent = {
-	name: 'support',
+	id: 'support',
+	name: 'Support',
 	label: 'Support Bot',
 	icon: 'bot'
 }

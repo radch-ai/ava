@@ -2,18 +2,26 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
 import type { ActivityFeed, AgentActivityItem } from '#lib/services/agent'
-import WorkerPageTestWrapper from './WorkerPageTestWrapper.svelte'
+import type { Agent } from '#lib/types/agent'
+import AgentPageTestWrapper from './AgentPageTestWrapper.svelte'
 
 vi.mock('#lib/services/agent', () => ({
 	getAgentActivityFeed: vi.fn(),
 	mergePastFeed: vi.fn(),
+	getAgentThread: vi.fn(),
+	mergePastThread: vi.fn(),
 	getAgentConfiguration: vi.fn(),
 	updateAgentConfiguration: vi.fn(),
 	createAgent: vi.fn()
 }))
 
 vi.mock('$app/paths', () => ({
-	resolve: vi.fn((path: string) => path)
+	resolve: vi.fn((path: string, params?: Record<string, string>) => {
+		const result = path.replace(/^\/?\([^)]*\)\//, '/')
+		return params?.agentId
+			? result.replace('[agentId]', params.agentId)
+			: result
+	})
 }))
 
 import { getAgentActivityFeed, mergePastFeed } from '#lib/services/agent'
@@ -21,12 +29,18 @@ import { getAgentActivityFeed, mergePastFeed } from '#lib/services/agent'
 const mockGetAgentActivityFeed = vi.mocked(getAgentActivityFeed)
 const mockMergePastFeed = vi.mocked(mergePastFeed)
 
-const workerAgents = {
-	support: { name: 'support', label: 'Support Bot', icon: 'bot' as const },
+const workerAgents: Record<string, Agent> = {
+	support: {
+		id: 'support',
+		name: 'Support',
+		label: 'Support Bot',
+		icon: 'bot'
+	},
 	analyst: {
-		name: 'analyst',
+		id: 'analyst',
+		name: 'Analyst',
 		label: 'Data Analyst',
-		icon: 'chart-column' as const
+		icon: 'chart-column'
 	}
 }
 
@@ -55,15 +69,16 @@ function createActivityFeed(
 
 function createPageData(overrides: Record<string, unknown> = {}) {
 	return {
-		agentsError: null,
 		agent: workerAgents.support,
 		activityFeed: createActivityFeed(),
 		activityError: null,
+		thread: null,
+		threadError: null,
 		...overrides
 	}
 }
 
-describe('WorkerPage', () => {
+describe('AgentPage (worker branch)', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 	})
@@ -74,7 +89,7 @@ describe('WorkerPage', () => {
 
 	describe('Agent header', () => {
 		it('renders support agent header', async () => {
-			render(WorkerPageTestWrapper, {
+			render(AgentPageTestWrapper, {
 				data: createPageData({ agent: workerAgents.support })
 			})
 
@@ -82,17 +97,30 @@ describe('WorkerPage', () => {
 		})
 
 		it('renders analyst agent header', async () => {
-			render(WorkerPageTestWrapper, {
+			render(AgentPageTestWrapper, {
 				data: createPageData({ agent: workerAgents.analyst })
 			})
 
 			await expect.element(page.getByText('Data Analyst')).toBeVisible()
 		})
+
+		it('does not render tabs for workers', async () => {
+			render(AgentPageTestWrapper, {
+				data: createPageData({ agent: workerAgents.analyst })
+			})
+
+			await expect
+				.element(page.getByRole('tab', { name: /conversation/i }))
+				.not.toBeInTheDocument()
+			await expect
+				.element(page.getByRole('tab', { name: /activity/i }))
+				.not.toBeInTheDocument()
+		})
 	})
 
 	describe('Activity feed - real data', () => {
 		it('renders activity items from page data', async () => {
-			render(WorkerPageTestWrapper, {
+			render(AgentPageTestWrapper, {
 				data: createPageData({
 					activityFeed: createActivityFeed({
 						items: [createActivityItem({ action: 'Synced inbox' })]
@@ -104,7 +132,7 @@ describe('WorkerPage', () => {
 		})
 
 		it('shows a load more button when nextCursor exists', async () => {
-			render(WorkerPageTestWrapper, {
+			render(AgentPageTestWrapper, {
 				data: createPageData({
 					activityFeed: createActivityFeed({
 						items: [createActivityItem()],
@@ -119,7 +147,7 @@ describe('WorkerPage', () => {
 		})
 
 		it('does not show load more button when nextCursor is null', async () => {
-			render(WorkerPageTestWrapper, {
+			render(AgentPageTestWrapper, {
 				data: createPageData({
 					activityFeed: createActivityFeed({
 						items: [createActivityItem()]
@@ -133,7 +161,7 @@ describe('WorkerPage', () => {
 		})
 
 		it('shows an empty state when no activity items exist', async () => {
-			render(WorkerPageTestWrapper, {
+			render(AgentPageTestWrapper, {
 				data: createPageData()
 			})
 
@@ -141,7 +169,7 @@ describe('WorkerPage', () => {
 		})
 
 		it('shows an error state when activityError is set', async () => {
-			render(WorkerPageTestWrapper, {
+			render(AgentPageTestWrapper, {
 				data: createPageData({
 					activityError: 'Failed to load activity'
 				})
@@ -153,7 +181,7 @@ describe('WorkerPage', () => {
 		})
 
 		it('shows triggeredBy and status in activity cards', async () => {
-			render(WorkerPageTestWrapper, {
+			render(AgentPageTestWrapper, {
 				data: createPageData({
 					activityFeed: createActivityFeed({
 						items: [
@@ -171,7 +199,7 @@ describe('WorkerPage', () => {
 		})
 
 		it('shows failed status indicator', async () => {
-			render(WorkerPageTestWrapper, {
+			render(AgentPageTestWrapper, {
 				data: createPageData({
 					activityFeed: createActivityFeed({
 						items: [
@@ -192,7 +220,7 @@ describe('WorkerPage', () => {
 		})
 
 		it('shows running status indicator', async () => {
-			render(WorkerPageTestWrapper, {
+			render(AgentPageTestWrapper, {
 				data: createPageData({
 					activityFeed: createActivityFeed({
 						items: [
@@ -213,7 +241,7 @@ describe('WorkerPage', () => {
 
 	describe('Activity feed - load more', () => {
 		it('load more button is clickable when nextCursor exists', async () => {
-			render(WorkerPageTestWrapper, {
+			render(AgentPageTestWrapper, {
 				data: createPageData({
 					activityFeed: createActivityFeed({
 						items: [createActivityItem()],
@@ -228,18 +256,13 @@ describe('WorkerPage', () => {
 		})
 
 		it('load more button shows loading state when clicked', async () => {
-			let resolvePromise: ((value: ActivityFeed) => void) | undefined
-			mockGetAgentActivityFeed.mockImplementation(
-				() =>
-					new Promise((resolve) => {
-						resolvePromise = resolve
-					})
-			)
+			const { promise, resolve } = Promise.withResolvers<ActivityFeed>()
+			mockGetAgentActivityFeed.mockImplementation(() => promise)
 			mockMergePastFeed.mockReturnValue(
 				createActivityFeed({ items: [createActivityItem()] })
 			)
 
-			render(WorkerPageTestWrapper, {
+			render(AgentPageTestWrapper, {
 				data: createPageData({
 					activityFeed: createActivityFeed({
 						items: [createActivityItem()],
@@ -251,18 +274,17 @@ describe('WorkerPage', () => {
 			const button = page.getByRole('button', { name: /load more/i })
 			await button.click()
 
-			await new Promise((resolve) => setTimeout(resolve, 50))
-
 			await expect.element(page.getByText('Loading...')).toBeVisible()
 
-			resolvePromise?.(createActivityFeed())
-			await new Promise((resolve) => setTimeout(resolve, 100))
+			resolve(createActivityFeed({ items: [createActivityItem()] }))
+			// The merged page replaces the loading state with merged items.
+			await expect.element(page.getByText('Test action')).toBeVisible()
 		}, 20000)
 	})
 
 	describe('CTA button', () => {
 		it('renders CTA button', async () => {
-			render(WorkerPageTestWrapper, {
+			render(AgentPageTestWrapper, {
 				data: createPageData()
 			})
 
@@ -271,8 +293,24 @@ describe('WorkerPage', () => {
 				.toBeVisible()
 		})
 
+		it('links the CTA to the superagent page', async () => {
+			render(AgentPageTestWrapper, {
+				data: createPageData()
+			})
+
+			const cta = page.getByRole('link', {
+				name: /ask ava about this agent/i
+			})
+			await expect
+				.element(cta)
+				.toHaveAttribute(
+					'href',
+					expect.stringContaining('/agent/_superagent?prompt=')
+				)
+		})
+
 		it('does not render model selector for workers', async () => {
-			render(WorkerPageTestWrapper, {
+			render(AgentPageTestWrapper, {
 				data: createPageData()
 			})
 
@@ -283,7 +321,7 @@ describe('WorkerPage', () => {
 		})
 
 		it('does not render text area for workers', async () => {
-			render(WorkerPageTestWrapper, {
+			render(AgentPageTestWrapper, {
 				data: createPageData({ agent: workerAgents.analyst })
 			})
 
@@ -296,7 +334,7 @@ describe('WorkerPage', () => {
 		it('load more failure preserves existing items', async () => {
 			mockGetAgentActivityFeed.mockRejectedValueOnce(new Error('Network error'))
 
-			render(WorkerPageTestWrapper, {
+			render(AgentPageTestWrapper, {
 				data: createPageData({
 					activityFeed: createActivityFeed({
 						items: [createActivityItem({ action: 'Existing item' })],
@@ -310,15 +348,14 @@ describe('WorkerPage', () => {
 			const loadMoreButton = page.getByRole('button', { name: /load more/i })
 			await loadMoreButton.click()
 
-			await new Promise((resolve) => setTimeout(resolve, 100))
-
+			await expect.element(page.getByText('Network error')).toBeVisible()
 			await expect.element(page.getByText('Existing item')).toBeVisible()
 		})
 
 		it('shows error message when load more fails', async () => {
 			mockGetAgentActivityFeed.mockRejectedValueOnce(new Error('Network error'))
 
-			render(WorkerPageTestWrapper, {
+			render(AgentPageTestWrapper, {
 				data: createPageData({
 					activityFeed: createActivityFeed({
 						items: [createActivityItem()],
@@ -329,8 +366,6 @@ describe('WorkerPage', () => {
 
 			const loadMoreButton = page.getByRole('button', { name: /load more/i })
 			await loadMoreButton.click()
-
-			await new Promise((resolve) => setTimeout(resolve, 100))
 
 			await expect.element(page.getByText('Network error')).toBeVisible()
 		})

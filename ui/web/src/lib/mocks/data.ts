@@ -1,26 +1,25 @@
-/**
- * Mock API seed data
- *
- * Deterministic fixtures served by the mock handlers (`src/lib/mocks/handlers.ts`).
- * IDs and timestamps derive from a fixed anchor so unit tests and UI states
- * are reproducible: no randomness, no clocks.
- */
-
-import { SUPERAGENT_NAME } from '../config.ts'
+import { SUPERAGENT_AGENT_ID, SUPERAGENT_NAME } from '../config.ts'
 import type { AgentActivityItem } from '../services/agent/activity.ts'
-import type { Message } from '../services/user/superagent-thread.ts'
+import type { ThreadMessage } from '../services/agent/thread.ts'
 import type { Agent, AgentConfiguration } from '../types/agent.ts'
 
 /** Mutable in-memory state the mock handlers read from and write to. */
 export interface MockStore {
 	agents: Agent[]
 	configurations: Map<string, AgentConfiguration>
-	thread: Message[]
+	thread: ThreadMessage[]
 	activity: Map<string, AgentActivityItem[]>
 	/** The one token POST /auth/exchange accepts. */
 	token: string
 	/** Profile served by /auth/exchange and /auth/me. */
 	user: { sub: string }
+}
+
+const SUPERAGENT_ENTRY: Agent = {
+	id: SUPERAGENT_AGENT_ID,
+	name: SUPERAGENT_NAME,
+	label: `Chat with ${SUPERAGENT_NAME}`,
+	icon: 'message-square'
 }
 
 // Fixed anchor for every seeded timestamp: 2026-10-23T12:00:00Z.
@@ -30,105 +29,118 @@ const minutesAgo = (minutes: number): string =>
 	new Date(ANCHOR - minutes * 60_000).toISOString()
 
 const WORKER_AGENTS: Agent[] = [
-	{ name: 'research', label: 'Research', icon: 'globe' },
-	{ name: 'scribe', label: 'Scribe', icon: 'pencil' },
-	{ name: 'sentinel', label: 'Sentinel', icon: 'shield' }
+	{ id: 'research', name: 'Research', label: 'Research', icon: 'globe' },
+	{ id: 'scribe', name: 'Scribe', label: 'Scribe', icon: 'pencil' },
+	{ id: 'sentinel', name: 'Sentinel', label: 'Sentinel', icon: 'shield' }
 ]
 
-const CONFIGURATIONS: AgentConfiguration[] = [
-	{
-		name: SUPERAGENT_NAME,
-		icon: 'message-square',
-		soul: {
-			personality:
-				'Warm, direct, and precise. Prefers short answers with concrete next steps.',
-			identity: `${SUPERAGENT_NAME} is the user's primary assistant and coordinates the worker agents.`
-		},
-		userContext:
-			'The user builds personal automation tooling and prefers concise, technical answers.',
-		operatingInstructions:
-			'Keep replies under five lines unless asked to elaborate. Surface agent failures immediately with a suggested fix.',
-		toolsContext:
-			"Local tools: file system read/write, browser, and shell access are available on the user's devices.",
-		toolsEnabled: ['browser.browse', 'fs.read', 'fs.write', 'shell.run'],
-		cronJobs: [
-			{
-				id: 'cron-digest',
-				time: '09:00',
-				frequency: 'daily',
-				model: 'gpt-4',
-				prompt:
-					'Compile the overnight digest: agent failures, research highlights, and today’s action items.'
+/** Configuration seeds keyed by agent id (`_superagent` is system-reserved). */
+const CONFIGURATIONS: Array<[id: string, config: AgentConfiguration]> = [
+	[
+		SUPERAGENT_AGENT_ID,
+		{
+			name: SUPERAGENT_NAME,
+			icon: 'message-square',
+			soul: {
+				personality:
+					'Warm, direct, and precise. Prefers short answers with concrete next steps.',
+				identity: `${SUPERAGENT_NAME} is the user's primary assistant and coordinates the worker agents.`
+			},
+			userContext:
+				'The user builds personal automation tooling and prefers concise, technical answers.',
+			operatingInstructions:
+				'Keep replies under five lines unless asked to elaborate. Surface agent failures immediately with a suggested fix.',
+			toolsContext:
+				"Local tools: file system read/write, browser, and shell access are available on the user's devices.",
+			toolsEnabled: ['browser.browse', 'fs.read', 'fs.write', 'shell.run'],
+			cronJobs: [
+				{
+					id: 'cron-digest',
+					time: '09:00',
+					frequency: 'daily',
+					model: 'gpt-4',
+					prompt:
+						'Compile the overnight digest: agent failures, research highlights, and today’s action items.'
+				}
+			],
+			heartbeat: {
+				id: 'heartbeat-ava',
+				model: 'auto',
+				enabled: true,
+				duration: '30m',
+				content: 'Check agent heartbeats and flag anything stalled.'
 			}
-		],
-		heartbeat: {
-			id: 'heartbeat-ava',
-			model: 'auto',
-			enabled: true,
-			duration: '30m',
-			content: 'Check agent heartbeats and flag anything stalled.'
 		}
-	},
-	{
-		name: 'Research',
-		icon: 'globe',
-		soul: {
-			personality:
-				'Methodical and skeptical. Cross-checks claims before presenting them.',
-			identity: 'Research scans sources and produces verified summaries.'
-		},
-		operatingInstructions:
-			'Verify every claim against two independent sources. Cite what you use.',
-		toolsContext: 'Uses the browser and a local cache of saved papers.',
-		toolsEnabled: ['browser.browse', 'fs.read'],
-		heartbeat: {
-			id: 'heartbeat-research',
-			model: 'gpt-4',
-			enabled: true,
-			duration: '1hr',
-			content:
-				'Scan new papers on personal agents and append anything relevant to the notes.'
+	],
+	[
+		'research',
+		{
+			name: 'Research',
+			icon: 'globe',
+			soul: {
+				personality:
+					'Methodical and skeptical. Cross-checks claims before presenting them.',
+				identity: 'Research scans sources and produces verified summaries.'
+			},
+			operatingInstructions:
+				'Verify every claim against two independent sources. Cite what you use.',
+			toolsContext: 'Uses the browser and a local cache of saved papers.',
+			toolsEnabled: ['browser.browse', 'fs.read'],
+			heartbeat: {
+				id: 'heartbeat-research',
+				model: 'gpt-4',
+				enabled: true,
+				duration: '1hr',
+				content:
+					'Scan new papers on personal agents and append anything relevant to the notes.'
+			}
 		}
-	},
-	{
-		name: 'Scribe',
-		icon: 'pencil',
-		soul: {
-			personality:
-				'Careful listener. Captures exactly what was said, then distills it.',
-			identity: 'Scribe transcribes conversations and extracts action items.'
-		},
-		operatingInstructions:
-			'Never paraphrase quotes. Mark decisions and owners explicitly.',
-		toolsContext: 'Reads meeting recordings and writes structured notes.',
-		toolsEnabled: ['fs.read', 'fs.write'],
-		heartbeat: {
-			id: 'heartbeat-scribe',
-			model: 'claude-3-sonnet',
-			enabled: false,
-			duration: '2hr',
-			content: 'Clean up unfinished transcripts.'
+	],
+	[
+		'scribe',
+		{
+			name: 'Scribe',
+			icon: 'pencil',
+			soul: {
+				personality:
+					'Careful listener. Captures exactly what was said, then distills it.',
+				identity: 'Scribe transcribes conversations and extracts action items.'
+			},
+			operatingInstructions:
+				'Never paraphrase quotes. Mark decisions and owners explicitly.',
+			toolsContext: 'Reads meeting recordings and writes structured notes.',
+			toolsEnabled: ['fs.read', 'fs.write'],
+			heartbeat: {
+				id: 'heartbeat-scribe',
+				model: 'claude-3-sonnet',
+				enabled: false,
+				duration: '2hr',
+				content: 'Clean up unfinished transcripts.'
+			}
 		}
-	},
-	{
-		name: 'Sentinel',
-		icon: 'shield',
-		soul: {
-			personality: 'Calm and watchful. Errs on the side of alerting early.',
-			identity: 'Sentinel watches auth logs and system health.'
-		},
-		operatingInstructions:
-			'Alert on any failed login or stale heartbeat within one minute.',
-		toolsContext: 'Reads auth logs and service health endpoints.',
-		toolsEnabled: ['fs.read'],
-		heartbeat: {
-			id: 'heartbeat-sentinel',
-			model: 'gpt-4',
-			enabled: true,
-			duration: '30m',
-			content: 'Scan auth logs for failures and report anomalies.'
+	],
+	[
+		'sentinel',
+		{
+			name: 'Sentinel',
+			icon: 'shield',
+			soul: {
+				personality: 'Calm and watchful. Errs on the side of alerting early.',
+				identity: 'Sentinel watches auth logs and system health.'
+			},
+			operatingInstructions:
+				'Alert on any failed login or stale heartbeat within one minute.',
+			toolsContext: 'Reads auth logs and service health endpoints.',
+			toolsEnabled: ['fs.read'],
+			heartbeat: {
+				id: 'heartbeat-sentinel',
+				model: 'gpt-4',
+				enabled: true,
+				duration: '30m',
+				content: 'Scan auth logs for failures and report anomalies.'
+			}
 		}
-	}
+	]
 ]
 
 /** Chronological conversation (oldest first). */
@@ -187,7 +199,12 @@ const CONVERSATION: Array<['user' | 'assistant', string]> = [
 ]
 
 const ACTIVITY_ACTIONS: Record<string, string[]> = {
-	ava: ['thread.message', 'digest.send', 'cron.run', 'watch.notify'],
+	[SUPERAGENT_AGENT_ID]: [
+		'thread.message',
+		'digest.send',
+		'cron.run',
+		'watch.notify'
+	],
 	research: ['paper.scan', 'summary.save', 'heartbeat.run'],
 	scribe: ['transcribe.run', 'action.extract', 'heartbeat.run'],
 	sentinel: ['auth.scan', 'alert.send', 'heartbeat.run']
@@ -197,14 +214,14 @@ const ACTIVITY_TRIGGERS = ['user', 'ava', 'heartbeat', 'cron']
 
 function seedActivity(): Map<string, AgentActivityItem[]> {
 	const activity = new Map<string, AgentActivityItem[]>()
-	for (const [name, actions] of Object.entries(ACTIVITY_ACTIONS)) {
+	for (const [id, actions] of Object.entries(ACTIVITY_ACTIONS)) {
 		activity.set(
-			name,
+			id,
 			Array.from({ length: 12 }, (_, index): AgentActivityItem => {
 				const status: AgentActivityItem['status'] =
 					index % 5 === 1 ? 'running' : index % 7 === 3 ? 'failed' : 'completed'
 				return {
-					id: `${name}-${index + 1}`,
+					id: `${id}-${index + 1}`,
 					createdAt: minutesAgo(index * 120),
 					triggeredBy: ACTIVITY_TRIGGERS[index % ACTIVITY_TRIGGERS.length],
 					action: actions[index % actions.length],
@@ -229,7 +246,7 @@ function seedActivity(): Map<string, AgentActivityItem[]> {
 export function createSeedData(): MockStore {
 	// Newest first: the conversation above is authored oldest-first.
 	const thread = CONVERSATION.map(
-		([role, content], index): Message => ({
+		([role, content], index): ThreadMessage => ({
 			id: `msg-${index + 1}`,
 			role,
 			content,
@@ -238,10 +255,8 @@ export function createSeedData(): MockStore {
 	).reverse()
 
 	return {
-		agents: [...WORKER_AGENTS],
-		configurations: new Map(
-			CONFIGURATIONS.map((config) => [config.name.toLowerCase(), config])
-		),
+		agents: [SUPERAGENT_ENTRY, ...WORKER_AGENTS],
+		configurations: new Map(CONFIGURATIONS),
 		thread,
 		activity: seedActivity(),
 		token: 'ava-mock-token',

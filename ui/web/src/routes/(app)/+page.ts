@@ -1,18 +1,13 @@
-import { getSuperagentThread, type SuperagentThread } from '#lib/services/user'
+import { redirect } from '@sveltejs/kit'
+import { SUPERAGENT_AGENT_ID } from '#lib/config'
+import { resolve } from '$app/paths'
 import type { PageLoad } from './$types'
 
-interface PageLoadResult {
-	thread: SuperagentThread | null
-	threadError: string | null
-}
-
-export const load: PageLoad<PageLoadResult> = async () => {
-	try {
-		const thread = await getSuperagentThread()
-		return { thread, threadError: null }
-	} catch (error) {
-		const threadError =
-			error instanceof Error ? error.message : 'Failed to load conversation'
-		return { thread: null, threadError }
-	}
+export const load: PageLoad = () => {
+	// The superagent lives at /agent/[agentId] like every other agent; its
+	// id is the reserved `_superagent` slug.
+	redirect(
+		307,
+		resolve('/(app)/agent/[agentId]', { agentId: SUPERAGENT_AGENT_ID })
+	)
 }

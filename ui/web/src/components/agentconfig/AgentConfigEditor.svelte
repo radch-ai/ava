@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { SvelteSet } from 'svelte/reactivity'
 	import { Button } from '#components/ui/button'
-	import { SUPERAGENT_NAME } from '#lib/config'
+
 	import {
 		AGENT_FIELDS,
 		type AgentConfiguration,
@@ -71,10 +71,8 @@
 		isSuperagent: isSuperagentProp
 	}: Props = $props()
 
-	// Determine agent type from prop or configuration name
-	const isSuperagent = $derived(
-		isSuperagentProp ?? configuration.name === SUPERAGENT_NAME.toLowerCase()
-	)
+	// Determine agent type from the isSuperagent prop
+	const isSuperagent = $derived(isSuperagentProp ?? false)
 	const fields = $derived(
 		isSuperagent ? AGENT_FIELDS.superagent : AGENT_FIELDS.worker
 	)

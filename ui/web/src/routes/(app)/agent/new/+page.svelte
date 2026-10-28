@@ -12,6 +12,7 @@
 	import { type BeforeNavigate, beforeNavigate, goto } from '$app/navigation'
 	import { resolve } from '$app/paths'
 	import type { PathnameWithSearchOrHash } from '$app/types'
+	import { isValidAgentName } from './agent-name'
 
 	let configuration = $state<WorkerConfiguration>(
 		createDefaultWorkerConfiguration()
@@ -80,28 +81,35 @@
 		history.back()
 	}
 
+	let createError = $state<string | null>(null)
+
 	async function handleSave(config: WorkerConfiguration) {
 		const name = config.name.trim()
 		if (!name) return
 
-		try {
-			// Generate agent name from display name (lowercase, replace spaces with dashes)
-			const agentName = name
-				.toLowerCase()
-				.replace(/[^a-z0-9]+/g, '-')
-				.replace(/^-+|-+$/g, '')
+		if (!isValidAgentName(name)) {
+			createError =
+				'Invalid agent name: use letters, digits and single spaces only'
+			return
+		}
+		createError = null
 
-			const createdAgent = await createAgent(agentName, config)
+		try {
+			// The server derives the id from the display name and rejects
+			// invalid or duplicate names; the client never invents an id.
+			const createdAgent = await createAgent({ ...config, name })
 			addAgent({
+				id: createdAgent.id,
 				name: createdAgent.name,
 				icon: (config.icon ?? 'bot') as IconName
 			})
 			isNavigating = true
 			await goto(
-				resolve('/(app)/agent/[agentName]', { agentName: createdAgent.name })
+				resolve('/(app)/agent/[agentId]', { agentId: createdAgent.id })
 			)
 		} catch (error) {
-			console.error('Failed to create agent:', error)
+			createError =
+				error instanceof Error ? error.message : 'Failed to create agent'
 		}
 	}
 </script>
@@ -116,6 +124,14 @@
 
 	<!-- Configuration Editor (full screen) -->
 	<div class="flex-1 overflow-auto rounded-lg border">
+		{#if createError}
+			<p
+				role="alert"
+				class="bg-destructive/10 text-destructive rounded-lg p-3 text-center text-sm"
+			>
+				{createError}
+			</p>
+		{/if}
 		<AgentConfigEditor
 			{configuration}
 			onSave={handleSave}

@@ -3,18 +3,19 @@ import { expect, test } from '../setup/fixtures'
 
 test.describe('error handling', () => {
 	test('should handle concurrent edits', async ({ page, browser }) => {
-		const agentName = `concurrent-${Date.now()}`
+		const agentName = `Concurrent ${Date.now()}`
 
 		await page.goto('/agent/new')
 		await page.getByLabel(/name/i).fill(agentName)
 		await page.getByRole('button', { name: 'Create Agent' }).click()
-		await expect(page).toHaveURL(new RegExp(`/agent/${agentName}`))
+		const agentId = agentName.toLowerCase().replace(/ +/g, '-')
+		await expect(page).toHaveURL(new RegExp(`/agent/${agentId}$`))
 
 		const context2 = await browser.newContext()
 		const page2 = await context2.newPage()
 
 		try {
-			await page2.goto(`/agent/${agentName}`)
+			await page2.goto(`/agent/${agentId}`)
 
 			await expect(page.locator('body')).toBeVisible()
 			await expect(page2.locator('body')).toBeVisible()
@@ -71,6 +72,6 @@ test.describe('error handling', () => {
 
 		await page.goto('/')
 		await expect(page.locator('main')).toBeVisible()
-		await expect(page.getByText(/failed|error/i)).toBeVisible()
+		await expect(page.getByText('Failed to fetch')).toBeVisible()
 	})
 })

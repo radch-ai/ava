@@ -21,8 +21,15 @@ vi.mock('$app/navigation', () => ({
 }))
 
 vi.mock('$app/paths', () => ({
-	resolve: vi.fn((path: string) => path)
+	resolve: vi.fn((path: string, params?: Record<string, string>) => {
+		const result = path.replace(/^\/?\([^)]*\)\//, '/')
+		return params?.agentId
+			? result.replace('[agentId]', params.agentId)
+			: result
+	})
 }))
+
+import { goto } from '$app/navigation'
 
 vi.mock('#lib/user', () => ({
 	addAgent: vi.fn()
@@ -289,9 +296,12 @@ describe('New Agent Page', () => {
 				.toBeVisible()
 		})
 
-		it('creates agent with correct name format when Create Agent is clicked', async () => {
+		it('creates the agent and navigates to its id page', async () => {
 			const mockCreateAgent = vi.mocked(agentConfig.createAgent)
-			mockCreateAgent.mockResolvedValueOnce({ name: 'test-agent-name' })
+			mockCreateAgent.mockResolvedValueOnce({
+				id: 'test-agent-name',
+				name: 'Test Agent Name'
+			})
 
 			render(NewAgentPage)
 
@@ -306,16 +316,19 @@ describe('New Agent Page', () => {
 			const createButton = page.getByRole('button', { name: /create agent/i })
 			await createButton.click()
 
-			// Verify createAgent was called with correct ID format
+			// The whole configuration is posted; the server derives the id
 			expect(mockCreateAgent).toHaveBeenCalledWith(
-				'test-agent-name',
 				expect.objectContaining({
 					name: 'Test Agent Name'
 				})
 			)
 			expect(mockAddAgent).toHaveBeenCalledWith({
-				name: 'test-agent-name',
+				id: 'test-agent-name',
+				name: 'Test Agent Name',
 				icon: expect.any(String)
+			})
+			await vi.waitFor(() => {
+				expect(goto).toHaveBeenCalledWith('/agent/test-agent-name')
 			})
 		})
 
@@ -340,7 +353,7 @@ describe('New Agent Page', () => {
 			await nameButton.click()
 
 			const nameInput = page.getByPlaceholder(/enter agent name/i)
-			await nameInput.fill('fail-agent')
+			await nameInput.fill('Fail Agent')
 
 			const createButton = page.getByRole('button', { name: /create agent/i })
 			await createButton.click()
@@ -348,6 +361,7 @@ describe('New Agent Page', () => {
 			await expect
 				.element(page.getByRole('heading', { name: /new agent/i }))
 				.toBeVisible()
+			await expect.element(page.getByText(/network error/i)).toBeVisible()
 		})
 
 		it('handles timeout gracefully when createAgent is slow', async () => {
@@ -360,7 +374,7 @@ describe('New Agent Page', () => {
 			await nameButton.click()
 
 			const nameInput = page.getByPlaceholder(/enter agent name/i)
-			await nameInput.fill('timeout-agent')
+			await nameInput.fill('Timeout Agent')
 
 			const createButton = page.getByRole('button', { name: /create agent/i })
 			await createButton.click()
@@ -381,7 +395,7 @@ describe('New Agent Page', () => {
 			await nameButton.click()
 
 			const nameInput = page.getByPlaceholder(/enter agent name/i)
-			await nameInput.fill('server-error-agent')
+			await nameInput.fill('Server Error Agent')
 
 			const createButton = page.getByRole('button', { name: /create agent/i })
 			await createButton.click()
@@ -390,6 +404,48 @@ describe('New Agent Page', () => {
 				.element(page.getByRole('heading', { name: /new agent/i }))
 				.toBeVisible()
 			expect(mockAddAgent).not.toHaveBeenCalled()
+		})
+
+		it('blocks invalid names client-side with a hint', async () => {
+			const mockCreateAgent = vi.mocked(agentConfig.createAgent)
+
+			render(NewAgentPage)
+
+			const nameButton = page.getByRole('button', { name: /^name$/i })
+			await nameButton.click()
+
+			const nameInput = page.getByPlaceholder(/enter agent name/i)
+			await nameInput.fill('bad_name')
+
+			const createButton = page.getByRole('button', { name: /create agent/i })
+			await createButton.click()
+
+			expect(mockCreateAgent).not.toHaveBeenCalled()
+			await expect
+				.element(page.getByText(/letters, digits and single spaces only/i))
+				.toBeVisible()
+		})
+
+		it('surfaces the duplicate-name error from the server', async () => {
+			const mockCreateAgent = vi.mocked(agentConfig.createAgent)
+			mockCreateAgent.mockRejectedValueOnce(
+				new Error('An agent named "Research" already exists')
+			)
+
+			render(NewAgentPage)
+
+			const nameButton = page.getByRole('button', { name: /^name$/i })
+			await nameButton.click()
+
+			const nameInput = page.getByPlaceholder(/enter agent name/i)
+			await nameInput.fill('Research')
+
+			const createButton = page.getByRole('button', { name: /create agent/i })
+			await createButton.click()
+
+			await expect.element(page.getByText(/already exists/i)).toBeVisible()
+			expect(mockAddAgent).not.toHaveBeenCalled()
+			expect(goto).not.toHaveBeenCalled()
 		})
 	})
 })

@@ -2,14 +2,17 @@
  * Mock API handlers
  *
  * MSW handlers implementing the backend contract consumed by
- * `src/lib/services`. Mounted by the vite dev/preview servers when
- * `VITE_USE_MOCKS=true` and reused by unit tests via `msw/node`.
+ * `src/lib/services` (see docs/specs/2026-10-26-agent-id-addressing-design.md).
+ * Mounted by the vite dev/preview servers when `VITE_USE_MOCKS=true` and
+ * reused by unit tests via `msw/node`.
  */
 
 import { type HttpHandler, HttpResponse, http } from 'msw'
+import { SUPERAGENT_AGENT_ID } from '../config.ts'
 import type { IconName } from '../icons/index.ts'
 import type { CursorPage } from '../services/utils/cursor.ts'
 import type { Agent, AgentConfiguration } from '../types/agent.ts'
+import { deriveAgentId, isValidAgentName } from './agent-id.ts'
 import type { MockStore } from './data.ts'
 
 interface CursorItem {
@@ -17,8 +20,8 @@ interface CursorItem {
 }
 
 /**
- * Slice a newest-first list into a cursor page. The cursor is the id of the
- * last item of the previous page; the next page starts below it.
+ * Slice a newest-first list into a cursor page. The cursor is the id of
+ * the last item of the previous page; the next page starts below it.
  */
 function paginate<T extends CursorItem>(
 	items: T[],
@@ -77,7 +80,15 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				})
 		),
 
-		http.get('*/api/user/superagent-thread', ({ request }) => {
+		// Per-agent thread. Only the superagent has a thread today; other
+		// agents 404 until threads are enabled for them.
+		http.get('*/api/user/agent/:id/thread', ({ request, params }) => {
+			if (String(params.id) !== SUPERAGENT_AGENT_ID) {
+				return HttpResponse.json(
+					{ message: `Agent "${String(params.id)}" has no thread` },
+					{ status: 404 }
+				)
+			}
 			const url = new URL(request.url)
 			const cursor = url.searchParams.get('cursor')
 			if (cursor && !store.thread.some((message) => message.id === cursor)) {
@@ -92,9 +103,9 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			)
 		}),
 
-		http.get('*/api/user/agent/:name/activity', ({ request, params }) => {
+		http.get('*/api/user/agent/:id/activity', ({ request, params }) => {
 			const url = new URL(request.url)
-			const items = store.activity.get(String(params.name)) ?? []
+			const items = store.activity.get(String(params.id)) ?? []
 			const cursor = url.searchParams.get('cursor')
 			if (cursor && !items.some((item) => item.id === cursor)) {
 				return HttpResponse.json({ message: 'Invalid cursor' }, { status: 400 })
@@ -108,24 +119,24 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			)
 		}),
 
-		http.get('*/api/user/agent/:name', ({ params }) => {
-			const name = String(params.name)
-			const configuration = store.configurations.get(name)
+		http.get('*/api/user/agent/:id', ({ params }) => {
+			const id = String(params.id)
+			const configuration = store.configurations.get(id)
 			if (!configuration) {
 				return HttpResponse.json(
-					{ message: `Agent "${name}" not found` },
+					{ message: `Agent "${id}" not found` },
 					{ status: 404 }
 				)
 			}
 			return HttpResponse.json(configuration)
 		}),
 
-		http.patch('*/api/user/agent/:name', async ({ request, params }) => {
-			const name = String(params.name)
-			const current = store.configurations.get(name)
+		http.patch('*/api/user/agent/:id', async ({ request, params }) => {
+			const id = String(params.id)
+			const current = store.configurations.get(id)
 			if (!current) {
 				return HttpResponse.json(
-					{ message: `Agent "${name}" not found` },
+					{ message: `Agent "${id}" not found` },
 					{ status: 404 }
 				)
 			}
@@ -135,27 +146,46 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				...patch,
 				soul: { ...current.soul, ...patch.soul }
 			}
-			store.configurations.set(name, next)
+			store.configurations.set(id, next)
 			return HttpResponse.json(next)
 		}),
 
-		http.post('*/api/user/agent/:name', async ({ request, params }) => {
-			const name = String(params.name)
-			if (store.configurations.has(name)) {
+		// Create: the server owns id derivation. Invalid names are rejected
+		// with 400, colliding derived ids with 409 — never auto-suffixed.
+		http.post('*/api/user/agent', async ({ request }) => {
+			const configuration = (await request.json()) as AgentConfiguration
+			const name = configuration.name ?? ''
+
+			if (!isValidAgentName(name)) {
 				return HttpResponse.json(
-					{ message: `Agent "${name}" already exists` },
+					{
+						message:
+							'Invalid agent name: use letters, digits and single spaces only'
+					},
+					{ status: 400 }
+				)
+			}
+
+			const id = deriveAgentId(name)
+			if (
+				store.configurations.has(id) ||
+				store.agents.some((agent) => agent.id === id)
+			) {
+				return HttpResponse.json(
+					{ message: `An agent named "${name}" already exists` },
 					{ status: 409 }
 				)
 			}
-			const configuration = (await request.json()) as AgentConfiguration
-			store.configurations.set(name, configuration)
+
+			store.configurations.set(id, configuration)
 			const agent: Agent = {
+				id,
 				name,
-				label: configuration.name || name,
+				label: name,
 				icon: (configuration.icon ?? 'bot') as IconName
 			}
 			store.agents.push(agent)
-			return HttpResponse.json({ name }, { status: 201 })
+			return HttpResponse.json({ id, name }, { status: 201 })
 		})
 	]
 }

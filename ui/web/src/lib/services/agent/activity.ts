@@ -16,7 +16,7 @@ export type ActivityFeed = CursorPage<AgentActivityItem>
 export const mergePastFeed = mergePastPages<AgentActivityItem>
 
 export async function getAgentActivityFeed(
-	agentName: string,
+	agentId: string,
 	limit = 20,
 	cursor?: string
 ): Promise<ActivityFeed> {
@@ -25,7 +25,7 @@ export async function getAgentActivityFeed(
 		params.set('cursor', cursor)
 	}
 	const response = await api
-		.get(`user/agent/${agentName}/activity?${params.toString()}`)
+		.get(`user/agent/${agentId}/activity?${params.toString()}`)
 		.json<unknown>()
 	return validateActivityFeed(response)
 }

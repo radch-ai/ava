@@ -1,6 +1,6 @@
 <script lang="ts">
 	import * as Sheet from '#components/ui/sheet'
-	import { SUPERAGENT_NAME } from '#lib/config'
+	import { SUPERAGENT_AGENT_ID } from '#lib/config'
 	import { updateAgentConfiguration } from '#lib/services/agent'
 	import {
 		AGENT_FIELDS,
@@ -18,8 +18,8 @@
 		configuration: AgentConfiguration
 		/** All available tools for this user */
 		availableTools: Tool[]
-		/** Agent name for API calls */
-		agentName: string
+		/** Agent id for API calls */
+		agentId: string
 		/** Called after successful save with the new configuration */
 		onSaved: (config: AgentConfiguration) => void
 	}
@@ -29,7 +29,7 @@
 		closeSheet,
 		configuration,
 		availableTools,
-		agentName,
+		agentId,
 		onSaved
 	}: Props = $props()
 
@@ -39,8 +39,8 @@
 	// State for close confirmation dialog (escape/click-outside)
 	let showCloseDialog = $state(false)
 
-	// Determine agent type from agentName
-	const isSuperagent = $derived(agentName === SUPERAGENT_NAME.toLowerCase())
+	// Determine agent type from the reserved superagent id
+	const isSuperagent = $derived(agentId === SUPERAGENT_AGENT_ID)
 
 	// Single handler for sheet open/close from Sheet component
 	// Cancel button calls handleCancel directly which closes immediately
@@ -68,7 +68,7 @@
 		}
 
 		try {
-			const savedConfig = await updateAgentConfiguration(agentName, changes)
+			const savedConfig = await updateAgentConfiguration(agentId, changes)
 			onSaved(savedConfig)
 			isSheetOpened = false
 		} catch {

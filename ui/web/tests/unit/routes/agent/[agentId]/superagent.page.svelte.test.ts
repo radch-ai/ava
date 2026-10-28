@@ -1,10 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import type { IconName } from '#lib/icons'
-import type { SuperagentThread } from '#lib/services/user'
-import type { Agent } from '#lib/types/agent'
-import SuperagentPage from './SuperagentPageTestWrapper.svelte'
+import type { AgentThread } from '#lib/services/agent'
+import { SUPERAGENT_AGENT } from '#lib/types/agent'
+import AgentPageTestWrapper from './AgentPageTestWrapper.svelte'
 
 vi.mock('#lib/services/api', () => ({
 	api: {
@@ -14,20 +13,16 @@ vi.mock('#lib/services/api', () => ({
 
 import { type ApiResponsePromise, api } from '#lib/services/api'
 
-const mockAgents = [
-	{ name: 'ava', icon: 'sparkles' as IconName, label: 'Ava' },
-	{ name: 'support', icon: 'bot' as IconName, label: 'Support' },
-	{ name: 'analyst', icon: 'chart-column' as IconName, label: 'Analyst' }
-]
-
 function createThread(
 	items: Array<{ id: string; role: 'user' | 'assistant'; content: string }>,
 	opts: { nextCursor?: string | null } = {}
-): SuperagentThread {
+): AgentThread {
 	return {
-		items: items.map((item) => ({
-			...item,
-			createdAt: '2026-03-22T00:00:00Z'
+		items: items.map((item, index) => ({
+			id: item.id,
+			role: item.role,
+			content: item.content,
+			createdAt: new Date(Date.now() - index * 60_000).toISOString()
 		})),
 		nextCursor: opts.nextCursor ?? null
 	}
@@ -44,33 +39,30 @@ function createActivityFeed(
 	opts: { nextCursor?: string | null } = {}
 ) {
 	return {
-		items: items.map((item) => ({
+		items: items.map((item, index) => ({
 			id: item.id,
-			createdAt: '2026-03-22T00:00:00Z',
+			createdAt: new Date(Date.now() - index * 60_000).toISOString(),
 			action: item.action,
 			status: item.status ?? 'completed',
-			triggeredBy: item.triggeredBy ?? 'user@example.com',
+			triggeredBy: item.triggeredBy ?? 'user',
 			message: item.message
 		})),
 		nextCursor: opts.nextCursor ?? null
 	}
 }
 
-interface TestPageData {
-	agents: Agent[]
-	thread: SuperagentThread | null
-	threadError: string | null
-}
-function createMockData(overrides: Partial<TestPageData> = {}) {
+function createMockData(overrides: Record<string, unknown> = {}) {
 	return {
+		agent: SUPERAGENT_AGENT,
+		activityFeed: { items: [], nextCursor: null },
+		activityError: null,
 		thread: null,
 		threadError: null,
-		agents: mockAgents,
 		...overrides
 	}
 }
 
-describe('SuperagentPage', () => {
+describe('AgentPage (superagent branch)', () => {
 	afterEach(async () => {
 		cleanup()
 		vi.clearAllMocks()
@@ -78,13 +70,13 @@ describe('SuperagentPage', () => {
 
 	describe('initial rendering', () => {
 		it('renders agent header with superagent name', async () => {
-			render(SuperagentPage, { data: createMockData() })
+			render(AgentPageTestWrapper, { data: createMockData() })
 
 			await expect.element(page.getByText('Chat with Ava')).toBeVisible()
 		})
 
 		it('renders model selector', async () => {
-			render(SuperagentPage, { data: createMockData() })
+			render(AgentPageTestWrapper, { data: createMockData() })
 
 			// role=combobox is nameFrom:author — its accessible name is empty, so
 			// match the visible label via text content instead
@@ -96,14 +88,16 @@ describe('SuperagentPage', () => {
 		})
 
 		it('renders text area', async () => {
-			render(SuperagentPage, { data: createMockData() })
+			render(AgentPageTestWrapper, { data: createMockData() })
 
 			const textarea = page.getByPlaceholder('Enter your query!')
 			await expect.element(textarea).toBeVisible()
 		})
 
 		it('uses a breakout footer with a centered composer and right-aligned model selector', async () => {
-			const { container } = render(SuperagentPage, { data: createMockData() })
+			const { container } = render(AgentPageTestWrapper, {
+				data: createMockData()
+			})
 
 			const footer = container.querySelector('footer')
 			expect(footer).toBeInTheDocument()
@@ -119,15 +113,6 @@ describe('SuperagentPage', () => {
 				'.mr-2.flex.items-center.justify-end'
 			)
 			expect(modelSelectorContainer).toBeInTheDocument()
-
-			const modelButton = page.getByRole('combobox')
-			await expect.element(modelButton).toBeVisible()
-			await expect
-				.element(modelButton)
-				.toHaveTextContent(/auto|GPT|Claude|Gemini|Grok/i)
-
-			const textarea = page.getByPlaceholder('Enter your query!')
-			await expect.element(textarea).toBeVisible()
 		})
 	})
 
@@ -138,7 +123,9 @@ describe('SuperagentPage', () => {
 				{ id: '2', role: 'user', content: 'Show me updates' }
 			])
 
-			render(SuperagentPage, { data: createMockData({ thread: threadPage }) })
+			render(AgentPageTestWrapper, {
+				data: createMockData({ thread: threadPage })
+			})
 
 			await expect.element(page.getByText('Welcome back')).toBeVisible()
 			await expect.element(page.getByText('Show me updates')).toBeVisible()
@@ -149,7 +136,9 @@ describe('SuperagentPage', () => {
 				{ id: '1', role: 'user', content: 'User message here' }
 			])
 
-			render(SuperagentPage, { data: createMockData({ thread: threadPage }) })
+			render(AgentPageTestWrapper, {
+				data: createMockData({ thread: threadPage })
+			})
 
 			const message = page.getByText('User message here')
 			await expect.element(message).toBeVisible()
@@ -160,7 +149,9 @@ describe('SuperagentPage', () => {
 				{ id: '1', role: 'assistant', content: 'Assistant reply here' }
 			])
 
-			render(SuperagentPage, { data: createMockData({ thread: threadPage }) })
+			render(AgentPageTestWrapper, {
+				data: createMockData({ thread: threadPage })
+			})
 
 			const message = page.getByText('Assistant reply here')
 			await expect.element(message).toBeVisible()
@@ -169,7 +160,9 @@ describe('SuperagentPage', () => {
 		it('shows no messages placeholder when thread is empty', async () => {
 			const threadPage = createThread([])
 
-			render(SuperagentPage, { data: createMockData({ thread: threadPage }) })
+			render(AgentPageTestWrapper, {
+				data: createMockData({ thread: threadPage })
+			})
 
 			await expect.element(page.getByText(/no messages yet/i)).toBeVisible()
 		})
@@ -186,7 +179,9 @@ describe('SuperagentPage', () => {
 				{ nextCursor: 'cursor-abc' }
 			)
 
-			render(SuperagentPage, { data: createMockData({ thread: threadPage }) })
+			render(AgentPageTestWrapper, {
+				data: createMockData({ thread: threadPage })
+			})
 
 			const loadMoreButton = page.getByRole('button', { name: /load more/i })
 			await expect.element(loadMoreButton).toBeVisible()
@@ -197,7 +192,9 @@ describe('SuperagentPage', () => {
 				{ id: '1', role: 'user', content: 'Only message' }
 			])
 
-			render(SuperagentPage, { data: createMockData({ thread: threadPage }) })
+			render(AgentPageTestWrapper, {
+				data: createMockData({ thread: threadPage })
+			})
 
 			await expect
 				.element(page.getByRole('button', { name: /load more/i }))
@@ -207,7 +204,7 @@ describe('SuperagentPage', () => {
 
 	describe('error handling', () => {
 		it('shows inline error state when initial thread load fails', async () => {
-			render(SuperagentPage, {
+			render(AgentPageTestWrapper, {
 				data: createMockData({
 					thread: null,
 					threadError: 'Failed to load conversation'
@@ -220,7 +217,7 @@ describe('SuperagentPage', () => {
 		})
 
 		it('keeps page shell visible when thread load fails', async () => {
-			render(SuperagentPage, {
+			render(AgentPageTestWrapper, {
 				data: createMockData({
 					thread: null,
 					threadError: 'Failed to load conversation'
@@ -246,7 +243,9 @@ describe('SuperagentPage', () => {
 				}
 			)
 
-			render(SuperagentPage, { data: createMockData({ thread: threadPage }) })
+			render(AgentPageTestWrapper, {
+				data: createMockData({ thread: threadPage })
+			})
 
 			await expect.element(page.getByText('Existing message')).toBeVisible()
 
@@ -268,7 +267,9 @@ describe('SuperagentPage', () => {
 				}
 			)
 
-			render(SuperagentPage, { data: createMockData({ thread: threadPage }) })
+			render(AgentPageTestWrapper, {
+				data: createMockData({ thread: threadPage })
+			})
 
 			const loadMoreButton = page.getByRole('button', { name: /load more/i })
 			await loadMoreButton.click()
@@ -303,7 +304,9 @@ describe('SuperagentPage', () => {
 				{ nextCursor: 'cursor-abc' }
 			)
 
-			render(SuperagentPage, { data: createMockData({ thread: threadPage }) })
+			render(AgentPageTestWrapper, {
+				data: createMockData({ thread: threadPage })
+			})
 
 			await expect.element(page.getByText('Newer message')).toBeVisible()
 			await expect.element(page.getByText('Newest reply')).toBeVisible()
@@ -320,7 +323,7 @@ describe('SuperagentPage', () => {
 
 	describe('tab switching', () => {
 		it('shows conversation tab and activity tab', async () => {
-			render(SuperagentPage, { data: createMockData() })
+			render(AgentPageTestWrapper, { data: createMockData() })
 
 			await expect
 				.element(page.getByRole('tab', { name: /conversation/i }))
@@ -331,7 +334,7 @@ describe('SuperagentPage', () => {
 		})
 
 		it('defaults to conversation tab selected', async () => {
-			render(SuperagentPage, { data: createMockData() })
+			render(AgentPageTestWrapper, { data: createMockData() })
 
 			const conversationTab = page.getByRole('tab', { name: /conversation/i })
 			await expect
@@ -347,7 +350,7 @@ describe('SuperagentPage', () => {
 				json: async () => activityPage
 			} as ApiResponsePromise)
 
-			render(SuperagentPage, { data: createMockData() })
+			render(AgentPageTestWrapper, { data: createMockData() })
 
 			const activityTab = page.getByRole('tab', { name: /activity/i })
 			await activityTab.click()
@@ -370,7 +373,9 @@ describe('SuperagentPage', () => {
 				{ id: '1', role: 'user', content: 'My message' }
 			])
 
-			render(SuperagentPage, { data: createMockData({ thread: threadPage }) })
+			render(AgentPageTestWrapper, {
+				data: createMockData({ thread: threadPage })
+			})
 
 			await expect.element(page.getByText('My message')).toBeVisible()
 
@@ -391,7 +396,7 @@ describe('SuperagentPage', () => {
 				json: async () => Promise.reject(new Error('Activity load failed'))
 			} as ApiResponsePromise)
 
-			render(SuperagentPage, { data: createMockData() })
+			render(AgentPageTestWrapper, { data: createMockData() })
 
 			const activityTab = page.getByRole('tab', { name: /activity/i })
 			await activityTab.click()
@@ -418,7 +423,7 @@ describe('SuperagentPage', () => {
 				json: async () => activityPage
 			} as ApiResponsePromise)
 
-			render(SuperagentPage, { data: createMockData() })
+			render(AgentPageTestWrapper, { data: createMockData() })
 
 			const activityTab = page.getByRole('tab', { name: /activity/i })
 			await activityTab.click()
@@ -442,34 +447,13 @@ describe('SuperagentPage', () => {
 				json: async () => activityPage
 			} as ApiResponsePromise)
 
-			render(SuperagentPage, { data: createMockData() })
+			render(AgentPageTestWrapper, { data: createMockData() })
 
 			const activityTab = page.getByRole('tab', { name: /activity/i })
 			await activityTab.click()
 
 			await expect.element(page.getByText('Processed data')).toBeVisible()
 			await expect.element(page.getByText('Connection refused')).toBeVisible()
-		})
-
-		it.skip('switches back to Conversation on submit from Activity', async () => {
-			render(SuperagentPage, { data: createMockData() })
-
-			const activityTab = page.getByRole('tab', { name: /activity/i })
-			await activityTab.click()
-
-			await expect.element(activityTab).toHaveAttribute('aria-selected', 'true')
-
-			const textarea = page.getByPlaceholder('Enter your query!')
-			await textarea.fill('Hello from activity tab')
-
-			const buttons = page.getByRole('button')
-			const submitButton = buttons.nth(buttons.elements().length - 1)
-			await submitButton.click()
-
-			const conversationTab = page.getByRole('tab', { name: /conversation/i })
-			await expect
-				.element(conversationTab)
-				.toHaveAttribute('aria-selected', 'true')
 		})
 	})
 })

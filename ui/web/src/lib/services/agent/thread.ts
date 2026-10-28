@@ -2,34 +2,33 @@ import { api } from '../api'
 import type { CursorPage } from '../utils/cursor'
 import { mergePastPages } from '../utils/cursor'
 
-export interface Message {
+export interface ThreadMessage {
 	id: string
 	role: 'user' | 'assistant'
 	content: string
 	createdAt: string
 }
 
-export type SuperagentThreadMessage = Message
+export type AgentThread = CursorPage<ThreadMessage>
 
-export type SuperagentThread = CursorPage<Message>
+export const mergePastThread = mergePastPages<ThreadMessage>
 
-export const mergePastSuperagentThread = mergePastPages<SuperagentThreadMessage>
-
-export async function getSuperagentThread(
+export async function getAgentThread(
+	agentId: string,
 	limit = 20,
 	cursor?: string
-): Promise<SuperagentThread> {
+): Promise<AgentThread> {
 	const params = new URLSearchParams({ limit: String(limit) })
 	if (cursor) {
 		params.set('cursor', cursor)
 	}
 	const response = await api
-		.get(`user/superagent-thread?${params.toString()}`)
+		.get(`user/agent/${agentId}/thread?${params.toString()}`)
 		.json<unknown>()
 	return validateThread(response)
 }
 
-function validateThread(thread: unknown): SuperagentThread {
+function validateThread(thread: unknown): AgentThread {
 	if (typeof thread !== 'object' || thread === null) {
 		throw new Error('Invalid thread: expected an object')
 	}
@@ -58,7 +57,7 @@ function validateThread(thread: unknown): SuperagentThread {
 		}
 	}
 	return {
-		items: t.items as Message[],
+		items: t.items as ThreadMessage[],
 		nextCursor: t.nextCursor as string | null
 	}
 }

@@ -15,18 +15,20 @@ test.describe('agent creation', () => {
 	})
 
 	test('should create agent with minimal required fields', async ({ page }) => {
-		const agentName = `test-agent-${Date.now()}`
+		const agentName = `Test Agent ${Date.now()}`
 
 		// Fill in required name field
 		await page.getByLabel(/name/i).fill(agentName)
 		await page.getByRole('button', { name: 'Create Agent' }).click()
 
-		// Should navigate to agent detail page
-		await expect(page).toHaveURL(new RegExp(`/agent/${agentName}`))
+		// Should navigate to the id derived from the display name
+		await expect(page).toHaveURL(
+			new RegExp(`/agent/${agentName.toLowerCase().replace(/ +/g, '-')}$`)
+		)
 	})
 
 	test('should create agent with full configuration', async ({ page }) => {
-		const agentName = `full-config-agent-${Date.now()}`
+		const agentName = `Full Config Agent ${Date.now()}`
 
 		// Fill all fields
 		await page.getByLabel(/name/i).fill(agentName)
@@ -53,7 +55,9 @@ test.describe('agent creation', () => {
 		await page.getByRole('button', { name: 'Create Agent' }).click()
 
 		// Should navigate to agent detail page
-		await expect(page).toHaveURL(new RegExp(`/agent/${agentName}`))
+		await expect(page).toHaveURL(
+			new RegExp(`/agent/${agentName.toLowerCase().replace(/ +/g, '-')}$`)
+		)
 	})
 
 	test('should show random icon selected by default', async ({ page }) => {
@@ -78,48 +82,53 @@ test.describe('agent creation validation', () => {
 		await expect(page).toHaveURL(/\/agent\/new/)
 	})
 
-	test('should sanitize agent name - lowercase and dashes', async ({
-		page
-	}) => {
+	test('should reject names with symbols and show a hint', async ({ page }) => {
 		await page.getByLabel(/name/i).fill('My Test Agent!')
 		await page.getByRole('button', { name: 'Create Agent' }).click()
 
-		// Should navigate to sanitized name
-		await expect(page).toHaveURL(/\/agent\/my-test-agent/)
+		// Symbols are invalid: stay on the form and explain the rule
+		await expect(page).toHaveURL(/\/agent\/new/)
+		await expect(
+			page.getByText(/letters, digits and single spaces only/i)
+		).toBeVisible()
 	})
 
-	test('should handle duplicate agent names', async ({ page }) => {
-		const baseName = `duplicate-test-${Date.now()}`
+	test('should surface the duplicate-name error without auto-suffixing', async ({
+		page
+	}) => {
+		const baseName = `Duplicate Test ${Date.now()}`
+		const agentId = baseName.toLowerCase().replace(/ +/g, '-')
 
 		// Create first agent
 		await page.getByLabel(/name/i).fill(baseName)
 		await page.getByRole('button', { name: 'Create Agent' }).click()
-		await expect(page).toHaveURL(new RegExp(`/agent/${baseName}`))
+		await expect(page).toHaveURL(new RegExp(`/agent/${agentId}$`))
 
-		// Create second agent with same name
+		// Create second agent with the same name
 		await page.goto('/agent/new')
 		await page.getByLabel(/name/i).fill(baseName)
 		await page.getByRole('button', { name: 'Create Agent' }).click()
 
-		// Should navigate to agent with suffix (e.g., duplicate-test-123-2)
-		await expect(page).toHaveURL(new RegExp(`/agent/${baseName}-\\d+$`))
+		// The server rejects the duplicate; the user must rename manually
+		await expect(page).toHaveURL(/\/agent\/new/)
+		await expect(page.getByText(/already exists/i)).toBeVisible()
 	})
 
 	test('should trim whitespace from name', async ({ page }) => {
-		await page.getByLabel(/name/i).fill('  trimmed-agent  ')
+		await page.getByLabel(/name/i).fill('  Trimmed Agent  ')
 		await page.getByRole('button', { name: 'Create Agent' }).click()
 
-		// Should navigate to trimmed name
-		await expect(page).toHaveURL(/\/agent\/trimmed-agent/)
+		// Should navigate to the trimmed, derived id
+		await expect(page).toHaveURL(/\/agent\/trimmed-agent$/)
 	})
 
-	test('should handle special characters in name gracefully', async ({
-		page
-	}) => {
+	test('should reject names with mixed symbols', async ({ page }) => {
 		await page.getByLabel(/name/i).fill('Test@Agent#123!')
 		await page.getByRole('button', { name: 'Create Agent' }).click()
 
-		// Special characters should be stripped
-		await expect(page).toHaveURL(/\/agent\/test-agent-123/)
+		await expect(page).toHaveURL(/\/agent\/new/)
+		await expect(
+			page.getByText(/letters, digits and single spaces only/i)
+		).toBeVisible()
 	})
 })

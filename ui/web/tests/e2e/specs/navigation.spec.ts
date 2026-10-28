@@ -8,7 +8,7 @@ test.describe('navigation', () => {
 			await page.getByLabel(/name/i).fill('unsaved-test')
 
 			// Try to navigate away
-			await page.locator('a[href="/"]').first().click()
+			await page.locator('a[href="/agent/_superagent"]').first().click()
 
 			// Should show dialog
 			await expect(page.getByRole('alertdialog')).toBeVisible()
@@ -19,7 +19,7 @@ test.describe('navigation', () => {
 			await page.getByLabel(/name/i).fill('discard-test')
 
 			// Navigate and discard
-			await page.locator('a[href="/"]').first().click()
+			await page.locator('a[href="/agent/_superagent"]').first().click()
 
 			// Click discard button
 			await page
@@ -27,7 +27,7 @@ test.describe('navigation', () => {
 				.click()
 
 			// Should navigate
-			await expect(page).toHaveURL(/\//)
+			await expect(page).toHaveURL(/\/agent\/_superagent$/)
 		})
 
 		test('should allow keep editing and stay on page', async ({ page }) => {
@@ -35,7 +35,7 @@ test.describe('navigation', () => {
 			await page.getByLabel(/name/i).fill('keep-editing-test')
 
 			// Try to navigate
-			await page.locator('a[href="/"]').first().click()
+			await page.locator('a[href="/agent/_superagent"]').first().click()
 
 			// Click keep editing
 			await page
@@ -50,10 +50,10 @@ test.describe('navigation', () => {
 			await page.goto('/agent/new')
 
 			// Don't make any changes, just navigate
-			await page.locator('a[href="/"]').first().click()
+			await page.locator('a[href="/agent/_superagent"]').first().click()
 
 			// Should navigate without dialog
-			await expect(page).toHaveURL(/\//)
+			await expect(page).toHaveURL(/\/agent\/_superagent$/)
 			await expect(page.locator('[role="dialog"]')).not.toBeVisible()
 		})
 	})
@@ -80,14 +80,15 @@ test.describe('navigation', () => {
 		test('should load agent detail directly via URL', async ({ page }) => {
 			// First create an agent
 			await page.goto('/agent/new')
-			const agentName = `deep-link-${Date.now()}`
+			const agentName = `Deep Link ${Date.now()}`
+			const agentId = agentName.toLowerCase().replace(/ +/g, '-')
 			await page.getByLabel(/name/i).fill(agentName)
 			await page.getByRole('button', { name: 'Create Agent' }).click()
-			await expect(page).toHaveURL(new RegExp(`/agent/${agentName}`))
+			await expect(page).toHaveURL(new RegExp(`/agent/${agentId}$`))
 
 			// Now reload the page directly
 			await page.reload()
-			await expect(page).toHaveURL(new RegExp(`/agent/${agentName}`))
+			await expect(page).toHaveURL(new RegExp(`/agent/${agentId}$`))
 		})
 	})
 })

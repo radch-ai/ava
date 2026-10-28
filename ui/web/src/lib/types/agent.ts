@@ -10,7 +10,7 @@
  * At runtime: SELECT * FROM user_tools WHERE id = ANY(agent.tools_enabled)
  */
 
-import { SUPERAGENT_NAME } from '#lib/config'
+import { SUPERAGENT_AGENT_ID, SUPERAGENT_NAME } from '#lib/config'
 import { ALL_ICON_NAMES, type IconName } from '#lib/icons'
 
 // ============================================================================
@@ -21,6 +21,8 @@ import { ALL_ICON_NAMES, type IconName } from '#lib/icons'
  * Agent displayed in UI - uses icon name string for flexibility
  */
 export interface Agent {
+	/** Per-user id used in URLs and API paths; `_`-prefixed ids are system-reserved. */
+	id: string
 	name: string
 	label: string
 	icon: IconName
@@ -30,7 +32,8 @@ export interface Agent {
  * superagent agent definition - the primary assistant
  */
 export const SUPERAGENT_AGENT: Agent = {
-	name: SUPERAGENT_NAME.toLowerCase(),
+	id: SUPERAGENT_AGENT_ID,
+	name: SUPERAGENT_NAME,
 	label: `Chat with ${SUPERAGENT_NAME}`,
 	icon: 'message-square'
 }

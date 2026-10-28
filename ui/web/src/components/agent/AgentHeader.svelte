@@ -3,7 +3,7 @@
 	import { AgentConfigSheet } from '#components/agentconfig'
 	import { Button, buttonVariants } from '#components/ui/button'
 	import * as Tooltip from '#components/ui/tooltip'
-	import { SUPERAGENT_NAME } from '#lib/config'
+	import { SUPERAGENT_AGENT_ID } from '#lib/config'
 	import { Icon } from '#lib/icons'
 	import { getAgentConfiguration } from '#lib/services/agent'
 	import type { Agent, AgentConfiguration } from '#lib/types/agent'
@@ -37,7 +37,7 @@
 		if (!configuration && !isLoading) {
 			isLoading = true
 			try {
-				configuration = await getAgentConfiguration(agent.name)
+				configuration = await getAgentConfiguration(agent.id)
 			} catch {
 				// API unreachable - ky logs to console
 			} finally {
@@ -57,9 +57,7 @@
 	</div>
 	<div class="flex items-center gap-6">
 		<div class="flex items-center gap-2">
-			{#if agent.name === SUPERAGENT_NAME.toLowerCase() &&
-				activeTab &&
-				onTabChange}
+			{#if agent.id === SUPERAGENT_AGENT_ID && activeTab && onTabChange}
 				<!-- Tabs for superagent -->
 				<div role="tablist" class="ml-4 flex gap-4">
 					{#each ['conversation', 'activity'] as tab (`tab-${tab}`)}
@@ -103,7 +101,7 @@
 		closeSheet={() => (configSheetOpen = false)}
 		{configuration}
 		{availableTools}
-		agentName={agent.name}
+		agentId={agent.id}
 		onSaved={(config) => (configuration = config)}
 	/>
 {/if}

@@ -69,6 +69,7 @@ function createProps(
 		saveLabel: 'Save',
 		cancelLabel: 'Cancel',
 		helperText: 'Test helper text',
+		isSuperagent: true,
 		...overrides
 	}
 }
@@ -175,7 +176,10 @@ describe('AgentConfigEditor', () => {
 		it('shows Worker-specific fields (no User Context, no Cron Jobs)', async () => {
 			render(
 				AgentConfigEditor,
-				createProps({ configuration: createDefaultWorkerConfig() })
+				createProps({
+					configuration: createDefaultWorkerConfig(),
+					isSuperagent: false
+				})
 			)
 
 			// Name button (includes icon picker in the editor)
@@ -1019,7 +1023,10 @@ describe('AgentConfigEditor', () => {
 		it('does not crash when clicking Cron Jobs on worker (field not shown)', async () => {
 			const config = createDefaultWorkerConfig()
 
-			render(AgentConfigEditor, createProps({ configuration: config }))
+			render(
+				AgentConfigEditor,
+				createProps({ configuration: config, isSuperagent: false })
+			)
 
 			// Cron Jobs button should not exist for worker
 			expect(

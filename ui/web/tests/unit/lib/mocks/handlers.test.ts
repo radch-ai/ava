@@ -16,16 +16,23 @@ afterAll(() => {
 })
 
 describe('mock API handlers', () => {
-	it('lists the seeded worker agents', async () => {
+	it('lists agents with ids, superagent first', async () => {
 		const res = await fetch(`${BASE}/user/agents`)
 		expect(res.status).toBe(200)
 		const body = (await res.json()) as {
-			agents: { name: string; label: string; icon: string }[]
+			agents: { id: string; name: string; label: string; icon: string }[]
 		}
-		expect(body.agents.map((agent) => agent.name)).toEqual([
+		expect(body.agents.map((agent) => agent.id)).toEqual([
+			'_superagent',
 			'research',
 			'scribe',
 			'sentinel'
+		])
+		expect(body.agents.map((agent) => agent.name)).toEqual([
+			'Ava',
+			'Research',
+			'Scribe',
+			'Sentinel'
 		])
 		for (const agent of body.agents) {
 			expect(typeof agent.label).toBe('string')
@@ -35,7 +42,7 @@ describe('mock API handlers', () => {
 
 	it('pages the superagent thread newest-first until the cursor is exhausted', async () => {
 		const first = (await (
-			await fetch(`${BASE}/user/superagent-thread?limit=10`)
+			await fetch(`${BASE}/user/agent/_superagent/thread?limit=10`)
 		).json()) as {
 			items: { id: string }[]
 			nextCursor: string | null
@@ -55,7 +62,9 @@ describe('mock API handlers', () => {
 		expect(first.nextCursor).toBe('msg-15')
 
 		const second = (await (
-			await fetch(`${BASE}/user/superagent-thread?limit=10&cursor=msg-15`)
+			await fetch(
+				`${BASE}/user/agent/_superagent/thread?limit=10&cursor=msg-15`
+			)
 		).json()) as {
 			items: { id: string }[]
 			nextCursor: string | null
@@ -75,7 +84,7 @@ describe('mock API handlers', () => {
 		expect(second.nextCursor).toBe('msg-5')
 
 		const third = (await (
-			await fetch(`${BASE}/user/superagent-thread?limit=10&cursor=msg-5`)
+			await fetch(`${BASE}/user/agent/_superagent/thread?limit=10&cursor=msg-5`)
 		).json()) as {
 			items: { id: string }[]
 			nextCursor: string | null
@@ -87,6 +96,18 @@ describe('mock API handlers', () => {
 			'msg-1'
 		])
 		expect(third.nextCursor).toBeNull()
+	})
+
+	it('404s the thread endpoint for agents without a thread', async () => {
+		const res = await fetch(`${BASE}/user/agent/research/thread`)
+		expect(res.status).toBe(404)
+	})
+
+	it('rejects an unknown thread cursor with 400', async () => {
+		const res = await fetch(
+			`${BASE}/user/agent/_superagent/thread?cursor=missing`
+		)
+		expect(res.status).toBe(400)
 	})
 
 	it('returns an activity feed for a known agent and an empty page for unknown agents', async () => {
@@ -101,6 +122,13 @@ describe('mock API handlers', () => {
 		for (const item of known.items) {
 			expect(['running', 'completed', 'failed']).toContain(item.status)
 		}
+
+		const superagent = (await (
+			await fetch(`${BASE}/user/agent/_superagent/activity?limit=3`)
+		).json()) as {
+			items: { id: string }[]
+		}
+		expect(superagent.items).toHaveLength(3)
 
 		const unknown = await (
 			await fetch(`${BASE}/user/agent/ghost/activity`)
@@ -119,6 +147,11 @@ describe('mock API handlers', () => {
 		expect(config.name).toBe('Scribe')
 		expect(typeof config.soul.personality).toBe('string')
 		expect(Array.isArray(config.toolsEnabled)).toBe(true)
+
+		const superagentRes = await fetch(`${BASE}/user/agent/_superagent`)
+		expect(superagentRes.status).toBe(200)
+		const superagentConfig = (await superagentRes.json()) as { name: string }
+		expect(superagentConfig.name).toBe('Ava')
 
 		const missing = await fetch(`${BASE}/user/agent/ghost`)
 		expect(missing.status).toBe(404)
@@ -152,9 +185,41 @@ describe('mock API handlers', () => {
 		expect(reread.operatingInstructions).toBe('Updated instructions')
 	})
 
-	it('creates agents via POST and rejects duplicates with 409', async () => {
+	it('creates agents via POST /user/agent and returns the derived id', async () => {
+		const created = await fetch(`${BASE}/user/agent`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Research Team',
+				icon: 'bot',
+				soul: { personality: '', identity: '' },
+				operatingInstructions: '',
+				toolsContext: '',
+				toolsEnabled: []
+			})
+		})
+		expect(created.status).toBe(201)
+		expect(await created.json()).toEqual({
+			id: 'research-team',
+			name: 'Research Team'
+		})
+
+		const list = (await (await fetch(`${BASE}/user/agents`)).json()) as {
+			agents: { id: string; name: string; label: string; icon: string }[]
+		}
+		const entry = list.agents.find((agent) => agent.id === 'research-team')
+		expect(entry?.name).toBe('Research Team')
+		expect(typeof entry?.label).toBe('string')
+
+		const config = (await (
+			await fetch(`${BASE}/user/agent/research-team`)
+		).json()) as { name: string }
+		expect(config.name).toBe('Research Team')
+	})
+
+	it('rejects duplicate derived ids with 409 and no auto-suffix', async () => {
 		const payload = JSON.stringify({
-			name: 'Scout',
+			name: 'Research',
 			icon: 'bot',
 			soul: { personality: '', identity: '' },
 			operatingInstructions: '',
@@ -162,25 +227,48 @@ describe('mock API handlers', () => {
 			toolsEnabled: []
 		})
 
-		const created = await fetch(`${BASE}/user/agent/scout`, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: payload
-		})
-		expect(created.status).toBe(201)
-		expect(await created.json()).toEqual({ name: 'scout' })
-
-		const list = (await (await fetch(`${BASE}/user/agents`)).json()) as {
-			agents: { name: string }[]
-		}
-		expect(list.agents.map((agent) => agent.name)).toContain('scout')
-
-		const duplicate = await fetch(`${BASE}/user/agent/scout`, {
+		const duplicate = await fetch(`${BASE}/user/agent`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: payload
 		})
 		expect(duplicate.status).toBe(409)
+		const body = (await duplicate.json()) as { message: string }
+		expect(body.message).toBe('An agent named "Research" already exists')
+
+		const caseVariant = await fetch(`${BASE}/user/agent`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				name: 'RESEARCH',
+				icon: 'bot',
+				soul: { personality: '', identity: '' },
+				operatingInstructions: '',
+				toolsContext: '',
+				toolsEnabled: []
+			})
+		})
+		expect(caseVariant.status).toBe(409)
+	})
+
+	it('rejects invalid display names with 400', async () => {
+		for (const name of ['bad_name', 'hyphen-name', 'double  space', '']) {
+			const res = await fetch(`${BASE}/user/agent`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					name,
+					icon: 'bot',
+					soul: { personality: '', identity: '' },
+					operatingInstructions: '',
+					toolsContext: '',
+					toolsEnabled: []
+				})
+			})
+			expect(res.status).toBe(400)
+			const body = (await res.json()) as { message: string }
+			expect(body.message).toContain('Invalid agent name')
+		}
 	})
 
 	describe('auth endpoints', () => {

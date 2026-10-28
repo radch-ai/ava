@@ -6,13 +6,15 @@ import AgentHeaderPairTestWrapper from './AgentHeaderPairTestWrapper.svelte'
 import AgentHeaderTestWrapper from './AgentHeaderTestWrapper.svelte'
 
 const superagent: Agent = {
-	name: 'ava',
+	id: '_superagent',
+	name: 'Ava',
 	label: 'Chat with Ava',
 	icon: 'message-square'
 }
 
 const workerAgent: Agent = {
-	name: 'support',
+	id: 'support',
+	name: 'Support',
 	label: 'Support Bot',
 	icon: 'bot'
 }
@@ -249,7 +251,7 @@ describe('AgentHeader', () => {
 			await page.getByLabelText('Open agent configuration').click()
 
 			await vi.waitFor(() => {
-				expect(mockGetAgentConfiguration).toHaveBeenCalledWith('ava')
+				expect(mockGetAgentConfiguration).toHaveBeenCalledWith('_superagent')
 			})
 
 			await expect
@@ -303,7 +305,7 @@ describe('AgentHeader', () => {
 			await page.getByLabelText('Open agent configuration').click()
 
 			await vi.waitFor(() => {
-				expect(mockGetAgentConfiguration).toHaveBeenCalledWith('ava')
+				expect(mockGetAgentConfiguration).toHaveBeenCalledWith('_superagent')
 			})
 
 			expect(page.getByRole('button', { name: /save/i }).query()).toBeNull()

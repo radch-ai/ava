@@ -10,12 +10,22 @@
 	import * as Sidebar from '#components/ui/sidebar'
 	import * as Tooltip from '#components/ui/tooltip'
 	import { authStore } from '#lib/auth'
-	import { APP_NAME } from '#lib/config'
+	import { APP_NAME, SUPERAGENT_AGENT_ID } from '#lib/config'
 	import { Icon } from '#lib/icons'
 	import { SUPERAGENT_AGENT } from '#lib/types/agent'
 	import { agents } from '#lib/user'
 	import { resolve } from '$app/paths'
 	import { page } from '$app/state'
+
+	// The superagent is a regular list entry with a reserved id; fall back to
+	// the client constant when the list has not loaded yet.
+	const grouped = $derived(
+		Object.groupBy(agents, (agent) =>
+			agent.id === SUPERAGENT_AGENT_ID ? 'superagent' : 'workers'
+		)
+	)
+	const superagent = $derived(grouped.superagent?.[0] ?? SUPERAGENT_AGENT)
+	const workerAgents = $derived(grouped.workers ?? [])
 
 	const sidebar = Sidebar.useSidebar()
 
@@ -79,18 +89,24 @@
 				<Sidebar.MenuItem>
 					<Sidebar.MenuButton
 						size="lg"
-						isActive={page.url.pathname === '/'}
+						isActive={page.route.id === '/(app)/agent/[agentId]' &&
+							page.params.agentId === SUPERAGENT_AGENT_ID}
 						class="group-data-[collapsible=icon]:justify-center"
 					>
 						{#snippet child({ props })}
-							<a href={resolve('/(app)')} {...props}>
+							<a
+								href={resolve('/(app)/agent/[agentId]', {
+									agentId: SUPERAGENT_AGENT_ID
+								})}
+								{...props}
+							>
 								<Icon
-									name={SUPERAGENT_AGENT.icon}
+									name={superagent.icon}
 									size={18}
 									class="group-data-[collapsible=icon]:size-5"
 								/>
 								<span class="font-medium group-data-[collapsible=icon]:hidden"
-									>{SUPERAGENT_AGENT.label}</span
+									>{superagent.label}</span
 								>
 							</a>
 						{/snippet}
@@ -100,18 +116,19 @@
 		</Sidebar.Group>
 		<Sidebar.Separator />
 		<Sidebar.Group>
-			<Sidebar.GroupLabel>Worker Agents</Sidebar.GroupLabel>
+			<Sidebar.GroupLabel>Agents</Sidebar.GroupLabel>
 			<Sidebar.GroupContent>
 				<Sidebar.Menu>
-					{#each agents as agent (agent.name)}
+					{#each workerAgents as agent (agent.id)}
 						<Sidebar.MenuItem>
 							<Sidebar.MenuButton
-								isActive={page.url.pathname === `/agent/${agent.name}`}
+								isActive={page.route.id === '/(app)/agent/[agentId]' &&
+									page.params.agentId === agent.id}
 							>
 								{#snippet child({ props })}
 									<a
-										href={resolve('/(app)/agent/[agentName]', {
-											agentName: agent.name
+										href={resolve('/(app)/agent/[agentId]', {
+											agentId: agent.id
 										})}
 										{...props}
 									>
@@ -134,7 +151,7 @@
 							size="sm"
 							href={resolve('/(app)/agent/new')}
 							class="w-full justify-start gap-2 group-data-[collapsible=icon]:justify-center {page
-								.url.pathname === '/agent/new'
+								.route.id === '/(app)/agent/new'
 								? ''
 								: 'opacity-50 hover:opacity-100'}"
 						>

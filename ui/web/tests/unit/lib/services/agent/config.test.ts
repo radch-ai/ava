@@ -335,147 +335,61 @@ describe('agent/config service', () => {
 	})
 
 	describe('createAgent', () => {
-		it('creates one agent config', async () => {
+		it('posts the configuration to the agent collection', async () => {
 			const mockConfig = createTestConfig({ name: 'New Agent' })
-			const response = { name: 'new-agent-2' }
+			const response = { id: 'new-agent', name: 'New Agent' }
 
 			vi.mocked(api.post).mockReturnValue({
 				json: async () => response
 			} as ApiResponsePromise)
 
-			const result = await createAgent('new-agent', mockConfig)
+			const result = await createAgent(mockConfig)
 
-			expect(api.post).toHaveBeenCalledWith('user/agent/new-agent', {
+			expect(api.post).toHaveBeenCalledWith('user/agent', {
 				json: mockConfig
 			})
 			expect(result).toEqual(response)
 		})
 
-		it('propagates errors from create responses', async () => {
-			const mockConfig = createTestConfig({ name: 'New Agent' })
-			const error = new Error('Create failed')
-
-			vi.mocked(api.post).mockReturnValue({
-				json: async () => Promise.reject(error)
-			} as ApiResponsePromise)
-
-			await expect(createAgent('new-agent', mockConfig)).rejects.toThrow(
-				'Create failed'
-			)
-		})
-
-		it('creates agent with full configuration', async () => {
-			const cronJobs: CronJob[] = [
-				{
-					id: 'cron-1',
-					time: '09:00',
-					frequency: 'daily',
-					model: 'gpt-4',
-					prompt: 'Daily digest'
-				}
-			]
-			const fullConfig = createTestConfig({
-				name: 'Full Agent',
-				icon: 'cpu',
-				userContext: 'Custom context',
-				operatingInstructions: 'Custom instructions',
-				toolsEnabled: ['web-search'],
-				cronJobs,
-				heartbeat: {
-					enabled: true,
-					duration: '1hr',
-					content: 'Heartbeat',
-					model: 'gpt-4'
-				}
-			})
-			const response = { name: 'full-agent' }
+		it('returns the server-derived id for display names with spaces', async () => {
+			const mockConfig = createTestConfig({ name: 'Research Team 2' })
+			const response = { id: 'research-team-2', name: 'Research Team 2' }
 
 			vi.mocked(api.post).mockReturnValue({
 				json: async () => response
 			} as ApiResponsePromise)
 
-			const result = await createAgent('full-agent', fullConfig)
+			const result = await createAgent(mockConfig)
 
-			expect(api.post).toHaveBeenCalledWith('user/agent/full-agent', {
-				json: fullConfig
-			})
-			expect(result.name).toBe('full-agent')
+			expect(result.id).toBe('research-team-2')
+			expect(result.name).toBe('Research Team 2')
 		})
 
-		it('creates agent with minimal configuration', async () => {
-			const minimalConfig = createTestConfig({
-				name: 'Minimal Agent'
-			})
-			const response = { name: 'minimal-agent' }
-
-			vi.mocked(api.post).mockReturnValue({
-				json: async () => response
-			} as ApiResponsePromise)
-
-			const result = await createAgent('minimal-agent', minimalConfig)
-
-			expect(result.name).toBe('minimal-agent')
-		})
-
-		it('handles special characters in agent names', async () => {
-			const mockConfig = createTestConfig()
-			const response = { name: 'agent-with-dashes-123' }
-
-			vi.mocked(api.post).mockReturnValue({
-				json: async () => response
-			} as ApiResponsePromise)
-
-			const result = await createAgent('agent-with-dashes-123', mockConfig)
-
-			expect(api.post).toHaveBeenCalledWith(
-				'user/agent/agent-with-dashes-123',
-				{
-					json: mockConfig
-				}
-			)
-			expect(result.name).toBe('agent-with-dashes-123')
-		})
-
-		it('handles different icon types', async () => {
-			for (const icon of ['bot', 'cpu', 'database', 'globe', 'zap'] as const) {
-				const config = createTestConfig({ icon })
-				const response = { name: `agent-${icon}` }
-
-				vi.mocked(api.post).mockReturnValue({
-					json: async () => response
-				} as ApiResponsePromise)
-
-				await createAgent(`agent-${icon}`, config)
-
-				expect(api.post).toHaveBeenCalledWith(`user/agent/agent-${icon}`, {
-					json: config
-				})
-			}
-		})
-
-		it('handles network timeout errors', async () => {
-			const mockConfig = createTestConfig()
-			const error = new Error('Request timeout')
+		it('propagates duplicate-name errors from the server', async () => {
+			const mockConfig = createTestConfig({ name: 'Research' })
+			const error = new Error('An agent named "Research" already exists')
 
 			vi.mocked(api.post).mockReturnValue({
 				json: async () => Promise.reject(error)
 			} as ApiResponsePromise)
 
-			await expect(createAgent('test-agent', mockConfig)).rejects.toThrow(
-				'Request timeout'
+			await expect(createAgent(mockConfig)).rejects.toThrow(
+				'An agent named "Research" already exists'
 			)
 		})
 
-		it('handles validation errors from backend', async () => {
-			const mockConfig = createTestConfig()
-			const error = new Error('Invalid configuration: name already exists')
+		it('propagates invalid-name errors from the server', async () => {
+			const mockConfig = createTestConfig({ name: 'bad_name' })
+			const error = new Error(
+				'Invalid agent name: use letters, digits and spaces only'
+			)
 
 			vi.mocked(api.post).mockReturnValue({
 				json: async () => Promise.reject(error)
 			} as ApiResponsePromise)
 
-			await expect(createAgent('existing-agent', mockConfig)).rejects.toThrow(
-				'Invalid configuration: name already exists'
+			await expect(createAgent(mockConfig)).rejects.toThrow(
+				'Invalid agent name: use letters, digits and spaces only'
 			)
 		})
 	})

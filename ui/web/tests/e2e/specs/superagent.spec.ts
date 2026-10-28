@@ -9,6 +9,12 @@ test.describe('ava agent', () => {
 		await expect(chatInput).toBeVisible()
 	})
 
+	test('should redirect / to the superagent agent page', async ({ page }) => {
+		await page.goto('/')
+
+		await expect(page).toHaveURL(/\/agent\/_superagent$/)
+	})
+
 	test('should show thread content or empty placeholder', async ({ page }) => {
 		await page.goto('/')
 
@@ -65,7 +71,7 @@ test.describe('ava agent', () => {
 		const superagentLink = page.getByRole('link', { name: /ava/i }).first()
 		await superagentLink.click()
 
-		await expect(page).toHaveURL(/\//)
+		await expect(page).toHaveURL(/\/agent\/_superagent$/)
 	})
 
 	test('should show error message when thread fails to load', async ({
@@ -218,6 +224,13 @@ test.describe('ava tabs', () => {
 
 		const conversationTab = page.getByRole('tab', { name: /conversation/i })
 		const activityTab = page.getByRole('tab', { name: /activity/i })
+
+		// Wait for the conversation to settle before comparing counts
+		await expect(
+			page
+				.getByText(/no messages yet/i)
+				.or(page.locator('[class*="rounded-2xl"]').first())
+		).toBeVisible()
 
 		const initialContent = await page.locator('[class*="rounded-2xl"]').count()
 

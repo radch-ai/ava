@@ -43,7 +43,7 @@ function createDefaultProps(
 		isSheetOpened: boolean
 		configuration: AgentConfiguration
 		availableTools: Tool[]
-		agentName: string
+		agentId: string
 		closeSheet: () => void
 		onSaved: (config: AgentConfiguration) => void
 	}> = {}
@@ -52,7 +52,7 @@ function createDefaultProps(
 		isSheetOpened: false,
 		configuration: createDefaultTestConfig(),
 		availableTools: [] as Tool[],
-		agentName: 'ava',
+		agentId: '_superagent',
 		closeSheet: () => {},
 		onSaved: (config: AgentConfiguration) => {
 			console.log('saved', config)
@@ -137,7 +137,7 @@ describe('AgentConfigSheet', () => {
 		it('shows cronJobs field for superagent', async () => {
 			render(
 				AgentConfigSheet,
-				createDefaultProps({ isSheetOpened: true, agentName: 'ava' })
+				createDefaultProps({ isSheetOpened: true, agentId: '_superagent' })
 			)
 
 			await expect.element(page.getByText('Cron Jobs')).toBeVisible()
@@ -146,7 +146,7 @@ describe('AgentConfigSheet', () => {
 		it('does not show model field for superagent', async () => {
 			render(
 				AgentConfigSheet,
-				createDefaultProps({ isSheetOpened: true, agentName: 'ava' })
+				createDefaultProps({ isSheetOpened: true, agentId: '_superagent' })
 			)
 
 			const modelField = page.getByText('Model').query()
@@ -158,7 +158,7 @@ describe('AgentConfigSheet', () => {
 		it('does not show cronJobs field for workers', async () => {
 			render(
 				AgentConfigSheet,
-				createDefaultProps({ isSheetOpened: true, agentName: 'support' })
+				createDefaultProps({ isSheetOpened: true, agentId: 'support' })
 			)
 
 			const cronField = page.getByText('Cron Jobs').query()
@@ -168,7 +168,7 @@ describe('AgentConfigSheet', () => {
 		it('does not show userContext field for workers', async () => {
 			render(
 				AgentConfigSheet,
-				createDefaultProps({ isSheetOpened: true, agentName: 'support' })
+				createDefaultProps({ isSheetOpened: true, agentId: 'support' })
 			)
 
 			const userContextField = page.getByText('User Context').query()
@@ -442,7 +442,7 @@ describe('AgentConfigSheet', () => {
 
 			expect(savedConfiguration).toBeDefined()
 			expect(mockUpdateAgentConfiguration).toHaveBeenCalledWith(
-				'ava',
+				'_superagent',
 				expect.any(Object)
 			)
 		})

@@ -54,7 +54,7 @@ function createProps(
 		closeSheet: () => void
 		configuration: AgentConfiguration
 		availableTools: Tool[]
-		agentName: string
+		agentId: string
 		onSaved: (config: AgentConfiguration) => void
 	}> = {}
 ) {
@@ -63,7 +63,7 @@ function createProps(
 		closeSheet: vi.fn(),
 		configuration: createDefaultSuperagentConfig(),
 		availableTools: [] as Tool[],
-		agentName: 'ava',
+		agentId: '_superagent',
 		onSaved: vi.fn(),
 		...overrides
 	}
@@ -205,7 +205,7 @@ describe('AgentConfigSheet', () => {
 
 			// Should call API with partial update
 			expect(mockUpdateAgentConfiguration).toHaveBeenCalledWith(
-				'ava',
+				'_superagent',
 				expect.objectContaining({
 					name: 'Updated'
 				})
@@ -283,7 +283,7 @@ describe('AgentConfigSheet', () => {
 				createProps({
 					isSheetOpened: true,
 					configuration: createDefaultWorkerConfig(),
-					agentName: 'support'
+					agentId: 'support'
 				})
 			)
 

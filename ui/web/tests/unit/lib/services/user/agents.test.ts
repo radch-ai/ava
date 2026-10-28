@@ -17,8 +17,13 @@ describe('user/agents service', () => {
 	describe('getAgents', () => {
 		it('fetches the current user agent list', async () => {
 			const mockAgents = [
-				{ name: 'ava', icon: 'message-square', label: 'Ava' },
-				{ name: 'worker-1', icon: 'bot', label: 'Worker 1' }
+				{
+					id: '_superagent',
+					name: 'Ava',
+					icon: 'message-square',
+					label: 'Chat with Ava'
+				},
+				{ id: 'research', name: 'Research', icon: 'bot', label: 'Research' }
 			]
 
 			vi.mocked(api.get).mockReturnValue({

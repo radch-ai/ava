@@ -1,23 +1,22 @@
 // tests/e2e/specs/agent-detail.spec.ts
+import type { Page } from '@playwright/test'
 import { expect, test } from '../setup/fixtures'
 
 /**
  * Helper to create an agent via UI and return the agent name.
  * Each test should create its own agent to avoid shared mutable state.
  */
-async function createAgentViaUi(
-	page: import('@playwright/test').Page,
-	name: string
-) {
+async function createAgentViaUi(page: Page, name: string) {
+	const agentId = name.toLowerCase().replace(/ +/g, '-')
 	await page.goto('/agent/new')
 	await page.getByRole('textbox', { name: /name/i }).fill(name)
 	await page.getByRole('button', { name: /create|submit/i }).click()
-	await expect(page).toHaveURL(new RegExp(`/agent/${name}`))
+	await expect(page).toHaveURL(new RegExp(`/agent/${agentId}$`))
 }
 
 test.describe('agent detail page', () => {
 	test('should show agent header independently', async ({ page }) => {
-		const uniqueName = `agent-isolated-${Date.now()}`
+		const uniqueName = `Agent Isolated ${Date.now()}`
 		await createAgentViaUi(page, uniqueName)
 
 		const header = page.locator('header').first()
@@ -29,7 +28,7 @@ test.describe('agent detail page', () => {
 	})
 
 	test('should show agent header with visible label text', async ({ page }) => {
-		const agentName = `detail-header-${Date.now()}`
+		const agentName = `Detail Header ${Date.now()}`
 		await createAgentViaUi(page, agentName)
 
 		const header = page.locator('header').first()
@@ -43,7 +42,7 @@ test.describe('agent detail page', () => {
 	test('should show configuration button with accessible name', async ({
 		page
 	}) => {
-		const agentName = `detail-config-btn-${Date.now()}`
+		const agentName = `Detail Config Btn ${Date.now()}`
 		await createAgentViaUi(page, agentName)
 		// Config button has accessible name: aria-label="Open agent configuration"
 		const configButton = page.getByRole('button', {
@@ -56,7 +55,7 @@ test.describe('agent detail page', () => {
 	test('should show Agent Config tooltip on hover over settings button', async ({
 		page
 	}) => {
-		const agentName = `detail-tooltip-${Date.now()}`
+		const agentName = `Detail Tooltip ${Date.now()}`
 		await createAgentViaUi(page, agentName)
 
 		const configButton = page.getByRole('button', {
@@ -70,8 +69,8 @@ test.describe('agent detail page', () => {
 	})
 
 	test('should render a unique tooltip per agent page', async ({ page }) => {
-		const firstName = `tooltip-unique-a-${Date.now()}`
-		const secondName = `tooltip-unique-b-${Date.now()}`
+		const firstName = `Tooltip Unique A ${Date.now()}`
+		const secondName = `Tooltip Unique B ${Date.now()}`
 
 		await createAgentViaUi(page, firstName)
 		const firstButton = page.getByRole('button', {
@@ -86,7 +85,9 @@ test.describe('agent detail page', () => {
 		await page.goto('/agent/new')
 		await page.getByRole('textbox', { name: /name/i }).fill(secondName)
 		await page.getByRole('button', { name: /create|submit/i }).click()
-		await expect(page).toHaveURL(new RegExp(`/agent/${secondName}`))
+		await expect(page).toHaveURL(
+			new RegExp(`/agent/${secondName.toLowerCase().replace(/ +/g, '-')}$`)
+		)
 
 		const secondButton = page.getByRole('button', {
 			name: 'Open agent configuration'
@@ -99,7 +100,7 @@ test.describe('agent detail page', () => {
 	})
 
 	test('should show activity feed', async ({ page }) => {
-		const agentName = `detail-activity-${Date.now()}`
+		const agentName = `Detail Activity ${Date.now()}`
 		await createAgentViaUi(page, agentName)
 		// Activity feed container with overflow-y-auto class
 		await expect(page.locator('.overflow-y-auto')).toBeVisible()
@@ -108,7 +109,7 @@ test.describe('agent detail page', () => {
 	})
 
 	test('should show empty state when no activity exists', async ({ page }) => {
-		const agentName = `detail-empty-activity-${Date.now()}`
+		const agentName = `Detail Empty Activity ${Date.now()}`
 		await createAgentViaUi(page, agentName)
 
 		const noActivityText = page.getByText(/no activity yet/i)
@@ -118,7 +119,7 @@ test.describe('agent detail page', () => {
 	test('should show error state when activity fails to load', async ({
 		page
 	}) => {
-		const agentName = `detail-error-activity-${Date.now()}`
+		const agentName = `Detail Error Activity ${Date.now()}`
 		await createAgentViaUi(page, agentName)
 
 		const errorText = page.locator('.text-destructive')
@@ -133,7 +134,7 @@ test.describe('agent detail page', () => {
 	test('should show load more button when more activity exists', async ({
 		page
 	}) => {
-		const agentName = `detail-loadmore-activity-${Date.now()}`
+		const agentName = `Detail Loadmore Activity ${Date.now()}`
 		await createAgentViaUi(page, agentName)
 
 		const loadMoreButton = page.getByRole('button', { name: /load more/i })
@@ -145,7 +146,7 @@ test.describe('agent detail page', () => {
 	test('should display activity card with triggeredBy, status, action, and createdAt', async ({
 		page
 	}) => {
-		const agentName = `detail-card-activity-${Date.now()}`
+		const agentName = `Detail Card Activity ${Date.now()}`
 		await createAgentViaUi(page, agentName)
 
 		const noActivityPlaceholder = page.getByText(/no activity yet/i)
@@ -164,7 +165,7 @@ test.describe('agent detail page', () => {
 	})
 
 	test('should show CTA button to ask superagent', async ({ page }) => {
-		const agentName = `detail-cta-${Date.now()}`
+		const agentName = `Detail Cta ${Date.now()}`
 		await createAgentViaUi(page, agentName)
 		// CTA button is a link styled as button - use accessible selector
 		const ctaButton = page.getByRole('link', {
@@ -185,7 +186,7 @@ test.describe('agent detail page', () => {
 	})
 
 	test('should show agent icon in header', async ({ page }) => {
-		const agentName = `detail-icon-${Date.now()}`
+		const agentName = `Detail Icon ${Date.now()}`
 		await createAgentViaUi(page, agentName)
 		// Header should contain an icon (rendered via Icon component)
 		const header = page.locator('header').first()

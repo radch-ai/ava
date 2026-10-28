@@ -31,7 +31,7 @@ describe('app layout load', () => {
 
 	it('fetches agents and sets them in shared state', async () => {
 		const agents: Agent[] = [
-			{ name: 'ava', icon: 'message-square', label: 'Ava' }
+			{ id: '_superagent', name: 'Ava', icon: 'message-square', label: 'Ava' }
 		]
 		mockGetAgents.mockResolvedValueOnce(agents)
 

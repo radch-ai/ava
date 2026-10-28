@@ -1,10 +1,11 @@
 import type { IconName } from '#lib/icons'
 import type { Agent } from '#lib/types/agent'
 
-type RawAgent = { name: string; label?: string; icon: IconName }
+type RawAgent = { id: string; name: string; label?: string; icon: IconName }
 
 export function normalizeAgent(raw: RawAgent): Agent {
 	return {
+		id: raw.id,
 		name: raw.name,
 		label:
 			raw.label ??

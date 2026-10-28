@@ -19,12 +19,16 @@ const { agents, mockSetAgents, mockGetAgents } = vi.hoisted(() => {
 	}
 })
 
-const { pageState, setPathname } = vi.hoisted(() => {
-	const state = { url: { pathname: '/' } }
+const { pageState, setRoute } = vi.hoisted(() => {
+	const state = {
+		route: { id: '/' as string | null },
+		params: {} as Record<string, string>
+	}
 	return {
 		pageState: state,
-		setPathname: (pathname: string) => {
-			state.url.pathname = pathname
+		setRoute: (id: string | null, params: Record<string, string> = {}) => {
+			state.route.id = id
+			state.params = params
 		}
 	}
 })
@@ -38,8 +42,11 @@ vi.mock('#lib/user', () => ({
 // Mock stores and modules
 vi.mock('$app/state', () => ({
 	page: {
-		get url() {
-			return pageState.url
+		get route() {
+			return pageState.route
+		},
+		get params() {
+			return pageState.params
 		}
 	}
 }))
@@ -55,7 +62,8 @@ vi.mock('$app/paths', () => ({
 }))
 
 vi.mock('#lib/config', () => ({
-	APP_NAME: 'TestApp'
+	APP_NAME: 'TestApp',
+	SUPERAGENT_AGENT_ID: '_superagent'
 }))
 
 vi.mock('#lib/auth', () => ({
@@ -64,7 +72,8 @@ vi.mock('#lib/auth', () => ({
 
 vi.mock('#lib/types/agent', () => ({
 	SUPERAGENT_AGENT: {
-		name: 'ava',
+		id: '_superagent',
+		name: 'Ava',
 		label: 'Chat with Ava',
 		icon: 'message-square'
 	}
@@ -81,9 +90,16 @@ vi.stubGlobal('localStorage', localStorageMock)
 
 function createMockAgents(overrides: Partial<Agent>[] = []): Agent[] {
 	return [
-		{ name: 'support', label: 'Support Bot', icon: 'bot', ...overrides[0] },
 		{
-			name: 'analyst',
+			id: 'support',
+			name: 'Support',
+			label: 'Support Bot',
+			icon: 'bot',
+			...overrides[0]
+		},
+		{
+			id: 'analyst',
+			name: 'Analyst',
 			label: 'Data Analyst',
 			icon: 'chart-column',
 			...overrides[1]
@@ -130,7 +146,7 @@ describe('AppSidebar', () => {
 			mockSetAgents(createMockAgents())
 			render(AppSidebarTestWrapper)
 
-			await expect.element(page.getByText('Worker Agents')).toBeVisible()
+			await expect.element(page.getByText('Agents')).toBeVisible()
 			await expect.element(page.getByText('Support Bot')).toBeVisible()
 			await expect.element(page.getByText('Data Analyst')).toBeVisible()
 		})
@@ -164,13 +180,15 @@ describe('AppSidebar', () => {
 	})
 
 	describe('navigation', () => {
-		it('highlights superagent link when on home page', async () => {
-			setPathname('/')
+		it('highlights superagent link when on the superagent page', async () => {
+			setRoute('/(app)/agent/[agentId]', { agentId: '_superagent' })
 			mockSetAgents(createMockAgents())
 			const { container } = render(AppSidebarTestWrapper)
 
 			// superagent link should be active
-			const superagentLink = container.querySelector('a[href="/"]')
+			const superagentLink = container.querySelector(
+				'a[href="/agent/_superagent"]'
+			)
 			expect(superagentLink).toBeInTheDocument()
 			expect(
 				superagentLink?.closest('[data-active="true"]')
@@ -178,7 +196,7 @@ describe('AppSidebar', () => {
 		})
 
 		it('highlights agent link when on agent page', async () => {
-			setPathname('/agent/support')
+			setRoute('/(app)/agent/[agentId]', { agentId: 'support' })
 			mockSetAgents(createMockAgents())
 			const { container } = render(AppSidebarTestWrapper)
 
@@ -189,7 +207,7 @@ describe('AppSidebar', () => {
 		})
 
 		it('highlights New Agent button when on new agent page', async () => {
-			setPathname('/agent/new')
+			setRoute('/(app)/agent/new')
 			mockSetAgents(createMockAgents())
 			render(AppSidebarTestWrapper)
 
