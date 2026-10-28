@@ -29,18 +29,18 @@ test.describe('agent list', () => {
 		await expect(superagentLink).toBeVisible()
 	})
 
-	test('should show newly created agent in list', async ({ page }) => {
+	test('should show newly created agent in sidebar without a reload', async ({
+		page
+	}) => {
 		const agentName = `List Test ${Date.now()}`
 
-		// Create agent using helper
+		// Create agent using helper; lands on the agent's own page
 		const agentId = await createAgentViaUi(page, agentName)
 
-		// Go to home and check sidebar
-		await page.goto('/')
+		// The sidebar on the current page must already list the new agent —
+		// invalidation refreshes it without a full navigation/reload.
 		const sidebar = page.locator('[data-slot="sidebar"]')
 		await expect(sidebar).toBeVisible()
-
-		// Assert the specific created agent exists in the sidebar
 		await expect(
 			sidebar.getByRole('link', {
 				name: new RegExp(agentId.replace(/-/g, ' '), 'i')

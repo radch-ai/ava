@@ -2,17 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SUPERAGENT_AGENT_ID } from '#lib/config'
 import type { Agent } from '#lib/types/agent'
 
-const { mockAgents } = vi.hoisted(() => ({
-	mockAgents: [] as Agent[]
-}))
-
 vi.mock('#lib/services/agent', () => ({
 	getAgentActivityFeed: vi.fn(),
 	getAgentThread: vi.fn()
-}))
-
-vi.mock('#lib/agents.svelte', () => ({
-	agents: mockAgents
 }))
 
 import { getAgentActivityFeed, getAgentThread } from '#lib/services/agent'
@@ -31,21 +23,27 @@ const agentsList: Agent[] = [
 	{ id: 'support', name: 'Support', label: 'Support Bot', icon: 'bot' }
 ]
 
+type ParentData = { agents: Agent[]; agentsError: string | null }
+
+function loadEvent(
+	params: { agentId: string },
+	parentData: ParentData = { agents: agentsList, agentsError: null }
+): Parameters<typeof load>[0] {
+	return {
+		params,
+		parent: vi.fn().mockResolvedValue(parentData)
+	} as unknown as Parameters<typeof load>[0]
+}
+
 describe('agent page load', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
-		mockAgents.length = 0
 		mockGetAgentActivityFeed.mockResolvedValue({ items: [], nextCursor: null })
 		mockGetAgentThread.mockResolvedValue({ items: [], nextCursor: null })
 	})
 
 	it('returns worker agent data with its activity feed', async () => {
-		mockAgents.push(...agentsList)
-
-		const result = (await load({
-			params: { agentId: 'support' },
-			parent: vi.fn().mockResolvedValue({})
-		} as unknown as Parameters<typeof load>[0])) as {
+		const result = (await load(loadEvent({ agentId: 'support' }))) as {
 			agent: Agent
 			thread: unknown
 		}
@@ -56,12 +54,9 @@ describe('agent page load', () => {
 	})
 
 	it('loads the thread instead of activity for the superagent id', async () => {
-		mockAgents.push(...agentsList)
-
-		const result = (await load({
-			params: { agentId: SUPERAGENT_AGENT_ID },
-			parent: vi.fn().mockResolvedValue({})
-		} as unknown as Parameters<typeof load>[0])) as {
+		const result = (await load(
+			loadEvent({ agentId: SUPERAGENT_AGENT_ID })
+		)) as {
 			agent: Agent
 			thread: unknown
 			threadError: string | null
@@ -76,13 +71,11 @@ describe('agent page load', () => {
 	})
 
 	it('surfaces thread errors without failing navigation', async () => {
-		mockAgents.push(...agentsList)
 		mockGetAgentThread.mockRejectedValueOnce(new Error('Thread unavailable'))
 
-		const result = (await load({
-			params: { agentId: SUPERAGENT_AGENT_ID },
-			parent: vi.fn().mockResolvedValue({})
-		} as unknown as Parameters<typeof load>[0])) as {
+		const result = (await load(
+			loadEvent({ agentId: SUPERAGENT_AGENT_ID })
+		)) as {
 			thread: unknown
 			threadError: string | null
 		}
@@ -92,13 +85,13 @@ describe('agent page load', () => {
 	})
 
 	it('falls back to the client superagent entry when the list failed to load', async () => {
-		// Store empty: the agents API failed and the layout returned agentsError
-		const result = (await load({
-			params: { agentId: SUPERAGENT_AGENT_ID },
-			parent: vi
-				.fn()
-				.mockResolvedValue({ agentsError: 'Failed to load agents' })
-		} as unknown as Parameters<typeof load>[0])) as {
+		// The agents API failed and the layout returned an empty list + error
+		const result = (await load(
+			loadEvent(
+				{ agentId: SUPERAGENT_AGENT_ID },
+				{ agents: [], agentsError: 'Failed to load agents' }
+			)
+		)) as {
 			agent: { id: string }
 		}
 
@@ -106,30 +99,19 @@ describe('agent page load', () => {
 	})
 
 	it('surfaces activity errors without failing navigation', async () => {
-		mockAgents.push(...agentsList)
 		mockGetAgentActivityFeed.mockRejectedValueOnce(
 			new Error('Activity unavailable')
 		)
 
-		const result = (await load({
-			params: { agentId: 'support' },
-			parent: vi.fn().mockResolvedValue({})
-		} as unknown as Parameters<typeof load>[0])) as {
+		const result = (await load(loadEvent({ agentId: 'support' }))) as {
 			activityError: string | null
 		}
 
 		expect(result.activityError).toBe('Activity unavailable')
 	})
 
-	it('throws 404 when the agent id is missing from shared state', async () => {
-		mockAgents.push(...agentsList)
-
-		await expect(
-			load({
-				params: { agentId: 'ghost' },
-				parent: vi.fn().mockResolvedValue({})
-			} as unknown as Parameters<typeof load>[0])
-		).rejects.toMatchObject({
+	it('throws 404 when the agent id is missing from the list', async () => {
+		await expect(load(loadEvent({ agentId: 'ghost' }))).rejects.toMatchObject({
 			status: 404,
 			body: { message: "Agent 'ghost' not found" }
 		})

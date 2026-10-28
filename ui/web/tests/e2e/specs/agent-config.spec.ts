@@ -164,5 +164,37 @@ test.describe('agent configuration', () => {
 				)
 			).toHaveValue(testValue)
 		})
+
+		test('should refresh the sidebar label after renaming, without a reload', async ({
+			page
+		}) => {
+			const agentName = `Config Rename ${Date.now()}`
+			await createAgentViaUi(page, agentName)
+
+			const configButton = page.getByRole('button', {
+				name: 'Open agent configuration'
+			})
+			await configButton.click()
+
+			const sheet = page.getByRole('dialog', { name: /agent configuration/i })
+			await expect(sheet).toBeVisible({ timeout: 10000 })
+
+			const nameField = sheet.getByPlaceholder('Enter agent name...')
+			await expect(nameField).toBeVisible()
+			const newName = `Renamed ${Date.now()}`
+			await nameField.fill(newName)
+			await sheet.getByRole('button', { name: 'Save' }).click()
+			await expect(sheet).not.toBeVisible({ timeout: 5000 })
+
+			// No navigation happened: the sidebar on this very page must show
+			// the new label via invalidation.
+			const sidebar = page.locator('[data-slot="sidebar"]')
+			await expect(
+				sidebar.getByRole('link', { name: new RegExp(newName, 'i') })
+			).toBeVisible({ timeout: 10000 })
+			await expect(
+				sidebar.getByRole('link', { name: new RegExp(agentName, 'i') })
+			).not.toBeVisible()
+		})
 	})
 })

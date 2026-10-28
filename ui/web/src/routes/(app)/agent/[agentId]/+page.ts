@@ -1,5 +1,4 @@
 import { error } from '@sveltejs/kit'
-import { agents } from '#lib/agents.svelte'
 import { SUPERAGENT_AGENT_ID } from '#lib/config'
 import {
 	type ActivityFeed,
@@ -11,11 +10,9 @@ import { type Agent, SUPERAGENT_AGENT } from '#lib/types/agent'
 import type { PageLoad } from './$types'
 
 export const load: PageLoad = async ({ params, parent }) => {
-	// Wait for the parent layout load to finish populating shared agent state
-	// before reading from it here. The page still uses the shared store as the
-	// source of truth so newly created agents remain available without
-	// duplicating data.
-	const { agentsError } = (await parent()) as { agentsError?: string | null }
+	// The parent layout load fetches the agents list; parent() reuses that
+	// data without a second fetch and stays fresh after invalidation.
+	const { agents, agentsError } = await parent()
 
 	// The superagent is preconfigured and always exists; if the list itself
 	// failed to load, fall back to the client constant so the layout's error

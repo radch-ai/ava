@@ -1,11 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import { addAgent } from '#lib/agents.svelte'
 import * as agentConfig from '#lib/services/agent'
 import NewAgentPage from '#routes/agent/new/+page.svelte'
-
-const mockAddAgent = vi.mocked(addAgent)
 
 // Mock the agent config service
 vi.mock('#lib/services/agent', () => ({
@@ -17,6 +14,7 @@ vi.mock('#lib/services/agent', () => ({
 // Mock SvelteKit navigation
 vi.mock('$app/navigation', () => ({
 	goto: vi.fn(),
+	invalidate: vi.fn(),
 	beforeNavigate: vi.fn()
 }))
 
@@ -29,11 +27,9 @@ vi.mock('$app/paths', () => ({
 	})
 }))
 
-import { goto } from '$app/navigation'
+import { goto, invalidate } from '$app/navigation'
 
-vi.mock('#lib/agents.svelte', () => ({
-	addAgent: vi.fn()
-}))
+const mockInvalidate = vi.mocked(invalidate)
 
 vi.mock('$app/stores', () => ({
 	page: {
@@ -322,11 +318,10 @@ describe('New Agent Page', () => {
 					name: 'Test Agent Name'
 				})
 			)
-			expect(mockAddAgent).toHaveBeenCalledWith({
-				id: 'test-agent-name',
-				name: 'Test Agent Name',
-				icon: expect.any(String)
-			})
+			expect(mockInvalidate).toHaveBeenCalledWith('app:agents')
+			expect(mockInvalidate.mock.invocationCallOrder[0]).toBeLessThan(
+				vi.mocked(goto).mock.invocationCallOrder[0]
+			)
 			await vi.waitFor(() => {
 				expect(goto).toHaveBeenCalledWith('/agent/test-agent-name')
 			})
@@ -382,7 +377,7 @@ describe('New Agent Page', () => {
 			await expect
 				.element(page.getByRole('heading', { name: /new agent/i }))
 				.toBeVisible()
-			expect(mockAddAgent).not.toHaveBeenCalled()
+			expect(mockInvalidate).not.toHaveBeenCalled()
 		})
 
 		it('handles HTTP 500 gracefully when createAgent fails with server error', async () => {
@@ -403,7 +398,7 @@ describe('New Agent Page', () => {
 			await expect
 				.element(page.getByRole('heading', { name: /new agent/i }))
 				.toBeVisible()
-			expect(mockAddAgent).not.toHaveBeenCalled()
+			expect(mockInvalidate).not.toHaveBeenCalled()
 		})
 
 		it('blocks invalid names client-side with a hint', async () => {
@@ -444,7 +439,7 @@ describe('New Agent Page', () => {
 			await createButton.click()
 
 			await expect.element(page.getByText(/already exists/i)).toBeVisible()
-			expect(mockAddAgent).not.toHaveBeenCalled()
+			expect(mockInvalidate).not.toHaveBeenCalled()
 			expect(goto).not.toHaveBeenCalled()
 		})
 	})

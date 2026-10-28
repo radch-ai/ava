@@ -1,15 +1,18 @@
 <script lang="ts">
 	import { Bot } from '@lucide/svelte'
-	import type { AgentIconName } from '#components/agent-icons/index.ts'
 	import { AgentConfigEditor } from '#components/agentconfig'
 	import UnsavedChangesDialog from '#components/agentconfig/UnsavedChangesDialog.svelte'
-	import { addAgent } from '#lib/agents.svelte'
 	import { createAgent } from '#lib/services/agent'
 	import {
 		createDefaultWorkerConfiguration,
 		type WorkerConfiguration
 	} from '#lib/types/agent'
-	import { type BeforeNavigate, beforeNavigate, goto } from '$app/navigation'
+	import {
+		type BeforeNavigate,
+		beforeNavigate,
+		goto,
+		invalidate
+	} from '$app/navigation'
 	import { resolve } from '$app/paths'
 	import type { PathnameWithSearchOrHash } from '$app/types'
 	import { isValidAgentName } from './agent-name'
@@ -98,11 +101,10 @@
 			// The server derives the id from the display name and rejects
 			// invalid or duplicate names; the client never invents an id.
 			const createdAgent = await createAgent({ ...config, name })
-			addAgent({
-				id: createdAgent.id,
-				name: createdAgent.name,
-				icon: (config.icon ?? 'bot') as AgentIconName
-			})
+			// Refresh the agents list so the sidebar shows the new agent.
+			// Awaited so the target page's parent data already includes the
+			// new agent when its load looks it up.
+			await invalidate('app:agents')
 			isNavigating = true
 			await goto(
 				resolve('/(app)/agent/[agentId]', { agentId: createdAgent.id })

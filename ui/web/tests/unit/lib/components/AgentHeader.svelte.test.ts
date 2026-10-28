@@ -43,6 +43,10 @@ vi.mock('#lib/services/agent', () => ({
 	updateAgentConfiguration: vi.fn()
 }))
 
+vi.mock('$app/navigation', () => ({
+	invalidate: vi.fn()
+}))
+
 import { getAgentConfiguration } from '#lib/services/agent'
 
 const mockGetAgentConfiguration = vi.mocked(getAgentConfiguration)

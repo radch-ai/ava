@@ -144,6 +144,18 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				soul: { ...current.soul, ...patch.soul }
 			}
 			store.configurations.set(id, next)
+			// Keep the list entry in sync so refetches reflect renames/icon
+			// changes, mirroring the real backend's list behavior.
+			store.agents = store.agents.map((agent) =>
+				agent.id === id
+					? {
+							...agent,
+							name: next.name,
+							label: next.name,
+							icon: (next.icon ?? agent.icon) as AgentIconName
+						}
+					: agent
+			)
 			return HttpResponse.json(next)
 		}),
 

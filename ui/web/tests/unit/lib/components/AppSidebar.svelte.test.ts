@@ -5,20 +5,6 @@ import { authStore } from '#lib/auth'
 import type { Agent } from '#lib/types/agent'
 import AppSidebarTestWrapper from './AppSidebarTestWrapper.svelte'
 
-const { agents, mockSetAgents, mockGetAgents } = vi.hoisted(() => {
-	const stored: Array<{ name: string; label: string; icon: string }> = []
-	return {
-		agents: stored,
-		mockSetAgents: vi.fn(
-			(agents: Array<{ name: string; label: string; icon: string }>) => {
-				stored.length = 0
-				stored.push(...agents)
-			}
-		),
-		mockGetAgents: vi.fn(() => stored)
-	}
-})
-
 const { pageState, setRoute } = vi.hoisted(() => {
 	const state = {
 		route: { id: '/' as string | null },
@@ -32,12 +18,6 @@ const { pageState, setRoute } = vi.hoisted(() => {
 		}
 	}
 })
-
-vi.mock('#lib/agents.svelte', () => ({
-	agents,
-	getAgents: mockGetAgents,
-	setAgents: mockSetAgents
-}))
 
 // Mock stores and modules
 vi.mock('$app/state', () => ({
@@ -107,6 +87,10 @@ function createMockAgents(overrides: Partial<Agent>[] = []): Agent[] {
 	]
 }
 
+function renderSidebar(agents: Agent[] = createMockAgents()) {
+	return render(AppSidebarTestWrapper, { props: { agents } })
+}
+
 function collapseButton() {
 	return page.getByRole('button', { name: /collapse sidebar/i }).first()
 }
@@ -127,8 +111,7 @@ describe('AppSidebar', () => {
 
 	describe('rendering', () => {
 		it('renders app name when sidebar is open', async () => {
-			mockSetAgents(createMockAgents())
-			render(AppSidebarTestWrapper)
+			renderSidebar()
 
 			await expect
 				.element(page.getByRole('heading', { name: 'TestApp' }))
@@ -136,15 +119,13 @@ describe('AppSidebar', () => {
 		})
 
 		it('renders superagent agent link', async () => {
-			mockSetAgents(createMockAgents())
-			render(AppSidebarTestWrapper)
+			renderSidebar()
 
 			await expect.element(page.getByText('Chat with Ava')).toBeVisible()
 		})
 
 		it('renders worker agents section', async () => {
-			mockSetAgents(createMockAgents())
-			render(AppSidebarTestWrapper)
+			renderSidebar()
 
 			await expect.element(page.getByText('Agents')).toBeVisible()
 			await expect.element(page.getByText('Support Bot')).toBeVisible()
@@ -152,8 +133,7 @@ describe('AppSidebar', () => {
 		})
 
 		it('renders New Agent button', async () => {
-			mockSetAgents(createMockAgents())
-			render(AppSidebarTestWrapper)
+			renderSidebar()
 
 			await expect.element(page.getByText('New Agent')).toBeVisible()
 		})
@@ -161,8 +141,7 @@ describe('AppSidebar', () => {
 
 	describe('footer logout', () => {
 		it('renders a logout button with an accessible name', async () => {
-			mockSetAgents(createMockAgents())
-			render(AppSidebarTestWrapper)
+			renderSidebar()
 
 			await expect
 				.element(page.getByRole('button', { name: 'Sign Out' }))
@@ -170,8 +149,7 @@ describe('AppSidebar', () => {
 		})
 
 		it('logs out when the logout button is clicked', async () => {
-			mockSetAgents(createMockAgents())
-			render(AppSidebarTestWrapper)
+			renderSidebar()
 
 			await page.getByRole('button', { name: 'Sign Out' }).click()
 
@@ -182,8 +160,7 @@ describe('AppSidebar', () => {
 	describe('navigation', () => {
 		it('highlights superagent link when on the superagent page', async () => {
 			setRoute('/(app)/agent/[agentId]', { agentId: '_superagent' })
-			mockSetAgents(createMockAgents())
-			const { container } = render(AppSidebarTestWrapper)
+			const { container } = renderSidebar()
 
 			// superagent link should be active
 			const superagentLink = container.querySelector(
@@ -197,8 +174,7 @@ describe('AppSidebar', () => {
 
 		it('highlights agent link when on agent page', async () => {
 			setRoute('/(app)/agent/[agentId]', { agentId: 'support' })
-			mockSetAgents(createMockAgents())
-			const { container } = render(AppSidebarTestWrapper)
+			const { container } = renderSidebar()
 
 			// Support link should be active
 			const supportLink = container.querySelector('a[href="/agent/support"]')
@@ -208,8 +184,7 @@ describe('AppSidebar', () => {
 
 		it('highlights New Agent button when on new agent page', async () => {
 			setRoute('/(app)/agent/new')
-			mockSetAgents(createMockAgents())
-			render(AppSidebarTestWrapper)
+			renderSidebar()
 
 			const newAgentButton = page.getByRole('link', { name: /new agent/i })
 			// Should have full opacity when active
@@ -219,8 +194,7 @@ describe('AppSidebar', () => {
 
 	describe('sidebar collapse/expand', () => {
 		it('toggles sidebar when collapse button is clicked', async () => {
-			mockSetAgents(createMockAgents())
-			render(AppSidebarTestWrapper)
+			renderSidebar()
 
 			// App name should be visible initially
 			await expect.element(page.getByText('TestApp')).toBeVisible()
@@ -233,8 +207,7 @@ describe('AppSidebar', () => {
 		})
 
 		it('saves collapsed state to localStorage', async () => {
-			mockSetAgents(createMockAgents())
-			render(AppSidebarTestWrapper)
+			renderSidebar()
 
 			await collapseButton().click()
 
@@ -245,8 +218,7 @@ describe('AppSidebar', () => {
 		})
 
 		it('removes collapsed state from localStorage when expanded', async () => {
-			mockSetAgents(createMockAgents())
-			render(AppSidebarTestWrapper)
+			renderSidebar()
 
 			// First collapse
 			await collapseButton().click()
@@ -262,8 +234,7 @@ describe('AppSidebar', () => {
 
 	describe('empty state', () => {
 		it('renders correctly with no worker agents', async () => {
-			mockSetAgents([])
-			render(AppSidebarTestWrapper)
+			renderSidebar([])
 
 			// Should still show superagent and New Agent button
 			await expect.element(page.getByText('Chat with Ava')).toBeVisible()
@@ -278,8 +249,7 @@ describe('AppSidebar', () => {
 
 	describe('agent links', () => {
 		it('generates correct links for agents', async () => {
-			mockSetAgents(createMockAgents())
-			render(AppSidebarTestWrapper)
+			renderSidebar()
 
 			const supportLink = page.getByRole('link', { name: 'Support Bot' })
 			await expect
@@ -297,8 +267,7 @@ describe('AppSidebar', () => {
 		it('initializes sidebar as collapsed when localStorage has collapsed state', async () => {
 			localStorageMock.getItem.mockReturnValue('collapsed')
 
-			mockSetAgents(createMockAgents())
-			render(AppSidebarTestWrapper)
+			renderSidebar()
 
 			// App name should be hidden (collapsed state)
 			await expect.element(page.getByText('TestApp')).not.toBeInTheDocument()
@@ -307,8 +276,7 @@ describe('AppSidebar', () => {
 		it('initializes sidebar as open when localStorage is empty', async () => {
 			localStorageMock.getItem.mockReturnValue(null)
 
-			mockSetAgents(createMockAgents())
-			render(AppSidebarTestWrapper)
+			renderSidebar()
 
 			// App name should be visible (open state)
 			await expect.element(page.getByText('TestApp')).toBeVisible()

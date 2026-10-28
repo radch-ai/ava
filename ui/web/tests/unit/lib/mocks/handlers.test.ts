@@ -177,6 +177,23 @@ describe('mock API handlers', () => {
 		expect(reread.operatingInstructions).toBe('Updated instructions')
 	})
 
+	it("updates the agents list entry when PATCH changes the agent's name or icon", async () => {
+		const res = await fetch(`${BASE}/agent/scribe`, {
+			method: 'PATCH',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ name: 'Scribe Two', icon: 'bot' })
+		})
+		expect(res.status).toBe(200)
+
+		const list = (await (await fetch(`${BASE}/agents`)).json()) as {
+			agents: { id: string; name: string; label: string; icon: string }[]
+		}
+		const entry = list.agents.find((agent) => agent.id === 'scribe')
+		expect(entry?.name).toBe('Scribe Two')
+		expect(entry?.label).toBe('Scribe Two')
+		expect(entry?.icon).toBe('bot')
+	})
+
 	it('creates agents via POST /agent and returns the derived id', async () => {
 		const created = await fetch(`${BASE}/agent`, {
 			method: 'POST',

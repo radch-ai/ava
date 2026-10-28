@@ -10,12 +10,14 @@
 	import { Button } from '#components/ui/button'
 	import * as Sidebar from '#components/ui/sidebar'
 	import * as Tooltip from '#components/ui/tooltip'
-	import { agents } from '#lib/agents.svelte'
 	import { authStore } from '#lib/auth'
 	import { APP_NAME, SUPERAGENT_AGENT_ID } from '#lib/config'
+	import type { Agent } from '#lib/types/agent'
 	import { SUPERAGENT_AGENT } from '#lib/types/agent'
 	import { resolve } from '$app/paths'
 	import { page } from '$app/state'
+
+	let { agents }: { agents: Agent[] } = $props()
 
 	// The superagent is a regular list entry with a reserved id; fall back to
 	// the client constant when the list has not loaded yet.

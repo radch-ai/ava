@@ -1,25 +1,27 @@
-import { setAgents } from '#lib/agents.svelte'
+import { normalizeAgent } from '#lib/agents'
 import { authStore } from '#lib/auth'
 import { getAgents } from '#lib/services/agent'
 import type { LayoutLoad } from './$types'
 
-export const load: LayoutLoad = async () => {
+export const load: LayoutLoad = async ({ depends }) => {
+	// The ky client bypasses the load event's fetch, so URL dependencies
+	// cannot be tracked automatically — declare the invalidation id by hand.
+	depends('app:agents')
+
 	await authStore.initialize()
 	if (!authStore.isAuthenticated) {
 		// No session — the layout guard sends the user to login; skip the
 		// agent list, which would just 401.
-		return { agentsError: null }
+		return { agents: [], agentsError: null }
 	}
-
-	let agentsError: string | null = null
 
 	try {
 		const agents = await getAgents()
-		setAgents(agents)
+		return { agents: agents.map(normalizeAgent), agentsError: null }
 	} catch (e) {
-		setAgents([])
-		agentsError = e instanceof Error ? e.message : 'Failed to load agents'
+		return {
+			agents: [],
+			agentsError: e instanceof Error ? e.message : 'Failed to load agents'
+		}
 	}
-
-	return { agentsError }
 }

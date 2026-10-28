@@ -8,6 +8,7 @@
 	import { getAgentConfiguration } from '#lib/services/agent'
 	import type { Agent, AgentConfiguration } from '#lib/types/agent'
 	import type { Tool } from '#lib/types/tool'
+	import { invalidate } from '$app/navigation'
 
 	let {
 		agent,
@@ -102,6 +103,10 @@
 		{configuration}
 		{availableTools}
 		agentId={agent.id}
-		onSaved={(config) => (configuration = config)}
+		onSaved={(config) => {
+			configuration = config
+			// Refresh the agents list so renames/icon changes reach the sidebar.
+			void invalidate('app:agents')
+		}}
 	/>
 {/if}

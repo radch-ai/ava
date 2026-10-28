@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { setAgents } from '#lib/agents.svelte'
 import { getAgents } from '#lib/services/agent'
 import type { Agent } from '#lib/types/agent'
 import { load } from '../../../../src/routes/(app)/+layout'
@@ -16,12 +15,13 @@ vi.mock('#lib/services/agent', () => ({
 	getAgents: vi.fn()
 }))
 
-vi.mock('#lib/agents.svelte', () => ({
-	setAgents: vi.fn()
-}))
-
 const mockGetAgents = vi.mocked(getAgents)
-const mockSetAgents = vi.mocked(setAgents)
+
+type LayoutResult = { agents: Agent[]; agentsError: string | null }
+
+function loadEvent(): Parameters<typeof load>[0] {
+	return { depends: vi.fn() } as unknown as Parameters<typeof load>[0]
+}
 
 describe('app layout load', () => {
 	beforeEach(() => {
@@ -29,86 +29,72 @@ describe('app layout load', () => {
 		mockAuthStore.isAuthenticated = true
 	})
 
-	it('fetches agents and sets them in shared state', async () => {
-		const agents: Agent[] = [
-			{ id: '_superagent', name: 'Ava', icon: 'message-square', label: 'Ava' }
-		]
-		mockGetAgents.mockResolvedValueOnce(agents)
+	it('declares the agents invalidation dependency', async () => {
+		mockGetAgents.mockResolvedValueOnce([])
+		const event = loadEvent()
 
-		const result = (await load({} as Parameters<typeof load>[0])) as {
-			agentsError: string | null
-		}
+		await load(event)
 
-		expect(mockGetAgents).toHaveBeenCalled()
-		expect(mockSetAgents).toHaveBeenCalledWith(agents)
-		expect(result.agentsError).toBeNull()
+		expect(event.depends).toHaveBeenCalledWith('app:agents')
 	})
 
-	it('sets empty agents and returns error when getAgents fails', async () => {
+	it('fetches agents and returns them normalized', async () => {
+		mockGetAgents.mockResolvedValueOnce([
+			{
+				id: '_superagent',
+				name: 'Ava',
+				label: 'Chat with Ava',
+				icon: 'message-square'
+			},
+			{ id: 'support-bot', name: 'support-bot', icon: 'bot' }
+		] as Agent[])
+
+		const result = (await load(loadEvent())) as LayoutResult
+
+		expect(mockGetAgents).toHaveBeenCalled()
+		expect(result.agentsError).toBeNull()
+		expect(result.agents).toEqual([
+			{
+				id: '_superagent',
+				name: 'Ava',
+				label: 'Chat with Ava',
+				icon: 'message-square'
+			},
+			{
+				id: 'support-bot',
+				name: 'support-bot',
+				label: 'Support Bot',
+				icon: 'bot'
+			}
+		])
+	})
+
+	it('returns empty agents and the error when getAgents fails', async () => {
 		mockGetAgents.mockRejectedValueOnce(new Error('Network error'))
 
-		const result = (await load({} as Parameters<typeof load>[0])) as {
-			agentsError: string | null
-		}
+		const result = (await load(loadEvent())) as LayoutResult
 
-		expect(mockSetAgents).toHaveBeenCalledWith([])
+		expect(result.agents).toEqual([])
 		expect(result.agentsError).toBe('Network error')
 	})
 
-	it('sets empty agents and returns error when getAgents times out', async () => {
-		mockGetAgents.mockRejectedValueOnce(new Error('Request timeout'))
-
-		const result = (await load({} as Parameters<typeof load>[0])) as {
-			agentsError: string | null
-		}
-
-		expect(mockSetAgents).toHaveBeenCalledWith([])
-		expect(result.agentsError).toBe('Request timeout')
-	})
-
-	it('sets empty agents and returns error when getAgents returns HTTP 500', async () => {
-		mockGetAgents.mockRejectedValueOnce(new Error('Internal server error'))
-
-		const result = (await load({} as Parameters<typeof load>[0])) as {
-			agentsError: string | null
-		}
-
-		expect(mockSetAgents).toHaveBeenCalledWith([])
-		expect(result.agentsError).toBe('Internal server error')
-	})
-
-	it('sets empty agents and returns error when getAgents returns malformed response', async () => {
-		mockGetAgents.mockRejectedValueOnce(new SyntaxError('Unexpected token'))
-
-		const result = (await load({} as Parameters<typeof load>[0])) as {
-			agentsError: string | null
-		}
-
-		expect(mockSetAgents).toHaveBeenCalledWith([])
-		expect(result.agentsError).toBe('Unexpected token')
-	})
-
-	it('returns fallback message for non-Error thrown values', async () => {
+	it('returns a fallback message for non-Error thrown values', async () => {
 		mockGetAgents.mockRejectedValueOnce('some string')
 
-		const result = (await load({} as Parameters<typeof load>[0])) as {
-			agentsError: string | null
-		}
+		const result = (await load(loadEvent())) as LayoutResult
 
-		expect(mockSetAgents).toHaveBeenCalledWith([])
+		expect(result.agents).toEqual([])
 		expect(result.agentsError).toBe('Failed to load agents')
 	})
 
-	it('skips the agent fetch when there is no session', async () => {
+	it('skips the agent fetch and returns empty agents when there is no session', async () => {
 		mockAuthStore.isAuthenticated = false
 
-		const result = (await load({} as Parameters<typeof load>[0])) as {
-			agentsError: string | null
-		}
+		const result = (await load(loadEvent())) as LayoutResult
 
 		expect(mockAuthStore.initialize).toHaveBeenCalledTimes(1)
 		expect(mockGetAgents).not.toHaveBeenCalled()
-		expect(mockSetAgents).not.toHaveBeenCalled()
+		expect(result.agents).toEqual([])
 		expect(result.agentsError).toBeNull()
 	})
 })

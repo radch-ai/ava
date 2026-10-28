@@ -28,7 +28,7 @@
 	<SidebarProvider>
 		{@const sidebar = useSidebar()}
 		<div class="flex h-svh w-full">
-			<AppSidebar />
+			<AppSidebar agents={data.agents} />
 			<!-- Backdrop overlay for mobile - closes sidebar when clicked -->
 			{#if sidebar.isMobile && sidebar.open}
 				<style>
