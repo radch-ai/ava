@@ -6,12 +6,10 @@ export interface CreateAgentResponse {
 	name: string
 }
 
-const AGENT_PATH = 'agent'
-
 export async function getAgentConfiguration(
 	agentId: string
 ): Promise<AgentConfiguration> {
-	return api.get(`${AGENT_PATH}/${agentId}`).json<AgentConfiguration>()
+	return api.get(`agent/${agentId}`).json<AgentConfiguration>()
 }
 
 export async function updateAgentConfiguration(
@@ -19,7 +17,7 @@ export async function updateAgentConfiguration(
 	configuration: Partial<AgentConfiguration>
 ): Promise<AgentConfiguration> {
 	const response = await api
-		.patch(`${AGENT_PATH}/${agentId}`, { json: configuration })
+		.patch(`agent/${agentId}`, { json: configuration })
 		.json<{ data?: AgentConfiguration } | AgentConfiguration>()
 
 	if (response && typeof response === 'object' && 'data' in response) {
@@ -36,7 +34,5 @@ export async function updateAgentConfiguration(
 export async function createAgent(
 	configuration: AgentConfiguration
 ): Promise<CreateAgentResponse> {
-	return api
-		.post(AGENT_PATH, { json: configuration })
-		.json<CreateAgentResponse>()
+	return api.post('agent', { json: configuration }).json<CreateAgentResponse>()
 }
