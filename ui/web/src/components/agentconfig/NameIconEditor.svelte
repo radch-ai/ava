@@ -1,8 +1,8 @@
 <script lang="ts">
+	import type { AgentIconName } from '#components/agent-icons/index.ts'
 	import { Input } from '#components/ui/input'
-	import type { IconName } from '#lib/icons'
 	import { type AgentConfiguration, FIELD_CONFIGS } from '#lib/types/agent'
-	import IconPicker from './IconPicker.svelte'
+	import AgentIconPicker from './AgentIconPicker.svelte'
 
 	interface Props {
 		config: AgentConfiguration
@@ -10,7 +10,7 @@
 
 	let { config = $bindable() }: Props = $props()
 
-	function handleIconSelect(icon: IconName) {
+	function handleIconSelect(icon: AgentIconName) {
 		config.icon = icon
 	}
 </script>
@@ -29,9 +29,9 @@
 	</div>
 	<div>
 		<label for="agent-icon" class="mb-2 block text-sm font-medium">Icon</label>
-		<IconPicker
+		<AgentIconPicker
 			id="agent-icon"
-			value={(config.icon ?? 'bot') as IconName}
+			value={(config.icon ?? 'bot') as AgentIconName}
 			onselect={handleIconSelect}
 		/>
 	</div>

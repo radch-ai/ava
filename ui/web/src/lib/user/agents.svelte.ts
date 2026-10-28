@@ -1,7 +1,12 @@
-import type { IconName } from '#lib/icons'
+import type { AgentIconName } from '#components/agent-icons/index.ts'
 import type { Agent } from '#lib/types/agent'
 
-type RawAgent = { id: string; name: string; label?: string; icon: IconName }
+type RawAgent = {
+	id: string
+	name: string
+	label?: string
+	icon: AgentIconName
+}
 
 export function normalizeAgent(raw: RawAgent): Agent {
 	return {

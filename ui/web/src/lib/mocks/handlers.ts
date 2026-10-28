@@ -2,14 +2,13 @@
  * Mock API handlers
  *
  * MSW handlers implementing the backend contract consumed by
- * `src/lib/services` (see docs/specs/2026-10-26-agent-id-addressing-design.md).
- * Mounted by the vite dev/preview servers when `VITE_USE_MOCKS=true` and
- * reused by unit tests via `msw/node`.
+ * `src/lib/services`. Mounted by the vite dev/preview servers when
+ * `VITE_USE_MOCKS=true` and reused by unit tests via `msw/node`.
  */
 
 import { type HttpHandler, HttpResponse, http } from 'msw'
+import type { AgentIconName } from '../../components/agent-icons/index.ts'
 import { SUPERAGENT_AGENT_ID } from '../config.ts'
-import type { IconName } from '../icons/index.ts'
 import type { CursorPage } from '../services/utils/cursor.ts'
 import type { Agent, AgentConfiguration } from '../types/agent.ts'
 import { deriveAgentId, isValidAgentName } from './agent-id.ts'
@@ -182,7 +181,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				id,
 				name,
 				label: name,
-				icon: (configuration.icon ?? 'bot') as IconName
+				icon: (configuration.icon ?? 'bot') as AgentIconName
 			}
 			store.agents.push(agent)
 			return HttpResponse.json({ id, name }, { status: 201 })

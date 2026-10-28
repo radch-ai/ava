@@ -1,12 +1,12 @@
 /**
- * Worker Agent Icons - Extracted from Lucide (MIT/ISC)
+ * Agent Icons - Extracted from Lucide (MIT/ISC)
  * @see https://lucide.dev/icons/
  */
 
 export type IconNode = [string, Record<string, string>][]
-export type IconName = keyof typeof WORKER_ICONS
+export type AgentIconName = keyof typeof AGENT_ICONS
 
-export const WORKER_ICONS = {
+export const AGENT_ICONS = {
 	// Communication
 	'message-square': [
 		[
@@ -376,7 +376,7 @@ export const WORKER_ICONS = {
 } as const satisfies Record<string, IconNode>
 
 // Icon categories for UI grouping (e.g., icon picker)
-export const ICON_CATEGORIES = {
+export const AGENT_ICON_CATEGORIES = {
 	communication: [
 		'message-square',
 		'message-circle',
@@ -398,4 +398,4 @@ export const ICON_CATEGORIES = {
 } as const
 
 // Helper to get all icon names as array
-export const ALL_ICON_NAMES = Object.keys(WORKER_ICONS) as IconName[]
+export const ALL_AGENT_ICON_NAMES = Object.keys(AGENT_ICONS) as AgentIconName[]

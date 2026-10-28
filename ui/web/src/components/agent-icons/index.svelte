@@ -1,16 +1,16 @@
 <script lang="ts">
-	import { type IconName, WORKER_ICONS } from './worker-icons'
+	import { AGENT_ICONS, type AgentIconName } from './index.ts'
 
 	interface Props {
-		name?: IconName | string | null
+		name?: AgentIconName | string | null
 		size?: number
 		class?: string
 	}
 
 	let { name, size = 24, class: className }: Props = $props()
 
-	let safeName: IconName = $derived(
-		name && name in WORKER_ICONS ? (name as IconName) : 'bot'
+	let safeName: AgentIconName = $derived(
+		name && name in AGENT_ICONS ? (name as AgentIconName) : 'bot'
 	)
 </script>
 
@@ -27,7 +27,7 @@
 	class={className}
 	aria-hidden="true"
 >
-	{#each WORKER_ICONS[safeName] as [tag, attrs], i (`icon-${safeName}-${i}`)}
+	{#each AGENT_ICONS[safeName] as [tag, attrs], i (`icon-${safeName}-${i}`)}
 		<svelte:element this={tag} {...attrs} />
 	{/each}
 </svg>

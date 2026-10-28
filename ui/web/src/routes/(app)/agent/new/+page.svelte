@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { Bot } from '@lucide/svelte'
+	import type { AgentIconName } from '#components/agent-icons/index.ts'
 	import { AgentConfigEditor } from '#components/agentconfig'
 	import UnsavedChangesDialog from '#components/agentconfig/UnsavedChangesDialog.svelte'
-	import type { IconName } from '#lib/icons'
 	import { createAgent } from '#lib/services/agent'
 	import {
 		createDefaultWorkerConfiguration,
@@ -101,7 +101,7 @@
 			addAgent({
 				id: createdAgent.id,
 				name: createdAgent.name,
-				icon: (config.icon ?? 'bot') as IconName
+				icon: (config.icon ?? 'bot') as AgentIconName
 			})
 			isNavigating = true
 			await goto(

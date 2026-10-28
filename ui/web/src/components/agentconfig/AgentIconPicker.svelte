@@ -1,10 +1,14 @@
 <script lang="ts">
+	import AgentIcon from '#components/agent-icons/index.svelte'
+	import {
+		AGENT_ICON_CATEGORIES,
+		type AgentIconName
+	} from '#components/agent-icons/index.ts'
 	import { Button } from '#components/ui/button'
-	import { ICON_CATEGORIES, Icon, type IconName } from '#lib/icons'
 
 	interface Props {
-		value: IconName
-		onselect: (icon: IconName) => void
+		value: AgentIconName
+		onselect: (icon: AgentIconName) => void
 		id?: string
 	}
 
@@ -17,7 +21,7 @@
 		isOpen = !isOpen
 	}
 
-	function handleSelect(icon: IconName) {
+	function handleSelect(icon: AgentIconName) {
 		onselect(icon)
 		isOpen = false
 	}
@@ -50,7 +54,7 @@
 		aria-label="Select icon"
 		onclick={toggle}
 	>
-		<Icon name={value} size={20} />
+		<AgentIcon name={value} size={20} />
 	</Button>
 
 	{#if isOpen}
@@ -67,7 +71,9 @@
 			bind:this={dropdownElement}
 			class="bg-popover fixed z-50 max-h-80 w-80 overflow-y-auto rounded-lg border p-3 shadow-lg"
 		>
-			{#each Object.entries(ICON_CATEGORIES) as [category, icons] (category)}
+			{#each Object.entries(
+				AGENT_ICON_CATEGORIES
+			) as [category, icons] (category)}
 				<div class="mb-3">
 					<h4
 						class="text-muted-foreground mb-1.5 px-1 text-xs font-medium capitalize"
@@ -86,7 +92,7 @@
 									: ''}"
 								onclick={() => handleSelect(icon)}
 							>
-								<Icon name={icon} size={20} />
+								<AgentIcon name={icon} size={20} />
 							</button>
 						{/each}
 					</div>

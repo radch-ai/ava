@@ -1,7 +1,11 @@
 import { SUPERAGENT_AGENT_ID, SUPERAGENT_NAME } from '../config.ts'
 import type { AgentActivityItem } from '../services/agent/activity.ts'
 import type { ThreadMessage } from '../services/agent/thread.ts'
-import type { Agent, AgentConfiguration } from '../types/agent.ts'
+import {
+	type Agent,
+	type AgentConfiguration,
+	SUPERAGENT_AGENT
+} from '../types/agent.ts'
 
 /** Mutable in-memory state the mock handlers read from and write to. */
 export interface MockStore {
@@ -13,13 +17,6 @@ export interface MockStore {
 	token: string
 	/** Profile served by /auth/exchange and /auth/me. */
 	user: { sub: string }
-}
-
-const SUPERAGENT_ENTRY: Agent = {
-	id: SUPERAGENT_AGENT_ID,
-	name: SUPERAGENT_NAME,
-	label: `Chat with ${SUPERAGENT_NAME}`,
-	icon: 'message-square'
 }
 
 // Fixed anchor for every seeded timestamp: 2026-10-23T12:00:00Z.
@@ -255,7 +252,7 @@ export function createSeedData(): MockStore {
 	).reverse()
 
 	return {
-		agents: [SUPERAGENT_ENTRY, ...WORKER_AGENTS],
+		agents: [SUPERAGENT_AGENT, ...WORKER_AGENTS],
 		configurations: new Map(CONFIGURATIONS),
 		thread,
 		activity: seedActivity(),

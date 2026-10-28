@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { IconName } from '#lib/icons'
+import type { AgentIconName } from '#components/agent-icons/index.ts'
 import {
 	addAgent,
 	agents,
@@ -8,8 +8,8 @@ import {
 	setAgents
 } from '#lib/user'
 
-const bot: IconName = 'bot'
-const chartColumn: IconName = 'chart-column'
+const bot: AgentIconName = 'bot'
+const chartColumn: AgentIconName = 'chart-column'
 
 describe('shared agents state', () => {
 	beforeEach(() => {

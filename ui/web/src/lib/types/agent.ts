@@ -10,8 +10,14 @@
  * At runtime: SELECT * FROM user_tools WHERE id = ANY(agent.tools_enabled)
  */
 
+// Icon data/types are pure TS with no component imports, keeping this
+// file loadable by the mock server's node-side module graph
+// (vite.config / msw) — never import the AgentIcon component here.
+import {
+	type AgentIconName,
+	ALL_AGENT_ICON_NAMES
+} from '#components/agent-icons/index.ts'
 import { SUPERAGENT_AGENT_ID, SUPERAGENT_NAME } from '#lib/config'
-import { ALL_ICON_NAMES, type IconName } from '#lib/icons'
 
 // ============================================================================
 // RUNTIME AGENT TYPE (for UI routing)
@@ -25,7 +31,7 @@ export interface Agent {
 	id: string
 	name: string
 	label: string
-	icon: IconName
+	icon: AgentIconName
 }
 
 /**
@@ -91,7 +97,7 @@ export interface SoulConfig {
 export interface AgentConfigBase {
 	/** Display name for the agent */
 	name: string
-	/** Icon for the agent (from worker-icons set) */
+	/** Icon for the agent (from the agent-icons set) */
 	icon?: string
 	/** Agent personality/identity (stored as JSONB) */
 	soul: SoulConfig
@@ -246,7 +252,9 @@ export type ConfigFieldName =
  * Get a random icon name
  */
 function getRandomIcon(): string {
-	return ALL_ICON_NAMES[Math.floor(Math.random() * ALL_ICON_NAMES.length)]
+	return ALL_AGENT_ICON_NAMES[
+		Math.floor(Math.random() * ALL_AGENT_ICON_NAMES.length)
+	]
 }
 
 /**

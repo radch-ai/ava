@@ -6,12 +6,12 @@
 		Plus
 	} from '@lucide/svelte'
 	import { onMount } from 'svelte'
+	import AgentIcon from '#components/agent-icons/index.svelte'
 	import { Button } from '#components/ui/button'
 	import * as Sidebar from '#components/ui/sidebar'
 	import * as Tooltip from '#components/ui/tooltip'
 	import { authStore } from '#lib/auth'
 	import { APP_NAME, SUPERAGENT_AGENT_ID } from '#lib/config'
-	import { Icon } from '#lib/icons'
 	import { SUPERAGENT_AGENT } from '#lib/types/agent'
 	import { agents } from '#lib/user'
 	import { resolve } from '$app/paths'
@@ -100,7 +100,7 @@
 								})}
 								{...props}
 							>
-								<Icon
+								<AgentIcon
 									name={superagent.icon}
 									size={18}
 									class="group-data-[collapsible=icon]:size-5"
@@ -132,7 +132,7 @@
 										})}
 										{...props}
 									>
-										<Icon
+										<AgentIcon
 											name={agent.icon}
 											size={18}
 											class="group-data-[collapsible=icon]:size-5"

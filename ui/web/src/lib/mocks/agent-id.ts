@@ -1,11 +1,8 @@
 /**
- * Server-side agent identity rules (see
- * docs/specs/2026-10-26-agent-id-addressing-design.md).
- *
- * The production backend implements these rules itself; this module is the
- * mock server's copy. The name pattern is declared once in
- * `#routes/agent/new/agent-name` and shared with the create form; the
- * client never derives ids.
+ * Server-side agent identity rules. The production backend implements the
+ * same rules; this module is the mock server's copy. The name pattern is
+ * declared once in `#routes/agent/new/agent-name` and shared with the
+ * create form; the client never derives ids.
  */
 
 export { isValidAgentName } from '#routes/agent/new/agent-name'

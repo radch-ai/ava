@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { Settings } from '@lucide/svelte'
+	import AgentIcon from '#components/agent-icons/index.svelte'
 	import { AgentConfigSheet } from '#components/agentconfig'
 	import { Button, buttonVariants } from '#components/ui/button'
 	import * as Tooltip from '#components/ui/tooltip'
 	import { SUPERAGENT_AGENT_ID } from '#lib/config'
-	import { Icon } from '#lib/icons'
 	import { getAgentConfiguration } from '#lib/services/agent'
 	import type { Agent, AgentConfiguration } from '#lib/types/agent'
 	import type { Tool } from '#lib/types/tool'
@@ -52,7 +52,7 @@
 
 <header class="flex w-full items-center justify-between p-2">
 	<div class="flex items-center gap-2 text-sm">
-		<Icon name={agent.icon} size={16} />
+		<AgentIcon name={agent.icon} size={16} />
 		<span>{agent.label}</span>
 	</div>
 	<div class="flex items-center gap-6">

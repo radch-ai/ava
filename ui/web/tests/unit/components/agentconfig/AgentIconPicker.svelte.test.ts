@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { page } from 'vitest/browser'
 import { render } from 'vitest-browser-svelte'
-import IconPicker from '#components/agentconfig/IconPicker.svelte'
-import type { IconName } from '#lib/icons'
+import type { AgentIconName } from '#components/agent-icons/index.ts'
+import AgentIconPicker from '#components/agentconfig/AgentIconPicker.svelte'
 
-describe('IconPicker', () => {
+describe('AgentIconPicker', () => {
 	async function openDropdown() {
 		await page.getByRole('button', { name: 'Select icon' }).click()
 	}
 
 	it('renders icons grouped by category', async () => {
-		render(IconPicker, {
+		render(AgentIconPicker, {
 			value: 'bot',
 			onselect: () => {}
 		})
@@ -31,7 +31,7 @@ describe('IconPicker', () => {
 	})
 
 	it('highlights the currently selected icon', async () => {
-		render(IconPicker, {
+		render(AgentIconPicker, {
 			value: 'bot',
 			onselect: () => {}
 		})
@@ -44,11 +44,11 @@ describe('IconPicker', () => {
 	})
 
 	it('calls onselect when an icon is clicked', async () => {
-		let selectedIcon: IconName | undefined
+		let selectedIcon: AgentIconName | undefined
 
-		render(IconPicker, {
+		render(AgentIconPicker, {
 			value: 'bot',
-			onselect: (icon: IconName) => {
+			onselect: (icon: AgentIconName) => {
 				selectedIcon = icon
 			}
 		})
@@ -60,7 +60,7 @@ describe('IconPicker', () => {
 	})
 
 	it('shows the selected icon in the trigger button', async () => {
-		render(IconPicker, {
+		render(AgentIconPicker, {
 			value: 'brain',
 			onselect: () => {}
 		})
@@ -71,7 +71,7 @@ describe('IconPicker', () => {
 	})
 
 	it('closes dropdown after selecting an icon', async () => {
-		render(IconPicker, {
+		render(AgentIconPicker, {
 			value: 'bot',
 			onselect: () => {}
 		})
