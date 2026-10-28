@@ -33,7 +33,7 @@ const { pageState, setRoute } = vi.hoisted(() => {
 	}
 })
 
-vi.mock('#lib/user', () => ({
+vi.mock('#lib/agents.svelte', () => ({
 	agents,
 	getAgents: mockGetAgents,
 	setAgents: mockSetAgents

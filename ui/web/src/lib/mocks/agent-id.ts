@@ -8,7 +8,7 @@
 export { isValidAgentName } from '#routes/agent/new/agent-name'
 
 /**
- * Derive the per-user agent id from a display name: lowercase, spaces to
+ * Derive the agent id from a display name: lowercase, spaces to
  * single hyphens, anything else stripped. Derived ids can never start with
  * `_` — that prefix is reserved for system entries like `_superagent`.
  */

@@ -40,7 +40,7 @@
 
 	interface Props {
 		configuration: AgentConfiguration
-		/** All available tools for this user */
+		/** All available tools */
 		availableTools?: Tool[]
 		/** Called when save is clicked with the configuration */
 		onSave: (config: AgentConfiguration) => void | Promise<void>

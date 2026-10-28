@@ -41,9 +41,7 @@ function paginate<T extends CursorItem>(
  */
 export function createHandlers(store: MockStore): HttpHandler[] {
 	return [
-		http.get('*/api/user/agents', () =>
-			HttpResponse.json({ agents: store.agents })
-		),
+		http.get('*/api/agents', () => HttpResponse.json({ agents: store.agents })),
 
 		http.post('*/api/auth/exchange', async ({ request }) => {
 			const { token } = (await request.json()) as { token: string }
@@ -81,7 +79,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 
 		// Per-agent thread. Only the superagent has a thread today; other
 		// agents 404 until threads are enabled for them.
-		http.get('*/api/user/agent/:id/thread', ({ request, params }) => {
+		http.get('*/api/agent/:id/thread', ({ request, params }) => {
 			if (String(params.id) !== SUPERAGENT_AGENT_ID) {
 				return HttpResponse.json(
 					{ message: `Agent "${String(params.id)}" has no thread` },
@@ -102,7 +100,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			)
 		}),
 
-		http.get('*/api/user/agent/:id/activity', ({ request, params }) => {
+		http.get('*/api/agent/:id/activity', ({ request, params }) => {
 			const url = new URL(request.url)
 			const items = store.activity.get(String(params.id)) ?? []
 			const cursor = url.searchParams.get('cursor')
@@ -118,7 +116,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			)
 		}),
 
-		http.get('*/api/user/agent/:id', ({ params }) => {
+		http.get('*/api/agent/:id', ({ params }) => {
 			const id = String(params.id)
 			const configuration = store.configurations.get(id)
 			if (!configuration) {
@@ -130,7 +128,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			return HttpResponse.json(configuration)
 		}),
 
-		http.patch('*/api/user/agent/:id', async ({ request, params }) => {
+		http.patch('*/api/agent/:id', async ({ request, params }) => {
 			const id = String(params.id)
 			const current = store.configurations.get(id)
 			if (!current) {
@@ -151,7 +149,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 
 		// Create: the server owns id derivation. Invalid names are rejected
 		// with 400, colliding derived ids with 409 — never auto-suffixed.
-		http.post('*/api/user/agent', async ({ request }) => {
+		http.post('*/api/agent', async ({ request }) => {
 			const configuration = (await request.json()) as AgentConfiguration
 			const name = configuration.name ?? ''
 

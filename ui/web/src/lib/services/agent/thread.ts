@@ -23,7 +23,7 @@ export async function getAgentThread(
 		params.set('cursor', cursor)
 	}
 	const response = await api
-		.get(`user/agent/${agentId}/thread?${params.toString()}`)
+		.get(`agent/${agentId}/thread?${params.toString()}`)
 		.json<unknown>()
 	return validateThread(response)
 }

@@ -3,8 +3,8 @@ export const APP_NAME = 'Ava'
 export const SUPERAGENT_NAME = 'Ava'
 
 /**
- * Reserved id of the preconfigured superagent entry in every user's agent
- * list. The `_` prefix cannot be derived from a display name, so it can
- * never collide with user-created agents.
+ * Reserved id of the preconfigured superagent entry in the agent
+ * list. The `_` prefix cannot be derived from a display name, so it
+ * can never collide with user-created agents.
  */
 export const SUPERAGENT_AGENT_ID = '_superagent'

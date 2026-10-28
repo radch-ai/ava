@@ -48,7 +48,7 @@ test.describe('error handling', () => {
 		page
 	}) => {
 		let routeHit = false
-		await page.route('**/api/user/agents', async (route) => {
+		await page.route('**/api/agents', async (route) => {
 			routeHit = true
 			await route.fulfill({
 				status: 500,
@@ -68,7 +68,7 @@ test.describe('error handling', () => {
 	test('should display error banner when agents API is unreachable', async ({
 		page
 	}) => {
-		await page.route('**/api/user/agents', (route) => route.abort('failed'))
+		await page.route('**/api/agents', (route) => route.abort('failed'))
 
 		await page.goto('/')
 		await expect(page.locator('main')).toBeVisible()

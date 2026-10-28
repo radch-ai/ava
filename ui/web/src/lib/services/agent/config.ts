@@ -6,7 +6,7 @@ export interface CreateAgentResponse {
 	name: string
 }
 
-const AGENT_PATH = 'user/agent'
+const AGENT_PATH = 'agent'
 
 export async function getAgentConfiguration(
 	agentId: string
@@ -29,7 +29,7 @@ export async function updateAgentConfiguration(
 }
 
 /**
- * Create an agent from a configuration. The server derives the per-user id
+ * Create an agent from a configuration. The server derives the agent id
  * from the display name (`deriveAgentId` rules) and rejects invalid or
  * duplicate names — the client never invents an id.
  */

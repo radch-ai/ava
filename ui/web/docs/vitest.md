@@ -21,7 +21,7 @@
 
 - `tests/unit/lib/mocks/handlers.test.ts`: the mock API contract — agent listing, cursor pagination, configuration CRUD, and error responses (400/404/409).
 - `tests/unit/lib/auth/store.test.ts`: covers session restore from `GET /auth/me`, unauthenticated start on 401, token exchange via `POST /auth/exchange`, invalid-token rejection with the server's message, logout via `POST /auth/logout`, and session-expiry clearing without network.
-- `tests/unit/lib/services/api.test.ts` and `tests/unit/lib/services/user/agents.test.ts`: cover API client construction, the 401 auth signal with the server's error message, agent list fetching, backend response shapes, and surfaced errors.
+- `tests/unit/lib/services/api.test.ts` and `tests/unit/lib/services/agent/agents.test.ts`: cover API client construction, the 401 auth signal with the server's error message, agent list fetching, backend response shapes, and surfaced errors.
 - Route/page rendering tests such as `tests/unit/routes/agent/[agentId]/page.svelte.test.ts` (worker branch), `tests/unit/routes/agent/[agentId]/superagent.page.svelte.test.ts` (superagent branch), `tests/unit/routes/agent/[agentId]/page.load.test.ts`, `tests/unit/routes/(app)/page.load.test.ts` (the `/` redirect), and `tests/unit/routes/agent/new/page.svelte.test.ts`: cover what each route renders, which controls appear, how key user interactions work, and how the superagent branch of the shared agent page differs from worker agents.
 - Agent configuration tests such as `tests/unit/components/agentconfig/AgentConfigSheet.svelte.test.ts` and `tests/unit/components/agentconfig/AgentConfigEditor.svelte.test.ts`: cover editor layout, field switching, worker-vs-superagent field availability, save/cancel flows, unsaved-change dialogs, retry behavior after API failure, and post-save callbacks.
 - Supporting UI tests such as `tests/unit/components/agentconfig/AgentIconPicker.svelte.test.ts`, `tests/unit/lib/components/AgentHeader.svelte.test.ts`, `tests/unit/lib/components/AppSidebar.svelte.test.ts`, `tests/unit/lib/components/TextArea.svelte.test.ts`, and model-selector specs: cover smaller presentation and control-level behaviors that would be too granular for Playwright.
@@ -29,7 +29,7 @@
 ## Main Logic Areas Covered
 
 - Auth logic: session restore, token exchange, logout, and session-expiry clearing.
-- Service logic: correct API path usage (`user/agent/{id}` addressing, `user/agent/{id}/thread`), id derivation and name validation rules, create-response handling, error propagation, and shape handling for agent configuration responses.
+- Service logic: correct API path usage (`agent/{id}` addressing, `agent/{id}/thread`), id derivation and name validation rules, create-response handling, error propagation, and shape handling for agent configuration responses.
 - Mock API logic: pagination, persistence, and error semantics of the handlers in `src/lib/mocks` (list with ids and superagent first, POST collection with 400/409, per-agent thread).
 - Route/component logic: rendering the new-agent experience, the merged agent page layout, the `/` redirect, and config editor interactions.
 - Helper logic: cursor-based pagination, agent id derivation, and date formatting.

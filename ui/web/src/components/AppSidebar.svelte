@@ -10,10 +10,10 @@
 	import { Button } from '#components/ui/button'
 	import * as Sidebar from '#components/ui/sidebar'
 	import * as Tooltip from '#components/ui/tooltip'
+	import { agents } from '#lib/agents.svelte'
 	import { authStore } from '#lib/auth'
 	import { APP_NAME, SUPERAGENT_AGENT_ID } from '#lib/config'
 	import { SUPERAGENT_AGENT } from '#lib/types/agent'
-	import { agents } from '#lib/user'
 	import { resolve } from '$app/paths'
 	import { page } from '$app/state'
 

@@ -1,4 +1,5 @@
 import { error } from '@sveltejs/kit'
+import { agents } from '#lib/agents.svelte'
 import { SUPERAGENT_AGENT_ID } from '#lib/config'
 import {
 	type ActivityFeed,
@@ -7,7 +8,6 @@ import {
 	getAgentThread
 } from '#lib/services/agent'
 import { type Agent, SUPERAGENT_AGENT } from '#lib/types/agent'
-import { agents } from '#lib/user'
 import type { PageLoad } from './$types'
 
 export const load: PageLoad = async ({ params, parent }) => {

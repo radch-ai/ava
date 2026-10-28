@@ -59,7 +59,7 @@ describe('agent/config service', () => {
 
 			const result = await getAgentConfiguration('ava')
 
-			expect(api.get).toHaveBeenCalledWith('user/agent/ava')
+			expect(api.get).toHaveBeenCalledWith('agent/ava')
 			expect(result).toEqual(mockConfig)
 		})
 
@@ -139,7 +139,7 @@ describe('agent/config service', () => {
 
 			await getAgentConfiguration('worker-bot')
 
-			expect(api.get).toHaveBeenCalledWith('user/agent/worker-bot')
+			expect(api.get).toHaveBeenCalledWith('agent/worker-bot')
 		})
 
 		it('handles special characters in agent name', async () => {
@@ -151,7 +151,7 @@ describe('agent/config service', () => {
 
 			await getAgentConfiguration('agent-with-dashes')
 
-			expect(api.get).toHaveBeenCalledWith('user/agent/agent-with-dashes')
+			expect(api.get).toHaveBeenCalledWith('agent/agent-with-dashes')
 		})
 	})
 
@@ -168,7 +168,7 @@ describe('agent/config service', () => {
 
 			const result = await updateAgentConfiguration('ava', mockConfig)
 
-			expect(api.patch).toHaveBeenCalledWith('user/agent/ava', {
+			expect(api.patch).toHaveBeenCalledWith('agent/ava', {
 				json: mockConfig
 			})
 			expect(result).toEqual(mockConfig)
@@ -196,7 +196,7 @@ describe('agent/config service', () => {
 
 			const result = await updateAgentConfiguration('ava', partialUpdate)
 
-			expect(api.patch).toHaveBeenCalledWith('user/agent/ava', {
+			expect(api.patch).toHaveBeenCalledWith('agent/ava', {
 				json: partialUpdate
 			})
 			expect(result).toEqual(mockConfig)
@@ -314,7 +314,7 @@ describe('agent/config service', () => {
 
 			await updateAgentConfiguration('worker-bot', mockConfig)
 
-			expect(api.patch).toHaveBeenCalledWith('user/agent/worker-bot', {
+			expect(api.patch).toHaveBeenCalledWith('agent/worker-bot', {
 				json: mockConfig
 			})
 		})
@@ -329,7 +329,7 @@ describe('agent/config service', () => {
 
 			const result = await updateAgentConfiguration('ava', emptyUpdate)
 
-			expect(api.patch).toHaveBeenCalledWith('user/agent/ava', { json: {} })
+			expect(api.patch).toHaveBeenCalledWith('agent/ava', { json: {} })
 			expect(result).toEqual(mockConfig)
 		})
 	})
@@ -345,7 +345,7 @@ describe('agent/config service', () => {
 
 			const result = await createAgent(mockConfig)
 
-			expect(api.post).toHaveBeenCalledWith('user/agent', {
+			expect(api.post).toHaveBeenCalledWith('agent', {
 				json: mockConfig
 			})
 			expect(result).toEqual(response)

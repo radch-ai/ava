@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { getAgents } from '#lib/services/user'
+import { setAgents } from '#lib/agents.svelte'
+import { getAgents } from '#lib/services/agent'
 import type { Agent } from '#lib/types/agent'
-import { setAgents } from '#lib/user'
 import { load } from '../../../../src/routes/(app)/+layout'
 
 const { mockAuthStore } = vi.hoisted(() => ({
@@ -12,11 +12,11 @@ vi.mock('#lib/auth', () => ({
 	authStore: mockAuthStore
 }))
 
-vi.mock('#lib/services/user', () => ({
+vi.mock('#lib/services/agent', () => ({
 	getAgents: vi.fn()
 }))
 
-vi.mock('#lib/user', () => ({
+vi.mock('#lib/agents.svelte', () => ({
 	setAgents: vi.fn()
 }))
 

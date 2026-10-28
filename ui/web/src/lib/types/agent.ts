@@ -27,7 +27,7 @@ import { SUPERAGENT_AGENT_ID, SUPERAGENT_NAME } from '#lib/config'
  * Agent displayed in UI - uses icon name string for flexibility
  */
 export interface Agent {
-	/** Per-user id used in URLs and API paths; `_`-prefixed ids are system-reserved. */
+	/** Agent id used in URLs and API paths; `_`-prefixed ids are system-reserved. */
 	id: string
 	name: string
 	label: string

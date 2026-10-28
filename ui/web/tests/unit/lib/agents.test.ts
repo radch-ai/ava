@@ -6,7 +6,7 @@ import {
 	clearAgents,
 	normalizeAgent,
 	setAgents
-} from '#lib/user'
+} from '#lib/agents.svelte'
 
 const bot: AgentIconName = 'bot'
 const chartColumn: AgentIconName = 'chart-column'

@@ -6,16 +6,16 @@ vi.mock('#lib/services/api', () => ({
 	}
 }))
 
+import { getAgents } from '#lib/services/agent/agents'
 import { type ApiResponsePromise, api } from '#lib/services/api'
-import { getAgents } from '#lib/services/user/agents'
 
-describe('user/agents service', () => {
+describe('agents service', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 	})
 
 	describe('getAgents', () => {
-		it('fetches the current user agent list', async () => {
+		it('fetches the agent list', async () => {
 			const mockAgents = [
 				{
 					id: '_superagent',
@@ -32,7 +32,7 @@ describe('user/agents service', () => {
 
 			const result = await getAgents()
 
-			expect(api.get).toHaveBeenCalledWith('user/agents')
+			expect(api.get).toHaveBeenCalledWith('agents')
 			expect(result).toEqual(mockAgents)
 		})
 

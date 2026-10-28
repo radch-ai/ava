@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
+import { addAgent } from '#lib/agents.svelte'
 import * as agentConfig from '#lib/services/agent'
-import { addAgent } from '#lib/user'
 import NewAgentPage from '#routes/agent/new/+page.svelte'
 
 const mockAddAgent = vi.mocked(addAgent)
@@ -31,7 +31,7 @@ vi.mock('$app/paths', () => ({
 
 import { goto } from '$app/navigation'
 
-vi.mock('#lib/user', () => ({
+vi.mock('#lib/agents.svelte', () => ({
 	addAgent: vi.fn()
 }))
 

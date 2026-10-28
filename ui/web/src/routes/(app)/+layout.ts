@@ -1,6 +1,6 @@
+import { setAgents } from '#lib/agents.svelte'
 import { authStore } from '#lib/auth'
-import { getAgents } from '#lib/services/user'
-import { setAgents } from '#lib/user'
+import { getAgents } from '#lib/services/agent'
 import type { LayoutLoad } from './$types'
 
 export const load: LayoutLoad = async () => {

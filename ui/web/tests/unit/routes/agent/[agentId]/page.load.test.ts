@@ -11,7 +11,7 @@ vi.mock('#lib/services/agent', () => ({
 	getAgentThread: vi.fn()
 }))
 
-vi.mock('#lib/user', () => ({
+vi.mock('#lib/agents.svelte', () => ({
 	agents: mockAgents
 }))
 

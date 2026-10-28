@@ -3,12 +3,12 @@ import { expect, test } from '../setup/fixtures'
 
 test.describe('API integration', () => {
 	test('should call agents list API on app load', async ({ page }) => {
-		const requestPromise = page.waitForRequest('**/api/user/agents')
+		const requestPromise = page.waitForRequest('**/api/agents')
 
 		await page.goto('/')
 		const request = await requestPromise
 
-		expect(request.url()).toContain('/api/user/agents')
+		expect(request.url()).toContain('/api/agents')
 	})
 
 	test('should call create agent API with correct payload', async ({
@@ -16,7 +16,7 @@ test.describe('API integration', () => {
 	}) => {
 		let requestBody: unknown
 
-		await page.route('**/api/user/agent', (route, request) => {
+		await page.route('**/api/agent', (route, request) => {
 			if (request.method() === 'POST') {
 				requestBody = request.postDataJSON()
 			}
@@ -37,7 +37,7 @@ test.describe('API integration', () => {
 				"Define operating rules, priorities, and do/don't guidelines..."
 			)
 			.fill('Test instructions')
-		const responsePromise = page.waitForResponse('**/api/user/agent')
+		const responsePromise = page.waitForResponse('**/api/agent')
 		await page.getByRole('button', { name: 'Create Agent' }).click()
 
 		// Wait for API call
@@ -61,7 +61,7 @@ test.describe('API integration', () => {
 
 		// Now update it
 		let patchCalled = false
-		await page.route('**/api/user/agent/*', (route, request) => {
+		await page.route('**/api/agent/*', (route, request) => {
 			if (request.method() === 'PATCH') {
 				patchCalled = true
 			}
@@ -86,13 +86,13 @@ test.describe('API integration', () => {
 	test('should include correct Content-Type header', async ({ page }) => {
 		let contentType: string | undefined
 
-		await page.route('**/api/user/agent', (route, request) => {
+		await page.route('**/api/agent', (route, request) => {
 			contentType = request.headers()['content-type']
 			route.continue()
 		})
 		await page.goto('/agent/new')
 		await page.getByLabel(/name/i).fill(`Content Type ${Date.now()}`)
-		const responsePromise = page.waitForResponse('**/api/user/agent')
+		const responsePromise = page.waitForResponse('**/api/agent')
 		await page.getByRole('button', { name: 'Create Agent' }).click()
 
 		await responsePromise

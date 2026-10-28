@@ -62,7 +62,7 @@ describe('agent/activity service', () => {
 
 			const result = await getAgentActivityFeed('ava')
 
-			expect(api.get).toHaveBeenCalledWith('user/agent/ava/activity?limit=20')
+			expect(api.get).toHaveBeenCalledWith('agent/ava/activity?limit=20')
 			expect(result).toEqual(
 				createActivityFeed({
 					items: [
@@ -97,7 +97,7 @@ describe('agent/activity service', () => {
 			const result = await getAgentActivityFeed('ava', 50, 'cursor-abc')
 
 			expect(api.get).toHaveBeenCalledWith(
-				'user/agent/ava/activity?limit=50&cursor=cursor-abc'
+				'agent/ava/activity?limit=50&cursor=cursor-abc'
 			)
 			expect(result.nextCursor).toBe('next-cursor-xyz')
 			expect(result.items[0]?.status).toBe('running')
@@ -435,7 +435,7 @@ describe('agent/activity service', () => {
 
 			await getAgentActivityFeed('ava', 1000)
 
-			expect(api.get).toHaveBeenCalledWith('user/agent/ava/activity?limit=1000')
+			expect(api.get).toHaveBeenCalledWith('agent/ava/activity?limit=1000')
 		})
 
 		it('handles default limit parameter', async () => {
@@ -447,7 +447,7 @@ describe('agent/activity service', () => {
 
 			await getAgentActivityFeed('ava')
 
-			expect(api.get).toHaveBeenCalledWith('user/agent/ava/activity?limit=20')
+			expect(api.get).toHaveBeenCalledWith('agent/ava/activity?limit=20')
 		})
 
 		it('handles special characters in triggeredBy field', async () => {
@@ -654,7 +654,7 @@ describe('agent/activity service', () => {
 			await getAgentActivityFeed('custom-agent')
 
 			expect(api.get).toHaveBeenCalledWith(
-				'user/agent/custom-agent/activity?limit=20'
+				'agent/custom-agent/activity?limit=20'
 			)
 		})
 
@@ -668,7 +668,7 @@ describe('agent/activity service', () => {
 			await getAgentActivityFeed('agent with spaces')
 
 			expect(api.get).toHaveBeenCalledWith(
-				'user/agent/agent with spaces/activity?limit=20'
+				'agent/agent with spaces/activity?limit=20'
 			)
 		})
 

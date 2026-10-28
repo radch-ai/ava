@@ -25,7 +25,7 @@ export async function getAgentActivityFeed(
 		params.set('cursor', cursor)
 	}
 	const response = await api
-		.get(`user/agent/${agentId}/activity?${params.toString()}`)
+		.get(`agent/${agentId}/activity?${params.toString()}`)
 		.json<unknown>()
 	return validateActivityFeed(response)
 }

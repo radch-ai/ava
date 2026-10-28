@@ -17,7 +17,7 @@ afterAll(() => {
 
 describe('mock API handlers', () => {
 	it('lists agents with ids, superagent first', async () => {
-		const res = await fetch(`${BASE}/user/agents`)
+		const res = await fetch(`${BASE}/agents`)
 		expect(res.status).toBe(200)
 		const body = (await res.json()) as {
 			agents: { id: string; name: string; label: string; icon: string }[]
@@ -42,7 +42,7 @@ describe('mock API handlers', () => {
 
 	it('pages the superagent thread newest-first until the cursor is exhausted', async () => {
 		const first = (await (
-			await fetch(`${BASE}/user/agent/_superagent/thread?limit=10`)
+			await fetch(`${BASE}/agent/_superagent/thread?limit=10`)
 		).json()) as {
 			items: { id: string }[]
 			nextCursor: string | null
@@ -62,9 +62,7 @@ describe('mock API handlers', () => {
 		expect(first.nextCursor).toBe('msg-15')
 
 		const second = (await (
-			await fetch(
-				`${BASE}/user/agent/_superagent/thread?limit=10&cursor=msg-15`
-			)
+			await fetch(`${BASE}/agent/_superagent/thread?limit=10&cursor=msg-15`)
 		).json()) as {
 			items: { id: string }[]
 			nextCursor: string | null
@@ -84,7 +82,7 @@ describe('mock API handlers', () => {
 		expect(second.nextCursor).toBe('msg-5')
 
 		const third = (await (
-			await fetch(`${BASE}/user/agent/_superagent/thread?limit=10&cursor=msg-5`)
+			await fetch(`${BASE}/agent/_superagent/thread?limit=10&cursor=msg-5`)
 		).json()) as {
 			items: { id: string }[]
 			nextCursor: string | null
@@ -99,20 +97,18 @@ describe('mock API handlers', () => {
 	})
 
 	it('404s the thread endpoint for agents without a thread', async () => {
-		const res = await fetch(`${BASE}/user/agent/research/thread`)
+		const res = await fetch(`${BASE}/agent/research/thread`)
 		expect(res.status).toBe(404)
 	})
 
 	it('rejects an unknown thread cursor with 400', async () => {
-		const res = await fetch(
-			`${BASE}/user/agent/_superagent/thread?cursor=missing`
-		)
+		const res = await fetch(`${BASE}/agent/_superagent/thread?cursor=missing`)
 		expect(res.status).toBe(400)
 	})
 
 	it('returns an activity feed for a known agent and an empty page for unknown agents', async () => {
 		const known = (await (
-			await fetch(`${BASE}/user/agent/research/activity?limit=5`)
+			await fetch(`${BASE}/agent/research/activity?limit=5`)
 		).json()) as {
 			items: { id: string; status: string }[]
 			nextCursor: string | null
@@ -124,20 +120,18 @@ describe('mock API handlers', () => {
 		}
 
 		const superagent = (await (
-			await fetch(`${BASE}/user/agent/_superagent/activity?limit=3`)
+			await fetch(`${BASE}/agent/_superagent/activity?limit=3`)
 		).json()) as {
 			items: { id: string }[]
 		}
 		expect(superagent.items).toHaveLength(3)
 
-		const unknown = await (
-			await fetch(`${BASE}/user/agent/ghost/activity`)
-		).json()
+		const unknown = await (await fetch(`${BASE}/agent/ghost/activity`)).json()
 		expect(unknown).toEqual({ items: [], nextCursor: null })
 	})
 
 	it('serves agent configuration and 404s for unknown agents', async () => {
-		const res = await fetch(`${BASE}/user/agent/scribe`)
+		const res = await fetch(`${BASE}/agent/scribe`)
 		expect(res.status).toBe(200)
 		const config = (await res.json()) as {
 			name: string
@@ -148,19 +142,19 @@ describe('mock API handlers', () => {
 		expect(typeof config.soul.personality).toBe('string')
 		expect(Array.isArray(config.toolsEnabled)).toBe(true)
 
-		const superagentRes = await fetch(`${BASE}/user/agent/_superagent`)
+		const superagentRes = await fetch(`${BASE}/agent/_superagent`)
 		expect(superagentRes.status).toBe(200)
 		const superagentConfig = (await superagentRes.json()) as { name: string }
 		expect(superagentConfig.name).toBe('Ava')
 
-		const missing = await fetch(`${BASE}/user/agent/ghost`)
+		const missing = await fetch(`${BASE}/agent/ghost`)
 		expect(missing.status).toBe(404)
 		const body = (await missing.json()) as { message: string }
 		expect(body.message).toContain('not found')
 	})
 
 	it('merges PATCHed configuration fields and persists them', async () => {
-		const res = await fetch(`${BASE}/user/agent/scribe`, {
+		const res = await fetch(`${BASE}/agent/scribe`, {
 			method: 'PATCH',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({
@@ -177,16 +171,14 @@ describe('mock API handlers', () => {
 		expect(updated.soul.identity).toBe('New identity')
 		expect(typeof updated.soul.personality).toBe('string')
 
-		const reread = (await (
-			await fetch(`${BASE}/user/agent/scribe`)
-		).json()) as {
+		const reread = (await (await fetch(`${BASE}/agent/scribe`)).json()) as {
 			operatingInstructions: string
 		}
 		expect(reread.operatingInstructions).toBe('Updated instructions')
 	})
 
-	it('creates agents via POST /user/agent and returns the derived id', async () => {
-		const created = await fetch(`${BASE}/user/agent`, {
+	it('creates agents via POST /agent and returns the derived id', async () => {
+		const created = await fetch(`${BASE}/agent`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({
@@ -204,7 +196,7 @@ describe('mock API handlers', () => {
 			name: 'Research Team'
 		})
 
-		const list = (await (await fetch(`${BASE}/user/agents`)).json()) as {
+		const list = (await (await fetch(`${BASE}/agents`)).json()) as {
 			agents: { id: string; name: string; label: string; icon: string }[]
 		}
 		const entry = list.agents.find((agent) => agent.id === 'research-team')
@@ -212,7 +204,7 @@ describe('mock API handlers', () => {
 		expect(typeof entry?.label).toBe('string')
 
 		const config = (await (
-			await fetch(`${BASE}/user/agent/research-team`)
+			await fetch(`${BASE}/agent/research-team`)
 		).json()) as { name: string }
 		expect(config.name).toBe('Research Team')
 	})
@@ -227,7 +219,7 @@ describe('mock API handlers', () => {
 			toolsEnabled: []
 		})
 
-		const duplicate = await fetch(`${BASE}/user/agent`, {
+		const duplicate = await fetch(`${BASE}/agent`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: payload
@@ -236,7 +228,7 @@ describe('mock API handlers', () => {
 		const body = (await duplicate.json()) as { message: string }
 		expect(body.message).toBe('An agent named "Research" already exists')
 
-		const caseVariant = await fetch(`${BASE}/user/agent`, {
+		const caseVariant = await fetch(`${BASE}/agent`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({
@@ -253,7 +245,7 @@ describe('mock API handlers', () => {
 
 	it('rejects invalid display names with 400', async () => {
 		for (const name of ['bad_name', 'hyphen-name', 'double  space', '']) {
-			const res = await fetch(`${BASE}/user/agent`, {
+			const res = await fetch(`${BASE}/agent`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({

@@ -6,7 +6,7 @@
  */
 
 /**
- * User tool definition
+ * Tool definition
  */
 export interface Tool {
 	id: string

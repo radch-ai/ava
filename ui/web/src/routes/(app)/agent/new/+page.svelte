@@ -3,12 +3,12 @@
 	import type { AgentIconName } from '#components/agent-icons/index.ts'
 	import { AgentConfigEditor } from '#components/agentconfig'
 	import UnsavedChangesDialog from '#components/agentconfig/UnsavedChangesDialog.svelte'
+	import { addAgent } from '#lib/agents.svelte'
 	import { createAgent } from '#lib/services/agent'
 	import {
 		createDefaultWorkerConfiguration,
 		type WorkerConfiguration
 	} from '#lib/types/agent'
-	import { addAgent } from '#lib/user'
 	import { type BeforeNavigate, beforeNavigate, goto } from '$app/navigation'
 	import { resolve } from '$app/paths'
 	import type { PathnameWithSearchOrHash } from '$app/types'
