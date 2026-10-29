@@ -7,8 +7,8 @@
 	import { getAgentConfiguration } from '#lib/services/agent'
 	import type { Agent, AgentConfiguration } from '#lib/types/agent'
 	import type { Tool } from '#lib/types/tool'
-	import ConfigSheet from '#routes/agent/[agentId]/ConfigSheet.svelte'
 	import { invalidate } from '$app/navigation'
+	import ConfigSheet from './ConfigSheet.svelte'
 
 	let {
 		agent,

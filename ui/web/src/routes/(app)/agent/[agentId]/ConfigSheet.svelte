@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { AgentConfigEditor } from '#components/agentconfig'
+	import { AgentConfigEditor } from '#components/agent-config'
 	import * as Sheet from '#components/ui/sheet'
 	import {
 		SheetCloseGuard,
@@ -129,7 +129,4 @@
 <!-- Levels 2 + 3: in-app navigation + browser unload protection while the
      open sheet has unsaved changes. Gated on isSheetOpened so a closed
      sheet never blocks; onDiscard closes it as the navigation resumes. -->
-<UnsavedChangesGuards
-	hasChanges={guardDirty}
-	onDiscard={closeSheet}
-/>
+<UnsavedChangesGuards hasChanges={guardDirty} onDiscard={closeSheet} />

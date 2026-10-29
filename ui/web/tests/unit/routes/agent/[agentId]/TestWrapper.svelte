@@ -1,9 +1,9 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte'
-	import AgentShell from '#components/agent/AgentShell.svelte'
 	import * as Tooltip from '#components/ui/tooltip'
 	import type { ActivityFeed } from '#lib/services/agent'
 	import type { Agent } from '#lib/types/agent'
+	import AgentShell from '#routes/agent/[agentId]/AgentShell.svelte'
 
 	interface ThreadItem {
 		id: string

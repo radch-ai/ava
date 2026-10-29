@@ -1,5 +1,5 @@
 <script lang="ts">
-	import CronJobEditor from '#components/agentconfig/CronJobEditor.svelte'
+	import CronJobEditor from '#components/agent-config/CronJobEditor.svelte'
 	import type { CronJob } from '#lib/types/agent'
 
 	interface Props {

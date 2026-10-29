@@ -1,7 +1,7 @@
 <script lang="ts">
-	import AgentHeader from '#components/agent/AgentHeader.svelte'
 	import * as Tooltip from '#components/ui/tooltip'
 	import type { Agent } from '#lib/types/agent'
+	import AgentHeader from '#routes/agent/[agentId]/AgentHeader.svelte'
 
 	let {
 		agent,

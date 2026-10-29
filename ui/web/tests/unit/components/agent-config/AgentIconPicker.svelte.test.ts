@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { page } from 'vitest/browser'
 import { render } from 'vitest-browser-svelte'
+import AgentIconPicker from '#components/agent-config/AgentIconPicker.svelte'
 import type { AgentIconName } from '#components/agent-icons/index.ts'
-import AgentIconPicker from '#components/agentconfig/AgentIconPicker.svelte'
 
 describe('AgentIconPicker', () => {
 	async function openDropdown() {

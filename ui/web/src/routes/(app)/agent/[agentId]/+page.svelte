@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { ArrowRight } from '@lucide/svelte'
 	import { onMount } from 'svelte'
-	import AgentShell from '#components/agent/AgentShell.svelte'
 	import ModelSelector from '#components/ModelSelector.svelte'
 	import { Button } from '#components/ui/button'
 	import { APP_NAME, SUPERAGENT_AGENT_ID, SUPERAGENT_NAME } from '#lib/config'
@@ -14,6 +13,7 @@
 	} from '#lib/services/agent'
 	import { resolve } from '$app/paths'
 	import type { PageData } from './$types'
+	import AgentShell from './AgentShell.svelte'
 	import TextArea from './TextArea.svelte'
 
 	let { data }: { data: PageData } = $props()

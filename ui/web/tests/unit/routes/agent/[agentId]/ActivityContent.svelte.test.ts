@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import ActivityContent from '#components/agent/ActivityContent.svelte'
 import type { AgentActivityItem } from '#lib/services/agent'
+import ActivityContent from '#routes/agent/[agentId]/ActivityContent.svelte'
 
 function createTestActivityItem(
 	overrides: Partial<AgentActivityItem> = {}

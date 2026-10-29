@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Bot } from '@lucide/svelte'
-	import { AgentConfigEditor } from '#components/agentconfig'
+	import { AgentConfigEditor } from '#components/agent-config'
 	import {
 		UnsavedChangesGuards,
 		type UnsavedChangesGuardsExports
