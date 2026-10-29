@@ -51,9 +51,10 @@ build service:
     @mkdir -p bin
     go build -o bin/{{ service }} ./cmd/{{ service }}
 
-# Build a service, then run its binary from bin/. Usage: just run <service>
+# Build a service, then run its binary from bin/. Dev runs use the in-memory
+# database unless AVA_DB is set.
 run service: (build service)
-    ./bin/{{ service }}
+    AVA_DB="${AVA_DB:-:memory:}" ./bin/{{ service }}
 
 ## --- test ---
 
@@ -76,8 +77,9 @@ migrate-cli direction n="":
     @just require_tool migrate
     @test "{{ direction }}" = "up" -o "{{ direction }}" = "down" -o "{{ direction }}" = "version" || { echo "Error: direction must be one of: up down version (got: {{ direction }})"; exit 1; }
     @test "{{ direction }}" != "down" -o "{{ n }}" != "" || { echo "Error: down needs a step count or 'all'. Usage: just migrate-cli down 1 | just migrate-cli down all"; exit 1; }
-    @mkdir -p "$(dirname "${AVA_DB:-data/ava.db}")"
-    @migrate -database "sqlite://${AVA_DB:-data/ava.db}" -path backend/internal/schema/migrations {{ direction }} {{ if n == "all" { "-all" } else { n } }}
+    @test -n "${AVA_DB:-}" || { echo "Error: AVA_DB is required"; exit 1; }
+    @mkdir -p "$(dirname "$AVA_DB")"
+    @migrate -database "sqlite://$AVA_DB" -path backend/internal/schema/migrations {{ direction }} {{ if n == "all" { "-all" } else { n } }}
 
 ## --- validate ---
 

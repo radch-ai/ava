@@ -26,11 +26,13 @@ type config struct {
 }
 
 // loadConfig binds env vars onto the config —
-// all env reading lives here.
+// all env reading lives here. AVA_DB names the SQLite file and is required;
+// the ":memory:" sentinel runs the database in-process (dev only — the
+// justfile run recipe defaults to it).
 func loadConfig(logger zerolog.Logger) config {
 	return config{
 		Addr:   utils.GetEnv("AVA_ADDR", ":8080"),
-		DBPath: utils.GetEnv("AVA_DB", "data/ava.db"),
+		DBPath: utils.GetEnvRequired("AVA_DB", logger),
 	}
 }
 

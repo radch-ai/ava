@@ -15,7 +15,10 @@ import (
 )
 
 // Open opens (creating if needed) the SQLite database at dbPath and applies
-// pending migrations.
+// pending migrations. The ":memory:" sentinel opens an in-process database
+// instead — WAL and synchronous are no-ops there, and it depends on the
+// single pooled connection below: every extra connection would get its own
+// private, empty memory database.
 func Open(dbPath string) (*sql.DB, error) {
 	if dir := filepath.Dir(dbPath); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {

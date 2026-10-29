@@ -24,3 +24,21 @@ func TestOpenCreatesFileAndVersionTable(t *testing.T) {
 		t.Fatalf("version table = %q, want schema_migrations", table)
 	}
 }
+
+func TestOpenMemory(t *testing.T) {
+	sqlDB, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open memory: %v", err)
+	}
+	defer func() { _ = sqlDB.Close() }()
+
+	var table string
+	if err := sqlDB.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'`,
+	).Scan(&table); err != nil {
+		t.Fatalf("version table in memory db: %v", err)
+	}
+	if table != "schema_migrations" {
+		t.Fatalf("version table = %q, want schema_migrations", table)
+	}
+}

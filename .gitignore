@@ -19,6 +19,3 @@ Thumbs.db
 .env.*
 !.env.example
 !.env.test
-
-# Runtime data (SQLite files live here via AVA_DB)
-data/
