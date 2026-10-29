@@ -26,7 +26,7 @@ func TestWSHelloThenClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
 	_, data, err := conn.Read(ctx)
 	if err != nil {
@@ -38,7 +38,7 @@ func TestWSHelloThenClose(t *testing.T) {
 
 	readCtx, readCancel := context.WithTimeout(ctx, 2*time.Second)
 	defer readCancel()
-	conn.Ping(readCtx) // keep the peer engaged before expecting the close
+	_ = conn.Ping(readCtx) // keep the peer engaged before expecting the close
 	if _, _, err := conn.Read(readCtx); err == nil {
 		t.Error("expected connection closed after hello, got another frame")
 	}
@@ -56,7 +56,7 @@ func TestWSRejectsPlainGET(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUpgradeRequired {
 		t.Errorf("plain GET /ws = %d, want %d", resp.StatusCode, http.StatusUpgradeRequired)
 	}

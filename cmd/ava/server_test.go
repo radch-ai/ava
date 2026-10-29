@@ -39,7 +39,7 @@ func TestServerChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := ln.Addr().String()
-	ln.Close()
+	_ = ln.Close()
 
 	// Same mounts main builds: backend under /api, gateway at /ws. The
 	// backend mount is wrapped to stamp a header, proving requests are
@@ -62,7 +62,7 @@ func TestServerChain(t *testing.T) {
 		for i := 0; i < 100; i++ {
 			resp, err := http.Get("http://" + addr + path)
 			if err == nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				return
 			}
 			time.Sleep(20 * time.Millisecond)
@@ -76,7 +76,7 @@ func TestServerChain(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s %s: %v", method, path, err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode != wantStatus {
 			t.Errorf("%s %s status = %d, want %d", method, path, resp.StatusCode, wantStatus)
 		}
@@ -89,7 +89,7 @@ func TestServerChain(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s %s: %v", method, path, err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if got := resp.Header.Get(name); got != want {
 			t.Errorf("%s %s header %s = %q, want %q", method, path, name, got, want)
 		}

@@ -47,7 +47,7 @@ func TestServe_Healthz(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := ln.Addr().String()
-	ln.Close()
+	_ = ln.Close()
 
 	done := make(chan error, 1)
 	go func() {
@@ -66,7 +66,7 @@ func TestServe_Healthz(t *testing.T) {
 	if err != nil {
 		t.Fatalf("healthz never came up: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("healthz status = %d, want 200", resp.StatusCode)
 	}
@@ -77,7 +77,7 @@ func TestServe_Healthz(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	postResp.Body.Close()
+	_ = postResp.Body.Close()
 	if postResp.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("POST /healthz status = %d, want 405", postResp.StatusCode)
 	}

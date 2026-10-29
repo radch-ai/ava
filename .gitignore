@@ -7,6 +7,9 @@ coverage.*
 *.coverprofile
 profile.cov
 
+# sqlc-generated query layer (regenerate via `just sqlc-generate`)
+backend/internal/db/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -16,3 +19,6 @@ Thumbs.db
 .env.*
 !.env.example
 !.env.test
+
+# Runtime data (SQLite files live here via AVA_DB)
+data/

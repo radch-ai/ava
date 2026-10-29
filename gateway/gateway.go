@@ -30,7 +30,7 @@ func handleWS(logger zerolog.Logger) http.HandlerFunc {
 			logger.Warn().Err(err).Msg("ws accept failed")
 			return
 		}
-		defer conn.Close(websocket.StatusNormalClosure, "")
+		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 		_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"type":"hello"}`))
 	}
 }
