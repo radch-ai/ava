@@ -89,6 +89,33 @@ test.describe('navigation', () => {
 			await expect(page).toHaveURL(/\/agent\/research$/)
 			await expect(page.getByPlaceholder(/enter agent name/i)).toHaveCount(0)
 		})
+
+		test('should warn on a real outside mouse click (backdrop) with a dirty edit sheet and discard closes', async ({
+			page
+		}) => {
+			await page.goto('/agent/research')
+			await page
+				.getByRole('button', { name: 'Open agent configuration' })
+				.click()
+			const sheet = page.getByRole('dialog', {
+				name: /agent configuration/i
+			})
+			await expect(sheet).toBeVisible({ timeout: 10000 })
+			const name = sheet.getByPlaceholder(/enter agent name/i)
+			await name.fill('')
+			await name.pressSequentially('backdrop-test')
+
+			// Real pointer on the backdrop — the panel is right-anchored
+			// max-w-2xl, so the far-left column is outside it.
+			await page.mouse.click(20, 200)
+
+			await expect(page.getByRole('alertdialog')).toBeVisible()
+			await page.getByRole('button', { name: 'Discard' }).click()
+
+			// Discard closes the sheet without navigating anywhere.
+			await expect(page.getByPlaceholder(/enter agent name/i)).toHaveCount(0)
+			await expect(page).toHaveURL(/\/agent\/research$/)
+		})
 	})
 
 	test.describe('unsaved changes protection — native beforeunload', () => {
