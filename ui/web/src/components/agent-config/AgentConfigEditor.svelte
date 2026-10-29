@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { SvelteSet } from 'svelte/reactivity'
+	import type { AgentIconName } from '#components/agent-icons/index.ts'
 	import { Button } from '#components/ui/button'
+	import { Input } from '#components/ui/input'
 	import UnsavedChangesDialog from '#components/unsaved-changes/UnsavedChangesDialog.svelte'
 	import {
 		AGENT_FIELDS,
@@ -13,10 +15,10 @@
 		type SuperagentConfiguration
 	} from '#lib/types/agent'
 	import type { Tool } from '#lib/types/tool'
+	import AgentIconPicker from './AgentIconPicker.svelte'
 	import ConfigTextField from './ConfigTextField.svelte'
 	import CronJobEditor from './CronJobEditor.svelte'
 	import HeartbeatEditor from './HeartbeatEditor.svelte'
-	import NameIconEditor from './NameIconEditor.svelte'
 	import SoulEditor from './SoulEditor.svelte'
 	import ToolsEditor from './ToolsEditor.svelte'
 
@@ -31,7 +33,8 @@
 	}
 
 	/**
-	 * Compare name field (ignoring icon)
+	 * Compare the name text only; icon is its own field, compared in the
+	 * generic field loop below
 	 */
 	function nameEquals(a: AgentConfiguration, b: AgentConfiguration): boolean {
 		return a.name === b.name
@@ -76,6 +79,10 @@
 		isSuperagent ? AGENT_FIELDS.superagent : AGENT_FIELDS.agent
 	)
 
+	// Nav shows one entry per panel; icon is tracked as a field but its picker
+	// lives in the Name panel, so it gets no sidebar entry of its own.
+	const navFields = $derived(fields.filter((field) => field !== 'icon'))
+
 	// Local working copy of configuration
 	let localConfiguration = $state<AgentConfiguration>()
 
@@ -90,7 +97,7 @@
 	const hasLocalChanges = $derived.by(() => {
 		if (!localConfiguration || !configuration) return false
 
-		// Compare name (without icon - icon changes don't count)
+		// Compare name text; icon is compared as its own field in the loop below
 		if (!nameEquals(localConfiguration, configuration)) return true
 
 		// Compare soul
@@ -120,7 +127,7 @@
 
 		for (const field of fields) {
 			if (field === 'name') {
-				// Compare name without icon
+				// Compare name text only; icon tracked as its own field
 				if (!nameEquals(localConfiguration, configuration)) {
 					dirty.add(field)
 				}
@@ -181,7 +188,7 @@
 	<div class="flex flex-1 overflow-hidden border-t">
 		<!-- Left panel: Field list -->
 		<div class="w-48 border-r py-2">
-			{#each fields as field (field)}
+			{#each navFields as field (field)}
 				<button
 					type="button"
 					class="w-full px-4 py-2.5 text-left text-sm transition-colors {selectedField ===
@@ -192,7 +199,8 @@
 				>
 					<span class="flex items-center gap-1">
 						{FIELD_CONFIGS[field]?.label ?? field}
-						{#if dirtyFields.has(field)}
+						{#if dirtyFields.has(field) ||
+							(field === 'name' && dirtyFields.has('icon'))}
 							<span class="text-primary">*</span>
 						{/if}
 					</span>
@@ -204,7 +212,30 @@
 		<div class="bg-background flex-1 overflow-y-auto p-4">
 			{#if localConfiguration}
 				{#if selectedField === 'name'}
-					<NameIconEditor bind:config={localConfiguration} />
+					{@const config = localConfiguration}
+					<div class="flex flex-col gap-4">
+						<div>
+							<label for="agent-name" class="mb-2 block text-sm font-medium">
+								{FIELD_CONFIGS.name.label}
+							</label>
+							<Input
+								id="agent-name"
+								value={config.name}
+								oninput={(e) => (config.name = e.currentTarget.value)}
+								placeholder={FIELD_CONFIGS.name.placeholder}
+							/>
+						</div>
+						<div>
+							<label for="agent-icon" class="mb-2 block text-sm font-medium">
+								{FIELD_CONFIGS.icon.label}
+							</label>
+							<AgentIconPicker
+								id="agent-icon"
+								value={(config.icon ?? 'bot') as AgentIconName}
+								onselect={(icon) => (config.icon = icon)}
+							/>
+						</div>
+					</div>
 				{:else if selectedField === 'soul'}
 					<SoulEditor bind:soul={localConfiguration.soul} />
 				{:else if selectedField === 'heartbeat'}

@@ -211,6 +211,7 @@ export const FIELD_CONFIGS: Record<string, FieldConfig> = {
 export const AGENT_FIELDS = {
 	superagent: [
 		'name',
+		'icon',
 		'soul',
 		'userContext',
 		'operatingInstructions',
@@ -221,6 +222,7 @@ export const AGENT_FIELDS = {
 	] as const,
 	agent: [
 		'name',
+		'icon',
 		'soul',
 		'operatingInstructions',
 		'toolsContext',

@@ -258,6 +258,31 @@ describe('ConfigSheet', () => {
 			)
 		})
 
+		it('includes icon in the patch when only the icon changed', async () => {
+			const onSaved = vi.fn()
+			const config = createDefaultSuperagentConfig()
+			mockUpdateAgentConfiguration.mockResolvedValue(config)
+
+			render(
+				ConfigSheet,
+				createProps({ isSheetOpened: true, configuration: config, onSaved })
+			)
+
+			// The icon picker sits in the default Name panel
+			await page
+				.getByRole('button', { name: 'Icon: bot. Change icon.' })
+				.click()
+			await page.getByRole('button', { name: 'sparkles' }).click()
+
+			await page.getByRole('button', { name: /save/i }).click()
+
+			// The patch must carry the icon, not silently drop it
+			expect(mockUpdateAgentConfiguration).toHaveBeenCalledWith(
+				'_superagent',
+				expect.objectContaining({ icon: 'sparkles' })
+			)
+		})
+
 		it('calls onSaved callback after successful save', async () => {
 			const onSaved = vi.fn()
 			const config = createDefaultSuperagentConfig()
@@ -539,7 +564,7 @@ describe('ConfigSheet', () => {
 			await page.getByRole('button', { name: /user context/i }).click()
 			await expect.element(page.getByRole('textbox')).toBeVisible()
 
-			// Name button shows the NameIconEditor which has name field
+			// Name button shows the inline name field
 			await page.getByRole('button', { name: /^name$/i }).click()
 			await expect.element(page.getByLabelText(/name/i)).toBeVisible()
 

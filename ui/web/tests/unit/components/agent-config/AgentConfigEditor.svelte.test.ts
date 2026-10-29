@@ -123,10 +123,12 @@ describe('AgentConfigEditor', () => {
 		it('shows all superagent-specific fields', async () => {
 			render(AgentConfigEditor, createProps())
 
-			// Name field button (includes icon picker in editor)
+			// Name field button; icon has no nav entry — picker lives in the
+			// Name panel
 			await expect
 				.element(page.getByRole('button', { name: /^name$/i }))
 				.toBeVisible()
+			expect(page.getByRole('button', { name: /^icon$/i }).query()).toBeNull()
 			await expect
 				.element(page.getByRole('button', { name: /^soul$/i }))
 				.toBeVisible()
@@ -153,8 +155,11 @@ describe('AgentConfigEditor', () => {
 		it('selects Name field by default', async () => {
 			render(AgentConfigEditor, createProps())
 
-			// Name editor should be visible (shows name input and icon picker)
+			// Name editor and icon picker share the Name panel
 			await expect.element(page.getByLabelText(/name/i)).toBeVisible()
+			await expect
+				.element(page.getByRole('button', { name: /change icon/i }))
+				.toBeVisible()
 		})
 
 		it('shows Soul field with only personality and identity', async () => {
@@ -181,10 +186,11 @@ describe('AgentConfigEditor', () => {
 				})
 			)
 
-			// Name button (includes icon picker in the editor)
+			// Name button
 			await expect
 				.element(page.getByRole('button', { name: /^name$/i }))
 				.toBeVisible()
+			expect(page.getByRole('button', { name: /^icon$/i }).query()).toBeNull()
 			// Soul button
 			await expect
 				.element(page.getByRole('button', { name: /^soul$/i }))
@@ -209,6 +215,32 @@ describe('AgentConfigEditor', () => {
 			expect(
 				page.getByRole('button', { name: /cron jobs/i }).query()
 			).toBeNull()
+		})
+	})
+
+	describe('Icon picker', () => {
+		it('shows the picker inside the Name panel', async () => {
+			render(AgentConfigEditor, createProps())
+
+			await expect
+				.element(page.getByRole('button', { name: 'Icon: bot. Change icon.' }))
+				.toBeVisible()
+		})
+
+		it('saves the changed icon', async () => {
+			const onSave = vi.fn()
+			render(AgentConfigEditor, createProps({ onSave }))
+
+			await page
+				.getByRole('button', { name: 'Icon: bot. Change icon.' })
+				.click()
+			await page.getByRole('button', { name: 'sparkles' }).click()
+
+			await page.getByRole('button', { name: /save/i }).click()
+
+			expect(onSave).toHaveBeenCalledWith(
+				expect.objectContaining({ icon: 'sparkles' })
+			)
 		})
 	})
 
@@ -340,6 +372,23 @@ describe('AgentConfigEditor', () => {
 				name: /user context\s*\*/i
 			})
 			await expect.element(userContextButton).toBeVisible()
+		})
+
+		it('shows asterisk on Name — and only Name — when just the icon changes', async () => {
+			render(AgentConfigEditor, createProps())
+
+			await page
+				.getByRole('button', { name: 'Icon: bot. Change icon.' })
+				.click()
+			await page.getByRole('button', { name: 'sparkles' }).click()
+
+			const nameButton = page.getByRole('button', { name: /^name\s*\*/i })
+			await expect.element(nameButton).toBeVisible()
+
+			// An icon-only edit must not dirty any other field
+			expect(
+				page.getByRole('button', { name: /^soul\s*\*/i }).query()
+			).toBeNull()
 		})
 	})
 
