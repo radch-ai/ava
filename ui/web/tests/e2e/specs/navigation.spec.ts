@@ -58,6 +58,56 @@ test.describe('navigation', () => {
 		})
 	})
 
+	test.describe('unsaved changes protection — native beforeunload', () => {
+		// The guard above covers SPA navigation; these cover the
+		// browser-level guard on /agent/new (reload/close). `fill()` does
+		// not grant the user activation Chromium requires to fire
+		// beforeunload, so the name is typed with real key events.
+		//
+		// The dialog must always be answered explicitly: without a
+		// `dialog` listener Playwright bypasses beforeunload and the
+		// navigation proceeds silently — a real browser would show the
+		// modal and wait. A cancelled reload's promise never settles in
+		// the driver, so it is fired unawaited and the outcome is
+		// asserted from document state.
+		test('should reload when the user leaves', async ({ page }) => {
+			await page.goto('/agent/new')
+			const name = page.getByLabel(/name/i)
+			await name.click()
+			await name.pressSequentially('accept-reload-test')
+
+			// Record the dialog: without this, the test would pass even
+			// if the guard were removed (reload proceeds, form resets).
+			const dialogs: string[] = []
+			await page.once('dialog', (dialog) => {
+				dialogs.push(dialog.type())
+				dialog.accept()
+			})
+			await page.reload()
+
+			// Leaving tore the document down: fresh form, name cleared
+			expect(dialogs).toEqual(['beforeunload'])
+			await expect(name).toHaveValue('')
+			expect(await page.evaluate(() => location.pathname)).toBe('/agent/new')
+		})
+
+		test('should stay on the page when the user cancels', async ({ page }) => {
+			await page.goto('/agent/new')
+			const name = page.getByLabel(/name/i)
+			await name.click()
+			await name.pressSequentially('dismiss-reload-test')
+
+			await page.once('dialog', (dialog) => dialog.dismiss())
+			// A cancelled reload's promise never settles in the driver —
+			// fire it unawaited; the assertions prove the document survived.
+			void page.reload().catch(() => {})
+
+			// Cancelling kept the document alive: typed name intact
+			await expect(name).toHaveValue('dismiss-reload-test')
+			expect(await page.evaluate(() => location.pathname)).toBe('/agent/new')
+		})
+	})
+
 	test.describe('sidebar navigation', () => {
 		test('should toggle sidebar on mobile', async ({ page }) => {
 			// Set mobile viewport
