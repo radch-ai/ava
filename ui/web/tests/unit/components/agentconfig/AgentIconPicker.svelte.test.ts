@@ -6,7 +6,7 @@ import AgentIconPicker from '#components/agentconfig/AgentIconPicker.svelte'
 
 describe('AgentIconPicker', () => {
 	async function openDropdown() {
-		await page.getByRole('button', { name: 'Select icon' }).click()
+		await page.getByRole('button', { name: 'Icon: bot. Change icon.' }).click()
 	}
 
 	it('renders icons grouped by category', async () => {
@@ -26,7 +26,7 @@ describe('AgentIconPicker', () => {
 			.element(page.getByRole('button', { name: 'message-square' }))
 			.toBeVisible()
 		await expect
-			.element(page.getByRole('button', { name: 'bot' }))
+			.element(page.getByRole('button', { name: 'bot', exact: true }))
 			.toBeVisible()
 	})
 
@@ -38,7 +38,7 @@ describe('AgentIconPicker', () => {
 
 		await openDropdown()
 
-		const selectedIcon = page.getByRole('button', { name: 'bot' })
+		const selectedIcon = page.getByRole('button', { name: 'bot', exact: true })
 		// Selected icon should have ring-2 class
 		await expect.element(selectedIcon).toHaveClass('ring-2')
 	})
@@ -65,8 +65,10 @@ describe('AgentIconPicker', () => {
 			onselect: () => {}
 		})
 
-		// The trigger button should exist
-		const trigger = page.getByRole('button', { name: 'Select icon' })
+		// The trigger announces the selected icon in its accessible name
+		const trigger = page.getByRole('button', {
+			name: 'Icon: brain. Change icon.'
+		})
 		await expect.element(trigger).toBeVisible()
 	})
 

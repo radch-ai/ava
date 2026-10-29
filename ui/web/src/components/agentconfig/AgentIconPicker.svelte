@@ -51,7 +51,7 @@
 		{id}
 		variant="outline"
 		size="icon"
-		aria-label="Select icon"
+		aria-label={`Icon: ${value}. Change icon.`}
 		onclick={toggle}
 	>
 		<AgentIcon name={value} size={20} />

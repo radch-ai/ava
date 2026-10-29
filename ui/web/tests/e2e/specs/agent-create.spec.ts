@@ -61,8 +61,10 @@ test.describe('agent creation', () => {
 	})
 
 	test('should show random icon selected by default', async ({ page }) => {
-		// Icon picker should show a selected icon
-		const iconButton = page.getByRole('button', { name: 'Select icon' })
+		// Trigger announces the (randomly chosen) default icon in its name
+		const iconButton = page.getByRole('button', {
+			name: /^Icon: [\w-]+\. Change icon\.$/
+		})
 		await expect(iconButton).toBeVisible()
 		// Icon should have some icon element inside
 		await expect(iconButton.locator('svg')).toBeVisible()
