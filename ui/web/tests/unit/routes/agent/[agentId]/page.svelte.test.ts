@@ -363,6 +363,9 @@ describe('AgentPage (non-superagent branch)', () => {
 			})
 
 			const loadMoreButton = page.getByRole('button', { name: /load more/i })
+			// Settle the initial render before clicking, like the sibling test —
+			// under full-suite load an immediate click can beat the mount flush.
+			await expect.element(loadMoreButton).toBeVisible()
 			await loadMoreButton.click()
 
 			await expect.element(page.getByText('Network error')).toBeVisible()
