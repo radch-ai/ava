@@ -1,20 +1,17 @@
 <script lang="ts">
 	import { Bot } from '@lucide/svelte'
 	import { AgentConfigEditor } from '#components/agentconfig'
-	import UnsavedChangesDialog from '#components/agentconfig/UnsavedChangesDialog.svelte'
+	import {
+		UnsavedChangesGuards,
+		type UnsavedChangesGuardsExports
+	} from '#components/unsaved-changes'
 	import { createAgent } from '#lib/services/agent'
 	import {
 		type AgentConfiguration,
 		createDefaultAgentConfiguration
 	} from '#lib/types/agent'
-	import {
-		type BeforeNavigate,
-		beforeNavigate,
-		goto,
-		invalidate
-	} from '$app/navigation'
+	import { goto, invalidate } from '$app/navigation'
 	import { resolve } from '$app/paths'
-	import type { PathnameWithSearchOrHash } from '$app/types'
 	import { isValidAgentName } from './agent-name'
 
 	let configuration = $state<AgentConfiguration>(
@@ -22,66 +19,17 @@
 	)
 	let hasChanges = $state(false)
 
-	// ============================================================
-	// UNSAVED CHANGES NAVIGATION PROTECTION
-	// ============================================================
-	// This page implements three levels of navigation protection:
-	//
-	// 1. CANCEL BUTTON: AgentConfigEditor handles this internally,
-	//    showing UnsavedChangesDialog when there are changes.
-	//
-	// 2. INTERNAL NAVIGATION (clicking links, back/forward):
-	//    We intercept with beforeNavigate and show our dialog.
-	//
-	// 3. BROWSER REFRESH/CLOSE: Uses browser's native dialog via
-	//    beforeunload event (not our custom dialog).
-
-	// Flag to bypass protection when navigation is intentional
-	let isNavigating = $state(false)
-
-	// State for navigation confirmation dialog
-	let showNavDialog = $state(false)
-	let pendingNavigation: BeforeNavigate | null = $state(null)
-
-	// Browser-level protection: Shows native browser dialog on refresh/close
-	function handleBeforeUnload(e: BeforeUnloadEvent) {
-		if (hasChanges && !isNavigating) {
-			e.preventDefault()
-		}
-	}
-
-	// SvelteKit-level protection: Intercepts internal app navigation
-	// 'leave' type = browser refresh/close, handled by beforeunload above
-	beforeNavigate((navigation) => {
-		if (hasChanges && !isNavigating && navigation.type !== 'leave') {
-			navigation.cancel()
-			pendingNavigation = navigation
-			showNavDialog = true
-		}
-	})
-
-	function handleNavKeepEditing() {
-		showNavDialog = false
-		pendingNavigation = null
-	}
-
-	function handleNavDiscard() {
-		showNavDialog = false
-		if (pendingNavigation?.to?.url) {
-			isNavigating = true
-			const url = pendingNavigation.to.url
-			goto(resolve((url.pathname + url.search) as PathnameWithSearchOrHash))
-		}
-		pendingNavigation = null
-	}
+	// Unsaved-changes protection — the editor confirms Cancel; navigation
+	// and reload are guarded below (full level map in UnsavedChangesGuards).
+	// Programmatic leaves (cancel, save-and-goto) run through bypassNavigation.
+	let guard = $state<UnsavedChangesGuardsExports>()
 
 	// ============================================================
 	// PAGE ACTIONS
 	// ============================================================
 
 	function handleCancel() {
-		isNavigating = true
-		history.back()
+		void guard?.bypassNavigation(() => history.back())
 	}
 
 	let createError = $state<string | null>(null)
@@ -105,9 +53,8 @@
 			// Awaited so the target page's parent data already includes the
 			// new agent when its load looks it up.
 			await invalidate('app:agents')
-			isNavigating = true
-			await goto(
-				resolve('/(app)/agent/[agentId]', { agentId: createdAgent.id })
+			await guard?.bypassNavigation(() =>
+				goto(resolve('/(app)/agent/[agentId]', { agentId: createdAgent.id }))
 			)
 		} catch (error) {
 			createError =
@@ -115,8 +62,6 @@
 		}
 	}
 </script>
-
-<svelte:window on:beforeunload={handleBeforeUnload} />
 
 <div class="mx-auto flex h-dvh min-h-[28rem] max-w-3xl flex-col px-4 py-8">
 	<header class="mb-6 flex items-center gap-3">
@@ -147,9 +92,4 @@
 	</div>
 </div>
 
-<!-- Navigation confirmation dialog (for internal app navigation) -->
-<UnsavedChangesDialog
-	bind:open={showNavDialog}
-	onDiscard={handleNavDiscard}
-	onKeepEditing={handleNavKeepEditing}
-/>
+<UnsavedChangesGuards bind:this={guard} {hasChanges} />

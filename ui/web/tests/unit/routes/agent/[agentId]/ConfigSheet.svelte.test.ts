@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import { AgentConfigSheet } from '#components/agentconfig'
 import type {
 	AgentConfiguration,
 	SuperagentConfiguration
 } from '#lib/types/agent'
 import type { Tool } from '#lib/types/tool'
+import ConfigSheet from '#routes/agent/[agentId]/ConfigSheet.svelte'
 
 // Helper to create default superagent configuration
 function createDefaultSuperagentConfig(): SuperagentConfiguration {
@@ -77,9 +77,18 @@ vi.mock('#lib/services/agent', () => ({
 
 import { updateAgentConfiguration } from '#lib/services/agent'
 
+// Mock SvelteKit navigation so the guard's interceptor can be captured
+vi.mock('$app/navigation', () => ({
+	goto: vi.fn(),
+	invalidate: vi.fn(),
+	beforeNavigate: vi.fn()
+}))
+
+import { type BeforeNavigate, beforeNavigate, goto } from '$app/navigation'
+
 const mockUpdateAgentConfiguration = vi.mocked(updateAgentConfiguration)
 
-describe('AgentConfigSheet', () => {
+describe('ConfigSheet', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 	})
@@ -90,14 +99,14 @@ describe('AgentConfigSheet', () => {
 
 	describe('Sheet open/close behavior', () => {
 		it('does not render content when closed', async () => {
-			render(AgentConfigSheet, createProps({ isSheetOpened: false }))
+			render(ConfigSheet, createProps({ isSheetOpened: false }))
 
 			// Should not show sheet content
 			expect(page.getByRole('button', { name: /save/i }).query()).toBeNull()
 		})
 
 		it('renders content when opened', async () => {
-			render(AgentConfigSheet, createProps({ isSheetOpened: true }))
+			render(ConfigSheet, createProps({ isSheetOpened: true }))
 
 			await expect
 				.element(page.getByRole('button', { name: /save/i }))
@@ -109,7 +118,7 @@ describe('AgentConfigSheet', () => {
 
 		it('calls closeSheet when Cancel is clicked with no changes', async () => {
 			const closeSheet = vi.fn()
-			render(AgentConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
+			render(ConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
 
 			await page.getByRole('button', { name: /cancel/i }).click()
 
@@ -120,7 +129,7 @@ describe('AgentConfigSheet', () => {
 	describe('Cancel behavior', () => {
 		it('closes immediately when Cancel clicked with no changes', async () => {
 			const closeSheet = vi.fn()
-			render(AgentConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
+			render(ConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
 
 			await page.getByRole('button', { name: /cancel/i }).click()
 
@@ -129,7 +138,7 @@ describe('AgentConfigSheet', () => {
 
 		it('shows confirmation dialog when Cancel clicked with unsaved changes', async () => {
 			const closeSheet = vi.fn()
-			render(AgentConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
+			render(ConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
 
 			// Make a change
 			const nameInput = page.getByLabelText(/name/i)
@@ -147,7 +156,7 @@ describe('AgentConfigSheet', () => {
 
 		it('closes sheet when Discard is clicked in confirmation dialog', async () => {
 			const closeSheet = vi.fn()
-			render(AgentConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
+			render(ConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
 
 			// Make a change
 			const nameInput = page.getByLabelText(/name/i)
@@ -165,7 +174,7 @@ describe('AgentConfigSheet', () => {
 
 		it('keeps editing when Keep Editing is clicked in confirmation dialog', async () => {
 			const closeSheet = vi.fn()
-			render(AgentConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
+			render(ConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
 
 			// Make a change
 			const nameInput = page.getByLabelText(/name/i)
@@ -192,7 +201,7 @@ describe('AgentConfigSheet', () => {
 			})
 
 			render(
-				AgentConfigSheet,
+				ConfigSheet,
 				createProps({ isSheetOpened: true, configuration: config, onSaved })
 			)
 
@@ -218,7 +227,7 @@ describe('AgentConfigSheet', () => {
 			mockUpdateAgentConfiguration.mockResolvedValue(savedConfig)
 
 			render(
-				AgentConfigSheet,
+				ConfigSheet,
 				createProps({ isSheetOpened: true, configuration: config, onSaved })
 			)
 
@@ -245,7 +254,7 @@ describe('AgentConfigSheet', () => {
 				}
 			}
 
-			render(AgentConfigSheet, props)
+			render(ConfigSheet, props)
 
 			const nameInput = page.getByLabelText(/name/i)
 			await nameInput.fill('Updated')
@@ -278,7 +287,7 @@ describe('AgentConfigSheet', () => {
 	describe('Non-superagent agent configuration', () => {
 		it('shows fields specific to non-superagent agents', async () => {
 			render(
-				AgentConfigSheet,
+				ConfigSheet,
 				createProps({
 					isSheetOpened: true,
 					configuration: createDefaultAgentConfig(),
@@ -305,7 +314,7 @@ describe('AgentConfigSheet', () => {
 
 	describe('Layout stability', () => {
 		it('maintains consistent layout when switching fields', async () => {
-			render(AgentConfigSheet, createProps({ isSheetOpened: true }))
+			render(ConfigSheet, createProps({ isSheetOpened: true }))
 
 			// Get initial button
 			const saveButton = page.getByRole('button', { name: /save/i })
@@ -332,7 +341,7 @@ describe('AgentConfigSheet', () => {
 		})
 
 		it('clicking Soul button shows Soul editor', async () => {
-			render(AgentConfigSheet, createProps({ isSheetOpened: true }))
+			render(ConfigSheet, createProps({ isSheetOpened: true }))
 
 			await page.getByRole('button', { name: /^soul$/i }).click()
 
@@ -341,7 +350,7 @@ describe('AgentConfigSheet', () => {
 		})
 
 		it('clicking User Context button shows text field', async () => {
-			render(AgentConfigSheet, createProps({ isSheetOpened: true }))
+			render(ConfigSheet, createProps({ isSheetOpened: true }))
 
 			await page.getByRole('button', { name: /user context/i }).click()
 
@@ -350,7 +359,7 @@ describe('AgentConfigSheet', () => {
 		})
 
 		it('clicking Operating Instructions button shows text field', async () => {
-			render(AgentConfigSheet, createProps({ isSheetOpened: true }))
+			render(ConfigSheet, createProps({ isSheetOpened: true }))
 
 			await page
 				.getByRole('button', { name: /operating instructions/i })
@@ -360,7 +369,7 @@ describe('AgentConfigSheet', () => {
 		})
 
 		it('clicking Tools Context button shows text field', async () => {
-			render(AgentConfigSheet, createProps({ isSheetOpened: true }))
+			render(ConfigSheet, createProps({ isSheetOpened: true }))
 
 			await page.getByRole('button', { name: /tools context/i }).click()
 
@@ -368,7 +377,7 @@ describe('AgentConfigSheet', () => {
 		})
 
 		it('clicking Cron Jobs button shows cron editor', async () => {
-			render(AgentConfigSheet, createProps({ isSheetOpened: true }))
+			render(ConfigSheet, createProps({ isSheetOpened: true }))
 
 			await page.getByRole('button', { name: /cron jobs/i }).click()
 
@@ -379,7 +388,7 @@ describe('AgentConfigSheet', () => {
 		})
 
 		it('clicking Heartbeat button shows heartbeat editor', async () => {
-			render(AgentConfigSheet, createProps({ isSheetOpened: true }))
+			render(ConfigSheet, createProps({ isSheetOpened: true }))
 
 			await page.getByRole('button', { name: /heartbeat/i }).click()
 
@@ -388,7 +397,7 @@ describe('AgentConfigSheet', () => {
 		})
 
 		it('clicking Enabled Tools button shows tools editor', async () => {
-			render(AgentConfigSheet, createProps({ isSheetOpened: true }))
+			render(ConfigSheet, createProps({ isSheetOpened: true }))
 
 			await page.getByRole('button', { name: /enabled tools/i }).click()
 
@@ -405,7 +414,7 @@ describe('AgentConfigSheet', () => {
 				createDefaultSuperagentConfig()
 			)
 			const onSaved = vi.fn()
-			render(AgentConfigSheet, createProps({ isSheetOpened: true, onSaved }))
+			render(ConfigSheet, createProps({ isSheetOpened: true, onSaved }))
 
 			// Make a change to trigger save
 			await page.getByLabelText(/name/i).fill('Updated Name')
@@ -431,7 +440,7 @@ describe('AgentConfigSheet', () => {
 				}
 			}
 
-			render(AgentConfigSheet, props)
+			render(ConfigSheet, props)
 
 			// Make a change to trigger save
 			await page.getByLabelText(/name/i).fill('Updated Name')
@@ -448,7 +457,7 @@ describe('AgentConfigSheet', () => {
 		it('clicking Save when API fails does not call onSaved', async () => {
 			mockUpdateAgentConfiguration.mockRejectedValue(new Error('Network error'))
 			const onSaved = vi.fn()
-			render(AgentConfigSheet, createProps({ isSheetOpened: true, onSaved }))
+			render(ConfigSheet, createProps({ isSheetOpened: true, onSaved }))
 
 			// Make a change to trigger save
 			await page.getByLabelText(/name/i).fill('Updated Name')
@@ -473,7 +482,7 @@ describe('AgentConfigSheet', () => {
 				}
 			}
 
-			render(AgentConfigSheet, props)
+			render(ConfigSheet, props)
 
 			// Make a change to trigger save
 			await page.getByLabelText(/name/i).fill('Updated Name')
@@ -486,7 +495,7 @@ describe('AgentConfigSheet', () => {
 
 		it('field buttons still work when API is down', async () => {
 			mockUpdateAgentConfiguration.mockRejectedValue(new Error('Network error'))
-			render(AgentConfigSheet, createProps({ isSheetOpened: true }))
+			render(ConfigSheet, createProps({ isSheetOpened: true }))
 
 			// All field buttons should still be clickable
 			await page.getByRole('button', { name: /user context/i }).click()
@@ -508,7 +517,7 @@ describe('AgentConfigSheet', () => {
 				new Error('Network error')
 			)
 			const onSaved = vi.fn()
-			render(AgentConfigSheet, createProps({ isSheetOpened: true, onSaved }))
+			render(ConfigSheet, createProps({ isSheetOpened: true, onSaved }))
 
 			// Make a change
 			await page.getByLabelText(/name/i).fill('Updated Name')
@@ -538,7 +547,7 @@ describe('AgentConfigSheet', () => {
 
 		it('clicking Cancel closes sheet without calling API', async () => {
 			const closeSheet = vi.fn()
-			render(AgentConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
+			render(ConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
 
 			await page.getByRole('button', { name: /cancel/i }).click()
 
@@ -549,7 +558,7 @@ describe('AgentConfigSheet', () => {
 		it('Cancel works even when API is unreachable', async () => {
 			mockUpdateAgentConfiguration.mockRejectedValue(new Error('Network error'))
 			const closeSheet = vi.fn()
-			render(AgentConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
+			render(ConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
 
 			await page.getByRole('button', { name: /cancel/i }).click()
 
@@ -560,7 +569,7 @@ describe('AgentConfigSheet', () => {
 	describe('Escape key with unsaved changes', () => {
 		it('shows confirmation dialog when Escape pressed with unsaved changes', async () => {
 			const closeSheet = vi.fn()
-			render(AgentConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
+			render(ConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
 
 			await page.getByLabelText(/name/i).fill('Changed Name')
 
@@ -577,7 +586,7 @@ describe('AgentConfigSheet', () => {
 
 		it('closes sheet when Discard clicked after Escape key dialog', async () => {
 			const closeSheet = vi.fn()
-			render(AgentConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
+			render(ConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
 
 			await page.getByLabelText(/name/i).fill('Changed Name')
 
@@ -593,7 +602,7 @@ describe('AgentConfigSheet', () => {
 
 		it('keeps sheet open when Keep Editing clicked after Escape key dialog', async () => {
 			const closeSheet = vi.fn()
-			render(AgentConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
+			render(ConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
 
 			await page.getByLabelText(/name/i).fill('Changed Name')
 
@@ -610,7 +619,7 @@ describe('AgentConfigSheet', () => {
 
 	describe('Browser refresh/close protection', () => {
 		it('prevents beforeunload when there are unsaved changes', async () => {
-			render(AgentConfigSheet, createProps({ isSheetOpened: true }))
+			render(ConfigSheet, createProps({ isSheetOpened: true }))
 
 			await page.getByLabelText(/name/i).fill('Changed Name')
 
@@ -622,13 +631,78 @@ describe('AgentConfigSheet', () => {
 		})
 
 		it('does not prevent beforeunload when there are no changes', async () => {
-			render(AgentConfigSheet, createProps({ isSheetOpened: true }))
+			render(ConfigSheet, createProps({ isSheetOpened: true }))
 
 			const event = new Event('beforeunload', { cancelable: true })
 			const spy = vi.spyOn(event, 'preventDefault')
 			window.dispatchEvent(event)
 
 			expect(spy).not.toHaveBeenCalled()
+		})
+	})
+
+	describe('Shared guard wiring', () => {
+		function navCallback(): (nav: BeforeNavigate) => void {
+			const mock = vi.mocked(beforeNavigate)
+			expect(mock).toHaveBeenCalled()
+			return mock.mock.calls[mock.mock.calls.length - 1][0] as unknown as (
+				nav: BeforeNavigate
+			) => void
+		}
+
+		it('does not prevent beforeunload once the sheet is closed', async () => {
+			// Stale hasChanges (editor unmounted after a discard) must not
+			// block navigation once the sheet is closed.
+			const { rerender } = render(
+				ConfigSheet,
+				createProps({ isSheetOpened: true })
+			)
+			await page.getByLabelText(/name/i).fill('Changed Name')
+			await rerender(createProps({ isSheetOpened: false }))
+
+			const event = new Event('beforeunload', { cancelable: true })
+			const spy = vi.spyOn(event, 'preventDefault')
+			window.dispatchEvent(event)
+
+			expect(spy).not.toHaveBeenCalled()
+		})
+
+		it('cancels in-app navigation and shows the dialog when dirty', async () => {
+			render(ConfigSheet, createProps({ isSheetOpened: true }))
+			await page.getByLabelText(/name/i).fill('Changed Name')
+
+			const cancel = vi.fn()
+			const nav = {
+				type: 'link',
+				to: { url: new URL('http://localhost/agent/_superagent') },
+				cancel,
+				willUnload: false
+			} as unknown as BeforeNavigate
+			navCallback()(nav)
+
+			expect(cancel).toHaveBeenCalled()
+
+			await vi.waitFor(() => {
+				expect(document.querySelector('[role="alertdialog"]')).toBeTruthy()
+			})
+		})
+
+		it('discard on navigation closes the sheet and resumes it', async () => {
+			const closeSheet = vi.fn()
+			render(ConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
+			await page.getByLabelText(/name/i).fill('Changed Name')
+
+			const nav = {
+				type: 'link',
+				to: { url: new URL('http://localhost/agent/_superagent') },
+				cancel: vi.fn(),
+				willUnload: false
+			} as unknown as BeforeNavigate
+			navCallback()(nav)
+			await page.getByRole('button', { name: /discard/i }).click()
+
+			expect(closeSheet).toHaveBeenCalledTimes(1)
+			expect(vi.mocked(goto)).toHaveBeenCalledWith('/agent/_superagent')
 		})
 	})
 })

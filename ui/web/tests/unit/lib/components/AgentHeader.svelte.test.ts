@@ -42,7 +42,9 @@ vi.mock('#lib/services/agent', () => ({
 }))
 
 vi.mock('$app/navigation', () => ({
-	invalidate: vi.fn()
+	goto: vi.fn(),
+	invalidate: vi.fn(),
+	beforeNavigate: vi.fn()
 }))
 
 import { getAgentConfiguration } from '#lib/services/agent'

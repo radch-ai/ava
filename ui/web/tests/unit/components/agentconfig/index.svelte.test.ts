@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import { AgentConfigSheet } from '#components/agentconfig'
 import type {
 	AgentConfiguration,
 	SuperagentConfiguration
 } from '#lib/types/agent'
 import type { Tool } from '#lib/types/tool'
+import ConfigSheet from '#routes/agent/[agentId]/ConfigSheet.svelte'
 
 // Mock the agent config service
 vi.mock('#lib/services/agent', () => ({
@@ -61,7 +61,7 @@ function createDefaultProps(
 	}
 }
 
-describe('AgentConfigSheet', () => {
+describe('ConfigSheet', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 	})
@@ -72,7 +72,7 @@ describe('AgentConfigSheet', () => {
 
 	describe('Sheet visibility', () => {
 		it('is hidden when isSheetOpened prop is false', async () => {
-			render(AgentConfigSheet, createDefaultProps({ isSheetOpened: false }))
+			render(ConfigSheet, createDefaultProps({ isSheetOpened: false }))
 
 			// Sheet content should not be visible
 			const sheetContent = page.getByRole('dialog').query()
@@ -80,7 +80,7 @@ describe('AgentConfigSheet', () => {
 		})
 
 		it('is visible when isSheetOpened prop is true', async () => {
-			render(AgentConfigSheet, createDefaultProps({ isSheetOpened: true }))
+			render(ConfigSheet, createDefaultProps({ isSheetOpened: true }))
 
 			// Sheet should be visible
 			await expect.element(page.getByRole('dialog')).toBeVisible()
@@ -89,7 +89,7 @@ describe('AgentConfigSheet', () => {
 
 	describe('Two-panel layout', () => {
 		it('shows field list in left panel', async () => {
-			render(AgentConfigSheet, createDefaultProps({ isSheetOpened: true }))
+			render(ConfigSheet, createDefaultProps({ isSheetOpened: true }))
 
 			// Should show field names
 			await expect.element(page.getByText('Soul')).toBeVisible()
@@ -100,7 +100,7 @@ describe('AgentConfigSheet', () => {
 		})
 
 		it('shows content area in right panel', async () => {
-			render(AgentConfigSheet, createDefaultProps({ isSheetOpened: true }))
+			render(ConfigSheet, createDefaultProps({ isSheetOpened: true }))
 
 			// Soul field should be selected by default - shows Name input
 			await expect.element(page.getByLabelText(/name/i)).toBeVisible()
@@ -109,7 +109,7 @@ describe('AgentConfigSheet', () => {
 
 	describe('Field selection', () => {
 		it('highlights selected field', async () => {
-			render(AgentConfigSheet, createDefaultProps({ isSheetOpened: true }))
+			render(ConfigSheet, createDefaultProps({ isSheetOpened: true }))
 
 			// Click on Operating Instructions field
 			const instructionsField = page.getByText('Operating Instructions')
@@ -122,7 +122,7 @@ describe('AgentConfigSheet', () => {
 		})
 
 		it('switches content when different field is clicked', async () => {
-			render(AgentConfigSheet, createDefaultProps({ isSheetOpened: true }))
+			render(ConfigSheet, createDefaultProps({ isSheetOpened: true }))
 
 			// Click on User Context
 			const userContextField = page.getByText('User Context')
@@ -136,7 +136,7 @@ describe('AgentConfigSheet', () => {
 	describe('superagent-specific fields', () => {
 		it('shows cronJobs field for superagent', async () => {
 			render(
-				AgentConfigSheet,
+				ConfigSheet,
 				createDefaultProps({ isSheetOpened: true, agentId: '_superagent' })
 			)
 
@@ -145,7 +145,7 @@ describe('AgentConfigSheet', () => {
 
 		it('does not show model field for superagent', async () => {
 			render(
-				AgentConfigSheet,
+				ConfigSheet,
 				createDefaultProps({ isSheetOpened: true, agentId: '_superagent' })
 			)
 
@@ -157,7 +157,7 @@ describe('AgentConfigSheet', () => {
 	describe('Fields specific to non-superagent agents', () => {
 		it('does not show cronJobs field for non-superagent agents', async () => {
 			render(
-				AgentConfigSheet,
+				ConfigSheet,
 				createDefaultProps({ isSheetOpened: true, agentId: 'support' })
 			)
 
@@ -167,7 +167,7 @@ describe('AgentConfigSheet', () => {
 
 		it('does not show userContext field for non-superagent agents', async () => {
 			render(
-				AgentConfigSheet,
+				ConfigSheet,
 				createDefaultProps({ isSheetOpened: true, agentId: 'support' })
 			)
 
@@ -178,7 +178,7 @@ describe('AgentConfigSheet', () => {
 
 	describe('Modal behavior', () => {
 		it('keeps sheet open when Escape is pressed', async () => {
-			render(AgentConfigSheet, createDefaultProps({ isSheetOpened: true }))
+			render(ConfigSheet, createDefaultProps({ isSheetOpened: true }))
 
 			// Sheet should be visible initially
 			await expect.element(page.getByRole('dialog')).toBeVisible()
@@ -188,7 +188,7 @@ describe('AgentConfigSheet', () => {
 		})
 
 		it('keeps sheet open when overlay is clicked', async () => {
-			render(AgentConfigSheet, createDefaultProps({ isSheetOpened: true }))
+			render(ConfigSheet, createDefaultProps({ isSheetOpened: true }))
 
 			// Sheet should be visible initially
 			await expect.element(page.getByRole('dialog')).toBeVisible()
@@ -220,7 +220,7 @@ describe('AgentConfigSheet', () => {
 			let closed = false
 
 			render(
-				AgentConfigSheet,
+				ConfigSheet,
 				createDefaultProps({
 					isSheetOpened: true,
 					configuration: createDefaultSuperagentConfig(),
@@ -257,7 +257,7 @@ describe('AgentConfigSheet', () => {
 			}
 
 			render(
-				AgentConfigSheet,
+				ConfigSheet,
 				createDefaultProps({
 					isSheetOpened: true,
 					configuration: config,
@@ -289,7 +289,7 @@ describe('AgentConfigSheet', () => {
 			let closed = false
 
 			render(
-				AgentConfigSheet,
+				ConfigSheet,
 				createDefaultProps({
 					isSheetOpened: true,
 					configuration: createDefaultSuperagentConfig(),
@@ -320,7 +320,7 @@ describe('AgentConfigSheet', () => {
 			let closed = false
 
 			render(
-				AgentConfigSheet,
+				ConfigSheet,
 				createDefaultProps({
 					isSheetOpened: true,
 					configuration: createDefaultSuperagentConfig(),
@@ -371,7 +371,7 @@ describe('AgentConfigSheet', () => {
 			}
 
 			render(
-				AgentConfigSheet,
+				ConfigSheet,
 				createDefaultProps({
 					isSheetOpened: true,
 					configuration: config,
@@ -398,7 +398,7 @@ describe('AgentConfigSheet', () => {
 
 	describe('Save and Cancel', () => {
 		it('has Save button', async () => {
-			render(AgentConfigSheet, createDefaultProps({ isSheetOpened: true }))
+			render(ConfigSheet, createDefaultProps({ isSheetOpened: true }))
 
 			await expect
 				.element(page.getByRole('button', { name: /save/i }))
@@ -406,7 +406,7 @@ describe('AgentConfigSheet', () => {
 		})
 
 		it('has Cancel button', async () => {
-			render(AgentConfigSheet, createDefaultProps({ isSheetOpened: true }))
+			render(ConfigSheet, createDefaultProps({ isSheetOpened: true }))
 
 			await expect
 				.element(page.getByRole('button', { name: /cancel/i }))
@@ -421,7 +421,7 @@ describe('AgentConfigSheet', () => {
 			mockUpdateAgentConfiguration.mockResolvedValue(mockConfig)
 
 			render(
-				AgentConfigSheet,
+				ConfigSheet,
 				createDefaultProps({
 					isSheetOpened: true,
 					onSaved: (configuration: AgentConfiguration) => {
@@ -451,7 +451,7 @@ describe('AgentConfigSheet', () => {
 			let closed = false
 
 			render(
-				AgentConfigSheet,
+				ConfigSheet,
 				createDefaultProps({
 					isSheetOpened: true,
 					closeSheet: () => {

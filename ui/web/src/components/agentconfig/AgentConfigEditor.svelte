@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { SvelteSet } from 'svelte/reactivity'
 	import { Button } from '#components/ui/button'
-
+	import UnsavedChangesDialog from '#components/unsaved-changes/UnsavedChangesDialog.svelte'
 	import {
 		AGENT_FIELDS,
 		type AgentConfiguration,
@@ -19,7 +19,6 @@
 	import NameIconEditor from './NameIconEditor.svelte'
 	import SoulEditor from './SoulEditor.svelte'
 	import ToolsEditor from './ToolsEditor.svelte'
-	import UnsavedChangesDialog from './UnsavedChangesDialog.svelte'
 
 	/**
 	 * Compare soul configs

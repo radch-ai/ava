@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { Settings } from '@lucide/svelte'
 	import AgentIcon from '#components/agent-icons/index.svelte'
-	import { AgentConfigSheet } from '#components/agentconfig'
 	import { Button, buttonVariants } from '#components/ui/button'
 	import * as Tooltip from '#components/ui/tooltip'
 	import { SUPERAGENT_AGENT_ID } from '#lib/config'
 	import { getAgentConfiguration } from '#lib/services/agent'
 	import type { Agent, AgentConfiguration } from '#lib/types/agent'
 	import type { Tool } from '#lib/types/tool'
+	import ConfigSheet from '#routes/agent/[agentId]/ConfigSheet.svelte'
 	import { invalidate } from '$app/navigation'
 
 	let {
@@ -97,7 +97,7 @@
 </header>
 
 {#if configuration}
-	<AgentConfigSheet
+	<ConfigSheet
 		bind:isSheetOpened={configSheetOpen}
 		closeSheet={() => (configSheetOpen = false)}
 		{configuration}

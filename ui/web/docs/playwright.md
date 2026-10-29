@@ -20,7 +20,7 @@
 - `tests/e2e/specs/agent-list.spec.ts`: checks that the sidebar reflects the current user agent list, shows newly created agents, supports navigation into agent detail pages, and tolerates empty or refreshed list states.
 - `tests/e2e/specs/agent-detail.spec.ts`: covers non-superagent agent detail rendering, accessible header/config actions, activity-feed presence, Ask superagent CTA behavior, icon rendering, and 404 behavior for missing agents.
 - `tests/e2e/specs/agent-config.spec.ts`: exercises opening the configuration sheet, selecting editable sections, changing persisted fields, saving updates, and confirming saved values survive reload/navigation.
-- `tests/e2e/specs/navigation.spec.ts`: checks unsaved-changes guards on both levels — the in-app `beforeNavigate` dialog (discard vs keep-editing) and the native `beforeunload` dialog on reload (leave on accept, stay on cancel) — plus mobile sidebar interactions and deep-link loading directly into an agent page.
+- `tests/e2e/specs/navigation.spec.ts`: checks unsaved-changes guards on both editing surfaces — the create page and the config sheet — at both levels: the in-app `beforeNavigate` dialog (discard vs keep-editing, including back-button navigation away from a dirty sheet) and the native `beforeunload` dialog on reload (leave on accept, stay on cancel, run through one shared surface definition). Also mobile sidebar interactions and deep-link loading directly into an agent page.
 - `tests/e2e/specs/error-handling.spec.ts`: covers 404 behavior for missing agents, error banners when the agents API fails or is unreachable, concurrent-edit handling, and large-input tolerance.
 - `tests/e2e/specs/api.spec.ts`: verifies the running app emits the expected list/create/update requests, JSON payloads, and content-type headers.
 - `tests/e2e/specs/superagent.spec.ts`: checks the superagent page at `/agent/_superagent` (including the `/` redirect), welcome message, model selector presence, model persistence, and navigation to the superagent from the sidebar.
@@ -51,4 +51,4 @@
 ## Current Scope Snapshot
 
 - E2E specs live under `tests/e2e/specs/*.spec.ts`.
-- The stabilized suite currently covers 67 Playwright tests.
+- The stabilized suite currently covers 72 Playwright tests.

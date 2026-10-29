@@ -1,5 +1,11 @@
 <script lang="ts">
+	import { AgentConfigEditor } from '#components/agentconfig'
 	import * as Sheet from '#components/ui/sheet'
+	import {
+		SheetCloseGuard,
+		type SheetCloseGuardExports,
+		UnsavedChangesGuards
+	} from '#components/unsaved-changes'
 	import { SUPERAGENT_AGENT_ID } from '#lib/config'
 	import { updateAgentConfiguration } from '#lib/services/agent'
 	import {
@@ -9,8 +15,6 @@
 		setConfigurationField
 	} from '#lib/types/agent'
 	import type { Tool } from '#lib/types/tool'
-	import AgentConfigEditor from './AgentConfigEditor.svelte'
-	import UnsavedChangesDialog from './UnsavedChangesDialog.svelte'
 
 	interface Props {
 		isSheetOpened: boolean
@@ -36,11 +40,17 @@
 	// Track if there are unsaved changes (bound to editor)
 	let hasChanges = $state(false)
 
-	// State for close confirmation dialog (escape/click-outside)
-	let showCloseDialog = $state(false)
+	// Sheet-level close protection (escape / click-outside → dialog).
+	// Level 4 of unsaved-changes protection — see SheetCloseGuard.
+	let closeGuard = $state<SheetCloseGuardExports>()
 
 	// Determine agent type from the reserved superagent id
 	const isSuperagent = $derived(agentId === SUPERAGENT_AGENT_ID)
+
+	// Guards see changes only while the sheet is open — hasChanges stays
+	// stale true after the editor unmounts on close, so never feed it
+	// through ungated.
+	let guardDirty = $derived(isSheetOpened && hasChanges)
 
 	// Single handler for sheet open/close from Sheet component
 	// Cancel button calls handleCancel directly which closes immediately
@@ -81,47 +91,17 @@
 		closeSheet()
 	}
 
-	// Prevent Escape when there are unsaved changes and show confirmation dialog
-	function handleEscapeKeydown(e: KeyboardEvent) {
-		if (hasChanges) {
-			e.preventDefault()
-			showCloseDialog = true
-		}
-	}
-
-	// Prevent click-outside when there are unsaved changes and show confirmation dialog
-	function handleInteractOutside(e: PointerEvent) {
-		if (hasChanges) {
-			e.preventDefault()
-			showCloseDialog = true
-		}
-	}
-
-	function handleCloseKeepEditing() {
-		showCloseDialog = false
-	}
-
 	function handleCloseDiscard() {
-		showCloseDialog = false
 		isSheetOpened = false
 		closeSheet()
 	}
-
-	// Browser-level protection: Shows native browser dialog on refresh/close
-	function handleBeforeUnload(e: BeforeUnloadEvent) {
-		if (hasChanges) {
-			e.preventDefault()
-		}
-	}
 </script>
-
-<svelte:window on:beforeunload={handleBeforeUnload} />
 
 <Sheet.Root open={isSheetOpened} onOpenChange={handleOpenChange}>
 	<Sheet.Content
 		class="bg-sidebar w-full max-w-2xl sm:max-w-2xl [&>button]:hidden"
-		onEscapeKeydown={handleEscapeKeydown}
-		onInteractOutside={handleInteractOutside}
+		onEscapeKeydown={closeGuard?.onEscapeKeydown}
+		onInteractOutside={closeGuard?.onInteractOutside}
 	>
 		<Sheet.Header>
 			<Sheet.Title>Agent Configuration</Sheet.Title>
@@ -140,8 +120,16 @@
 	</Sheet.Content>
 </Sheet.Root>
 
-<UnsavedChangesDialog
-	bind:open={showCloseDialog}
+<SheetCloseGuard
+	bind:this={closeGuard}
+	hasChanges={guardDirty}
 	onDiscard={handleCloseDiscard}
-	onKeepEditing={handleCloseKeepEditing}
+/>
+
+<!-- Levels 2 + 3: in-app navigation + browser unload protection while the
+     open sheet has unsaved changes. Gated on isSheetOpened so a closed
+     sheet never blocks; onDiscard closes it as the navigation resumes. -->
+<UnsavedChangesGuards
+	hasChanges={guardDirty}
+	onDiscard={closeSheet}
 />

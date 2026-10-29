@@ -1,4 +1,5 @@
 // tests/e2e/specs/navigation.spec.ts
+import type { Page } from '@playwright/test'
 import { expect, test } from '../setup/fixtures'
 
 test.describe('navigation', () => {
@@ -56,13 +57,45 @@ test.describe('navigation', () => {
 			await expect(page).toHaveURL(/\/agent\/_superagent$/)
 			await expect(page.locator('[role="dialog"]')).not.toBeVisible()
 		})
+
+		test('should warn on navigation with a dirty edit sheet and discard navigates', async ({
+			page
+		}) => {
+			// SPA history for the back button: hard loads create document
+			// entries (back = unload, the beforeunload guard's domain), so
+			// seed one client-side navigation before dirtying the sheet.
+			await page.goto('/agent/research')
+			await page.locator('a[href="/agent/_superagent"]').first().click()
+			await expect(page).toHaveURL(/\/agent\/_superagent$/)
+			await page
+				.getByRole('button', { name: 'Open agent configuration' })
+				.click()
+			const sheet = page.getByRole('dialog', {
+				name: /agent configuration/i
+			})
+			await expect(sheet).toBeVisible({ timeout: 10000 })
+			const name = sheet.getByPlaceholder(/enter agent name/i)
+			await name.fill('')
+			await name.pressSequentially('nav-away-test')
+
+			// The sheet overlay covers the sidebar, so back is the realistic
+			// in-app navigation away from a dirty sheet (popstate route).
+			// A cancelled navigation's promise never settles — unawaited.
+			void page.goBack().catch(() => {})
+
+			await expect(page.getByRole('alertdialog')).toBeVisible()
+			await page.getByRole('button', { name: 'Discard' }).click()
+
+			await expect(page).toHaveURL(/\/agent\/research$/)
+			await expect(page.getByPlaceholder(/enter agent name/i)).toHaveCount(0)
+		})
 	})
 
 	test.describe('unsaved changes protection — native beforeunload', () => {
 		// The guard above covers SPA navigation; these cover the
-		// browser-level guard on /agent/new (reload/close). `fill()` does
-		// not grant the user activation Chromium requires to fire
-		// beforeunload, so the name is typed with real key events.
+		// browser-level guard (reload/close). `fill()` does not grant
+		// the user activation Chromium requires to fire beforeunload, so
+		// the name is typed with real key events.
 		//
 		// The dialog must always be answered explicitly: without a
 		// `dialog` listener Playwright bypasses beforeunload and the
@@ -70,42 +103,85 @@ test.describe('navigation', () => {
 		// modal and wait. A cancelled reload's promise never settles in
 		// the driver, so it is fired unawaited and the outcome is
 		// asserted from document state.
-		test('should reload when the user leaves', async ({ page }) => {
-			await page.goto('/agent/new')
-			const name = page.getByLabel(/name/i)
-			await name.click()
-			await name.pressSequentially('accept-reload-test')
 
-			// Record the dialog: without this, the test would pass even
-			// if the guard were removed (reload proceeds, form resets).
-			const dialogs: string[] = []
-			await page.once('dialog', (dialog) => {
-				dialogs.push(dialog.type())
-				dialog.accept()
+		// Both editing surfaces sit on the same UnsavedChangesGuards, so the
+		// same scenarios run against each through one shared definition.
+		const guardSurfaces = [
+			{
+				name: 'create form',
+				openAndDirty: async (page: Page) => {
+					await page.goto('/agent/new')
+					const name = page.getByLabel(/name/i)
+					await name.click()
+					await name.pressSequentially('guard-test')
+				},
+				dirtyInput: (page: Page) => page.getByLabel(/name/i),
+				// Leaving tore the document down: create form resets empty
+				assertLeft: async (page: Page) => {
+					await expect(page.getByLabel(/name/i)).toHaveValue('')
+				}
+			},
+			{
+				name: 'edit sheet',
+				openAndDirty: async (page: Page) => {
+					await page.goto('/agent/_superagent')
+					await page
+						.getByRole('button', { name: 'Open agent configuration' })
+						.click()
+					const sheet = page.getByRole('dialog', {
+						name: /agent configuration/i
+					})
+					await expect(sheet).toBeVisible({ timeout: 10000 })
+					const name = sheet.getByPlaceholder(/enter agent name/i)
+					await name.fill('')
+					await name.pressSequentially('guard-test')
+				},
+				dirtyInput: (page: Page) =>
+					page
+						.getByRole('dialog', { name: /agent configuration/i })
+						.getByPlaceholder(/enter agent name/i),
+				// Leaving tore the document down: fresh page has no sheet
+				assertLeft: async (page: Page) => {
+					await expect(page.getByPlaceholder(/enter agent name/i)).toHaveCount(
+						0
+					)
+				}
+			}
+		]
+
+		for (const surface of guardSurfaces) {
+			test(`should reload when the user leaves (${surface.name})`, async ({
+				page
+			}) => {
+				await surface.openAndDirty(page)
+
+				// Record the dialog: without this, the test would pass even
+				// if the guard were removed (reload proceeds, form resets).
+				const dialogs: string[] = []
+				await page.once('dialog', (dialog) => {
+					dialogs.push(dialog.type())
+					dialog.accept()
+				})
+				await page.reload()
+
+				expect(dialogs).toEqual(['beforeunload'])
+				await surface.assertLeft(page)
 			})
-			await page.reload()
 
-			// Leaving tore the document down: fresh form, name cleared
-			expect(dialogs).toEqual(['beforeunload'])
-			await expect(name).toHaveValue('')
-			expect(await page.evaluate(() => location.pathname)).toBe('/agent/new')
-		})
+			test(`should stay on the page when the user cancels (${surface.name})`, async ({
+				page
+			}) => {
+				await surface.openAndDirty(page)
 
-		test('should stay on the page when the user cancels', async ({ page }) => {
-			await page.goto('/agent/new')
-			const name = page.getByLabel(/name/i)
-			await name.click()
-			await name.pressSequentially('dismiss-reload-test')
+				await page.once('dialog', (dialog) => dialog.dismiss())
+				// A cancelled reload's promise never settles in the driver —
+				// fire it unawaited; assertions prove the document survived.
+				void page.reload().catch(() => {})
 
-			await page.once('dialog', (dialog) => dialog.dismiss())
-			// A cancelled reload's promise never settles in the driver —
-			// fire it unawaited; the assertions prove the document survived.
-			void page.reload().catch(() => {})
-
-			// Cancelling kept the document alive: typed name intact
-			await expect(name).toHaveValue('dismiss-reload-test')
-			expect(await page.evaluate(() => location.pathname)).toBe('/agent/new')
-		})
+				// Cancelling kept the document alive: edit intact
+				await expect(surface.dirtyInput(page)).toHaveValue('guard-test')
+			})
+		}
 	})
 
 	test.describe('sidebar navigation', () => {
