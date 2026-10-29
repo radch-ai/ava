@@ -183,7 +183,7 @@
 </div>
 
 <style lang="postcss">
-	@reference "../../../../app.css";
+	@reference "#app.css";
 
 	.content-container {
 		@apply mx-auto w-full max-md:px-6 md:max-w-[var(--content-max-width)];
