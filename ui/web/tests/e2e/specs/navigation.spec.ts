@@ -182,6 +182,32 @@ test.describe('navigation', () => {
 				await expect(surface.dirtyInput(page)).toHaveValue('guard-test')
 			})
 		}
+
+		test('should leave via Cancel→Discard without a second, native dialog', async ({
+			page
+		}) => {
+			// Cancel runs history.back(); hard-loaded entries make that a
+			// document unload, so a leaky bypass would surface here as a
+			// beforeunload dialog after the user already confirmed Discard.
+			await page.goto('/agent/research')
+			await page.goto('/agent/new')
+			const name = page.getByLabel(/name/i)
+			await name.click()
+			await name.pressSequentially('cancel-test')
+
+			const dialogs: string[] = []
+			await page.once('dialog', (dialog) => {
+				dialogs.push(dialog.type())
+				dialog.accept()
+			})
+
+			await page.getByRole('button', { name: 'Cancel' }).click()
+			await page.getByRole('button', { name: 'Discard' }).click()
+
+			// The bypass covers the leave: no native dialog, back lands
+			expect(dialogs).toEqual([])
+			await expect(page).toHaveURL(/\/agent\/research$/)
+		})
 	})
 
 	test.describe('sidebar navigation', () => {

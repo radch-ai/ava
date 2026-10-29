@@ -47,6 +47,12 @@
 		isBypassing = true
 		try {
 			await action()
+			// The leave may still be unloading: history.back() returns
+			// before the browser queues its traversal task, which runs
+			// (firing beforeunload) before this later-queued timer. If
+			// the document unloads, the timer never runs at all — the
+			// flag dies with the page instead of re-arming mid-leave.
+			await new Promise((resolve) => setTimeout(resolve, 0))
 		} finally {
 			isBypassing = false
 		}

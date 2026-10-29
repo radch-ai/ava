@@ -135,5 +135,22 @@ describe('UnsavedChangesGuards', () => {
 			navCallback()(nav)
 			expect(nav.cancel).toHaveBeenCalled()
 		})
+
+		it('keeps the bypass open while the leave it started is unloading', async () => {
+			const { component } = await render(UnsavedChangesGuards, {
+				hasChanges: true
+			})
+
+			// history.back() returns before the browser starts unloading —
+			// one microtask later the leave is still in flight, so the
+			// guard must not block it with its own beforeunload dialog.
+			const leaving = component.bypassNavigation(() => {})
+			await Promise.resolve()
+			expect(fireBeforeUnload()).not.toHaveBeenCalled()
+
+			await leaving
+			// window closed: still dirty means guarded again
+			expect(fireBeforeUnload()).toHaveBeenCalled()
+		})
 	})
 })
