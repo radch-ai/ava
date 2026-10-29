@@ -74,7 +74,7 @@
 	// Determine agent type from the isSuperagent prop
 	const isSuperagent = $derived(isSuperagentProp ?? false)
 	const fields = $derived(
-		isSuperagent ? AGENT_FIELDS.superagent : AGENT_FIELDS.worker
+		isSuperagent ? AGENT_FIELDS.superagent : AGENT_FIELDS.agent
 	)
 
 	// Local working copy of configuration

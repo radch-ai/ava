@@ -16,23 +16,18 @@ afterAll(() => {
 })
 
 describe('mock API handlers', () => {
-	it('lists agents with ids, superagent first', async () => {
+	it('lists agents without the system superagent entry', async () => {
 		const res = await fetch(`${BASE}/agents`)
 		expect(res.status).toBe(200)
 		const body = (await res.json()) as {
-			agents: { id: string; name: string; label: string; icon: string }[]
+			agents: { id: string; name: string; icon: string }[]
 		}
+		// The superagent is a client-side constant; the list only carries
+		// user-created agents.
 		expect(body.agents.map((agent) => agent.id)).toEqual([
-			'_superagent',
 			'research',
 			'scribe',
 			'sentinel'
-		])
-		expect(body.agents.map((agent) => agent.name)).toEqual([
-			'Ava',
-			'Research',
-			'Scribe',
-			'Sentinel'
 		])
 		for (const agent of body.agents) {
 			expect(typeof agent.name).toBe('string')

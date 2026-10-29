@@ -12,16 +12,14 @@ import type { PageLoad } from './$types'
 export const load: PageLoad = async ({ params, parent }) => {
 	// The parent layout load fetches the agents list; parent() reuses that
 	// data without a second fetch and stays fresh after invalidation.
-	const { agents, agentsError } = await parent()
+	const { agents } = await parent()
 
-	// The superagent is preconfigured and always exists; if the list itself
-	// failed to load, fall back to the client constant so the layout's error
-	// banner surfaces instead of a bogus 404.
+	// The superagent is a client constant, so its page renders even when
+	// the agents list failed to load; every other id must be in the list.
 	const agent =
-		agents.find((a: Agent) => a.id === params.agentId) ??
-		(params.agentId === SUPERAGENT_AGENT_ID && agentsError
+		params.agentId === SUPERAGENT_AGENT_ID
 			? SUPERAGENT_AGENT
-			: undefined)
+			: agents.find((a: Agent) => a.id === params.agentId)
 
 	if (!agent) {
 		error(404, `Agent '${params.agentId}' not found`)

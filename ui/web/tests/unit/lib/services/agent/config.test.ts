@@ -131,15 +131,15 @@ describe('agent/config service', () => {
 		})
 
 		it('fetches config for different agent names', async () => {
-			const mockConfig = createTestConfig({ name: 'Worker Bot' })
+			const mockConfig = createTestConfig({ name: 'Test Bot' })
 
 			vi.mocked(api.get).mockReturnValue({
 				json: async () => mockConfig
 			} as ApiResponsePromise)
 
-			await getAgentConfiguration('worker-bot')
+			await getAgentConfiguration('test-bot')
 
-			expect(api.get).toHaveBeenCalledWith('agent/worker-bot')
+			expect(api.get).toHaveBeenCalledWith('agent/test-bot')
 		})
 
 		it('handles special characters in agent name', async () => {
@@ -312,9 +312,9 @@ describe('agent/config service', () => {
 				json: async () => mockConfig
 			} as ApiResponsePromise)
 
-			await updateAgentConfiguration('worker-bot', mockConfig)
+			await updateAgentConfiguration('test-bot', mockConfig)
 
-			expect(api.patch).toHaveBeenCalledWith('agent/worker-bot', {
+			expect(api.patch).toHaveBeenCalledWith('agent/test-bot', {
 				json: mockConfig
 			})
 		})

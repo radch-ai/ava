@@ -18,7 +18,7 @@
 
 - `tests/e2e/specs/agent-create.spec.ts`: covers the create-agent journey from opening the page through name entry, section editing, submission, id derivation from the display name, duplicate-name rejection without auto-suffixing, invalid-name rejection, whitespace trimming, and failure handling when creation requests break.
 - `tests/e2e/specs/agent-list.spec.ts`: checks that the sidebar reflects the current user agent list, shows newly created agents, supports navigation into agent detail pages, and tolerates empty or refreshed list states.
-- `tests/e2e/specs/agent-detail.spec.ts`: covers worker-agent detail rendering, accessible header/config actions, activity-feed presence, Ask superagent CTA behavior, icon rendering, and 404 behavior for missing agents.
+- `tests/e2e/specs/agent-detail.spec.ts`: covers non-superagent agent detail rendering, accessible header/config actions, activity-feed presence, Ask superagent CTA behavior, icon rendering, and 404 behavior for missing agents.
 - `tests/e2e/specs/agent-config.spec.ts`: exercises opening the configuration sheet, selecting editable sections, changing persisted fields, saving updates, and confirming saved values survive reload/navigation.
 - `tests/e2e/specs/navigation.spec.ts`: checks unsaved-changes guards, discard vs keep-editing decisions, mobile sidebar interactions, and deep-link loading directly into an agent page.
 - `tests/e2e/specs/error-handling.spec.ts`: covers 404 behavior for missing agents, error banners when the agents API fails or is unreachable, concurrent-edit handling, and large-input tolerance.
@@ -29,7 +29,7 @@
 
 - Agent creation: open new agent page -> fill required or extended config -> submit -> land on `/agent/{id}` using the server-derived id (`name.toLowerCase()` with spaces as hyphens).
 - Agent editing: open config sheet from detail page -> edit fields -> save -> reload or revisit -> confirm persisted state.
-- Agent navigation: move between sidebar, worker pages, the superagent page, and deep links while preserving correct route behavior.
+- Agent navigation: move between sidebar, agent pages, the superagent page, and deep links while preserving correct route behavior.
 - Failure recovery: broken or unreachable API responses keep the app understandable instead of silently failing.
 
 ## Shared Test Infrastructure

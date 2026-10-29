@@ -42,8 +42,7 @@ vi.mock('$app/paths', () => ({
 }))
 
 vi.mock('#lib/config', () => ({
-	APP_NAME: 'TestApp',
-	SUPERAGENT_AGENT_ID: '_superagent'
+	APP_NAME: 'TestApp'
 }))
 
 vi.mock('#lib/auth', () => ({
@@ -121,10 +120,10 @@ describe('AppSidebar', () => {
 			await expect.element(page.getByText('Chat with Ava')).toBeVisible()
 		})
 
-		it('renders worker agents section', async () => {
+		it('renders agents section', async () => {
 			renderSidebar()
 
-			await expect.element(page.getByText('Agents')).toBeVisible()
+			await expect.element(page.getByText('Specialized Agents')).toBeVisible()
 			await expect.element(page.getByText('Support')).toBeVisible()
 			await expect.element(page.getByText('Analyst')).toBeVisible()
 		})
@@ -230,14 +229,14 @@ describe('AppSidebar', () => {
 	})
 
 	describe('empty state', () => {
-		it('renders correctly with no worker agents', async () => {
+		it('renders correctly with no agents', async () => {
 			renderSidebar([])
 
 			// Should still show superagent and New Agent button
 			await expect.element(page.getByText('Chat with Ava')).toBeVisible()
 			await expect.element(page.getByText('New Agent')).toBeVisible()
 
-			// Worker Agents section should be empty
+			// Agents section should be empty
 			await expect.element(page.getByText('Support')).not.toBeInTheDocument()
 		})
 	})

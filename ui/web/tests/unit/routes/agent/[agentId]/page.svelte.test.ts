@@ -29,7 +29,7 @@ import { getAgentActivityFeed, mergePastFeed } from '#lib/services/agent'
 const mockGetAgentActivityFeed = vi.mocked(getAgentActivityFeed)
 const mockMergePastFeed = vi.mocked(mergePastFeed)
 
-const workerAgents: Record<string, Agent> = {
+const agents: Record<string, Agent> = {
 	support: {
 		id: 'support',
 		name: 'Support',
@@ -67,7 +67,7 @@ function createActivityFeed(
 
 function createPageData(overrides: Record<string, unknown> = {}) {
 	return {
-		agent: workerAgents.support,
+		agent: agents.support,
 		activityFeed: createActivityFeed(),
 		activityError: null,
 		thread: null,
@@ -76,7 +76,7 @@ function createPageData(overrides: Record<string, unknown> = {}) {
 	}
 }
 
-describe('AgentPage (worker branch)', () => {
+describe('AgentPage (non-superagent branch)', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 	})
@@ -88,7 +88,7 @@ describe('AgentPage (worker branch)', () => {
 	describe('Agent header', () => {
 		it('renders support agent header', async () => {
 			render(AgentPageTestWrapper, {
-				data: createPageData({ agent: workerAgents.support })
+				data: createPageData({ agent: agents.support })
 			})
 
 			await expect.element(page.getByText('Support')).toBeVisible()
@@ -96,15 +96,15 @@ describe('AgentPage (worker branch)', () => {
 
 		it('renders analyst agent header', async () => {
 			render(AgentPageTestWrapper, {
-				data: createPageData({ agent: workerAgents.analyst })
+				data: createPageData({ agent: agents.analyst })
 			})
 
 			await expect.element(page.getByText('Analyst')).toBeVisible()
 		})
 
-		it('does not render tabs for workers', async () => {
+		it('does not render tabs for non-superagent agents', async () => {
 			render(AgentPageTestWrapper, {
-				data: createPageData({ agent: workerAgents.analyst })
+				data: createPageData({ agent: agents.analyst })
 			})
 
 			await expect
@@ -307,7 +307,7 @@ describe('AgentPage (worker branch)', () => {
 				)
 		})
 
-		it('does not render model selector for workers', async () => {
+		it('does not render model selector for non-superagent agents', async () => {
 			render(AgentPageTestWrapper, {
 				data: createPageData()
 			})
@@ -318,9 +318,9 @@ describe('AgentPage (worker branch)', () => {
 			await expect.element(modelButton).not.toBeInTheDocument()
 		})
 
-		it('does not render text area for workers', async () => {
+		it('does not render text area for non-superagent agents', async () => {
 			render(AgentPageTestWrapper, {
-				data: createPageData({ agent: workerAgents.analyst })
+				data: createPageData({ agent: agents.analyst })
 			})
 
 			const textarea = page.getByPlaceholder('Enter your query!')

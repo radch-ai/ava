@@ -24,7 +24,7 @@ test.describe('agent list', () => {
 		const sidebar = page.locator('[data-slot="sidebar"]')
 		await expect(sidebar).toBeVisible()
 
-		// superagent should always be present as the first menu item
+		// The superagent renders from the client constant as the first menu item
 		const superagentLink = sidebar.getByRole('link', { name: /ava/i })
 		await expect(superagentLink).toBeVisible()
 	})

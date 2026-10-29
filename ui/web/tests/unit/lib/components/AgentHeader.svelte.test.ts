@@ -11,7 +11,7 @@ const superagent: Agent = {
 	icon: 'message-square'
 }
 
-const workerAgent: Agent = {
+const agent: Agent = {
 	id: 'support',
 	name: 'Support',
 	icon: 'bot'
@@ -66,16 +66,16 @@ describe('AgentHeader', () => {
 			await expect.element(page.getByText('Ava')).toBeVisible()
 		})
 
-		it('displays worker agent name', async () => {
+		it('displays non-superagent agent name', async () => {
 			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
-			render(AgentHeaderTestWrapper, { agent: workerAgent })
+			render(AgentHeaderTestWrapper, { agent })
 
 			await expect.element(page.getByText('Support')).toBeVisible()
 		})
 
 		it('renders exactly one settings button with accessible name', async () => {
 			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
-			render(AgentHeaderTestWrapper, { agent: workerAgent })
+			render(AgentHeaderTestWrapper, { agent })
 
 			await expect
 				.element(page.getByRole('button', { name: 'Open agent configuration' }))
@@ -84,7 +84,7 @@ describe('AgentHeader', () => {
 
 		it('renders settings button with accessible label', async () => {
 			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
-			render(AgentHeaderTestWrapper, { agent: workerAgent })
+			render(AgentHeaderTestWrapper, { agent })
 
 			await expect
 				.element(page.getByLabelText('Open agent configuration'))
@@ -93,7 +93,7 @@ describe('AgentHeader', () => {
 
 		it('shows an agent config tooltip for the settings button', async () => {
 			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
-			render(AgentHeaderTestWrapper, { agent: workerAgent })
+			render(AgentHeaderTestWrapper, { agent })
 
 			const settingsButton = page.getByLabelText('Open agent configuration')
 			await settingsButton.hover()
@@ -104,7 +104,7 @@ describe('AgentHeader', () => {
 		it('uses a unique tooltip id for each settings button', async () => {
 			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
 			render(AgentHeaderPairTestWrapper, {
-				agents: [workerAgent, { ...workerAgent, name: 'support-two' }]
+				agents: [agent, { ...agent, name: 'support-two' }]
 			})
 
 			const settingsButtons = page.getByLabelText('Open agent configuration')
@@ -143,9 +143,9 @@ describe('AgentHeader', () => {
 				.toBeVisible()
 		})
 
-		it('does not render tabs for worker agents', async () => {
+		it('does not render tabs for non-superagent agents', async () => {
 			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
-			render(AgentHeaderTestWrapper, { agent: workerAgent })
+			render(AgentHeaderTestWrapper, { agent })
 
 			expect(page.getByRole('tab', { name: 'Conversation' }).query()).toBeNull()
 			expect(page.getByRole('tab', { name: 'Activity' }).query()).toBeNull()

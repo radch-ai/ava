@@ -4,8 +4,7 @@ import { cleanup, render } from 'vitest-browser-svelte'
 import { AgentConfigSheet } from '#components/agentconfig'
 import type {
 	AgentConfiguration,
-	SuperagentConfiguration,
-	WorkerConfiguration
+	SuperagentConfiguration
 } from '#lib/types/agent'
 import type { Tool } from '#lib/types/tool'
 
@@ -29,14 +28,14 @@ function createDefaultSuperagentConfig(): SuperagentConfiguration {
 	}
 }
 
-// Helper to create default Worker configuration
-function createDefaultWorkerConfig(): WorkerConfiguration {
+// Helper to create default agent configuration
+function createDefaultAgentConfig(): AgentConfiguration {
 	return {
-		name: 'Worker Bot',
+		name: 'Test Bot',
 		icon: 'bot',
 		soul: { personality: 'Efficient', identity: 'Task runner' },
 		operatingInstructions: 'Complete tasks',
-		toolsContext: 'Worker tools',
+		toolsContext: 'Test tools',
 		toolsEnabled: [],
 		heartbeat: {
 			enabled: false,
@@ -276,13 +275,13 @@ describe('AgentConfigSheet', () => {
 		})
 	})
 
-	describe('Worker agent configuration', () => {
-		it('shows Worker-specific fields', async () => {
+	describe('Non-superagent agent configuration', () => {
+		it('shows fields specific to non-superagent agents', async () => {
 			render(
 				AgentConfigSheet,
 				createProps({
 					isSheetOpened: true,
-					configuration: createDefaultWorkerConfig(),
+					configuration: createDefaultAgentConfig(),
 					agentId: 'support'
 				})
 			)

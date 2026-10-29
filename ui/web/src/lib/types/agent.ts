@@ -108,27 +108,21 @@ export interface AgentConfigBase {
 }
 
 /**
- * superagent agent configuration (includes heartbeat and cron job references)
+ * Agent configuration — the base shape every agent uses
  */
-export interface SuperagentConfiguration extends AgentConfigBase {
+export interface AgentConfiguration extends AgentConfigBase {
 	heartbeat?: HeartbeatConfig
+}
+
+/**
+ * Superagent configuration — extends the agent shape with the user
+ * context and cron jobs only the superagent has
+ */
+export interface SuperagentConfiguration extends AgentConfiguration {
 	cronJobs: CronJob[]
 	/** Information about the user and their preferences */
 	userContext: string
 }
-
-/**
- * Worker agent configuration
- */
-export interface WorkerConfiguration extends AgentConfigBase {
-	heartbeat?: HeartbeatConfig
-}
-
-/**
- * Union type for all agent configurations
- */
-export type AgentConfiguration = SuperagentConfiguration | WorkerConfiguration
-
 // ============================================================================
 // FIELD CONFIGS FOR UI
 // ============================================================================
@@ -225,7 +219,7 @@ export const AGENT_FIELDS = {
 		'heartbeat',
 		'cronJobs'
 	] as const,
-	worker: [
+	agent: [
 		'name',
 		'soul',
 		'operatingInstructions',
@@ -240,7 +234,7 @@ export const AGENT_FIELDS = {
  */
 export type ConfigFieldName =
 	| (typeof AGENT_FIELDS.superagent)[number]
-	| (typeof AGENT_FIELDS.worker)[number]
+	| (typeof AGENT_FIELDS.agent)[number]
 
 // ============================================================================
 // DEFAULT FACTORIES
@@ -282,9 +276,9 @@ export function createDefaultSuperagentConfiguration(): SuperagentConfiguration 
 }
 
 /**
- * Create default Worker configuration
+ * Create default agent configuration
  */
-export function createDefaultWorkerConfiguration(): WorkerConfiguration {
+export function createDefaultAgentConfiguration(): AgentConfiguration {
 	return {
 		name: '',
 		icon: getRandomIcon(),

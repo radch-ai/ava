@@ -38,7 +38,7 @@ const superagent: Agent = {
 	icon: 'message-square'
 }
 
-const workerAgent: Agent = {
+const agent: Agent = {
 	id: 'support',
 	name: 'Support',
 	icon: 'bot'
@@ -118,9 +118,9 @@ describe('AgentShell', () => {
 			expect(separator).toBeInTheDocument()
 		})
 
-		it('displays agent label in header', async () => {
+		it('displays agent name in header', async () => {
 			render(TestWrapper, {
-				agent: workerAgent
+				agent
 			})
 
 			await expect.element(page.getByText('Support')).toBeVisible()
@@ -145,7 +145,7 @@ describe('AgentShell', () => {
 
 		it('does NOT show tabs for non-superagent agents', async () => {
 			render(TestWrapper, {
-				agent: workerAgent,
+				agent,
 				activeTab: 'conversation',
 				onTabChange: vi.fn()
 			})
@@ -251,7 +251,7 @@ describe('AgentShell', () => {
 
 		it('does NOT render ThreadPanel for non-superagent agents', async () => {
 			render(TestWrapper, {
-				agent: workerAgent,
+				agent,
 				threadItems: mockMessages
 			})
 
@@ -262,7 +262,7 @@ describe('AgentShell', () => {
 	describe('ActivityContent rendering', () => {
 		it('renders ActivityContent for non-superagent agents', async () => {
 			render(TestWrapper, {
-				agent: workerAgent,
+				agent,
 				activityFeed: createTestFeed([
 					createTestActivityItem({ action: 'Test activity' })
 				])
@@ -285,7 +285,7 @@ describe('AgentShell', () => {
 
 		it('shows empty state when no activities', async () => {
 			render(TestWrapper, {
-				agent: workerAgent,
+				agent,
 				activityFeed: createTestFeed([])
 			})
 
@@ -296,7 +296,7 @@ describe('AgentShell', () => {
 	describe('Children/footer slot', () => {
 		it('renders footer element', async () => {
 			const { container } = render(TestWrapper, {
-				agent: workerAgent
+				agent: agent
 			})
 
 			const footer = container.querySelector('footer')
@@ -305,7 +305,7 @@ describe('AgentShell', () => {
 
 		it('footer has correct styling classes', async () => {
 			const { container } = render(TestWrapper, {
-				agent: workerAgent
+				agent: agent
 			})
 
 			const footer = container.querySelector('footer')
@@ -353,7 +353,7 @@ describe('AgentShell', () => {
 	describe('Activity error states', () => {
 		it('shows activity error message when activityError is provided', async () => {
 			render(TestWrapper, {
-				agent: workerAgent,
+				agent,
 				activityError: 'Failed to load activity'
 			})
 
@@ -375,7 +375,7 @@ describe('AgentShell', () => {
 
 		it('hides ActivityContent when there is an activity error', async () => {
 			render(TestWrapper, {
-				agent: workerAgent,
+				agent,
 				activityFeed: createTestFeed([
 					createTestActivityItem({ action: 'Test' })
 				]),
@@ -389,7 +389,7 @@ describe('AgentShell', () => {
 	describe('Loading states', () => {
 		it('shows loading message when isLoadingActivity is true', async () => {
 			render(TestWrapper, {
-				agent: workerAgent,
+				agent,
 				isLoadingActivity: true
 			})
 
@@ -398,7 +398,7 @@ describe('AgentShell', () => {
 
 		it('hides ActivityContent when loading', async () => {
 			render(TestWrapper, {
-				agent: workerAgent,
+				agent,
 				activityFeed: createTestFeed([
 					createTestActivityItem({ action: 'Test' })
 				]),
@@ -517,7 +517,7 @@ describe('AgentShell', () => {
 	describe('Shared shell - activity tab load more', () => {
 		it('renders load more button in shell when activityFeed has nextCursor', async () => {
 			render(TestWrapper, {
-				agent: workerAgent,
+				agent,
 				activityFeed: createTestFeed([createTestActivityItem()], 'next-cursor')
 			})
 
@@ -528,7 +528,7 @@ describe('AgentShell', () => {
 
 		it('does not render load more button when activityFeed has no nextCursor', async () => {
 			render(TestWrapper, {
-				agent: workerAgent,
+				agent,
 				activityFeed: createTestFeed([createTestActivityItem()])
 			})
 
@@ -547,7 +547,7 @@ describe('AgentShell', () => {
 			mockMergePastFeed.mockReturnValue(mergedFeed)
 
 			render(TestWrapper, {
-				agent: workerAgent,
+				agent,
 				activityFeed: createTestFeed(
 					[createTestActivityItem({ action: 'Current' })],
 					'next-cursor'
@@ -570,7 +570,7 @@ describe('AgentShell', () => {
 			mockGetAgentActivityFeed.mockRejectedValue(new Error('Network failure'))
 
 			render(TestWrapper, {
-				agent: workerAgent,
+				agent,
 				activityFeed: createTestFeed([createTestActivityItem()], 'next-cursor')
 			})
 
@@ -583,7 +583,7 @@ describe('AgentShell', () => {
 			mockGetAgentActivityFeed.mockRejectedValue(new Error('Failed'))
 
 			render(TestWrapper, {
-				agent: workerAgent,
+				agent,
 				activityFeed: createTestFeed([createTestActivityItem()], 'next-cursor')
 			})
 
@@ -599,7 +599,7 @@ describe('AgentShell', () => {
 				.mockResolvedValueOnce(createTestFeed())
 
 			render(TestWrapper, {
-				agent: workerAgent,
+				agent,
 				activityFeed: createTestFeed([createTestActivityItem()], 'next-cursor'),
 				onActivityLoadMore
 			})
@@ -616,7 +616,7 @@ describe('AgentShell', () => {
 			const onActivityLoadMore = vi.fn()
 
 			render(TestWrapper, {
-				agent: workerAgent,
+				agent,
 				activityFeed: createTestFeed([createTestActivityItem()]),
 				onActivityLoadMore
 			})
@@ -633,7 +633,7 @@ describe('AgentShell', () => {
 			)
 
 			render(TestWrapper, {
-				agent: workerAgent,
+				agent,
 				activityFeed: createTestFeed([createTestActivityItem()], 'next-cursor')
 			})
 
@@ -650,7 +650,7 @@ describe('AgentShell', () => {
 			mockGetAgentActivityFeed.mockRejectedValue('string error')
 
 			render(TestWrapper, {
-				agent: workerAgent,
+				agent,
 				activityFeed: createTestFeed([createTestActivityItem()], 'next-cursor')
 			})
 
@@ -679,7 +679,7 @@ describe('AgentShell', () => {
 
 		it('renders load more before items for activity tab', async () => {
 			render(TestWrapper, {
-				agent: workerAgent,
+				agent,
 				activityFeed: createTestFeed([createTestActivityItem()], 'cursor')
 			})
 
@@ -704,7 +704,7 @@ describe('AgentShell', () => {
 
 		it('renders empty state when activity items are empty', async () => {
 			render(TestWrapper, {
-				agent: workerAgent,
+				agent,
 				activityFeed: createTestFeed([])
 			})
 
@@ -715,7 +715,7 @@ describe('AgentShell', () => {
 	describe('Layout structure', () => {
 		it('keeps header and footer outside the scroll region', async () => {
 			const { container } = render(TestWrapper, {
-				agent: workerAgent
+				agent: agent
 			})
 
 			const shell = container.firstElementChild
@@ -738,7 +738,7 @@ describe('AgentShell', () => {
 
 		it('uses a full-width outer scroll region and a separate inner content container', async () => {
 			const { container } = render(TestWrapper, {
-				agent: workerAgent
+				agent: agent
 			})
 
 			const scrollRegion = container.querySelector(
@@ -757,7 +757,7 @@ describe('AgentShell', () => {
 
 		it('content area uses custom-scrollbar styling', async () => {
 			const { container } = render(TestWrapper, {
-				agent: workerAgent
+				agent: agent
 			})
 
 			const content = container.querySelector('.custom-scrollbar')
@@ -781,7 +781,7 @@ describe('AgentShell', () => {
 
 		it('prioritizes activity error over loading state', async () => {
 			render(TestWrapper, {
-				agent: workerAgent,
+				agent,
 				isLoadingActivity: true,
 				activityError: 'Activity error'
 			})
@@ -792,7 +792,7 @@ describe('AgentShell', () => {
 
 		it('shows ActivityContent for non-superagent when activityFeed is explicitly null', async () => {
 			const { container } = render(TestWrapper, {
-				agent: workerAgent,
+				agent,
 				activityFeed: null
 			})
 

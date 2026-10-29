@@ -13,14 +13,7 @@ import { load } from '../../../../../src/routes/(app)/agent/[agentId]/+page'
 const mockGetAgentActivityFeed = vi.mocked(getAgentActivityFeed)
 const mockGetAgentThread = vi.mocked(getAgentThread)
 
-const agentsList: Agent[] = [
-	{
-		id: '_superagent',
-		name: 'Ava',
-		icon: 'message-square'
-	},
-	{ id: 'support', name: 'Support', icon: 'bot' }
-]
+const agentsList: Agent[] = [{ id: 'support', name: 'Support', icon: 'bot' }]
 
 type ParentData = { agents: Agent[]; agentsError: string | null }
 
@@ -41,7 +34,7 @@ describe('agent page load', () => {
 		mockGetAgentThread.mockResolvedValue({ items: [], nextCursor: null })
 	})
 
-	it('returns worker agent data with its activity feed', async () => {
+	it('returns agent data with its activity feed', async () => {
 		const result = (await load(loadEvent({ agentId: 'support' }))) as {
 			agent: Agent
 			thread: unknown
@@ -83,7 +76,7 @@ describe('agent page load', () => {
 		expect(result.threadError).toBe('Thread unavailable')
 	})
 
-	it('falls back to the client superagent entry when the list failed to load', async () => {
+	it('resolves the superagent entry from the client constant when the list failed to load', async () => {
 		// The agents API failed and the layout returned an empty list + error
 		const result = (await load(
 			loadEvent(
@@ -95,6 +88,22 @@ describe('agent page load', () => {
 		}
 
 		expect(result.agent.id).toBe(SUPERAGENT_AGENT_ID)
+	})
+
+	it('resolves the superagent entry from the client constant without the list', async () => {
+		// The list never carries the superagent; the id resolves from the
+		// client constant regardless of the fetch outcome.
+		const result = (await load(
+			loadEvent(
+				{ agentId: SUPERAGENT_AGENT_ID },
+				{ agents: [], agentsError: null }
+			)
+		)) as {
+			agent: { id: string }
+		}
+
+		expect(result.agent.id).toBe(SUPERAGENT_AGENT_ID)
+		expect(mockGetAgentThread).toHaveBeenCalledWith(SUPERAGENT_AGENT_ID)
 	})
 
 	it('surfaces activity errors without failing navigation', async () => {

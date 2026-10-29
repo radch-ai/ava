@@ -154,8 +154,8 @@ describe('AgentConfigSheet', () => {
 		})
 	})
 
-	describe('Worker-specific fields', () => {
-		it('does not show cronJobs field for workers', async () => {
+	describe('Fields specific to non-superagent agents', () => {
+		it('does not show cronJobs field for non-superagent agents', async () => {
 			render(
 				AgentConfigSheet,
 				createDefaultProps({ isSheetOpened: true, agentId: 'support' })
@@ -165,7 +165,7 @@ describe('AgentConfigSheet', () => {
 			expect(cronField).toBeNull()
 		})
 
-		it('does not show userContext field for workers', async () => {
+		it('does not show userContext field for non-superagent agents', async () => {
 			render(
 				AgentConfigSheet,
 				createDefaultProps({ isSheetOpened: true, agentId: 'support' })

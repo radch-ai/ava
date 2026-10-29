@@ -5,8 +5,7 @@ import { AgentConfigEditor } from '#components/agentconfig'
 import type {
 	AgentConfiguration,
 	CronJob,
-	SuperagentConfiguration,
-	WorkerConfiguration
+	SuperagentConfiguration
 } from '#lib/types/agent'
 import type { Tool } from '#lib/types/tool'
 
@@ -30,14 +29,14 @@ function createDefaultSuperagentConfig(): SuperagentConfiguration {
 	}
 }
 
-// Helper to create default Worker configuration
-function createDefaultWorkerConfig(): WorkerConfiguration {
+// Helper to create default agent configuration
+function createDefaultAgentConfig(): AgentConfiguration {
 	return {
-		name: 'Worker Bot',
+		name: 'Test Bot',
 		icon: 'bot',
 		soul: { personality: 'Efficient', identity: 'Task runner' },
 		operatingInstructions: 'Complete tasks',
-		toolsContext: 'Worker tools',
+		toolsContext: 'Test tools',
 		toolsEnabled: [],
 		heartbeat: {
 			enabled: false,
@@ -170,14 +169,14 @@ describe('AgentConfigEditor', () => {
 		})
 	})
 
-	describe('Field list - Worker agent', () => {
+	describe('Field list - Non-superagent agent', () => {
 		beforeEach(() => {})
 
-		it('shows Worker-specific fields (no User Context, no Cron Jobs)', async () => {
+		it('shows fields specific to non-superagent agents (no User Context, no Cron Jobs)', async () => {
 			render(
 				AgentConfigEditor,
 				createProps({
-					configuration: createDefaultWorkerConfig(),
+					configuration: createDefaultAgentConfig(),
 					isSuperagent: false
 				})
 			)
@@ -573,7 +572,7 @@ describe('AgentConfigEditor', () => {
 				page.getByRole('button', { name: /user context/i }).query()
 			).toBeNull()
 
-			// Should show worker fields
+			// Should show fields for non-superagent agents
 			await expect
 				.element(page.getByRole('button', { name: /^name$/i }))
 				.toBeVisible()
@@ -585,8 +584,8 @@ describe('AgentConfigEditor', () => {
 				.toBeVisible()
 		})
 
-		it('uses isSuperagent=true to show Cron Jobs even when route detection says Worker', async () => {
-			// Route detection would say Worker
+		it('uses isSuperagent=true to show Cron Jobs even when route detection says non-superagent agent', async () => {
+			// Route detection would say non-superagent agent
 
 			// But we explicitly set isSuperagent=true with superagent config
 			const superagentConfig = createDefaultSuperagentConfig()
@@ -1019,16 +1018,16 @@ describe('AgentConfigEditor', () => {
 		})
 	})
 
-	describe('Worker agent - no Cron Jobs crash', () => {
-		it('does not crash when clicking Cron Jobs on worker (field not shown)', async () => {
-			const config = createDefaultWorkerConfig()
+	describe('Non-superagent agent - no Cron Jobs crash', () => {
+		it('does not crash when clicking Cron Jobs on non-superagent agent (field not shown)', async () => {
+			const config = createDefaultAgentConfig()
 
 			render(
 				AgentConfigEditor,
 				createProps({ configuration: config, isSuperagent: false })
 			)
 
-			// Cron Jobs button should not exist for worker
+			// Cron Jobs button should not exist for non-superagent agent
 			expect(
 				page.getByRole('button', { name: /cron jobs/i }).query()
 			).toBeNull()
@@ -1037,13 +1036,13 @@ describe('AgentConfigEditor', () => {
 		it('uses isSuperagent prop correctly for new agent page scenario', async () => {
 			// Simulate new agent page where route would be /agents/new
 			// Route detection might return ava, but we pass isSuperagent=false
-			const workerConfig = createDefaultWorkerConfig()
+			const agentConfig = createDefaultAgentConfig()
 			render(
 				AgentConfigEditor,
-				createProps({ configuration: workerConfig, isSuperagent: false })
+				createProps({ configuration: agentConfig, isSuperagent: false })
 			)
 
-			// Should show worker fields only
+			// Should show fields for non-superagent agents only
 			await expect
 				.element(page.getByRole('button', { name: /^name$/i }))
 				.toBeVisible()

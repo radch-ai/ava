@@ -1,4 +1,7 @@
-import type { AgentConfiguration } from '#lib/types/agent'
+import type {
+	AgentConfiguration,
+	SuperagentConfiguration
+} from '#lib/types/agent'
 import { api } from '../api'
 
 export interface CreateAgentResponse {
@@ -14,7 +17,8 @@ export async function getAgentConfiguration(
 
 export async function updateAgentConfiguration(
 	agentId: string,
-	configuration: Partial<AgentConfiguration>
+	// Superagent fields are the full superset a patch may carry
+	configuration: Partial<SuperagentConfiguration>
 ): Promise<AgentConfiguration> {
 	const response = await api
 		.patch(`agent/${agentId}`, { json: configuration })

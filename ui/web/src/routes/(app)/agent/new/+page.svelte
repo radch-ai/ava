@@ -4,8 +4,8 @@
 	import UnsavedChangesDialog from '#components/agentconfig/UnsavedChangesDialog.svelte'
 	import { createAgent } from '#lib/services/agent'
 	import {
-		createDefaultWorkerConfiguration,
-		type WorkerConfiguration
+		type AgentConfiguration,
+		createDefaultAgentConfiguration
 	} from '#lib/types/agent'
 	import {
 		type BeforeNavigate,
@@ -17,8 +17,8 @@
 	import type { PathnameWithSearchOrHash } from '$app/types'
 	import { isValidAgentName } from './agent-name'
 
-	let configuration = $state<WorkerConfiguration>(
-		createDefaultWorkerConfiguration()
+	let configuration = $state<AgentConfiguration>(
+		createDefaultAgentConfiguration()
 	)
 	let hasChanges = $state(false)
 
@@ -86,7 +86,7 @@
 
 	let createError = $state<string | null>(null)
 
-	async function handleSave(config: WorkerConfiguration) {
+	async function handleSave(config: AgentConfiguration) {
 		const name = config.name.trim()
 		if (!name) return
 

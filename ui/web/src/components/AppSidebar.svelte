@@ -11,23 +11,14 @@
 	import * as Sidebar from '#components/ui/sidebar'
 	import * as Tooltip from '#components/ui/tooltip'
 	import { authStore } from '#lib/auth'
-	import { APP_NAME, SUPERAGENT_AGENT_ID } from '#lib/config'
-	import type { Agent } from '#lib/types/agent'
-	import { SUPERAGENT_AGENT } from '#lib/types/agent'
+	import { APP_NAME } from '#lib/config'
+	import { type Agent, SUPERAGENT_AGENT } from '#lib/types/agent'
 	import { resolve } from '$app/paths'
 	import { page } from '$app/state'
 
+	// The list only carries user-created agents; the superagent entry
+	// below comes from the client constant.
 	let { agents }: { agents: Agent[] } = $props()
-
-	// The superagent is a regular list entry with a reserved id; fall back to
-	// the client constant when the list has not loaded yet.
-	const grouped = $derived(
-		Object.groupBy(agents, (agent) =>
-			agent.id === SUPERAGENT_AGENT_ID ? 'superagent' : 'workers'
-		)
-	)
-	const superagent = $derived(grouped.superagent?.[0] ?? SUPERAGENT_AGENT)
-	const workerAgents = $derived(grouped.workers ?? [])
 
 	const sidebar = Sidebar.useSidebar()
 
@@ -92,23 +83,23 @@
 					<Sidebar.MenuButton
 						size="lg"
 						isActive={page.route.id === '/(app)/agent/[agentId]' &&
-							page.params.agentId === SUPERAGENT_AGENT_ID}
+							page.params.agentId === SUPERAGENT_AGENT.id}
 						class="group-data-[collapsible=icon]:justify-center"
 					>
 						{#snippet child({ props })}
 							<a
 								href={resolve('/(app)/agent/[agentId]', {
-									agentId: SUPERAGENT_AGENT_ID
+									agentId: SUPERAGENT_AGENT.id
 								})}
 								{...props}
 							>
 								<AgentIcon
-									name={superagent.icon}
+									name={SUPERAGENT_AGENT.icon}
 									size={18}
 									class="group-data-[collapsible=icon]:size-5"
 								/>
 								<span class="font-medium group-data-[collapsible=icon]:hidden"
-									>Chat with {superagent.name}</span
+									>Chat with {SUPERAGENT_AGENT.name}</span
 								>
 							</a>
 						{/snippet}
@@ -118,10 +109,10 @@
 		</Sidebar.Group>
 		<Sidebar.Separator />
 		<Sidebar.Group>
-			<Sidebar.GroupLabel>Agents</Sidebar.GroupLabel>
+			<Sidebar.GroupLabel>Specialized Agents</Sidebar.GroupLabel>
 			<Sidebar.GroupContent>
 				<Sidebar.Menu>
-					{#each workerAgents as agent (agent.id)}
+					{#each agents as agent (agent.id)}
 						<Sidebar.MenuItem>
 							<Sidebar.MenuButton
 								isActive={page.route.id === '/(app)/agent/[agentId]' &&

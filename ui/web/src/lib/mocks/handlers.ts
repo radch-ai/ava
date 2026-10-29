@@ -41,6 +41,9 @@ function paginate<T extends CursorItem>(
  */
 export function createHandlers(store: MockStore): HttpHandler[] {
 	return [
+		// The list mirrors the backend query: it never includes the system
+		// superagent. Per-id endpoints (config, thread) resolve it separately.
+
 		http.get('*/api/agents', () => HttpResponse.json({ agents: store.agents })),
 
 		http.post('*/api/auth/exchange', async ({ request }) => {

@@ -1,10 +1,10 @@
 import { SUPERAGENT_AGENT_ID, SUPERAGENT_NAME } from '../config.ts'
 import type { AgentActivityItem } from '../services/agent/activity.ts'
 import type { ThreadMessage } from '../services/agent/thread.ts'
-import {
-	type Agent,
-	type AgentConfiguration,
-	SUPERAGENT_AGENT
+import type {
+	Agent,
+	AgentConfiguration,
+	SuperagentConfiguration
 } from '../types/agent.ts'
 
 /** Mutable in-memory state the mock handlers read from and write to. */
@@ -25,50 +25,50 @@ const ANCHOR = Date.parse('2026-10-23T12:00:00Z')
 const minutesAgo = (minutes: number): string =>
 	new Date(ANCHOR - minutes * 60_000).toISOString()
 
-const WORKER_AGENTS: Agent[] = [
+/** Seeded user-created agents; the system superagent is never in the list. */
+const AGENT_SEEDS: Agent[] = [
 	{ id: 'research', name: 'Research', icon: 'globe' },
 	{ id: 'scribe', name: 'Scribe', icon: 'pencil' },
 	{ id: 'sentinel', name: 'Sentinel', icon: 'shield' }
 ]
 
 /** Configuration seeds keyed by agent id (`_superagent` is system-reserved). */
-const CONFIGURATIONS: Array<[id: string, config: AgentConfiguration]> = [
-	[
-		SUPERAGENT_AGENT_ID,
+const SUPERAGENT_CONFIG = {
+	name: SUPERAGENT_NAME,
+	icon: 'message-square',
+	soul: {
+		personality:
+			'Warm, direct, and precise. Prefers short answers with concrete next steps.',
+		identity: `${SUPERAGENT_NAME} is the user's primary assistant and coordinates the other agents.`
+	},
+	userContext:
+		'The user builds personal automation tooling and prefers concise, technical answers.',
+	operatingInstructions:
+		'Keep replies under five lines unless asked to elaborate. Surface agent failures immediately with a suggested fix.',
+	toolsContext:
+		"Local tools: file system read/write, browser, and shell access are available on the user's devices.",
+	toolsEnabled: ['browser.browse', 'fs.read', 'fs.write', 'shell.run'],
+	cronJobs: [
 		{
-			name: SUPERAGENT_NAME,
-			icon: 'message-square',
-			soul: {
-				personality:
-					'Warm, direct, and precise. Prefers short answers with concrete next steps.',
-				identity: `${SUPERAGENT_NAME} is the user's primary assistant and coordinates the worker agents.`
-			},
-			userContext:
-				'The user builds personal automation tooling and prefers concise, technical answers.',
-			operatingInstructions:
-				'Keep replies under five lines unless asked to elaborate. Surface agent failures immediately with a suggested fix.',
-			toolsContext:
-				"Local tools: file system read/write, browser, and shell access are available on the user's devices.",
-			toolsEnabled: ['browser.browse', 'fs.read', 'fs.write', 'shell.run'],
-			cronJobs: [
-				{
-					id: 'cron-digest',
-					time: '09:00',
-					frequency: 'daily',
-					model: 'gpt-4',
-					prompt:
-						'Compile the overnight digest: agent failures, research highlights, and today’s action items.'
-				}
-			],
-			heartbeat: {
-				id: 'heartbeat-ava',
-				model: 'auto',
-				enabled: true,
-				duration: '30m',
-				content: 'Check agent heartbeats and flag anything stalled.'
-			}
+			id: 'cron-digest',
+			time: '09:00',
+			frequency: 'daily',
+			model: 'gpt-4',
+			prompt:
+				'Compile the overnight digest: agent failures, research highlights, and today’s action items.'
 		}
 	],
+	heartbeat: {
+		id: 'heartbeat-ava',
+		model: 'auto',
+		enabled: true,
+		duration: '30m',
+		content: 'Check agent heartbeats and flag anything stalled.'
+	}
+} satisfies SuperagentConfiguration
+
+const CONFIGURATIONS: Array<[id: string, config: AgentConfiguration]> = [
+	[SUPERAGENT_AGENT_ID, SUPERAGENT_CONFIG],
 	[
 		'research',
 		{
@@ -252,7 +252,7 @@ export function createSeedData(): MockStore {
 	).reverse()
 
 	return {
-		agents: [SUPERAGENT_AGENT, ...WORKER_AGENTS],
+		agents: [...AGENT_SEEDS],
 		configurations: new Map(CONFIGURATIONS),
 		thread,
 		activity: seedActivity(),

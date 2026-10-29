@@ -56,7 +56,7 @@
 
 	async function handleSave(config: AgentConfiguration) {
 		// Build partial update with only changed fields
-		const fields = isSuperagent ? AGENT_FIELDS.superagent : AGENT_FIELDS.worker
+		const fields = isSuperagent ? AGENT_FIELDS.superagent : AGENT_FIELDS.agent
 		const changes: Partial<AgentConfiguration> = {}
 
 		for (const field of fields) {
