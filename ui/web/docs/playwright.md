@@ -51,4 +51,4 @@
 ## Current Scope Snapshot
 
 - E2E specs live under `tests/e2e/specs/*.spec.ts`.
-- The stabilized suite currently covers 73 Playwright tests.
+- Test count is intentionally not tracked here — it changes with every addition. Note that static `test(` counting undercounts the suite: the `guardSurfaces` loop in `navigation.spec.ts` generates tests at runtime for each editing surface.

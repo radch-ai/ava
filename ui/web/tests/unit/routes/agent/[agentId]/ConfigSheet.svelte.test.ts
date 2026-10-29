@@ -191,6 +191,44 @@ describe('ConfigSheet', () => {
 		})
 	})
 
+	describe('Close button wiring (bits-ui Close → onOpenChange backstop)', () => {
+		// The X button is CSS-hidden by ConfigSheet, but a programmatic click
+		// still runs the real bits-ui chain: Close.onclick → handleClose →
+		// onOpenChange → handleOpenChange. This is the only sheet close path
+		// that does not pass through the SheetCloseGuard handlers, so it is
+		// the one that exercises the handleOpenChange backstop directly.
+		function getCloseButton(): HTMLElement {
+			const button = page.getByRole('button', { name: 'Close' }).query()
+			expect(button).not.toBeNull()
+			return button as HTMLElement
+		}
+
+		it('closes the sheet via the X close button when there are no changes', async () => {
+			const closeSheet = vi.fn()
+			render(ConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
+
+			getCloseButton().click()
+
+			await vi.waitFor(() => expect(closeSheet).toHaveBeenCalledTimes(1))
+		})
+
+		it('backstop refuses the X close button while the form is dirty', async () => {
+			const closeSheet = vi.fn()
+			render(ConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
+
+			// Make a change
+			await page.getByLabelText(/name/i).fill('New Name')
+
+			getCloseButton().click()
+
+			// The sheet must stay open and the close must not leak through
+			await expect
+				.element(page.getByRole('button', { name: /save/i }))
+				.toBeVisible()
+			expect(closeSheet).not.toHaveBeenCalled()
+		})
+	})
+
 	describe('Save functionality - API success', () => {
 		it('calls updateAgentConfiguration with changed fields only', async () => {
 			const onSaved = vi.fn()
