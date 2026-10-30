@@ -11,6 +11,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/radch-ai/ava/backend"
+	"github.com/radch-ai/ava/backend/sqlstore"
 	"github.com/radch-ai/ava/gateway"
 	"github.com/radch-ai/ava/utils"
 )
@@ -18,20 +19,19 @@ import (
 // Version is set at build time via -ldflags `-X main.Version=<tag>`.
 var Version = "dev"
 
-// baseConfig holds the server-level values the binary itself consumes.
-type baseConfig struct {
-	Addr string
+// config holds the server-level values the binary itself consumes.
+type config struct {
+	Addr   string
+	DBPath string
 }
 
-// loadConfig binds env vars onto the base, backend, and gateway configs —
+// loadConfig binds env vars onto the config —
 // all env reading lives here.
-func loadConfig(logger zerolog.Logger) (baseConfig, *backend.Config, *gateway.Config) {
-	dbPath := utils.GetEnv("AVA_DB", "data/ava.db")
-	return baseConfig{
-			Addr: utils.GetEnv("AVA_ADDR", ":8080"),
-		},
-		&backend.Config{DBPath: dbPath},
-		&gateway.Config{DBPath: dbPath}
+func loadConfig(logger zerolog.Logger) config {
+	return config{
+		Addr:   utils.GetEnv("AVA_ADDR", ":8080"),
+		DBPath: utils.GetEnv("AVA_DB", "data/ava.db"),
+	}
 }
 
 func main() {
@@ -41,22 +41,29 @@ func main() {
 	logger.Info().Str("version", Version).Msg("starting ava")
 
 	// Load configuration
-	baseCfg, backendCfg, gatewayCfg := loadConfig(logger)
+	cfg := loadConfig(logger)
 
 	// Create cancellable context for graceful shutdown
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	logger.Info().
-		Str("addr", baseCfg.Addr).
+		Str("addr", cfg.Addr).
 		Msg("Configuration loaded")
 
-	apiHandler, err := backend.New(backendCfg, logger)
+	// Open the store here so the backend stays engine-agnostic.
+	sqlDB, err := sqlstore.Open(cfg.DBPath)
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Failed to open store")
+	}
+	logger.Info().Str("path", cfg.DBPath).Msg("store ready")
+
+	apiHandler, err := backend.New(sqlDB, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Failed to create backend handler")
 	}
 
-	wsHandler, err := gateway.New(gatewayCfg, logger)
+	wsHandler, err := gateway.New(&gateway.Config{}, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Failed to create gateway handler")
 	}
@@ -67,7 +74,7 @@ func main() {
 	root.Handle("/api/", apiHandler)
 	root.Handle("GET /ws", wsHandler)
 
-	if err := utils.Serve(ctx, root, baseCfg.Addr, logger); err != nil {
+	if err := utils.Serve(ctx, root, cfg.Addr, logger); err != nil {
 		logger.Fatal().Err(err).Msg("Server failed")
 	}
 }

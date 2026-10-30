@@ -4,12 +4,14 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/rs/zerolog"
 
 	"github.com/radch-ai/ava/backend"
+	"github.com/radch-ai/ava/backend/sqlstore"
 	"github.com/radch-ai/ava/gateway"
 	"github.com/radch-ai/ava/utils"
 )
@@ -20,7 +22,13 @@ import (
 func TestServerChain(t *testing.T) {
 	logger := zerolog.Nop()
 
-	apiHandler, err := backend.New(&backend.Config{}, logger)
+	sqlDB, err := sqlstore.Open(filepath.Join(t.TempDir(), "ava.db"))
+	if err != nil {
+		t.Fatalf("sqlstore.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+
+	apiHandler, err := backend.New(sqlDB, logger)
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}

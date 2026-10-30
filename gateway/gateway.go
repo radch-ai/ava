@@ -11,9 +11,7 @@ import (
 )
 
 // Config is the gateway's runtime configuration.
-type Config struct {
-	DBPath string
-}
+type Config struct{}
 
 // New builds the gateway WebSocket handler. The gateway is a single endpoint:
 // the caller owns the path it is mounted on.

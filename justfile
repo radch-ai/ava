@@ -1,6 +1,7 @@
 set shell := ["/bin/bash", "-euo", "pipefail", "-c"]
 
 allowed_services := "ava"
+sqlc_services := "ava"
 
 # Validate that a service name is in allowed_services. Used by service-arg recipes.
 [private]
@@ -32,9 +33,15 @@ install-tools:
 
 # Regenerate the sqlc db layer (backend/queries + backend/internal/schema/migrations → backend/internal/db).
 # Functional once queries land; sqlc rejects empty query paths.
+# Gated into validate/build/test when they do.
 sqlc-generate:
     @just require_tool sqlc
     @cd backend && sqlc generate
+
+# Run sqlc-generate, but only for services that use it (see sqlc_services).
+[private]
+sqlc-generate-for service:
+    @case " {{ sqlc_services }} " in *" {{ service }} "*) just sqlc-generate ;; esac
 
 ## --- build / run ---
 
@@ -75,7 +82,6 @@ migrate-cli direction n="":
 ## --- validate ---
 
 # go mod tidy → golangci-lint --fix → go fmt → goimports.
-# sqlc generate joins here when queries land.
 validate:
     @just require_tool golangci-lint
     @just require_tool goimports
