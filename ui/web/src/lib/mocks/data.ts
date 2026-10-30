@@ -15,8 +15,6 @@ export interface MockStore {
 	activity: Map<string, AgentActivityItem[]>
 	/** The one token POST /auth/exchange accepts. */
 	token: string
-	/** Profile served by /auth/exchange and /auth/me. */
-	user: { sub: string }
 }
 
 // Fixed anchor for every seeded timestamp: 2026-10-23T12:00:00Z.
@@ -256,7 +254,6 @@ export function createSeedData(): MockStore {
 		configurations: new Map(CONFIGURATIONS),
 		thread,
 		activity: seedActivity(),
-		token: 'ava-mock-token',
-		user: { sub: 'local' }
+		token: 'ava-mock-token'
 	}
 }
