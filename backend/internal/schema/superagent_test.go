@@ -12,7 +12,7 @@ import (
 )
 
 func TestSeedSuperagent(t *testing.T) {
-	db := open(t, filepath.Join(t.TempDir(), "ava.db"))
+	db := openSQLite(t, filepath.Join(t.TempDir(), "ava.db"))
 	defer func() { _ = db.Close() }()
 
 	var name, icon string
@@ -27,7 +27,7 @@ func TestSeedSuperagent(t *testing.T) {
 }
 
 func TestSystemAgentsCannotBeDeleted(t *testing.T) {
-	db := open(t, filepath.Join(t.TempDir(), "ava.db"))
+	db := openSQLite(t, filepath.Join(t.TempDir(), "ava.db"))
 	defer func() { _ = db.Close() }()
 
 	// The trigger aborts deletes of "_"-prefixed ids — every code

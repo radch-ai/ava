@@ -8,7 +8,7 @@ import (
 )
 
 func TestMigrateCreatesVersionTable(t *testing.T) {
-	db := open(t, filepath.Join(t.TempDir(), "ava.db"))
+	db := openSQLite(t, filepath.Join(t.TempDir(), "ava.db"))
 	defer func() { _ = db.Close() }()
 
 	var n int
@@ -20,9 +20,9 @@ func TestMigrateCreatesVersionTable(t *testing.T) {
 func TestMigrateIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ava.db")
 
-	db := open(t, path)
+	db := openSQLite(t, path)
 	_ = db.Close()
 
-	db2 := open(t, path) // second open + migrate on the same file must succeed
+	db2 := openSQLite(t, path) // second open + migrate on the same file must succeed
 	defer func() { _ = db2.Close() }()
 }

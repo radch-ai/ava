@@ -20,10 +20,10 @@ import (
 //go:embed all:migrations
 var migrationsFS embed.FS
 
-// Migrate applies every pending migration in version order using the
+// MigrateSQLite applies every pending migration in version order using the
 // golang-migrate engine. The engine wraps each step in a transaction and
 // records it in schema_migrations (version, dirty).
-func Migrate(db *sql.DB) error {
+func MigrateSQLite(db *sql.DB) error {
 	src, err := iofs.New(migrationsFS, "migrations")
 	if err != nil {
 		return fmt.Errorf("migration source: %w", err)

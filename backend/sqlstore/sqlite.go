@@ -38,7 +38,7 @@ func OpenSQLite(dbPath string) (*sql.DB, error) {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("ping sqlite: %w", err)
 	}
-	if err := schema.Migrate(sqlDB); err != nil {
+	if err := schema.MigrateSQLite(sqlDB); err != nil {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
