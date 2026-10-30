@@ -31,7 +31,7 @@ install-tools:
     fi
     @echo "Tools installed. Ensure ~/.local/bin is in your PATH."
 
-# Regenerate the sqlc db layer (backend/queries + backend/internal/schema/migrations → backend/internal/db).
+# Regenerate the sqlc db layer (backend/internal/queries + backend/internal/schema/migrations → backend/internal/db).
 # Functional once queries land; sqlc rejects empty query paths.
 # Gated into validate/build/test when they do.
 sqlc-generate:
