@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-func TestOpenCreatesFileAndVersionTable(t *testing.T) {
+func TestOpenSQLiteCreatesFileAndVersionTable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "data", "ava.db") // exercises dir creation
 
-	sqlDB, err := Open(path)
+	sqlDB, err := OpenSQLite(path)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -25,8 +25,8 @@ func TestOpenCreatesFileAndVersionTable(t *testing.T) {
 	}
 }
 
-func TestOpenMemory(t *testing.T) {
-	sqlDB, err := Open(":memory:")
+func TestOpenSQLiteMemory(t *testing.T) {
+	sqlDB, err := OpenSQLite(":memory:")
 	if err != nil {
 		t.Fatalf("open memory: %v", err)
 	}

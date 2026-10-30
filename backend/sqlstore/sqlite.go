@@ -14,12 +14,12 @@ import (
 	"github.com/radch-ai/ava/backend/internal/schema"
 )
 
-// Open opens (creating if needed) the SQLite database at dbPath and applies
+// OpenSQLite opens (creating if needed) the SQLite database at dbPath and applies
 // pending migrations. The ":memory:" sentinel opens an in-process database
 // instead — WAL and synchronous are no-ops there, and it depends on the
 // single pooled connection below: every extra connection would get its own
 // private, empty memory database.
-func Open(dbPath string) (*sql.DB, error) {
+func OpenSQLite(dbPath string) (*sql.DB, error) {
 	if dir := filepath.Dir(dbPath); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("create data directory: %w", err)

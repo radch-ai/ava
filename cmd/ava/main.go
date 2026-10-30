@@ -54,7 +54,7 @@ func main() {
 		Msg("Configuration loaded")
 
 	// Open the store here so the backend stays engine-agnostic.
-	sqlDB, err := sqlstore.Open(cfg.DBPath)
+	sqlDB, err := sqlstore.OpenSQLite(cfg.DBPath)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Failed to open store")
 	}

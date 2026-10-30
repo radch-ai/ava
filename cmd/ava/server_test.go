@@ -22,9 +22,9 @@ import (
 func TestServerChain(t *testing.T) {
 	logger := zerolog.Nop()
 
-	sqlDB, err := sqlstore.Open(filepath.Join(t.TempDir(), "ava.db"))
+	sqlDB, err := sqlstore.OpenSQLite(filepath.Join(t.TempDir(), "ava.db"))
 	if err != nil {
-		t.Fatalf("sqlstore.Open: %v", err)
+		t.Fatalf("sqlstore.OpenSQLite: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
 

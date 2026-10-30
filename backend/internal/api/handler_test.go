@@ -15,9 +15,9 @@ import (
 // in-memory database — every endpoint test starts here.
 func openHandler(t *testing.T) (http.Handler, *sql.DB) {
 	t.Helper()
-	sqlDB, err := sqlstore.Open(":memory:")
+	sqlDB, err := sqlstore.OpenSQLite(":memory:")
 	if err != nil {
-		t.Fatalf("sqlstore.Open: %v", err)
+		t.Fatalf("sqlstore.OpenSQLite: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	return Handler(sqlDB, zerolog.Nop()), sqlDB
