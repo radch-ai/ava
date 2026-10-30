@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	_ "github.com/glebarez/go-sqlite" // registers the "sqlite" driver (pure Go)
+	_ "modernc.org/sqlite" // registers the "sqlite" driver (pure Go)
 
 	"github.com/radch-ai/ava/backend/internal/schema"
 )

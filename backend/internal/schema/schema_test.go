@@ -1,15 +1,15 @@
 package schema
 
-// Runner mechanics only: version table, ordering, idempotence. The
-// open helper below is shared by the SQL-invariant tests in this
-// package (e.g. superagent_test.go).
+// Shared test infrastructure for this package's SQL-level tests: open
+// returns a fully migrated database and is used by the runner-mechanics
+// tests in migrations_test.go and the SQL-invariant tests (e.g.
+// superagent_test.go).
 
 import (
 	"database/sql"
-	"path/filepath"
 	"testing"
 
-	_ "github.com/glebarez/go-sqlite"
+	_ "modernc.org/sqlite"
 )
 
 func open(t *testing.T, path string) *sql.DB {
@@ -23,24 +23,4 @@ func open(t *testing.T, path string) *sql.DB {
 		t.Fatalf("migrate: %v", err)
 	}
 	return db
-}
-
-func TestMigrateCreatesVersionTable(t *testing.T) {
-	db := open(t, filepath.Join(t.TempDir(), "ava.db"))
-	defer func() { _ = db.Close() }()
-
-	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil {
-		t.Fatalf("version table: %v", err)
-	}
-}
-
-func TestMigrateIsIdempotent(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ava.db")
-
-	db := open(t, path)
-	_ = db.Close()
-
-	db2 := open(t, path) // second open + migrate on the same file must succeed
-	defer func() { _ = db2.Close() }()
 }
