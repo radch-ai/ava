@@ -4,7 +4,12 @@
 		AGENT_ICON_CATEGORIES,
 		type AgentIconName
 	} from '#components/agent-icons/index.ts'
-	import { Button } from '#components/ui/button'
+	import { buttonVariants } from '#components/ui/button'
+	import {
+		DropdownMenu,
+		DropdownMenuContent,
+		DropdownMenuTrigger
+	} from '#components/ui/dropdown-menu'
 
 	interface Props {
 		value: AgentIconName
@@ -13,91 +18,54 @@
 	}
 
 	let { value, onselect, id }: Props = $props()
-	let isOpen = $state(false)
-	let dropdownElement: HTMLDivElement | null = $state(null)
-	let triggerElement: HTMLButtonElement | null = $state(null)
 
-	function toggle() {
-		isOpen = !isOpen
-	}
+	// Close the menu after a selection.
+	let isOpen = $state(false)
 
 	function handleSelect(icon: AgentIconName) {
 		onselect(icon)
 		isOpen = false
 	}
-
-	// Position the dropdown when it opens, ensuring it stays in viewport
-	$effect(() => {
-		if (isOpen && dropdownElement && triggerElement) {
-			const rect = triggerElement.getBoundingClientRect()
-			const dropdownWidth = 320 // w-80 = 320px
-			const padding = 8
-
-			// Calculate horizontal position - prefer left-aligned with trigger, but shift if needed
-			let left = rect.left
-			if (left + dropdownWidth > window.innerWidth - padding) {
-				left = Math.max(padding, window.innerWidth - dropdownWidth - padding)
-			}
-
-			dropdownElement.style.top = `${rect.bottom + 8}px`
-			dropdownElement.style.left = `${left}px`
-		}
-	})
 </script>
 
-<div class="relative">
-	<Button
-		bind:ref={triggerElement}
+<DropdownMenu bind:open={isOpen}>
+	<DropdownMenuTrigger
+		class={buttonVariants({ variant: 'outline', size: 'icon' })}
 		{id}
-		variant="outline"
-		size="icon"
 		aria-label={`Icon: ${value}. Change icon.`}
-		onclick={toggle}
 	>
 		<AgentIcon name={value} size={20} />
-	</Button>
-
-	{#if isOpen}
-		<!-- Backdrop to close dropdown when clicking outside -->
-		<button
-			type="button"
-			class="fixed inset-0 z-40 bg-transparent"
-			aria-label="Close"
-			onclick={toggle}
-		></button>
-
-		<!-- Dropdown panel - fixed positioning to avoid overflow clipping -->
-		<div
-			bind:this={dropdownElement}
-			class="bg-popover fixed z-50 max-h-80 w-80 overflow-y-auto rounded-lg border p-3 shadow-lg"
-		>
-			{#each Object.entries(
-				AGENT_ICON_CATEGORIES
-			) as [category, icons] (category)}
-				<div class="mb-3">
-					<h4
-						class="text-muted-foreground mb-1.5 px-1 text-xs font-medium capitalize"
-					>
-						{category}
-					</h4>
-					<div class="grid grid-cols-6 gap-1">
-						{#each icons as icon (icon)}
-							<button
-								type="button"
-								aria-label={icon}
-								title={icon}
-								class="flex h-8 w-8 items-center justify-center rounded-md hover:bg-accent {value ===
-								icon
-									? 'bg-accent/50 ring-2 ring-primary'
-									: ''}"
-								onclick={() => handleSelect(icon)}
-							>
-								<AgentIcon name={icon} size={20} />
-							</button>
-						{/each}
-					</div>
+	</DropdownMenuTrigger>
+	<!-- DropdownMenuContent portals this panel to <body>: the sheet dialog's
+	     contain: layout style makes the dialog the containing block for fixed
+	     descendants, so the panel must live outside it to stay viewport-anchored. -->
+	<DropdownMenuContent class="max-h-60 w-60 rounded-lg p-2">
+		{#each Object.entries(
+			AGENT_ICON_CATEGORIES
+		) as [category, icons] (category)}
+			<div class="mb-3">
+				<h4
+					class="text-muted-foreground mb-1.5 px-1 text-xs font-medium capitalize"
+				>
+					{category}
+				</h4>
+				<div class="grid grid-cols-6 gap-1">
+					{#each icons as icon (icon)}
+						<button
+							type="button"
+							aria-label={icon}
+							title={icon}
+							class="flex h-8 w-8 items-center justify-center rounded-md hover:bg-accent {value ===
+							icon
+								? 'bg-accent/50 ring-2 ring-primary'
+								: ''}"
+							onclick={() => handleSelect(icon)}
+						>
+							<AgentIcon name={icon} size={20} />
+						</button>
+					{/each}
 				</div>
-			{/each}
-		</div>
-	{/if}
-</div>
+			</div>
+		{/each}
+	</DropdownMenuContent>
+</DropdownMenu>
