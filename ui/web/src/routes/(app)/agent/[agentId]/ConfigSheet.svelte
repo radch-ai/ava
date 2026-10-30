@@ -20,7 +20,7 @@
 		isSheetOpened: boolean
 		closeSheet: () => void
 		configuration: AgentConfiguration
-		/** All available tools for this user */
+		/** All available tools, configured by the user at the server level */
 		availableTools: Tool[]
 		/** Agent id for API calls */
 		agentId: string

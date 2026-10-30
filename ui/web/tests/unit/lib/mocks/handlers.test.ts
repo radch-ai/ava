@@ -274,7 +274,7 @@ describe('mock API handlers', () => {
 	})
 
 	describe('auth endpoints', () => {
-		it('exchanges the seeded token for a session cookie and user', async () => {
+		it('exchanges the seeded token for a session cookie', async () => {
 			const res = await fetch(`${BASE}/auth/exchange`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
@@ -283,7 +283,6 @@ describe('mock API handlers', () => {
 			expect(res.status).toBe(200)
 			expect(res.headers.get('set-cookie')).toContain('ava_session=')
 			expect(res.headers.get('set-cookie')).toContain('HttpOnly')
-			expect(await res.json()).toEqual({ user: { sub: 'local' } })
 		})
 
 		it('rejects a wrong token with 401', async () => {
@@ -303,7 +302,6 @@ describe('mock API handlers', () => {
 				headers: { cookie: 'ava_session=mock-session' }
 			})
 			expect(authed.status).toBe(200)
-			expect(await authed.json()).toEqual({ user: { sub: 'local' } })
 		})
 
 		it('expires the session cookie on logout', async () => {

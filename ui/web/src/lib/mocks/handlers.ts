@@ -51,20 +51,18 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			if (token !== store.token) {
 				return HttpResponse.json({ message: 'Invalid token' }, { status: 401 })
 			}
-			return HttpResponse.json(
-				{ user: store.user },
-				{
-					headers: {
-						'Set-Cookie':
-							'ava_session=mock-session; Path=/; HttpOnly; SameSite=Strict'
-					}
+			return new HttpResponse(null, {
+				status: 200,
+				headers: {
+					'Set-Cookie':
+						'ava_session=mock-session; Path=/; HttpOnly; SameSite=Strict'
 				}
-			)
+			})
 		}),
 
 		http.get('*/api/auth/me', ({ request }) =>
 			request.headers.get('cookie')?.includes('ava_session=')
-				? HttpResponse.json({ user: store.user })
+				? new HttpResponse(null, { status: 200 })
 				: HttpResponse.json({ message: 'No session' }, { status: 401 })
 		),
 

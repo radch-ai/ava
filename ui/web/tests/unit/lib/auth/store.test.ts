@@ -3,25 +3,21 @@ import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { AuthStore } from '#lib/auth/store.svelte'
 
-const MOCK_USER = { sub: 'u1', name: 'Ava' }
-
 const server = setupServer(
 	// Node fetch has no cookie jar; "has session" here just means the server
 	// says so. Cookie mechanics are the browser's job (browser-verified).
-	http.get('*/api/auth/me', () => HttpResponse.json({ user: MOCK_USER })),
+	http.get('*/api/auth/me', () => new HttpResponse(null, { status: 200 })),
 	http.post('*/api/auth/exchange', async ({ request }) => {
 		const { token } = (await request.json()) as { token: string }
 		if (token !== 'secret-token') {
 			return HttpResponse.json({ message: 'Invalid token' }, { status: 401 })
 		}
-		return HttpResponse.json(
-			{ user: MOCK_USER },
-			{
-				headers: {
-					'Set-Cookie': 'ava_session=s; Path=/; HttpOnly; SameSite=Strict'
-				}
+		return new HttpResponse(null, {
+			status: 200,
+			headers: {
+				'Set-Cookie': 'ava_session=s; Path=/; HttpOnly; SameSite=Strict'
 			}
-		)
+		})
 	}),
 	http.post(
 		'*/api/auth/logout',
