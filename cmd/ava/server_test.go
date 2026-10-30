@@ -51,7 +51,7 @@ func TestServerChain(t *testing.T) {
 
 	// Same mounts main builds: backend under /api, gateway at /ws. The
 	// backend mount is wrapped to stamp a header, proving requests are
-	// delegated to the mounted handler even while its route table is empty.
+	// delegated to the mounted handler.
 	stampedAPI := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Chain", "api")
 		apiHandler.ServeHTTP(w, r)
@@ -110,10 +110,12 @@ func TestServerChain(t *testing.T) {
 	check(http.MethodPost, "/healthz", http.StatusMethodNotAllowed)
 
 	// Delegated to the app mux: gateway rejects a plain GET without
-	// upgrade headers; backend has no routes yet; unknown root paths 404.
+	// upgrade headers; the backend serves its routes under /api and
+	// 404s everything else; unknown root paths 404.
 	check(http.MethodGet, "/ws", http.StatusUpgradeRequired)
 	check(http.MethodGet, "/api/", http.StatusNotFound)
 	checkHeader(http.MethodGet, "/api/", "X-Chain", "api")
+	check(http.MethodGet, "/api/agents", http.StatusOK)
 	check(http.MethodGet, "/", http.StatusNotFound)
 
 	cancel()

@@ -1,6 +1,6 @@
-// Package backend is the public entry point of the ava backend.
-// Everything under backend/internal is invisible outside this subtree; this
-// package and the sqlstore adapter are its importable surfaces.
+// Package backend is the backend's public surface: internal/ is
+// invisible outside this subtree, so this package and sqlstore are the
+// importable entry points.
 package backend
 
 import (
@@ -8,23 +8,13 @@ import (
 	"net/http"
 
 	"github.com/rs/zerolog"
+
+	"github.com/radch-ai/ava/backend/internal/api"
 )
 
-// Backend holds the backend's long-lived components. Its handler is the only
-// public surface; the database handle will back the /api endpoints as they
-// land.
-type Backend struct {
-	sqlDB   *sql.DB
-	handler http.Handler
-}
-
-// New builds the backend handler over an already-open database — the caller
-// wires the engine, so this package never sees a driver. The backend owns
-// its route paths under /api.
+// New builds the backend's HTTP handler over an already-open,
+// already-migrated database. The route table lives in internal/api;
+// the binary entrypoint mounts this handler under /api on its root mux.
 func New(sqlDB *sql.DB, logger zerolog.Logger) (http.Handler, error) {
-	b := &Backend{
-		sqlDB:   sqlDB,
-		handler: http.NewServeMux(), // routes arrive with the endpoints
-	}
-	return b.handler, nil
+	return api.Handler(sqlDB, logger), nil
 }

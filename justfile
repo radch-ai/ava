@@ -48,6 +48,7 @@ sqlc-generate-for service:
 # Build a service into ./bin. Usage: just build <service>
 build service:
     @just validate_service {{ service }}
+    @just sqlc-generate-for {{ service }}
     @mkdir -p bin
     go build -o bin/{{ service }} ./cmd/{{ service }}
 
@@ -61,6 +62,7 @@ run service: (build service)
 # Run unit tests with race + coverage. Usage: just test <service> [test_path]
 test service test_path="":
     @just validate_service {{ service }}
+    @just sqlc-generate-for {{ service }}
     #!/usr/bin/env bash
     path="{{ test_path }}"
     CGO_ENABLED=1 go test -race -coverprofile=coverage.{{ service }}.out ${path:-./...}

@@ -1,5 +1,9 @@
 package schema
 
+// Runner mechanics only: version table, ordering, idempotence. The
+// open helper below is shared by the SQL-invariant tests in this
+// package (e.g. superagent_test.go).
+
 import (
 	"database/sql"
 	"path/filepath"
