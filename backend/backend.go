@@ -9,12 +9,17 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/radch-ai/ava/backend/internal/api"
+	"github.com/radch-ai/ava/backend/internal/api/agents"
+	"github.com/radch-ai/ava/backend/internal/db"
 )
 
-// New builds the backend's HTTP handler over an already-open,
-// already-migrated database. The route table lives in internal/api;
-// the binary entrypoint mounts this handler under /api on its root mux.
-func New(sqlDB *sql.DB, logger zerolog.Logger) (http.Handler, error) {
-	return api.Handler(sqlDB, logger), nil
+// New builds the backend route table over an already-open,
+// already-migrated database; the binary entrypoint mounts it under
+// /api on its root mux. The contract source is the UI itself
+// (ui/web/src/lib/services and lib/mocks).
+func New(sqlDB *sql.DB, logger zerolog.Logger) http.Handler {
+	queries := db.New(sqlDB)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/agents", agents.GetAgents(queries, logger))
+	return mux
 }

@@ -60,10 +60,7 @@ func main() {
 	}
 	logger.Info().Str("path", cfg.DBPath).Msg("store ready")
 
-	apiHandler, err := backend.New(sqlDB, logger)
-	if err != nil {
-		logger.Fatal().Err(err).Msg("Failed to create backend handler")
-	}
+	apiHandler := backend.New(sqlDB, logger)
 
 	wsHandler, err := gateway.New(&gateway.Config{}, logger)
 	if err != nil {

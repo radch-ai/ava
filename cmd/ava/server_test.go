@@ -28,10 +28,7 @@ func TestServerChain(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
 
-	apiHandler, err := backend.New(sqlDB, logger)
-	if err != nil {
-		t.Fatalf("backend.New: %v", err)
-	}
+	apiHandler := backend.New(sqlDB, logger)
 	wsHandler, err := gateway.New(&gateway.Config{}, logger)
 	if err != nil {
 		t.Fatalf("gateway.New: %v", err)
