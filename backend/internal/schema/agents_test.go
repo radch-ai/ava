@@ -1,16 +1,16 @@
 // Agents-table DB-enforced rules: created_at is stamped by the
 // database on insert.
-package schema
+package schema_test
 
 import (
-	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
 func TestCreatedAtStampedByDatabase(t *testing.T) {
-	sqlDB := openSQLite(t, filepath.Join(t.TempDir(), "ava.db"))
-	defer func() { _ = sqlDB.Close() }()
+	sqlDB := testdb.Open(t)
 
 	if _, err := sqlDB.Exec(
 		`INSERT INTO agents (id, name, icon) VALUES ('research', 'Research', 'globe')`,

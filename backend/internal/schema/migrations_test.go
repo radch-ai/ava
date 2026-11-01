@@ -1,15 +1,17 @@
-package schema
+package schema_test
 
 // Migration runner mechanics only: version table, idempotence.
 
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/radch-ai/ava/backend/internal/testdb"
+	"github.com/radch-ai/ava/backend/sqlstore"
 )
 
 func TestMigrateCreatesVersionTable(t *testing.T) {
-	db := openSQLite(t, filepath.Join(t.TempDir(), "ava.db"))
-	defer func() { _ = db.Close() }()
+	db := testdb.Open(t)
 
 	var n int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil {
@@ -18,11 +20,20 @@ func TestMigrateCreatesVersionTable(t *testing.T) {
 }
 
 func TestMigrateIsIdempotent(t *testing.T) {
+	// File-based: the reopen must land on the same database — memory
+	// would hand the second open a fresh one.
 	path := filepath.Join(t.TempDir(), "ava.db")
 
-	db := openSQLite(t, path)
+	db, err := sqlstore.OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
 	_ = db.Close()
 
-	db2 := openSQLite(t, path) // second open + migrate on the same file must succeed
+	// Second open + migrate on the same file must succeed.
+	db2, err := sqlstore.OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("reopen sqlite: %v", err)
+	}
 	defer func() { _ = db2.Close() }()
 }

@@ -1,4 +1,4 @@
-package schema
+package schema_test
 
 // Superagent SQL-level invariants: the seed guarantees and the
 // DB-enforced rules from migrations/0002_seed_superagent. Everything
@@ -6,14 +6,14 @@ package schema
 // schema tests pin only what the SQL layer itself enforces.
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
 func TestSeedSuperagent(t *testing.T) {
-	db := openSQLite(t, filepath.Join(t.TempDir(), "ava.db"))
-	defer func() { _ = db.Close() }()
+	db := testdb.Open(t)
 
 	var name, icon string
 	if err := db.QueryRow(
@@ -27,11 +27,10 @@ func TestSeedSuperagent(t *testing.T) {
 }
 
 func TestSystemAgentsCannotBeDeleted(t *testing.T) {
-	db := openSQLite(t, filepath.Join(t.TempDir(), "ava.db"))
-	defer func() { _ = db.Close() }()
+	db := testdb.Open(t)
 
 	// The trigger aborts deletes of "_"-prefixed ids — every code
-	// path, not just a future endpoint's.
+	// path, not just endpoints.
 	_, err := db.Exec(`DELETE FROM agents WHERE id = '_superagent'`)
 	if err == nil || !strings.Contains(err.Error(), "system agents cannot be deleted") {
 		t.Fatalf("delete _superagent err = %v, want trigger abort", err)
