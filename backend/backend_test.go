@@ -26,6 +26,9 @@ func TestRoutes(t *testing.T) {
 	if code := do(http.MethodPost, "/api/agents"); code != http.StatusMethodNotAllowed {
 		t.Errorf("POST /api/agents = %d, want 405", code)
 	}
+	if code := do(http.MethodGet, "/api/agents"); code != http.StatusOK {
+		t.Errorf("GET /api/agents = %d, want 200", code)
+	}
 	if code := do(http.MethodGet, "/api/nope"); code != http.StatusNotFound {
 		t.Errorf("GET /api/nope = %d, want 404", code)
 	}

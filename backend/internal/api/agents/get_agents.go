@@ -2,9 +2,8 @@
 package agents
 
 import (
+	"fmt"
 	"net/http"
-
-	"github.com/rs/zerolog"
 
 	"github.com/radch-ai/ava/backend/internal/api"
 	"github.com/radch-ai/ava/backend/internal/db"
@@ -21,18 +20,13 @@ type getAgentsResponse struct {
 // GetAgents answers the UI's getAgents(): the user's agents in
 // creation order, never the system superagent — clients render it from
 // their own constant.
-func GetAgents(queries *db.Queries, logger zerolog.Logger) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		logger.Debug().Str("method", r.Method).Str("path", r.URL.Path).Msg("handling get agents request")
-
+func GetAgents(queries *db.Queries) api.Handler {
+	return func(w http.ResponseWriter, r *http.Request) error {
 		rows, err := queries.ListAgents(r.Context())
 		if err != nil {
-			logger.Error().Err(err).Msg("get agents failed")
-			api.WriteError(logger, w, http.StatusInternalServerError, "Internal server error")
-			return
+			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+			return fmt.Errorf("list agents: %w", err)
 		}
-
-		logger.Info().Int("agent_count", len(rows)).Msg("retrieved agents")
-		api.WriteJSON(logger, w, http.StatusOK, getAgentsResponse{Agents: rows})
+		return api.WriteJSON(w, http.StatusOK, getAgentsResponse{Agents: rows})
 	}
 }

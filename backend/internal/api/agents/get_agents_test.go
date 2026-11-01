@@ -12,8 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rs/zerolog"
-
 	"github.com/radch-ai/ava/backend/internal/db"
 	"github.com/radch-ai/ava/backend/internal/testdb"
 )
@@ -28,23 +26,24 @@ VALUES (?, ?, ?, ?)`, id, name, icon, createdAt)
 	}
 }
 
-// getAgents runs the handler and returns status plus raw body — the
-// byte-exact comparisons are the contract pin, catching any drift
-// between the query's SELECT and the UI's Agent shape.
-func getAgents(t *testing.T, queries *db.Queries) (int, string) {
+// getAgents runs the handler and returns status, raw body, and the
+// handler's error — byte-exact body comparisons are the contract pin,
+// the error asserts the server-fault path returns for api.Log.
+func getAgents(t *testing.T, queries *db.Queries) (int, string, error) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	GetAgents(queries, zerolog.Nop())(rec,
+	err := GetAgents(queries)(rec,
 		httptest.NewRequest(http.MethodGet, "/api/agents", nil))
-	return rec.Code, strings.TrimSpace(rec.Body.String())
+	return rec.Code, strings.TrimSpace(rec.Body.String()), err
 }
 
 func TestGetAgentsEmpty(t *testing.T) {
 	queries := db.New(testdb.Open(t))
 	// Only the seeded superagent exists and it is excluded; the list is
 	// an array, never null.
-	if code, body := getAgents(t, queries); code != http.StatusOK || body != `{"agents":[]}` {
-		t.Errorf("get = %d %s, want 200 {\"agents\":[]}", code, body)
+	code, body, err := getAgents(t, queries)
+	if err != nil || code != http.StatusOK || body != `{"agents":[]}` {
+		t.Errorf("get = %d %s (%v), want 200 {\"agents\":[]}", code, body, err)
 	}
 }
 
@@ -57,8 +56,8 @@ func TestGetAgentsContract(t *testing.T) {
 	seedAgent(t, sqlDB, "research", "Research", "globe", 1)
 
 	want := `{"agents":[{"id":"research","name":"Research","icon":"globe"},{"id":"scribe","name":"Scribe","icon":"pencil"}]}`
-	if _, body := getAgents(t, queries); body != want {
-		t.Errorf("body =\n%s\nwant\n%s", body, want)
+	if _, body, err := getAgents(t, queries); err != nil || body != want {
+		t.Errorf("body =\n%s (%v)\nwant\n%s", body, err, want)
 	}
 }
 
@@ -71,7 +70,11 @@ func TestGetAgentsStoreFailure(t *testing.T) {
 		t.Fatalf("drop agents: %v", err)
 	}
 
-	code, body := getAgents(t, queries)
+	code, body, err := getAgents(t, queries)
+	// The cause returns for api.Log; the response stays contract-shaped.
+	if err == nil {
+		t.Fatal("store failure: want error returned for logging")
+	}
 	if code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", code)
 	}

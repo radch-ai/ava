@@ -9,6 +9,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/radch-ai/ava/backend/internal/api"
 	"github.com/radch-ai/ava/backend/internal/api/agents"
 	"github.com/radch-ai/ava/backend/internal/db"
 )
@@ -20,6 +21,6 @@ import (
 func New(sqlDB *sql.DB, logger zerolog.Logger) http.Handler {
 	queries := db.New(sqlDB)
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/agents", agents.GetAgents(queries, logger))
+	mux.Handle("GET /api/agents", api.Log(logger, agents.GetAgents(queries)))
 	return mux
 }
