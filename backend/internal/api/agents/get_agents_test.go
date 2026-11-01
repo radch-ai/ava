@@ -11,16 +11,17 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/radch-ai/ava/backend/internal/db"
 	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
-// seedAgent inserts an agent row with an explicit creation timestamp.
-func seedAgent(t *testing.T, sqlDB *sql.DB, id, name, icon string, createdAt int64) {
+// seedAgent inserts a row; insertion order is creation order.
+func seedAgent(t *testing.T, sqlDB *sql.DB, id, name, icon string) {
 	t.Helper()
-	_, err := sqlDB.Exec(`INSERT INTO agents (id, name, icon, created_at)
-VALUES (?, ?, ?, ?)`, id, name, icon, createdAt)
+	_, err := sqlDB.Exec(`INSERT INTO agents (id, name, icon) VALUES (?, ?, ?)`,
+		id, name, icon)
 	if err != nil {
 		t.Fatalf("seed agent %s: %v", id, err)
 	}
@@ -50,12 +51,14 @@ func TestGetAgentsEmpty(t *testing.T) {
 func TestGetAgentsContract(t *testing.T) {
 	sqlDB := testdb.Open(t)
 	queries := db.New(sqlDB)
-	// created_at order differs from insertion and id order, so the list
-	// pins created_at ordering; the seeded superagent never appears.
-	seedAgent(t, sqlDB, "scribe", "Scribe", "pencil", 2)
-	seedAgent(t, sqlDB, "research", "Research", "globe", 1)
+	// "research" sorts before "scribe", but scribe was created first:
+	// listing scribe first pins created_at ordering, not id ordering.
+	// Stamps are coarse, so the seeds sit 2ms apart.
+	seedAgent(t, sqlDB, "scribe", "Scribe", "pencil")
+	time.Sleep(2 * time.Millisecond)
+	seedAgent(t, sqlDB, "research", "Research", "globe")
 
-	want := `{"agents":[{"id":"research","name":"Research","icon":"globe"},{"id":"scribe","name":"Scribe","icon":"pencil"}]}`
+	want := `{"agents":[{"id":"scribe","name":"Scribe","icon":"pencil"},{"id":"research","name":"Research","icon":"globe"}]}`
 	if _, body, err := getAgents(t, queries); err != nil || body != want {
 		t.Errorf("body =\n%s (%v)\nwant\n%s", body, err, want)
 	}
