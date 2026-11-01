@@ -14,7 +14,7 @@ import (
 // icon) are the contract fields, and emit_empty_slices in
 // backend/sqlc.yaml keeps an empty list an array, never null.
 type getAgentsResponse struct {
-	Agents []db.ListAgentsRow `json:"agents"`
+	Agents []db.GetAgentsRow `json:"agents"`
 }
 
 // GetAgents answers the UI's getAgents(): the user's agents in
@@ -22,7 +22,7 @@ type getAgentsResponse struct {
 // their own constant.
 func GetAgents(queries *db.Queries) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
-		rows, err := queries.ListAgents(r.Context())
+		rows, err := queries.GetAgents(r.Context())
 		if err != nil {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return fmt.Errorf("list agents: %w", err)

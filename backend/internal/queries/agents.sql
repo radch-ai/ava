@@ -1,4 +1,4 @@
--- name: ListAgents :many
+-- name: GetAgents :many
 -- The user's agents in creation order. The system superagent is
 -- excluded: clients render it from their own constant, never from here.
 SELECT id, name, icon
