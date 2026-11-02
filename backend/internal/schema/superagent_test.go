@@ -38,8 +38,15 @@ func TestSeedSuperagent(t *testing.T) {
 	if _, ok := doc["icon"]; ok {
 		t.Errorf("seed config carries icon — identity belongs in columns")
 	}
-	if _, ok := doc["cronJobs"]; !ok {
-		t.Errorf("seed config lost cronJobs")
+	// No default scheduled work — the heartbeat check is the only
+	// proactive default; cron jobs are user-created.
+	var jobs []json.RawMessage
+	if err := json.Unmarshal(doc["cronJobs"], &jobs); err != nil || len(jobs) != 0 {
+		t.Errorf("seed cronJobs = %s, want none", doc["cronJobs"])
+	}
+	var tools []string
+	if err := json.Unmarshal(doc["toolsEnabled"], &tools); err != nil || len(tools) != 0 {
+		t.Errorf("seed toolsEnabled = %s, want none until tools are wired", doc["toolsEnabled"])
 	}
 }
 
