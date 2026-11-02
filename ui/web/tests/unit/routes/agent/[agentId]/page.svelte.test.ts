@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
 import type { ActivityFeed, AgentActivityItem } from '#lib/services/agent'
-import type { Agent } from '#lib/types/agent'
+import type { AgentIdentity } from '#lib/types/agent'
 import AgentPageTestWrapper from './AgentPageTestWrapper.svelte'
 
 vi.mock('#lib/services/agent', () => ({
@@ -29,7 +29,7 @@ import { getAgentActivityFeed, mergePastFeed } from '#lib/services/agent'
 const mockGetAgentActivityFeed = vi.mocked(getAgentActivityFeed)
 const mockMergePastFeed = vi.mocked(mergePastFeed)
 
-const agents: Record<string, Agent> = {
+const agents: Record<string, AgentIdentity> = {
 	support: {
 		id: 'support',
 		name: 'Support',

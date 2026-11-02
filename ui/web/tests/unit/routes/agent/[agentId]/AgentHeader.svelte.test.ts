@@ -1,37 +1,44 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import type { Agent, SuperagentConfiguration } from '#lib/types/agent'
+import type {
+	AgentConfigurationWithIdentity,
+	AgentIdentity,
+	SuperagentConfiguration
+} from '#lib/types/agent'
 import AgentHeaderPairTestWrapper from './AgentHeaderPairTestWrapper.svelte'
 import AgentHeaderTestWrapper from './AgentHeaderTestWrapper.svelte'
 
-const superagent: Agent = {
+const superagent: AgentIdentity = {
 	id: '_superagent',
 	name: 'Ava',
 	icon: 'message-square'
 }
 
-const agent: Agent = {
+const agent: AgentIdentity = {
 	id: 'support',
 	name: 'Support',
 	icon: 'bot'
 }
 
-function createDefaultTestConfig(): SuperagentConfiguration {
+function createDefaultTestConfig(): AgentConfigurationWithIdentity<SuperagentConfiguration> {
 	return {
+		id: '_superagent',
 		name: 'Test',
 		icon: 'bot',
-		soul: { personality: '', identity: '' },
-		userContext: '',
-		operatingInstructions: '',
-		toolsContext: '',
-		toolsEnabled: [],
-		cronJobs: [],
-		heartbeat: {
-			enabled: false,
-			duration: '1hr',
-			content: '',
-			model: 'default'
+		config: {
+			soul: { personality: '', identity: '' },
+			userContext: '',
+			operatingInstructions: '',
+			toolsContext: '',
+			toolsEnabled: [],
+			cronJobs: [],
+			heartbeat: {
+				enabled: false,
+				duration: '1hr',
+				content: '',
+				model: 'default'
+			}
 		}
 	}
 }
@@ -261,7 +268,11 @@ describe('AgentHeader', () => {
 		})
 
 		it('disables button while loading', async () => {
-			let resolveConfig: ((value: SuperagentConfiguration) => void) | undefined
+			let resolveConfig:
+				| ((
+						value: AgentConfigurationWithIdentity<SuperagentConfiguration>
+				  ) => void)
+				| undefined
 			mockGetAgentConfiguration.mockImplementation(
 				() => new Promise((resolve) => (resolveConfig = resolve))
 			)

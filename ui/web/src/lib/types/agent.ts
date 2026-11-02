@@ -20,13 +20,14 @@ import {
 import { SUPERAGENT_AGENT_ID, SUPERAGENT_NAME } from '#lib/config'
 
 // ============================================================================
-// RUNTIME AGENT TYPE (for UI routing)
+// AGENT IDENTITY (id + display fields)
 // ============================================================================
 
 /**
- * Agent displayed in UI - uses icon name string for flexibility
+ * Agent identity — id plus the display fields; list entries and detail
+ * bodies both carry it
  */
-export interface Agent {
+export interface AgentIdentity {
 	/** Agent id used in URLs and API paths; `_`-prefixed ids are system-reserved. */
 	id: string
 	name: string
@@ -36,10 +37,19 @@ export interface Agent {
 /**
  * superagent agent definition - the primary assistant
  */
-export const SUPERAGENT_AGENT: Agent = {
+export const SUPERAGENT_AGENT: AgentIdentity = {
 	id: SUPERAGENT_AGENT_ID,
 	name: SUPERAGENT_NAME,
 	icon: 'message-square'
+}
+
+/**
+ * Agent detail responses — an identity plus its configuration
+ */
+export interface AgentConfigurationWithIdentity<
+	C extends AgentConfiguration = AgentConfiguration
+> extends AgentIdentity {
+	config: C
 }
 
 // ============================================================================
@@ -90,13 +100,9 @@ export interface SoulConfig {
 // ============================================================================
 
 /**
- * Core agent configuration fields (maps to agents table)
+ * Agent configuration — everything under the config field
  */
-export interface AgentConfigBase {
-	/** Display name for the agent */
-	name: string
-	/** Icon for the agent (from the agent-icons set) */
-	icon?: string
+export interface AgentConfiguration {
 	/** Agent personality/identity (stored as JSONB) */
 	soul: SoulConfig
 	/** Operating rules, priorities, and behavioral guidelines */
@@ -105,12 +111,6 @@ export interface AgentConfigBase {
 	toolsContext: string
 	/** Array of tool IDs that this agent can use */
 	toolsEnabled: string[]
-}
-
-/**
- * Agent configuration — the base shape every agent uses
- */
-export interface AgentConfiguration extends AgentConfigBase {
 	heartbeat?: HeartbeatConfig
 }
 
@@ -245,7 +245,7 @@ export type ConfigFieldName =
 /**
  * Get a random icon name
  */
-function getRandomIcon(): string {
+function getRandomIcon(): AgentIconName {
 	return ALL_AGENT_ICON_NAMES[
 		Math.floor(Math.random() * ALL_AGENT_ICON_NAMES.length)
 	]
@@ -264,7 +264,8 @@ export function createDefaultSoulConfig(): SoulConfig {
 /**
  * Create default superagent configuration
  */
-export function createDefaultSuperagentConfiguration(): SuperagentConfiguration {
+export function createDefaultSuperagentConfiguration(): SuperagentConfiguration &
+	Pick<AgentIdentity, 'name' | 'icon'> {
 	return {
 		name: '',
 		icon: getRandomIcon(),
@@ -280,7 +281,8 @@ export function createDefaultSuperagentConfiguration(): SuperagentConfiguration 
 /**
  * Create default agent configuration
  */
-export function createDefaultAgentConfiguration(): AgentConfiguration {
+export function createDefaultAgentConfiguration(): AgentConfiguration &
+	Pick<AgentIdentity, 'name' | 'icon'> {
 	return {
 		name: '',
 		icon: getRandomIcon(),
@@ -321,7 +323,7 @@ export function cloneConfiguration<T extends AgentConfiguration>(
  * Get a configuration field value safely
  */
 export function getConfigurationField(
-	configuration: AgentConfiguration,
+	configuration: AgentConfiguration & Pick<AgentIdentity, 'name' | 'icon'>,
 	field: ConfigFieldName
 ): unknown {
 	return (configuration as unknown as Record<string, unknown>)[field]
@@ -331,7 +333,7 @@ export function getConfigurationField(
  * Set a configuration field value safely
  */
 export function setConfigurationField(
-	configuration: AgentConfiguration,
+	configuration: AgentConfiguration & Pick<AgentIdentity, 'name' | 'icon'>,
 	field: ConfigFieldName,
 	value: unknown
 ): void {

@@ -129,13 +129,19 @@ describe('mock API handlers', () => {
 		const res = await fetch(`${BASE}/agent/scribe`)
 		expect(res.status).toBe(200)
 		const config = (await res.json()) as {
+			id: string
 			name: string
-			soul: { personality: string; identity: string }
-			toolsEnabled: string[]
+			icon: string
+			config: {
+				soul: { personality: string; identity: string }
+				toolsEnabled: string[]
+			}
 		}
+		expect(config.id).toBe('scribe')
+		expect(config.icon).toBe('pencil')
 		expect(config.name).toBe('Scribe')
-		expect(typeof config.soul.personality).toBe('string')
-		expect(Array.isArray(config.toolsEnabled)).toBe(true)
+		expect(typeof config.config.soul.personality).toBe('string')
+		expect(Array.isArray(config.config.toolsEnabled)).toBe(true)
 
 		const superagentRes = await fetch(`${BASE}/agent/_superagent`)
 		expect(superagentRes.status).toBe(200)
@@ -153,23 +159,27 @@ describe('mock API handlers', () => {
 			method: 'PATCH',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({
-				operatingInstructions: 'Updated instructions',
-				soul: { identity: 'New identity' }
+				config: {
+					operatingInstructions: 'Updated instructions',
+					soul: { identity: 'New identity' }
+				}
 			})
 		})
 		expect(res.status).toBe(200)
 		const updated = (await res.json()) as {
-			operatingInstructions: string
-			soul: { personality: string; identity: string }
+			config: {
+				operatingInstructions: string
+				soul: { personality: string; identity: string }
+			}
 		}
-		expect(updated.operatingInstructions).toBe('Updated instructions')
-		expect(updated.soul.identity).toBe('New identity')
-		expect(typeof updated.soul.personality).toBe('string')
+		expect(updated.config.operatingInstructions).toBe('Updated instructions')
+		expect(updated.config.soul.identity).toBe('New identity')
+		expect(typeof updated.config.soul.personality).toBe('string')
 
 		const reread = (await (await fetch(`${BASE}/agent/scribe`)).json()) as {
-			operatingInstructions: string
+			config: { operatingInstructions: string }
 		}
-		expect(reread.operatingInstructions).toBe('Updated instructions')
+		expect(reread.config.operatingInstructions).toBe('Updated instructions')
 	})
 
 	it("updates the agents list entry when PATCH changes the agent's name or icon", async () => {
@@ -195,10 +205,12 @@ describe('mock API handlers', () => {
 			body: JSON.stringify({
 				name: 'Research Team',
 				icon: 'bot',
-				soul: { personality: '', identity: '' },
-				operatingInstructions: '',
-				toolsContext: '',
-				toolsEnabled: []
+				config: {
+					soul: { personality: '', identity: '' },
+					operatingInstructions: '',
+					toolsContext: '',
+					toolsEnabled: []
+				}
 			})
 		})
 		expect(created.status).toBe(201)
@@ -223,10 +235,12 @@ describe('mock API handlers', () => {
 		const payload = JSON.stringify({
 			name: 'Research',
 			icon: 'bot',
-			soul: { personality: '', identity: '' },
-			operatingInstructions: '',
-			toolsContext: '',
-			toolsEnabled: []
+			config: {
+				soul: { personality: '', identity: '' },
+				operatingInstructions: '',
+				toolsContext: '',
+				toolsEnabled: []
+			}
 		})
 
 		const duplicate = await fetch(`${BASE}/agent`, {
@@ -244,10 +258,12 @@ describe('mock API handlers', () => {
 			body: JSON.stringify({
 				name: 'RESEARCH',
 				icon: 'bot',
-				soul: { personality: '', identity: '' },
-				operatingInstructions: '',
-				toolsContext: '',
-				toolsEnabled: []
+				config: {
+					soul: { personality: '', identity: '' },
+					operatingInstructions: '',
+					toolsContext: '',
+					toolsEnabled: []
+				}
 			})
 		})
 		expect(caseVariant.status).toBe(409)

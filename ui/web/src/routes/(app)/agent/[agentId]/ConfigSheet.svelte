@@ -11,6 +11,8 @@
 	import {
 		AGENT_FIELDS,
 		type AgentConfiguration,
+		type AgentConfigurationWithIdentity,
+		type AgentIdentity,
 		getConfigurationField,
 		setConfigurationField
 	} from '#lib/types/agent'
@@ -19,13 +21,13 @@
 	interface Props {
 		isSheetOpened: boolean
 		closeSheet: () => void
-		configuration: AgentConfiguration
+		configuration: AgentConfigurationWithIdentity
 		/** All available tools */
 		availableTools: Tool[]
 		/** Agent id for API calls */
 		agentId: string
 		/** Called after successful save with the new configuration */
-		onSaved: (config: AgentConfiguration) => void
+		onSaved: (config: AgentConfigurationWithIdentity) => void
 	}
 
 	let {
@@ -47,6 +49,14 @@
 	// Determine agent type from the reserved superagent id
 	const isSuperagent = $derived(agentId === SUPERAGENT_AGENT_ID)
 
+	// The editor edits name and icon beside the config fields; the
+	// envelope carries them separately.
+	const editable = $derived({
+		name: configuration.name,
+		icon: configuration.icon,
+		...configuration.config
+	})
+
 	// Guards see changes only while the sheet is open — hasChanges stays
 	// stale true after the editor unmounts on close, so never feed it
 	// through ungated.
@@ -64,21 +74,37 @@
 		if (!newOpen) closeSheet()
 	}
 
-	async function handleSave(config: AgentConfiguration) {
+	async function handleSave(
+		config: AgentConfiguration & Pick<AgentIdentity, 'name' | 'icon'>
+	) {
 		// Build partial update with only changed fields
 		const fields = isSuperagent ? AGENT_FIELDS.superagent : AGENT_FIELDS.agent
-		const changes: Partial<AgentConfiguration> = {}
+		const changes: Partial<
+			AgentConfiguration & Pick<AgentIdentity, 'name' | 'icon'>
+		> = {}
 
 		for (const field of fields) {
 			const localValue = getConfigurationField(config, field)
-			const originalValue = getConfigurationField(configuration, field)
+			const originalValue = getConfigurationField(editable, field)
 			if (JSON.stringify(localValue) !== JSON.stringify(originalValue)) {
-				setConfigurationField(changes as AgentConfiguration, field, localValue)
+				setConfigurationField(
+					changes as AgentConfiguration & Pick<AgentIdentity, 'name' | 'icon'>,
+					field,
+					localValue
+				)
 			}
 		}
 
+		// name and icon travel beside the config field in the patch
+		const { name, icon, ...configChanges } = changes
+		const patch = {
+			...(name !== undefined && { name }),
+			...(icon !== undefined && { icon }),
+			...(Object.keys(configChanges).length > 0 && { config: configChanges })
+		}
+
 		try {
-			const savedConfig = await updateAgentConfiguration(agentId, changes)
+			const savedConfig = await updateAgentConfiguration(agentId, patch)
 			onSaved(savedConfig)
 			isSheetOpened = false
 		} catch {
@@ -110,7 +136,7 @@
 		<!-- Kept separate so other consumers (e.g. /agent/new)can use the editor
 		 			directly with their own save behavior (createAgent vs updateAgentConfiguration) -->
 		<AgentConfigEditor
-			{configuration}
+			configuration={editable}
 			{availableTools}
 			onSave={handleSave}
 			onCancel={handleCancel}

@@ -43,11 +43,15 @@ test.describe('API integration', () => {
 		// Wait for API call
 		await responsePromise
 		expect(requestBody).toBeDefined()
-		expect(requestBody).toHaveProperty(
-			'operatingInstructions',
-			'Test instructions'
+		expect(requestBody).toEqual(
+			expect.objectContaining({
+				name: agentName,
+				icon: expect.any(String),
+				config: expect.objectContaining({
+					operatingInstructions: 'Test instructions'
+				})
+			})
 		)
-		expect(requestBody).toHaveProperty('name', agentName)
 	})
 
 	test('should handle PATCH for agent update', async ({ page }) => {

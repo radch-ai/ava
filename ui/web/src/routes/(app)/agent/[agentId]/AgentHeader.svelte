@@ -5,7 +5,10 @@
 	import * as Tooltip from '#components/ui/tooltip'
 	import { SUPERAGENT_AGENT_ID } from '#lib/config'
 	import { getAgentConfiguration } from '#lib/services/agent'
-	import type { Agent, AgentConfiguration } from '#lib/types/agent'
+	import type {
+		AgentConfigurationWithIdentity,
+		AgentIdentity
+	} from '#lib/types/agent'
 	import type { Tool } from '#lib/types/tool'
 	import { invalidate } from '$app/navigation'
 	import ConfigSheet from './ConfigSheet.svelte'
@@ -15,13 +18,13 @@
 		activeTab,
 		onTabChange
 	}: {
-		agent: Agent
+		agent: AgentIdentity
 		activeTab?: 'conversation' | 'activity'
 		onTabChange?: (tab: 'conversation' | 'activity') => void
 	} = $props()
 
 	let configSheetOpen = $state(false)
-	let configuration = $state<AgentConfiguration>()
+	let configuration = $state<AgentConfigurationWithIdentity>()
 	let isLoading = $state(false)
 
 	function handleTabChange(tab: 'conversation' | 'activity') {

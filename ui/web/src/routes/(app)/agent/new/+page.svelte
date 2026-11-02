@@ -8,15 +8,16 @@
 	import { createAgent } from '#lib/services/agent'
 	import {
 		type AgentConfiguration,
+		type AgentIdentity,
 		createDefaultAgentConfiguration
 	} from '#lib/types/agent'
 	import { goto, invalidate } from '$app/navigation'
 	import { resolve } from '$app/paths'
 	import { isValidAgentName } from './agent-name'
 
-	let configuration = $state<AgentConfiguration>(
-		createDefaultAgentConfiguration()
-	)
+	let configuration = $state<
+		AgentConfiguration & Pick<AgentIdentity, 'name' | 'icon'>
+	>(createDefaultAgentConfiguration())
 	let hasChanges = $state(false)
 
 	// Unsaved-changes protection — the editor confirms Cancel; navigation
@@ -34,7 +35,9 @@
 
 	let createError = $state<string | null>(null)
 
-	async function handleSave(config: AgentConfiguration) {
+	async function handleSave(
+		config: AgentConfiguration & Pick<AgentIdentity, 'name' | 'icon'>
+	) {
 		const name = config.name.trim()
 		if (!name) return
 

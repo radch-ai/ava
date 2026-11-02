@@ -1,4 +1,4 @@
-import type { Agent } from '#lib/types/agent'
+import type { AgentIdentity } from '#lib/types/agent'
 import { api } from '../api'
 
 /**
@@ -10,7 +10,7 @@ import { api } from '../api'
  * own constant (`SUPERAGENT_AGENT`), not from this list.
  */
 
-export async function getAgents(): Promise<Agent[]> {
-	const response = await api.get('agents').json<{ agents: Agent[] }>()
+export async function getAgents(): Promise<AgentIdentity[]> {
+	const response = await api.get('agents').json<{ agents: AgentIdentity[] }>()
 	return response.agents
 }

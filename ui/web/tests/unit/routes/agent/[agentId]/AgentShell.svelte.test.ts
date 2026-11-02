@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
 import type { ActivityFeed, AgentActivityItem } from '#lib/services/agent'
-import type { Agent } from '#lib/types/agent'
+import type { AgentIdentity } from '#lib/types/agent'
 import TestWrapper from './TestWrapper.svelte'
 
 vi.mock('#lib/services/agent', () => ({
@@ -20,7 +20,10 @@ import {
 	getAgentConfiguration,
 	mergePastFeed
 } from '#lib/services/agent'
-import type { SuperagentConfiguration } from '#lib/types/agent'
+import type {
+	AgentConfigurationWithIdentity,
+	SuperagentConfiguration
+} from '#lib/types/agent'
 
 const mockGetAgentActivityFeed = vi.mocked(getAgentActivityFeed)
 const mockMergePastFeed = vi.mocked(mergePastFeed)
@@ -32,13 +35,13 @@ interface ThreadItem {
 	content: string
 }
 
-const superagent: Agent = {
+const superagent: AgentIdentity = {
 	id: '_superagent',
 	name: 'Ava',
 	icon: 'message-square'
 }
 
-const agent: Agent = {
+const agent: AgentIdentity = {
 	id: 'support',
 	name: 'Support',
 	icon: 'bot'
@@ -64,21 +67,24 @@ function createTestFeed(
 	return { items, nextCursor }
 }
 
-function createDefaultTestConfig(): SuperagentConfiguration {
+function createDefaultTestConfig(): AgentConfigurationWithIdentity<SuperagentConfiguration> {
 	return {
+		id: '_superagent',
 		name: 'Test',
 		icon: 'bot',
-		soul: { personality: '', identity: '' },
-		userContext: '',
-		operatingInstructions: '',
-		toolsContext: '',
-		toolsEnabled: [],
-		cronJobs: [],
-		heartbeat: {
-			enabled: false,
-			duration: '1hr',
-			content: '',
-			model: 'default'
+		config: {
+			soul: { personality: '', identity: '' },
+			userContext: '',
+			operatingInstructions: '',
+			toolsContext: '',
+			toolsEnabled: [],
+			cronJobs: [],
+			heartbeat: {
+				enabled: false,
+				duration: '1hr',
+				content: '',
+				model: 'default'
+			}
 		}
 	}
 }

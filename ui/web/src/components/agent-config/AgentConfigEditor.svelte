@@ -7,6 +7,7 @@
 	import {
 		AGENT_FIELDS,
 		type AgentConfiguration,
+		type AgentIdentity,
 		type ConfigFieldName,
 		cloneConfiguration,
 		FIELD_CONFIGS,
@@ -36,16 +37,21 @@
 	 * Compare the name text only; icon is its own field, compared in the
 	 * generic field loop below
 	 */
-	function nameEquals(a: AgentConfiguration, b: AgentConfiguration): boolean {
+	function nameEquals(
+		a: Pick<AgentIdentity, 'name'>,
+		b: Pick<AgentIdentity, 'name'>
+	): boolean {
 		return a.name === b.name
 	}
 
 	interface Props {
-		configuration: AgentConfiguration
+		configuration: AgentConfiguration & Pick<AgentIdentity, 'name' | 'icon'>
 		/** All available tools */
 		availableTools?: Tool[]
 		/** Called when save is clicked with the configuration */
-		onSave: (config: AgentConfiguration) => void | Promise<void>
+		onSave: (
+			config: AgentConfiguration & Pick<AgentIdentity, 'name' | 'icon'>
+		) => void | Promise<void>
 		/** Called when cancel is confirmed (no changes or user discarded) */
 		onCancel: () => void
 		/** Label for the save button */
@@ -84,7 +90,9 @@
 	const navFields = $derived(fields.filter((field) => field !== 'icon'))
 
 	// Local working copy of configuration
-	let localConfiguration = $state<AgentConfiguration>()
+	let localConfiguration = $state<
+		AgentConfiguration & Pick<AgentIdentity, 'name' | 'icon'>
+	>()
 
 	// Initialize local configuration when component mounts or configuration changes
 	$effect(() => {
@@ -231,7 +239,7 @@
 							</label>
 							<AgentIconPicker
 								id="agent-icon"
-								value={(config.icon ?? 'bot') as AgentIconName}
+								value={config.icon as AgentIconName}
 								onselect={(icon) => (config.icon = icon)}
 							/>
 						</div>
@@ -244,11 +252,13 @@
 					/>
 				{:else if selectedField === 'cronJobs' && isSuperagent}
 					{@const superagentConfig =
-						localConfiguration as SuperagentConfiguration}
+						localConfiguration as SuperagentConfiguration &
+							Pick<AgentIdentity, 'name' | 'icon'>}
 					<CronJobEditor bind:jobs={superagentConfig.cronJobs} />
 				{:else if selectedField === 'userContext' && isSuperagent}
 					{@const superagentConfig =
-						localConfiguration as SuperagentConfiguration}
+						localConfiguration as SuperagentConfiguration &
+							Pick<AgentIdentity, 'name' | 'icon'>}
 					<ConfigTextField
 						value={superagentConfig.userContext}
 						config={FIELD_CONFIGS.userContext}

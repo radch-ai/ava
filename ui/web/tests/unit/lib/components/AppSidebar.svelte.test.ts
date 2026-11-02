@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
 import { authStore } from '#lib/auth'
-import type { Agent } from '#lib/types/agent'
+import type { AgentIdentity } from '#lib/types/agent'
 import AppSidebarTestWrapper from './AppSidebarTestWrapper.svelte'
 
 const { pageState, setRoute } = vi.hoisted(() => {
@@ -66,7 +66,9 @@ const localStorageMock = {
 }
 vi.stubGlobal('localStorage', localStorageMock)
 
-function createMockAgents(overrides: Partial<Agent>[] = []): Agent[] {
+function createMockAgents(
+	overrides: Partial<AgentIdentity>[] = []
+): AgentIdentity[] {
 	return [
 		{
 			id: 'support',
@@ -83,7 +85,7 @@ function createMockAgents(overrides: Partial<Agent>[] = []): Agent[] {
 	]
 }
 
-function renderSidebar(agents: Agent[] = createMockAgents()) {
+function renderSidebar(agents: AgentIdentity[] = createMockAgents()) {
 	return render(AppSidebarTestWrapper, { props: { agents } })
 }
 

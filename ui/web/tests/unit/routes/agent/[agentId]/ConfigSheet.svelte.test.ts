@@ -2,46 +2,52 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
 import type {
-	AgentConfiguration,
+	AgentConfigurationWithIdentity,
 	SuperagentConfiguration
 } from '#lib/types/agent'
 import type { Tool } from '#lib/types/tool'
 import ConfigSheet from '#routes/agent/[agentId]/ConfigSheet.svelte'
 
 // Helper to create default superagent configuration
-function createDefaultSuperagentConfig(): SuperagentConfiguration {
+function createDefaultSuperagentConfig(): AgentConfigurationWithIdentity<SuperagentConfiguration> {
 	return {
+		id: '_superagent',
 		name: 'ava',
 		icon: 'bot',
-		soul: { personality: 'Friendly', identity: 'Helper' },
-		userContext: 'User context test',
-		operatingInstructions: 'Be helpful',
-		toolsContext: 'Tools info',
-		toolsEnabled: [],
-		cronJobs: [],
-		heartbeat: {
-			enabled: false,
-			duration: '1hr',
-			content: '',
-			model: 'default'
+		config: {
+			soul: { personality: 'Friendly', identity: 'Helper' },
+			userContext: 'User context test',
+			operatingInstructions: 'Be helpful',
+			toolsContext: 'Tools info',
+			toolsEnabled: [],
+			cronJobs: [],
+			heartbeat: {
+				enabled: false,
+				duration: '1hr',
+				content: '',
+				model: 'default'
+			}
 		}
 	}
 }
 
 // Helper to create default agent configuration
-function createDefaultAgentConfig(): AgentConfiguration {
+function createDefaultAgentConfig(): AgentConfigurationWithIdentity {
 	return {
+		id: 'test-bot',
 		name: 'Test Bot',
 		icon: 'bot',
-		soul: { personality: 'Efficient', identity: 'Task runner' },
-		operatingInstructions: 'Complete tasks',
-		toolsContext: 'Test tools',
-		toolsEnabled: [],
-		heartbeat: {
-			enabled: false,
-			duration: '1hr',
-			content: '',
-			model: 'default'
+		config: {
+			soul: { personality: 'Efficient', identity: 'Task runner' },
+			operatingInstructions: 'Complete tasks',
+			toolsContext: 'Test tools',
+			toolsEnabled: [],
+			heartbeat: {
+				enabled: false,
+				duration: '1hr',
+				content: '',
+				model: 'default'
+			}
 		}
 	}
 }
@@ -51,10 +57,10 @@ function createProps(
 	overrides: Partial<{
 		isSheetOpened: boolean
 		closeSheet: () => void
-		configuration: AgentConfiguration
+		configuration: AgentConfigurationWithIdentity
 		availableTools: Tool[]
 		agentId: string
-		onSaved: (config: AgentConfiguration) => void
+		onSaved: (config: AgentConfigurationWithIdentity) => void
 	}> = {}
 ) {
 	return {

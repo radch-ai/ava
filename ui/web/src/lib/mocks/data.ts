@@ -2,14 +2,14 @@ import { SUPERAGENT_AGENT_ID, SUPERAGENT_NAME } from '../config.ts'
 import type { AgentActivityItem } from '../services/agent/activity.ts'
 import type { ThreadMessage } from '../services/agent/thread.ts'
 import type {
-	Agent,
 	AgentConfiguration,
+	AgentIdentity,
 	SuperagentConfiguration
 } from '../types/agent.ts'
 
 /** Mutable in-memory state the mock handlers read from and write to. */
 export interface MockStore {
-	agents: Agent[]
+	agents: AgentIdentity[]
 	configurations: Map<string, AgentConfiguration>
 	thread: ThreadMessage[]
 	activity: Map<string, AgentActivityItem[]>
@@ -24,7 +24,7 @@ const minutesAgo = (minutes: number): string =>
 	new Date(ANCHOR - minutes * 60_000).toISOString()
 
 /** Seeded user-created agents; the system superagent is never in the list. */
-const AGENT_SEEDS: Agent[] = [
+const AGENT_SEEDS: AgentIdentity[] = [
 	{ id: 'research', name: 'Research', icon: 'globe' },
 	{ id: 'scribe', name: 'Scribe', icon: 'pencil' },
 	{ id: 'sentinel', name: 'Sentinel', icon: 'shield' }
@@ -32,8 +32,6 @@ const AGENT_SEEDS: Agent[] = [
 
 /** Configuration seeds keyed by agent id (`_superagent` is system-reserved). */
 const SUPERAGENT_CONFIG = {
-	name: SUPERAGENT_NAME,
-	icon: 'message-square',
 	soul: {
 		personality:
 			'Warm, direct, and precise. Prefers short answers with concrete next steps.',
@@ -70,8 +68,6 @@ const CONFIGURATIONS: Array<[id: string, config: AgentConfiguration]> = [
 	[
 		'research',
 		{
-			name: 'Research',
-			icon: 'globe',
 			soul: {
 				personality:
 					'Methodical and skeptical. Cross-checks claims before presenting them.',
@@ -94,8 +90,6 @@ const CONFIGURATIONS: Array<[id: string, config: AgentConfiguration]> = [
 	[
 		'scribe',
 		{
-			name: 'Scribe',
-			icon: 'pencil',
 			soul: {
 				personality:
 					'Careful listener. Captures exactly what was said, then distills it.',
@@ -117,8 +111,6 @@ const CONFIGURATIONS: Array<[id: string, config: AgentConfiguration]> = [
 	[
 		'sentinel',
 		{
-			name: 'Sentinel',
-			icon: 'shield',
 			soul: {
 				personality: 'Calm and watchful. Errs on the side of alerting early.',
 				identity: 'Sentinel watches auth logs and system health.'

@@ -10,7 +10,11 @@ import { type HttpHandler, HttpResponse, http } from 'msw'
 import type { AgentIconName } from '../../components/agent-icons/index.ts'
 import { SUPERAGENT_AGENT_ID } from '../config.ts'
 import type { CursorPage } from '../services/utils/cursor.ts'
-import type { Agent, AgentConfiguration } from '../types/agent.ts'
+import {
+	type AgentConfiguration,
+	type AgentIdentity,
+	SUPERAGENT_AGENT
+} from '../types/agent.ts'
 import { deriveAgentId, isValidAgentName } from './agent-id.ts'
 import type { MockStore } from './data.ts'
 
@@ -119,14 +123,18 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 
 		http.get('*/api/agent/:id', ({ params }) => {
 			const id = String(params.id)
-			const configuration = store.configurations.get(id)
-			if (!configuration) {
+			const stored = store.configurations.get(id)
+			if (!stored) {
 				return HttpResponse.json(
 					{ message: `Agent "${id}" not found` },
 					{ status: 404 }
 				)
 			}
-			return HttpResponse.json(configuration)
+			// name and icon live in the list entry (the constant for the
+			// system superagent, never listed)
+			const { name, icon } =
+				store.agents.find((agent) => agent.id === id) ?? SUPERAGENT_AGENT
+			return HttpResponse.json({ id, name, icon, config: stored })
 		}),
 
 		http.patch('*/api/agent/:id', async ({ request, params }) => {
@@ -138,11 +146,17 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 					{ status: 404 }
 				)
 			}
-			const patch = (await request.json()) as Partial<AgentConfiguration>
+			// name and icon go to the list entry, config fields to the
+			// configuration
+			const { name, icon, config } = (await request.json()) as {
+				name?: string
+				icon?: string
+				config?: Partial<AgentConfiguration>
+			}
 			const next: AgentConfiguration = {
 				...current,
-				...patch,
-				soul: { ...current.soul, ...patch.soul }
+				...config,
+				soul: { ...current.soul, ...config?.soul }
 			}
 			store.configurations.set(id, next)
 			// Keep the list entry in sync so refetches reflect renames/icon
@@ -151,19 +165,30 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				agent.id === id
 					? {
 							...agent,
-							name: next.name,
-							icon: (next.icon ?? agent.icon) as AgentIconName
+							...(name !== undefined && { name }),
+							...(icon !== undefined && { icon: icon as AgentIconName })
 						}
 					: agent
 			)
-			return HttpResponse.json(next)
+			const entry =
+				store.agents.find((agent) => agent.id === id) ?? SUPERAGENT_AGENT
+			return HttpResponse.json({
+				id,
+				name: entry.name,
+				icon: entry.icon,
+				config: next
+			})
 		}),
 
 		// Create: the server owns id derivation. Invalid names are rejected
 		// with 400, colliding derived ids with 409 — never auto-suffixed.
 		http.post('*/api/agent', async ({ request }) => {
-			const configuration = (await request.json()) as AgentConfiguration
-			const name = configuration.name ?? ''
+			const body = (await request.json()) as {
+				name?: string
+				icon?: string
+				config?: AgentConfiguration
+			}
+			const name = body.name ?? ''
 
 			if (!isValidAgentName(name)) {
 				return HttpResponse.json(
@@ -171,6 +196,12 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 						message:
 							'Invalid agent name: use letters, digits and single spaces only'
 					},
+					{ status: 400 }
+				)
+			}
+			if (!body.config) {
+				return HttpResponse.json(
+					{ message: 'Invalid request body' },
 					{ status: 400 }
 				)
 			}
@@ -186,11 +217,11 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				)
 			}
 
-			store.configurations.set(id, configuration)
-			const agent: Agent = {
+			store.configurations.set(id, body.config)
+			const agent: AgentIdentity = {
 				id,
 				name,
-				icon: (configuration.icon ?? 'bot') as AgentIconName
+				icon: body.icon as AgentIconName
 			}
 			store.agents.push(agent)
 			return HttpResponse.json({ id, name }, { status: 201 })
