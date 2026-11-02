@@ -1,48 +1,66 @@
 package schema_test
 
 // Superagent SQL-level invariants: the seed guarantees and the
-// DB-enforced rules from migrations/0002_seed_superagent. Everything
-// else about the database is verified through the api endpoint tests —
-// schema tests pin only what the SQL layer itself enforces.
+// DB-enforced rules from migrations/0002_seed_superagent. Seeding
+// goes through the sqlc query layer; raw SQL remains where no query
+// reaches (the system row is excluded from GetAgents) and where the
+// SQL rule itself is under test (the trigger probes).
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/radch-ai/ava/backend/internal/db"
 	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
 func TestSeedSuperagent(t *testing.T) {
-	db := testdb.Open(t)
+	sqlDB := testdb.Open(t)
 
-	var name, icon string
-	if err := db.QueryRow(
-		`SELECT name, icon FROM agents WHERE id = '_superagent'`,
-	).Scan(&name, &icon); err != nil {
+	var name, icon, config string
+	if err := sqlDB.QueryRow(
+		`SELECT name, icon, config FROM agents WHERE id = '_superagent'`,
+	).Scan(&name, &icon, &config); err != nil {
 		t.Fatalf("seed row: %v", err)
 	}
 	if name != "Ava" || icon != "message-square" {
 		t.Errorf("seed row = %q/%q, want Ava/message-square", name, icon)
 	}
+	// The document never duplicates identity; its home is the columns.
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(config), &doc); err != nil {
+		t.Fatalf("seed config JSON: %v", err)
+	}
+	if _, ok := doc["name"]; ok {
+		t.Errorf("seed config carries name — identity belongs in columns")
+	}
+	if _, ok := doc["icon"]; ok {
+		t.Errorf("seed config carries icon — identity belongs in columns")
+	}
+	if _, ok := doc["cronJobs"]; !ok {
+		t.Errorf("seed config lost cronJobs")
+	}
 }
 
 func TestSystemAgentsCannotBeDeleted(t *testing.T) {
-	db := testdb.Open(t)
+	sqlDB := testdb.Open(t)
+	queries := db.New(sqlDB)
 
 	// The trigger aborts deletes of "_"-prefixed ids — every code
 	// path, not just endpoints.
-	_, err := db.Exec(`DELETE FROM agents WHERE id = '_superagent'`)
+	_, err := sqlDB.Exec(`DELETE FROM agents WHERE id = '_superagent'`)
 	if err == nil || !strings.Contains(err.Error(), "system agents cannot be deleted") {
 		t.Fatalf("delete _superagent err = %v, want trigger abort", err)
 	}
 
 	// Non-system rows delete normally.
-	if _, err := db.Exec(
-		`INSERT INTO agents (id, name, icon, created_at)
-		 VALUES ('research', 'Research', 'globe', 1)`); err != nil {
+	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
+		ID: "research", Name: "Research", Icon: "globe", Config: "{}",
+	}); err != nil {
 		t.Fatalf("insert research: %v", err)
 	}
-	if _, err := db.Exec(`DELETE FROM agents WHERE id = 'research'`); err != nil {
+	if _, err := sqlDB.Exec(`DELETE FROM agents WHERE id = 'research'`); err != nil {
 		t.Fatalf("delete research: %v", err)
 	}
 }

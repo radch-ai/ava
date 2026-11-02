@@ -1,12 +1,10 @@
 package agents
 
-// GetAgents handler tests, within this package's boundary: the
-// handler over the real store. Seeding is handwritten SQL until the
-// InsertAgent query lands with POST /api/agent. Route mounting is
-// pinned in backend's tests.
+// GetAgents handler tests: the handler over the real store, seeded
+// via the sqlc query layer. Route mounting is pinned in backend's
+// tests.
 
 import (
-	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,11 +16,11 @@ import (
 )
 
 // seedAgent inserts a row; insertion order is creation order.
-func seedAgent(t *testing.T, sqlDB *sql.DB, id, name, icon string) {
+func seedAgent(t *testing.T, queries *db.Queries, id, name, icon string) {
 	t.Helper()
-	_, err := sqlDB.Exec(`INSERT INTO agents (id, name, icon) VALUES (?, ?, ?)`,
-		id, name, icon)
-	if err != nil {
+	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
+		ID: id, Name: name, Icon: icon, Config: "{}",
+	}); err != nil {
 		t.Fatalf("seed agent %s: %v", id, err)
 	}
 }
@@ -49,14 +47,13 @@ func TestGetAgentsEmpty(t *testing.T) {
 }
 
 func TestGetAgentsContract(t *testing.T) {
-	sqlDB := testdb.Open(t)
-	queries := db.New(sqlDB)
+	queries := db.New(testdb.Open(t))
 	// "research" sorts before "scribe", but scribe was created first:
 	// listing scribe first pins created_at ordering, not id ordering.
 	// Stamps are coarse, so the seeds sit 2ms apart.
-	seedAgent(t, sqlDB, "scribe", "Scribe", "pencil")
+	seedAgent(t, queries, "scribe", "Scribe", "pencil")
 	time.Sleep(2 * time.Millisecond)
-	seedAgent(t, sqlDB, "research", "Research", "globe")
+	seedAgent(t, queries, "research", "Research", "globe")
 
 	want := `{"agents":[{"id":"scribe","name":"Scribe","icon":"pencil"},{"id":"research","name":"Research","icon":"globe"}]}`
 	if _, body, err := getAgents(t, queries); err != nil || body != want {

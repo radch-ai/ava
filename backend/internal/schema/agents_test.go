@@ -6,16 +6,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/radch-ai/ava/backend/internal/db"
 	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
 func TestCreatedAtStampedByDatabase(t *testing.T) {
 	sqlDB := testdb.Open(t)
-
-	if _, err := sqlDB.Exec(
-		`INSERT INTO agents (id, name, icon) VALUES ('research', 'Research', 'globe')`,
-	); err != nil {
-		t.Fatalf("insert without created_at: %v", err)
+	queries := db.New(sqlDB)
+	// CreateAgent omits created_at — the app's only write path.
+	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
+		ID: "research", Name: "Research", Icon: "globe", Config: "{}",
+	}); err != nil {
+		t.Fatalf("create agent: %v", err)
 	}
 
 	var createdAt int64
