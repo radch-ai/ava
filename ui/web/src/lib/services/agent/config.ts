@@ -8,7 +8,6 @@ import { api } from '../api'
 
 export interface CreateAgentResponse {
 	id: string
-	name: string
 }
 
 /** Patch body: identity fields and/or configuration fields */

@@ -224,7 +224,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				icon: body.icon as AgentIconName
 			}
 			store.agents.push(agent)
-			return HttpResponse.json({ id, name }, { status: 201 })
+			return HttpResponse.json({ id }, { status: 201 })
 		})
 	]
 }

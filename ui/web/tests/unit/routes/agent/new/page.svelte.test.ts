@@ -294,10 +294,7 @@ describe('New Agent Page', () => {
 
 		it('creates the agent and navigates to its id page', async () => {
 			const mockCreateAgent = vi.mocked(agentConfig.createAgent)
-			mockCreateAgent.mockResolvedValueOnce({
-				id: 'test-agent-name',
-				name: 'Test Agent Name'
-			})
+			mockCreateAgent.mockResolvedValueOnce({ id: 'test-agent-name' })
 
 			render(NewAgentPage)
 

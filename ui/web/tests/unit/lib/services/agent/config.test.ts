@@ -330,7 +330,7 @@ describe('agent/config service', () => {
 	describe('createAgent', () => {
 		it('posts name, icon and config as one body', async () => {
 			const mockConfig = createTestConfig({ name: 'New Agent' })
-			const response = { id: 'new-agent', name: 'New Agent' }
+			const response = { id: 'new-agent' }
 
 			vi.mocked(api.post).mockReturnValue({
 				json: async () => response
@@ -347,7 +347,7 @@ describe('agent/config service', () => {
 
 		it('returns the server-derived id for display names with spaces', async () => {
 			const mockConfig = createTestConfig({ name: 'Research Team 2' })
-			const response = { id: 'research-team-2', name: 'Research Team 2' }
+			const response = { id: 'research-team-2' }
 
 			vi.mocked(api.post).mockReturnValue({
 				json: async () => response
@@ -356,7 +356,6 @@ describe('agent/config service', () => {
 			const result = await createAgent(mockConfig)
 
 			expect(result.id).toBe('research-team-2')
-			expect(result.name).toBe('Research Team 2')
 		})
 
 		it('propagates duplicate-name errors from the server', async () => {

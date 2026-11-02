@@ -214,10 +214,7 @@ describe('mock API handlers', () => {
 			})
 		})
 		expect(created.status).toBe(201)
-		expect(await created.json()).toEqual({
-			id: 'research-team',
-			name: 'Research Team'
-		})
+		expect(await created.json()).toEqual({ id: 'research-team' })
 
 		const list = (await (await fetch(`${BASE}/agents`)).json()) as {
 			agents: { id: string; name: string; label: string; icon: string }[]

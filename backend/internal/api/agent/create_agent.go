@@ -43,11 +43,10 @@ type createAgentRequest struct {
 	Config json.RawMessage `json:"config"`
 }
 
-// createAgentResponse is the mock's 201 body — the UI navigates from
-// the id alone.
+// createAgentResponse is the mock's 201 body: just the id — the UI
+// navigates from it alone.
 type createAgentResponse struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID string `json:"id"`
 }
 
 // CreateAgent answers the UI's createAgent(): derive the id from the
@@ -82,6 +81,6 @@ func CreateAgent(queries *db.Queries) api.Handler {
 			return fmt.Errorf("insert agent: %w", err)
 		}
 
-		return api.WriteJSON(w, http.StatusCreated, createAgentResponse{ID: id, Name: req.Name})
+		return api.WriteJSON(w, http.StatusCreated, createAgentResponse{ID: id})
 	}
 }

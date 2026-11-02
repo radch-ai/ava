@@ -35,8 +35,8 @@ func TestCreateAgent(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201", rec.Code)
 	}
-	// The 201 body is {id, name}; the id is the derived one.
-	want := `{"id":"research-bot","name":"Research Bot"}`
+	// The 201 body is {id}; the id is the derived one.
+	want := `{"id":"research-bot"}`
 	if got := strings.TrimSpace(rec.Body.String()); got != want {
 		t.Errorf("body = %s, want %s", got, want)
 	}
