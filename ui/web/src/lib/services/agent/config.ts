@@ -1,8 +1,9 @@
 import type {
-	AgentConfiguration,
-	AgentConfigurationWithIdentity,
+	AgentConfig,
+	AgentConfigWithIdentity,
 	AgentIdentity,
-	SuperagentConfiguration
+	CronJob,
+	HeartbeatConfig
 } from '#lib/types/agent'
 import { api } from '../api'
 
@@ -10,48 +11,60 @@ export interface CreateAgentResponse {
 	id: string
 }
 
-/** Patch body: identity fields and/or configuration fields */
-export interface AgentConfigurationPatch {
-	name?: string
-	icon?: AgentIdentity['icon']
-	config?: Partial<SuperagentConfiguration>
-}
+/** Identity and config text fields; heartbeat/cronJobs save via
+ * their own endpoints. */
+export type AgentConfigPatch = Partial<
+	Pick<AgentIdentity, 'name' | 'icon'> &
+		Omit<AgentConfig, 'heartbeat' | 'cronJobs'>
+>
 
-export async function getAgentConfiguration(
+export async function getAgentConfig(
 	agentId: string
-): Promise<AgentConfigurationWithIdentity<SuperagentConfiguration>> {
-	return api
-		.get(`agent/${agentId}`)
-		.json<AgentConfigurationWithIdentity<SuperagentConfiguration>>()
+): Promise<AgentConfigWithIdentity> {
+	return api.get(`agent/${agentId}`).json<AgentConfigWithIdentity>()
 }
 
-export async function updateAgentConfiguration(
+export async function updateAgentConfig(
 	agentId: string,
-	patch: AgentConfigurationPatch
-): Promise<AgentConfigurationWithIdentity<SuperagentConfiguration>> {
+	patch: AgentConfigPatch
+): Promise<AgentConfigWithIdentity> {
 	const response = await api
 		.patch(`agent/${agentId}`, { json: patch })
-		.json<
-			| { data?: AgentConfigurationWithIdentity<SuperagentConfiguration> }
-			| AgentConfigurationWithIdentity<SuperagentConfiguration>
-		>()
+		.json<{ data?: AgentConfigWithIdentity } | AgentConfigWithIdentity>()
 
 	if (response && typeof response === 'object' && 'data' in response) {
-		return response.data as AgentConfigurationWithIdentity<SuperagentConfiguration>
+		return response.data as AgentConfigWithIdentity
 	}
-	return response as AgentConfigurationWithIdentity<SuperagentConfiguration>
+	return response as AgentConfigWithIdentity
+}
+
+/** Save the agent's single heartbeat row. */
+export async function updateHeartbeat(
+	agentId: string,
+	heartbeat: HeartbeatConfig
+): Promise<AgentConfigWithIdentity> {
+	return api
+		.patch(`agent/${agentId}/heartbeat`, { json: heartbeat })
+		.json<AgentConfigWithIdentity>()
+}
+
+/** Save the cron job list; replaced wholesale. */
+export async function updateCronJobs(
+	agentId: string,
+	cronJobs: CronJob[]
+): Promise<AgentConfigWithIdentity> {
+	return api
+		.patch(`agent/${agentId}/cron-jobs`, { json: { cronJobs } })
+		.json<AgentConfigWithIdentity>()
 }
 
 /**
- * Create an agent from a configuration. The server derives the agent id
- * from the display name (`deriveAgentId` rules) and rejects invalid or
- * duplicate names — the client never invents an id.
+ * Create an agent. The server derives the id from the display name
+ * (`deriveAgentId`) and rejects invalid or duplicate names; fields
+ * that aren't columns are ignored.
  */
 export async function createAgent(
-	configuration: AgentConfiguration & Pick<AgentIdentity, 'name' | 'icon'>
+	configuration: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>
 ): Promise<CreateAgentResponse> {
-	const { name, icon, ...config } = configuration
-	return api
-		.post('agent', { json: { name, icon, config } })
-		.json<CreateAgentResponse>()
+	return api.post('agent', { json: configuration }).json<CreateAgentResponse>()
 }

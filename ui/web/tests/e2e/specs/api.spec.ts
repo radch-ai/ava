@@ -47,9 +47,7 @@ test.describe('API integration', () => {
 			expect.objectContaining({
 				name: agentName,
 				icon: expect.any(String),
-				config: expect.objectContaining({
-					operatingInstructions: 'Test instructions'
-				})
+				operatingInstructions: 'Test instructions'
 			})
 		)
 	})

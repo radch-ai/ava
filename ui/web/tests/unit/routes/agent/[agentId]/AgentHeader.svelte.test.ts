@@ -1,11 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import type {
-	AgentConfigurationWithIdentity,
-	AgentIdentity,
-	SuperagentConfiguration
-} from '#lib/types/agent'
+import type { AgentConfigWithIdentity, AgentIdentity } from '#lib/types/agent'
 import AgentHeaderPairTestWrapper from './AgentHeaderPairTestWrapper.svelte'
 import AgentHeaderTestWrapper from './AgentHeaderTestWrapper.svelte'
 
@@ -21,31 +17,31 @@ const agent: AgentIdentity = {
 	icon: 'bot'
 }
 
-function createDefaultTestConfig(): AgentConfigurationWithIdentity<SuperagentConfiguration> {
+function createDefaultTestConfig(): AgentConfigWithIdentity {
 	return {
 		id: '_superagent',
 		name: 'Test',
 		icon: 'bot',
-		config: {
-			soul: { personality: '', identity: '' },
-			userContext: '',
-			operatingInstructions: '',
-			toolsContext: '',
-			toolsEnabled: [],
-			cronJobs: [],
-			heartbeat: {
-				enabled: false,
-				duration: '1hr',
-				content: '',
-				model: 'default'
-			}
-		}
+		soul: { personality: '', identity: '' },
+		userContext: '',
+		operatingInstructions: '',
+		toolsContext: '',
+		toolsEnabled: [],
+		heartbeat: {
+			enabled: false,
+			duration: '1hr',
+			content: '',
+			model: 'default'
+		},
+		cronJobs: []
 	}
 }
 
 vi.mock('#lib/services/agent', () => ({
-	getAgentConfiguration: vi.fn(),
-	updateAgentConfiguration: vi.fn()
+	getAgentConfig: vi.fn(),
+	updateAgentConfig: vi.fn(),
+	updateHeartbeat: vi.fn(),
+	updateCronJobs: vi.fn()
 }))
 
 vi.mock('$app/navigation', () => ({
@@ -54,9 +50,9 @@ vi.mock('$app/navigation', () => ({
 	beforeNavigate: vi.fn()
 }))
 
-import { getAgentConfiguration } from '#lib/services/agent'
+import { getAgentConfig } from '#lib/services/agent'
 
-const mockGetAgentConfiguration = vi.mocked(getAgentConfiguration)
+const mockGetAgentConfig = vi.mocked(getAgentConfig)
 
 describe('AgentHeader', () => {
 	beforeEach(() => {
@@ -69,21 +65,21 @@ describe('AgentHeader', () => {
 
 	describe('rendering', () => {
 		it('displays agent name', async () => {
-			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
+			mockGetAgentConfig.mockResolvedValue(createDefaultTestConfig())
 			render(AgentHeaderTestWrapper, { agent: superagent })
 
 			await expect.element(page.getByText('Ava')).toBeVisible()
 		})
 
 		it('displays non-superagent agent name', async () => {
-			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
+			mockGetAgentConfig.mockResolvedValue(createDefaultTestConfig())
 			render(AgentHeaderTestWrapper, { agent })
 
 			await expect.element(page.getByText('Support')).toBeVisible()
 		})
 
 		it('renders exactly one settings button with accessible name', async () => {
-			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
+			mockGetAgentConfig.mockResolvedValue(createDefaultTestConfig())
 			render(AgentHeaderTestWrapper, { agent })
 
 			await expect
@@ -92,7 +88,7 @@ describe('AgentHeader', () => {
 		})
 
 		it('renders settings button with accessible label', async () => {
-			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
+			mockGetAgentConfig.mockResolvedValue(createDefaultTestConfig())
 			render(AgentHeaderTestWrapper, { agent })
 
 			await expect
@@ -101,7 +97,7 @@ describe('AgentHeader', () => {
 		})
 
 		it('shows an agent config tooltip for the settings button', async () => {
-			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
+			mockGetAgentConfig.mockResolvedValue(createDefaultTestConfig())
 			render(AgentHeaderTestWrapper, { agent })
 
 			const settingsButton = page.getByLabelText('Open agent configuration')
@@ -111,7 +107,7 @@ describe('AgentHeader', () => {
 		})
 
 		it('uses a unique tooltip id for each settings button', async () => {
-			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
+			mockGetAgentConfig.mockResolvedValue(createDefaultTestConfig())
 			render(AgentHeaderPairTestWrapper, {
 				agents: [agent, { ...agent, name: 'support-two' }]
 			})
@@ -137,7 +133,7 @@ describe('AgentHeader', () => {
 
 	describe('tab switcher', () => {
 		it('renders tabs for superagent agent when activeTab and onTabChange provided', async () => {
-			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
+			mockGetAgentConfig.mockResolvedValue(createDefaultTestConfig())
 			render(AgentHeaderTestWrapper, {
 				agent: superagent,
 				activeTab: 'conversation',
@@ -153,7 +149,7 @@ describe('AgentHeader', () => {
 		})
 
 		it('does not render tabs for non-superagent agents', async () => {
-			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
+			mockGetAgentConfig.mockResolvedValue(createDefaultTestConfig())
 			render(AgentHeaderTestWrapper, { agent })
 
 			expect(page.getByRole('tab', { name: 'Conversation' }).query()).toBeNull()
@@ -161,7 +157,7 @@ describe('AgentHeader', () => {
 		})
 
 		it('does not render tabs when onTabChange is not provided', async () => {
-			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
+			mockGetAgentConfig.mockResolvedValue(createDefaultTestConfig())
 			render(AgentHeaderTestWrapper, {
 				agent: superagent,
 				activeTab: 'conversation'
@@ -173,7 +169,7 @@ describe('AgentHeader', () => {
 
 	describe('tab interaction', () => {
 		it('calls onTabChange when switching tabs', async () => {
-			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
+			mockGetAgentConfig.mockResolvedValue(createDefaultTestConfig())
 			const onTabChange = vi.fn()
 			render(AgentHeaderTestWrapper, {
 				agent: superagent,
@@ -187,7 +183,7 @@ describe('AgentHeader', () => {
 		})
 
 		it('does not call onTabChange when clicking active tab', async () => {
-			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
+			mockGetAgentConfig.mockResolvedValue(createDefaultTestConfig())
 			const onTabChange = vi.fn()
 			render(AgentHeaderTestWrapper, {
 				agent: superagent,
@@ -205,7 +201,7 @@ describe('AgentHeader', () => {
 
 	describe('tab accessibility', () => {
 		it('sets aria-selected correctly', async () => {
-			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
+			mockGetAgentConfig.mockResolvedValue(createDefaultTestConfig())
 			render(AgentHeaderTestWrapper, {
 				agent: superagent,
 				activeTab: 'conversation',
@@ -224,7 +220,7 @@ describe('AgentHeader', () => {
 		})
 
 		it('sets aria-controls correctly', async () => {
-			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
+			mockGetAgentConfig.mockResolvedValue(createDefaultTestConfig())
 			render(AgentHeaderTestWrapper, {
 				agent: superagent,
 				activeTab: 'conversation',
@@ -240,7 +236,7 @@ describe('AgentHeader', () => {
 		})
 
 		it('has tablist role', async () => {
-			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
+			mockGetAgentConfig.mockResolvedValue(createDefaultTestConfig())
 			render(AgentHeaderTestWrapper, {
 				agent: superagent,
 				activeTab: 'conversation',
@@ -253,13 +249,13 @@ describe('AgentHeader', () => {
 
 	describe('settings button - successful load', () => {
 		it('loads config and opens sheet on click', async () => {
-			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
+			mockGetAgentConfig.mockResolvedValue(createDefaultTestConfig())
 			render(AgentHeaderTestWrapper, { agent: superagent })
 
 			await page.getByLabelText('Open agent configuration').click()
 
 			await vi.waitFor(() => {
-				expect(mockGetAgentConfiguration).toHaveBeenCalledWith('_superagent')
+				expect(mockGetAgentConfig).toHaveBeenCalledWith('_superagent')
 			})
 
 			await expect
@@ -268,12 +264,8 @@ describe('AgentHeader', () => {
 		})
 
 		it('disables button while loading', async () => {
-			let resolveConfig:
-				| ((
-						value: AgentConfigurationWithIdentity<SuperagentConfiguration>
-				  ) => void)
-				| undefined
-			mockGetAgentConfiguration.mockImplementation(
+			let resolveConfig: ((value: AgentConfigWithIdentity) => void) | undefined
+			mockGetAgentConfig.mockImplementation(
 				() => new Promise((resolve) => (resolveConfig = resolve))
 			)
 			render(AgentHeaderTestWrapper, { agent: superagent })
@@ -292,55 +284,53 @@ describe('AgentHeader', () => {
 		})
 
 		it('caches config after first load', async () => {
-			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
+			mockGetAgentConfig.mockResolvedValue(createDefaultTestConfig())
 			render(AgentHeaderTestWrapper, { agent: superagent })
 
 			await page.getByLabelText('Open agent configuration').click()
 			await vi.waitFor(() => {
-				expect(mockGetAgentConfiguration).toHaveBeenCalledTimes(1)
+				expect(mockGetAgentConfig).toHaveBeenCalledTimes(1)
 			})
 
 			await page.getByRole('button', { name: /cancel/i }).click()
 
 			await page.getByLabelText('Open agent configuration').click()
 			await vi.waitFor(() => {
-				expect(mockGetAgentConfiguration).toHaveBeenCalledTimes(1)
+				expect(mockGetAgentConfig).toHaveBeenCalledTimes(1)
 			})
 		})
 	})
 
 	describe('settings button - API error', () => {
 		it('does not open sheet when API fails', async () => {
-			mockGetAgentConfiguration.mockRejectedValue(new Error('Network error'))
+			mockGetAgentConfig.mockRejectedValue(new Error('Network error'))
 			render(AgentHeaderTestWrapper, { agent: superagent })
 
 			await page.getByLabelText('Open agent configuration').click()
 
 			await vi.waitFor(() => {
-				expect(mockGetAgentConfiguration).toHaveBeenCalledWith('_superagent')
+				expect(mockGetAgentConfig).toHaveBeenCalledWith('_superagent')
 			})
 
 			expect(page.getByRole('button', { name: /save/i }).query()).toBeNull()
 		})
 
 		it('re-enables button after error', async () => {
-			mockGetAgentConfiguration.mockRejectedValue(new Error('Network error'))
+			mockGetAgentConfig.mockRejectedValue(new Error('Network error'))
 			render(AgentHeaderTestWrapper, { agent: superagent })
 
 			const settingsBtn = page.getByLabelText('Open agent configuration')
 			await settingsBtn.click()
 
 			await vi.waitFor(() => {
-				expect(mockGetAgentConfiguration).toHaveBeenCalled()
+				expect(mockGetAgentConfig).toHaveBeenCalled()
 			})
 
 			await expect.element(settingsBtn).not.toBeDisabled()
 		})
 
 		it('allows retry after error', async () => {
-			mockGetAgentConfiguration.mockRejectedValueOnce(
-				new Error('Network error')
-			)
+			mockGetAgentConfig.mockRejectedValueOnce(new Error('Network error'))
 			render(AgentHeaderTestWrapper, { agent: superagent })
 
 			const settingsBtn = page.getByLabelText('Open agent configuration')
@@ -350,7 +340,7 @@ describe('AgentHeader', () => {
 				expect(page.getByRole('button', { name: /save/i }).query()).toBeNull()
 			})
 
-			mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
+			mockGetAgentConfig.mockResolvedValue(createDefaultTestConfig())
 			await settingsBtn.click()
 
 			await expect

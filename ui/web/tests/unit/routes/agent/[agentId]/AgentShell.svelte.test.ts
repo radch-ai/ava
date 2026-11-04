@@ -10,24 +10,23 @@ vi.mock('#lib/services/agent', () => ({
 	mergePastFeed: vi.fn(),
 	getAgentThread: vi.fn(),
 	mergePastThread: vi.fn(),
-	getAgentConfiguration: vi.fn(),
-	updateAgentConfiguration: vi.fn(),
+	getAgentConfig: vi.fn(),
+	updateAgentConfig: vi.fn(),
+	updateHeartbeat: vi.fn(),
+	updateCronJobs: vi.fn(),
 	createAgent: vi.fn()
 }))
 
 import {
 	getAgentActivityFeed,
-	getAgentConfiguration,
+	getAgentConfig,
 	mergePastFeed
 } from '#lib/services/agent'
-import type {
-	AgentConfigurationWithIdentity,
-	SuperagentConfiguration
-} from '#lib/types/agent'
+import type { AgentConfigWithIdentity } from '#lib/types/agent'
 
 const mockGetAgentActivityFeed = vi.mocked(getAgentActivityFeed)
 const mockMergePastFeed = vi.mocked(mergePastFeed)
-const mockGetAgentConfiguration = vi.mocked(getAgentConfiguration)
+const mockGetAgentConfig = vi.mocked(getAgentConfig)
 
 interface ThreadItem {
 	id: string
@@ -67,25 +66,23 @@ function createTestFeed(
 	return { items, nextCursor }
 }
 
-function createDefaultTestConfig(): AgentConfigurationWithIdentity<SuperagentConfiguration> {
+function createDefaultTestConfig(): AgentConfigWithIdentity {
 	return {
 		id: '_superagent',
 		name: 'Test',
 		icon: 'bot',
-		config: {
-			soul: { personality: '', identity: '' },
-			userContext: '',
-			operatingInstructions: '',
-			toolsContext: '',
-			toolsEnabled: [],
-			cronJobs: [],
-			heartbeat: {
-				enabled: false,
-				duration: '1hr',
-				content: '',
-				model: 'default'
-			}
-		}
+		soul: { personality: '', identity: '' },
+		userContext: '',
+		operatingInstructions: '',
+		toolsContext: '',
+		toolsEnabled: [],
+		heartbeat: {
+			enabled: false,
+			duration: '1hr',
+			content: '',
+			model: 'default'
+		},
+		cronJobs: []
 	}
 }
 
@@ -99,7 +96,7 @@ describe('AgentShell', () => {
 		vi.clearAllMocks()
 		mockGetAgentActivityFeed.mockResolvedValue(createTestFeed())
 		mockMergePastFeed.mockImplementation((current) => current)
-		mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
+		mockGetAgentConfig.mockResolvedValue(createDefaultTestConfig())
 	})
 
 	afterEach(async () => {

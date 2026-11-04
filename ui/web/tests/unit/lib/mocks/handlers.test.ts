@@ -128,25 +128,46 @@ describe('mock API handlers', () => {
 	it('serves agent configuration and 404s for unknown agents', async () => {
 		const res = await fetch(`${BASE}/agent/scribe`)
 		expect(res.status).toBe(200)
-		const config = (await res.json()) as {
+		const detail = (await res.json()) as {
 			id: string
 			name: string
 			icon: string
-			config: {
-				soul: { personality: string; identity: string }
-				toolsEnabled: string[]
-			}
+			soul: { personality: string; identity: string }
+			toolsEnabled: string[]
+			heartbeat: {
+				model: string
+				enabled: boolean
+				duration: string
+				content: string
+			} | null
 		}
-		expect(config.id).toBe('scribe')
-		expect(config.icon).toBe('pencil')
-		expect(config.name).toBe('Scribe')
-		expect(typeof config.config.soul.personality).toBe('string')
-		expect(Array.isArray(config.config.toolsEnabled)).toBe(true)
+		expect(detail.id).toBe('scribe')
+		expect(detail.icon).toBe('pencil')
+		expect(detail.name).toBe('Scribe')
+		expect(typeof detail.soul.personality).toBe('string')
+		expect(Array.isArray(detail.toolsEnabled)).toBe(true)
+		// The body is flat: heartbeat rides beside the config fields —
+		// a full config even without a saved row. Scribe has no row:
+		// disabled with empty fields; only the superagent is seeded.
+		expect(detail.heartbeat).toEqual({
+			model: '',
+			enabled: false,
+			duration: '1hr',
+			content: ''
+		})
 
 		const superagentRes = await fetch(`${BASE}/agent/_superagent`)
 		expect(superagentRes.status).toBe(200)
-		const superagentConfig = (await superagentRes.json()) as { name: string }
-		expect(superagentConfig.name).toBe('Ava')
+		const superagentDetail = (await superagentRes.json()) as {
+			name: string
+			heartbeat: { model: string; enabled: boolean; duration: string }
+			cronJobs: unknown[]
+		}
+		expect(superagentDetail.name).toBe('Ava')
+		expect(superagentDetail.heartbeat.model).toBe('auto')
+		expect(superagentDetail.heartbeat.enabled).toBe(true)
+		expect(superagentDetail.heartbeat.duration).toBe('30m')
+		expect(superagentDetail.cronJobs).toEqual([])
 
 		const missing = await fetch(`${BASE}/agent/ghost`)
 		expect(missing.status).toBe(404)
@@ -159,29 +180,104 @@ describe('mock API handlers', () => {
 			method: 'PATCH',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({
-				config: {
-					operatingInstructions: 'Updated instructions',
-					soul: { identity: 'New identity' }
-				}
+				operatingInstructions: 'Updated instructions',
+				soul: { identity: 'New identity' }
 			})
 		})
 		expect(res.status).toBe(200)
 		const updated = (await res.json()) as {
-			config: {
-				operatingInstructions: string
-				soul: { personality: string; identity: string }
-			}
+			operatingInstructions: string
+			soul: { personality: string; identity: string }
 		}
-		expect(updated.config.operatingInstructions).toBe('Updated instructions')
-		expect(updated.config.soul.identity).toBe('New identity')
-		expect(typeof updated.config.soul.personality).toBe('string')
+		expect(updated.operatingInstructions).toBe('Updated instructions')
+		expect(updated.soul.identity).toBe('New identity')
+		expect(typeof updated.soul.personality).toBe('string')
 
 		const reread = (await (await fetch(`${BASE}/agent/scribe`)).json()) as {
-			config: { operatingInstructions: string }
+			operatingInstructions: string
 		}
-		expect(reread.config.operatingInstructions).toBe('Updated instructions')
+		expect(reread.operatingInstructions).toBe('Updated instructions')
 	})
 
+	it('saves heartbeat rows on their own endpoint, not the config patch', async () => {
+		const res = await fetch(`${BASE}/agent/scribe/heartbeat`, {
+			method: 'PATCH',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				model: 'auto',
+				enabled: false,
+				duration: '2hr',
+				content: 'Rewritten check'
+			})
+		})
+		expect(res.status).toBe(200)
+		const detail = (await res.json()) as {
+			heartbeat: {
+				model: string
+				enabled: boolean
+				duration: string
+				content: string
+			}
+		}
+		expect(detail.heartbeat).toEqual({
+			model: 'auto',
+			enabled: false,
+			duration: '2hr',
+			content: 'Rewritten check'
+		})
+
+		// The row persists; the config patch never carries it.
+		const reread = (await (await fetch(`${BASE}/agent/scribe`)).json()) as {
+			heartbeat: { content: string }
+		}
+		expect(reread.heartbeat.content).toBe('Rewritten check')
+
+		const missing = await fetch(`${BASE}/agent/ghost/heartbeat`, {
+			method: 'PATCH',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				model: 'auto',
+				enabled: false,
+				duration: '30m',
+				content: ''
+			})
+		})
+		expect(missing.status).toBe(404)
+	})
+
+	it('replaces the cron list on its own endpoint', async () => {
+		const res = await fetch(`${BASE}/agent/_superagent/cron-jobs`, {
+			method: 'PATCH',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				cronJobs: [
+					{
+						id: 'job-1',
+						time: '09:00',
+						frequency: 'custom',
+						cronExpression: '0 9 * * *',
+						model: 'auto',
+						prompt: 'Morning digest'
+					}
+				]
+			})
+		})
+		expect(res.status).toBe(200)
+		const detail = (await res.json()) as {
+			cronJobs: { id: string; cronExpression?: string }[]
+		}
+		expect(detail.cronJobs).toHaveLength(1)
+		expect(detail.cronJobs[0]?.cronExpression).toBe('0 9 * * *')
+
+		const replaced = await fetch(`${BASE}/agent/_superagent/cron-jobs`, {
+			method: 'PATCH',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ cronJobs: [] })
+		})
+		expect(replaced.status).toBe(200)
+		const emptied = (await replaced.json()) as { cronJobs: unknown[] }
+		expect(emptied.cronJobs).toEqual([])
+	})
 	it("updates the agents list entry when PATCH changes the agent's name or icon", async () => {
 		const res = await fetch(`${BASE}/agent/scribe`, {
 			method: 'PATCH',
@@ -205,12 +301,10 @@ describe('mock API handlers', () => {
 			body: JSON.stringify({
 				name: 'Research Team',
 				icon: 'bot',
-				config: {
-					soul: { personality: '', identity: '' },
-					operatingInstructions: '',
-					toolsContext: '',
-					toolsEnabled: []
-				}
+				soul: { personality: '', identity: '' },
+				operatingInstructions: '',
+				toolsContext: '',
+				toolsEnabled: []
 			})
 		})
 		expect(created.status).toBe(201)

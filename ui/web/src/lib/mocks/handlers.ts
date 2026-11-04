@@ -11,8 +11,11 @@ import type { AgentIconName } from '../../components/agent-icons/index.ts'
 import { SUPERAGENT_AGENT_ID } from '../config.ts'
 import type { CursorPage } from '../services/utils/cursor.ts'
 import {
-	type AgentConfiguration,
+	type AgentConfig,
+	type AgentConfigWithIdentity,
 	type AgentIdentity,
+	type CronJob,
+	type HeartbeatConfig,
 	SUPERAGENT_AGENT
 } from '../types/agent.ts'
 import { deriveAgentId, isValidAgentName } from './agent-id.ts'
@@ -44,6 +47,28 @@ function paginate<T extends CursorItem>(
  * each consumer gets isolated state.
  */
 export function createHandlers(store: MockStore): HttpHandler[] {
+	// AgentConfigWithIdentity. heartbeat is the saved row or the
+	// disabled default; name/icon come from the list entry (the
+	// constant covers the never-listed superagent).
+	const buildDetail = (id: string): AgentConfigWithIdentity | null => {
+		const config = store.configurations.get(id)
+		if (!config) return null
+		const { name, icon } =
+			store.agents.find((agent) => agent.id === id) ?? SUPERAGENT_AGENT
+		return {
+			id,
+			name,
+			icon,
+			...config,
+			heartbeat: store.heartbeats.get(id) ?? {
+				model: '',
+				enabled: false,
+				duration: '1hr',
+				content: ''
+			},
+			cronJobs: store.cronJobs.get(id) ?? []
+		}
+	}
 	return [
 		// The list mirrors the backend query: it never includes the system
 		// superagent. Per-id endpoints (config, thread) resolve it separately.
@@ -123,18 +148,14 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 
 		http.get('*/api/agent/:id', ({ params }) => {
 			const id = String(params.id)
-			const stored = store.configurations.get(id)
-			if (!stored) {
+			const detail = buildDetail(id)
+			if (!detail) {
 				return HttpResponse.json(
 					{ message: `Agent "${id}" not found` },
 					{ status: 404 }
 				)
 			}
-			// name and icon live in the list entry (the constant for the
-			// system superagent, never listed)
-			const { name, icon } =
-				store.agents.find((agent) => agent.id === id) ?? SUPERAGENT_AGENT
-			return HttpResponse.json({ id, name, icon, config: stored })
+			return HttpResponse.json(detail)
 		}),
 
 		http.patch('*/api/agent/:id', async ({ request, params }) => {
@@ -146,17 +167,23 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 					{ status: 404 }
 				)
 			}
-			// name and icon go to the list entry, config fields to the
-			// configuration
-			const { name, icon, config } = (await request.json()) as {
+			// name/icon update the list entry, text updates the config;
+			// heartbeat/cronJobs have their own endpoints.
+			const {
+				name,
+				icon,
+				soul,
+				heartbeat: _hb,
+				cronJobs: _cron,
+				...configText
+			} = (await request.json()) as Partial<AgentConfig> & {
 				name?: string
 				icon?: string
-				config?: Partial<AgentConfiguration>
 			}
-			const next: AgentConfiguration = {
+			const next: Omit<AgentConfig, 'heartbeat' | 'cronJobs'> = {
 				...current,
-				...config,
-				soul: { ...current.soul, ...config?.soul }
+				...configText,
+				soul: { ...current.soul, ...soul }
 			}
 			store.configurations.set(id, next)
 			// Keep the list entry in sync so refetches reflect renames/icon
@@ -170,38 +197,51 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 						}
 					: agent
 			)
-			const entry =
-				store.agents.find((agent) => agent.id === id) ?? SUPERAGENT_AGENT
-			return HttpResponse.json({
-				id,
-				name: entry.name,
-				icon: entry.icon,
-				config: next
-			})
+			return HttpResponse.json(buildDetail(id))
+		}),
+
+		// The heartbeat row: one per agent, written whole.
+		http.patch('*/api/agent/:id/heartbeat', async ({ request, params }) => {
+			const id = String(params.id)
+			if (!store.configurations.has(id)) {
+				return HttpResponse.json(
+					{ message: `Agent "${id}" not found` },
+					{ status: 404 }
+				)
+			}
+			const heartbeat = (await request.json()) as HeartbeatConfig
+			store.heartbeats.set(id, heartbeat)
+			return HttpResponse.json(buildDetail(id))
+		}),
+
+		// The cron list: replaced wholesale on each save.
+		http.patch('*/api/agent/:id/cron-jobs', async ({ request, params }) => {
+			const id = String(params.id)
+			if (!store.configurations.has(id)) {
+				return HttpResponse.json(
+					{ message: `Agent "${id}" not found` },
+					{ status: 404 }
+				)
+			}
+			const { cronJobs } = (await request.json()) as { cronJobs: CronJob[] }
+			store.cronJobs.set(id, cronJobs)
+			return HttpResponse.json(buildDetail(id))
 		}),
 
 		// Create: the server owns id derivation. Invalid names are rejected
 		// with 400, colliding derived ids with 409 — never auto-suffixed.
 		http.post('*/api/agent', async ({ request }) => {
-			const body = (await request.json()) as {
-				name?: string
-				icon?: string
-				config?: AgentConfiguration
-			}
+			const body = (await request.json()) as Partial<
+				Pick<AgentIdentity, 'name' | 'icon'>
+			> &
+				AgentConfig
 			const name = body.name ?? ''
-
 			if (!isValidAgentName(name)) {
 				return HttpResponse.json(
 					{
 						message:
 							'Invalid agent name: use letters, digits and single spaces only'
 					},
-					{ status: 400 }
-				)
-			}
-			if (!body.config) {
-				return HttpResponse.json(
-					{ message: 'Invalid request body' },
 					{ status: 400 }
 				)
 			}
@@ -217,7 +257,14 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				)
 			}
 
-			store.configurations.set(id, body.config)
+			// Create ignores heartbeat/cronJobs like the backend; they
+			// have their own endpoints.
+			store.configurations.set(id, {
+				soul: body.soul,
+				operatingInstructions: body.operatingInstructions,
+				toolsContext: body.toolsContext,
+				toolsEnabled: body.toolsEnabled ?? []
+			})
 			const agent: AgentIdentity = {
 				id,
 				name,

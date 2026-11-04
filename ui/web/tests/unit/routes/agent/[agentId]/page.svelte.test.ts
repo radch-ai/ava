@@ -10,8 +10,10 @@ vi.mock('#lib/services/agent', () => ({
 	mergePastFeed: vi.fn(),
 	getAgentThread: vi.fn(),
 	mergePastThread: vi.fn(),
-	getAgentConfiguration: vi.fn(),
-	updateAgentConfiguration: vi.fn(),
+	getAgentConfig: vi.fn(),
+	updateAgentConfig: vi.fn(),
+	updateHeartbeat: vi.fn(),
+	updateCronJobs: vi.fn(),
 	createAgent: vi.fn()
 }))
 

@@ -7,8 +7,9 @@ import NewAgentPage from '#routes/agent/new/+page.svelte'
 // Mock the agent config service
 vi.mock('#lib/services/agent', () => ({
 	createAgent: vi.fn(),
-	getAgentConfiguration: vi.fn(),
-	updateAgentConfiguration: vi.fn()
+	getAgentConfig: vi.fn(),
+	updateAgentConfig: vi.fn(),
+	updateHeartbeat: vi.fn()
 }))
 
 // Mock SvelteKit navigation
@@ -199,16 +200,18 @@ describe('New Agent Page', () => {
 			await expect.element(heartbeatButton).toBeVisible()
 		})
 
-		it('shows heartbeat toggle when Heartbeat is selected', async () => {
+		it('shows the heartbeat form disabled by default', async () => {
 			render(NewAgentPage)
 
 			// Click on Heartbeat in sidebar
 			const heartbeatButton = page.getByRole('button', { name: /^heartbeat$/i })
 			await heartbeatButton.click()
 
-			// Should show enabled checkbox with exact label match
+			// Always a full config: form visible, disabled with empty fields
 			const enabledCheckbox = page.getByRole('checkbox', { name: 'Enabled' })
 			await expect.element(enabledCheckbox).toBeVisible()
+			await expect.element(enabledCheckbox).not.toBeChecked()
+			await expect.element(page.getByLabelText(/duration/i)).toBeVisible()
 		})
 
 		it('allows toggling heartbeat enabled', async () => {

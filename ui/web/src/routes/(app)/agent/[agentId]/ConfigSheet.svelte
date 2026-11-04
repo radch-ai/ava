@@ -7,11 +7,15 @@
 		UnsavedChangesGuards
 	} from '#components/unsaved-changes'
 	import { SUPERAGENT_AGENT_ID } from '#lib/config'
-	import { updateAgentConfiguration } from '#lib/services/agent'
+	import {
+		updateAgentConfig,
+		updateCronJobs,
+		updateHeartbeat
+	} from '#lib/services/agent'
 	import {
 		AGENT_FIELDS,
-		type AgentConfiguration,
-		type AgentConfigurationWithIdentity,
+		type AgentConfig,
+		type AgentConfigWithIdentity,
 		type AgentIdentity,
 		getConfigurationField,
 		setConfigurationField
@@ -21,13 +25,13 @@
 	interface Props {
 		isSheetOpened: boolean
 		closeSheet: () => void
-		configuration: AgentConfigurationWithIdentity
+		configuration: AgentConfigWithIdentity
 		/** All available tools */
 		availableTools: Tool[]
 		/** Agent id for API calls */
 		agentId: string
 		/** Called after successful save with the new configuration */
-		onSaved: (config: AgentConfigurationWithIdentity) => void
+		onSaved: (config: AgentConfigWithIdentity) => void
 	}
 
 	let {
@@ -49,14 +53,6 @@
 	// Determine agent type from the reserved superagent id
 	const isSuperagent = $derived(agentId === SUPERAGENT_AGENT_ID)
 
-	// The editor edits name and icon beside the config fields; the
-	// envelope carries them separately.
-	const editable = $derived({
-		name: configuration.name,
-		icon: configuration.icon,
-		...configuration.config
-	})
-
 	// Guards see changes only while the sheet is open — hasChanges stays
 	// stale true after the editor unmounts on close, so never feed it
 	// through ungated.
@@ -75,37 +71,42 @@
 	}
 
 	async function handleSave(
-		config: AgentConfiguration & Pick<AgentIdentity, 'name' | 'icon'>
+		config: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>
 	) {
 		// Build partial update with only changed fields
 		const fields = isSuperagent ? AGENT_FIELDS.superagent : AGENT_FIELDS.agent
-		const changes: Partial<
-			AgentConfiguration & Pick<AgentIdentity, 'name' | 'icon'>
-		> = {}
+		const changes: Partial<AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>> =
+			{}
 
 		for (const field of fields) {
 			const localValue = getConfigurationField(config, field)
-			const originalValue = getConfigurationField(editable, field)
+			const originalValue = getConfigurationField(configuration, field)
 			if (JSON.stringify(localValue) !== JSON.stringify(originalValue)) {
 				setConfigurationField(
-					changes as AgentConfiguration & Pick<AgentIdentity, 'name' | 'icon'>,
+					changes as AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>,
 					field,
 					localValue
 				)
 			}
 		}
-
-		// name and icon travel beside the config field in the patch
-		const { name, icon, ...configChanges } = changes
-		const patch = {
-			...(name !== undefined && { name }),
-			...(icon !== undefined && { icon }),
-			...(Object.keys(configChanges).length > 0 && { config: configChanges })
-		}
+		// Heartbeat and cron jobs go to their own endpoints; the rest
+		// is one patch.
+		const { heartbeat, cronJobs, ...patch } = changes
 
 		try {
-			const savedConfig = await updateAgentConfiguration(agentId, patch)
-			onSaved(savedConfig)
+			let savedConfig: AgentConfigWithIdentity | undefined
+			if (Object.keys(patch).length > 0) {
+				savedConfig = await updateAgentConfig(agentId, patch)
+			}
+			if (heartbeat) {
+				savedConfig = await updateHeartbeat(agentId, heartbeat)
+			}
+			if (cronJobs !== undefined) {
+				savedConfig = await updateCronJobs(agentId, cronJobs)
+			}
+			if (savedConfig) {
+				onSaved(savedConfig)
+			}
 			isSheetOpened = false
 		} catch {
 			// Keep sheet open on error so user can retry
@@ -134,9 +135,9 @@
 		</Sheet.Header>
 
 		<!-- Kept separate so other consumers (e.g. /agent/new)can use the editor
-		 			directly with their own save behavior (createAgent vs updateAgentConfiguration) -->
+		 			directly with their own save behavior (createAgent vs updateAgentConfig) -->
 		<AgentConfigEditor
-			configuration={editable}
+			{configuration}
 			{availableTools}
 			onSave={handleSave}
 			onCancel={handleCancel}

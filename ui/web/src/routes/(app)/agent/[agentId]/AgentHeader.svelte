@@ -4,11 +4,8 @@
 	import { Button, buttonVariants } from '#components/ui/button'
 	import * as Tooltip from '#components/ui/tooltip'
 	import { SUPERAGENT_AGENT_ID } from '#lib/config'
-	import { getAgentConfiguration } from '#lib/services/agent'
-	import type {
-		AgentConfigurationWithIdentity,
-		AgentIdentity
-	} from '#lib/types/agent'
+	import { getAgentConfig } from '#lib/services/agent'
+	import type { AgentConfigWithIdentity, AgentIdentity } from '#lib/types/agent'
 	import type { Tool } from '#lib/types/tool'
 	import { invalidate } from '$app/navigation'
 	import ConfigSheet from './ConfigSheet.svelte'
@@ -24,7 +21,7 @@
 	} = $props()
 
 	let configSheetOpen = $state(false)
-	let configuration = $state<AgentConfigurationWithIdentity>()
+	let configuration = $state<AgentConfigWithIdentity>()
 	let isLoading = $state(false)
 
 	function handleTabChange(tab: 'conversation' | 'activity') {
@@ -41,7 +38,7 @@
 		if (!configuration && !isLoading) {
 			isLoading = true
 			try {
-				configuration = await getAgentConfiguration(agent.id)
+				configuration = await getAgentConfig(agent.id)
 			} catch {
 				// API unreachable - ky logs to console
 			} finally {
