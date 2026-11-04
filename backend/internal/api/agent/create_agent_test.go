@@ -5,7 +5,7 @@ package agent
 // mounting is pinned in backend's tests.
 
 import (
-	"encoding/json"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,7 +28,7 @@ func create(t *testing.T, queries *db.Queries, body string) (*httptest.ResponseR
 
 func TestCreateAgent(t *testing.T) {
 	queries := db.New(testdb.Open(t))
-	rec, err := create(t, queries, `{"name":"Research Bot","icon":"globe","config":{"soul":{"personality":"curious"}}}`)
+	rec, err := create(t, queries, `{"name":"Research Bot","icon":"globe","soul":{"personality":"curious"}}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,33 +42,27 @@ func TestCreateAgent(t *testing.T) {
 	}
 }
 
-func TestCreateAgentConfigStoredVerbatim(t *testing.T) {
+func TestCreateAgentConfigStoredAsColumns(t *testing.T) {
 	sqlDB := testdb.Open(t)
 	queries := db.New(sqlDB)
 	if rec, err := create(t, queries,
-		`{"name":"Research Bot","icon":"globe","config":{"soul":{"personality":"curious"},"unknownField":"kept"}}`,
+		`{"name":"Research Bot","icon":"globe","soul":{"personality":"curious","identity":"the lab researcher"},"userContext":"morning person","operatingInstructions":"cite sources","toolsContext":""}`,
 	); err != nil || rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201", rec.Code)
 	}
-	// No query exposes config yet, so read the row directly. Parsed,
-	// never byte-compared — storage bytes are the column's business.
-	var config string
+	// The five prompt texts land in their columns verbatim.
+	var personality, identity, userContext, operating, toolsContext string
 	if err := sqlDB.QueryRow(
-		`SELECT config FROM agents WHERE id = 'research-bot'`,
-	).Scan(&config); err != nil {
-		t.Fatalf("read config: %v", err)
+		`SELECT soul_personality, soul_identity, user_context,
+		        operating_instructions, tools_context
+		 FROM agents WHERE id = 'research-bot'`,
+	).Scan(&personality, &identity, &userContext, &operating, &toolsContext); err != nil {
+		t.Fatalf("read config columns: %v", err)
 	}
-	var doc map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(config), &doc); err != nil {
-		t.Fatalf("stored config JSON: %v", err)
-	}
-	if _, ok := doc["soul"]; !ok {
-		t.Errorf("stored config lost soul")
-	}
-	// The document passes through verbatim — fields Go doesn't model
-	// survive.
-	if _, ok := doc["unknownField"]; !ok {
-		t.Errorf("stored config lost unknownField")
+	if personality != "curious" || identity != "the lab researcher" ||
+		userContext != "morning person" || operating != "cite sources" || toolsContext != "" {
+		t.Errorf("config columns = %q/%q/%q/%q/%q, want curious/the lab researcher/morning person/cite sources/\"\"",
+			personality, identity, userContext, operating, toolsContext)
 	}
 }
 
@@ -98,11 +92,11 @@ func TestCreateAgentInvalidName(t *testing.T) {
 
 func TestCreateAgentDuplicateName(t *testing.T) {
 	queries := db.New(testdb.Open(t))
-	if rec, err := create(t, queries, `{"name":"Research","config":{}}`); err != nil || rec.Code != http.StatusCreated {
+	if rec, err := create(t, queries, `{"name":"Research"}`); err != nil || rec.Code != http.StatusCreated {
 		t.Fatalf("first create: status = %d, want 201", rec.Code)
 	}
 
-	rec, err := create(t, queries, `{"name":"Research","config":{}}`)
+	rec, err := create(t, queries, `{"name":"Research"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +110,7 @@ func TestCreateAgentDuplicateName(t *testing.T) {
 
 	// Derivation lowercases, so differently-cased names collide on the
 	// same id — and the 409 carries the name as sent.
-	rec, err = create(t, queries, `{"name":"RESEARCH","config":{}}`)
+	rec, err = create(t, queries, `{"name":"RESEARCH"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,9 +126,8 @@ func TestCreateAgentDuplicateName(t *testing.T) {
 func TestCreateAgentMalformedBody(t *testing.T) {
 	queries := db.New(testdb.Open(t))
 	// Malformed JSON never reaches the mock's handler (its
-	// request.json() throws); the no-config 400 is shared contract —
-	// the mock answers the same message.
-	for _, body := range []string{"", "not json", `{"name":"Valid Name","icon":"bot"}`} {
+	// request.json() throws).
+	for _, body := range []string{"", "not json"} {
 		rec, err := create(t, queries, body)
 		if err != nil {
 			t.Errorf("POST %q err = %v, want handled client error", body, err)
@@ -149,6 +142,29 @@ func TestCreateAgentMalformedBody(t *testing.T) {
 	}
 }
 
+func TestCreateAgentConfigOptional(t *testing.T) {
+	sqlDB := testdb.Open(t)
+	queries := db.New(sqlDB)
+	// Config fields are optional; omitted texts insert as '' and
+	// user_context as NULL.
+	if rec, err := create(t, queries, `{"name":"Minimal","icon":"bot"}`); err != nil || rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d (%v), want 201", rec.Code, err)
+	}
+	var personality string
+	var userContext sql.NullString
+	if err := sqlDB.QueryRow(
+		`SELECT soul_personality, user_context FROM agents WHERE id = 'minimal'`,
+	).Scan(&personality, &userContext); err != nil {
+		t.Fatalf("read column: %v", err)
+	}
+	if personality != "" {
+		t.Errorf("soul_personality = %q, want empty", personality)
+	}
+	if userContext.Valid {
+		t.Errorf("user_context = %q, want NULL", userContext.String)
+	}
+}
+
 func TestCreateAgentStoreFailure(t *testing.T) {
 	sqlDB := testdb.Open(t)
 	queries := db.New(sqlDB)
@@ -157,7 +173,7 @@ func TestCreateAgentStoreFailure(t *testing.T) {
 		t.Fatalf("drop agents: %v", err)
 	}
 
-	rec, err := create(t, queries, `{"name":"Scribe","icon":"pencil","config":{}}`)
+	rec, err := create(t, queries, `{"name":"Scribe","icon":"pencil"}`)
 	// The cause returns for api.Log; the response stays contract-shaped.
 	if err == nil {
 		t.Fatal("store failure: want error returned for logging")

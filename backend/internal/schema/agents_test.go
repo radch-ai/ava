@@ -1,8 +1,9 @@
-// Agents-table DB-enforced rules: created_at is stamped by the
-// database on insert.
+// Agents-table rules: typed text columns; created_at stamped by
+// the DB on insert.
 package schema_test
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -10,12 +11,42 @@ import (
 	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
+// The table is exactly these columns; the exact set is what
+// catches a JSON blob column being added.
+func TestAgentsColumnSet(t *testing.T) {
+	sqlDB := testdb.Open(t)
+
+	rows, err := sqlDB.Query(`PRAGMA table_info(agents)`)
+	if err != nil {
+		t.Fatalf("table_info: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var got []string
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, colType string
+		var dflt any
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dflt, &pk); err != nil {
+			t.Fatalf("scan table_info: %v", err)
+		}
+		got = append(got, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("table_info rows: %v", err)
+	}
+	want := []string{"id", "name", "icon", "soul_personality", "soul_identity",
+		"user_context", "operating_instructions", "tools_context", "created_at"}
+	if !slices.Equal(got, want) {
+		t.Errorf("agents columns = %v, want %v", got, want)
+	}
+}
+
 func TestCreatedAtStampedByDatabase(t *testing.T) {
 	sqlDB := testdb.Open(t)
 	queries := db.New(sqlDB)
 	// CreateAgent omits created_at — the app's only write path.
 	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
-		ID: "research", Name: "Research", Icon: "globe", Config: "{}",
+		ID: "research", Name: "Research", Icon: "globe",
 	}); err != nil {
 		t.Fatalf("create agent: %v", err)
 	}

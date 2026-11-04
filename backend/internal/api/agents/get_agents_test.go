@@ -19,7 +19,7 @@ import (
 func seedAgent(t *testing.T, queries *db.Queries, id, name, icon string) {
 	t.Helper()
 	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
-		ID: id, Name: name, Icon: icon, Config: "{}",
+		ID: id, Name: name, Icon: icon,
 	}); err != nil {
 		t.Fatalf("seed agent %s: %v", id, err)
 	}

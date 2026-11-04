@@ -35,12 +35,18 @@ func deriveAgentID(name string) string {
 	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(name)), " ", "-")
 }
 
-// createAgentRequest is the wire bundle: name/icon plus the config
-// field, passed through verbatim — fields Go doesn't model survive.
+// createAgentRequest is the wire body: identity and config fields
+// at one level; only the column fields persist.
 type createAgentRequest struct {
-	Name   string          `json:"name"`
-	Icon   string          `json:"icon"`
-	Config json.RawMessage `json:"config"`
+	Name string `json:"name"`
+	Icon string `json:"icon"`
+	Soul struct {
+		Personality string `json:"personality"`
+		Identity    string `json:"identity"`
+	} `json:"soul"`
+	UserContext           *string `json:"userContext"`
+	OperatingInstructions string  `json:"operatingInstructions"`
+	ToolsContext          string  `json:"toolsContext"`
 }
 
 // createAgentResponse is the mock's 201 body: just the id — the UI
@@ -63,9 +69,6 @@ func CreateAgent(queries *db.Queries) api.Handler {
 			return api.WriteError(w, http.StatusBadRequest,
 				"Invalid agent name: use letters, digits and single spaces only")
 		}
-		if len(req.Config) == 0 { // the config field is the document
-			return api.WriteError(w, http.StatusBadRequest, "Invalid request body")
-		}
 		id := deriveAgentID(req.Name)
 
 		if _, err := queries.GetAgentID(r.Context(), id); err == nil {
@@ -75,8 +78,21 @@ func CreateAgent(queries *db.Queries) api.Handler {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return fmt.Errorf("agent id collision check: %w", err)
 		}
+		// Absent userContext stores NULL; regular agents never send
+		// the field.
+		userContext := sql.NullString{}
+		if req.UserContext != nil {
+			userContext = sql.NullString{String: *req.UserContext, Valid: true}
+		}
 		if err := queries.CreateAgent(r.Context(), db.CreateAgentParams{
-			ID: id, Name: req.Name, Icon: req.Icon, Config: string(req.Config),
+			ID:                    id,
+			Name:                  req.Name,
+			Icon:                  req.Icon,
+			SoulPersonality:       req.Soul.Personality,
+			SoulIdentity:          req.Soul.Identity,
+			UserContext:           userContext,
+			OperatingInstructions: req.OperatingInstructions,
+			ToolsContext:          req.ToolsContext,
 		}); err != nil {
 			return fmt.Errorf("insert agent: %w", err)
 		}
