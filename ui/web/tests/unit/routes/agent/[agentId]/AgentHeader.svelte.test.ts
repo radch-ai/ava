@@ -299,6 +299,43 @@ describe('AgentHeader', () => {
 				expect(mockGetAgentConfig).toHaveBeenCalledTimes(1)
 			})
 		})
+
+		it('refetches the config when the agent changes', async () => {
+			mockGetAgentConfig.mockResolvedValue(createDefaultTestConfig())
+			const { rerender } = render(AgentHeaderTestWrapper, {
+				agent: superagent
+			})
+
+			await page.getByLabelText('Open agent configuration').click()
+			await vi.waitFor(() => {
+				expect(mockGetAgentConfig).toHaveBeenCalledWith('_superagent')
+			})
+
+			await rerender({ agent })
+			await page.getByLabelText('Open agent configuration').click()
+			await vi.waitFor(() => {
+				expect(mockGetAgentConfig).toHaveBeenLastCalledWith('support')
+			})
+		})
+
+		it('drops a fetch that resolves after the agent changed', async () => {
+			let resolveConfig!: (config: AgentConfigWithIdentity) => void
+			mockGetAgentConfig.mockImplementation(
+				() => new Promise((resolve) => (resolveConfig = resolve))
+			)
+			const { rerender } = render(AgentHeaderTestWrapper, {
+				agent: superagent
+			})
+
+			await page.getByLabelText('Open agent configuration').click()
+
+			await rerender({ agent })
+			resolveConfig(createDefaultTestConfig())
+
+			await vi.waitFor(() => {
+				expect(page.getByRole('button', { name: /save/i }).query()).toBeNull()
+			})
+		})
 	})
 
 	describe('settings button - API error', () => {

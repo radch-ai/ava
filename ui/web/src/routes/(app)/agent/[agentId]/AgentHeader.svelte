@@ -24,6 +24,14 @@
 	let configuration = $state<AgentConfigWithIdentity>()
 	let isLoading = $state(false)
 
+	// The route stays mounted across agents; drop the cached config
+	// when the agent changes so the sheet refetches.
+	$effect(() => {
+		void agent.id
+		configuration = undefined
+		configSheetOpen = false
+	})
+
 	function handleTabChange(tab: 'conversation' | 'activity') {
 		// Only call onTabChange if switching to a different tab (idempotency)
 		if (activeTab !== tab && onTabChange) {
@@ -37,8 +45,13 @@
 	async function openSettings() {
 		if (!configuration && !isLoading) {
 			isLoading = true
+			const agentId = agent.id
 			try {
-				configuration = await getAgentConfig(agent.id)
+				const config = await getAgentConfig(agentId)
+				// A fetch resolved after an agent switch belongs to the previous agent.
+				if (agent.id === agentId) {
+					configuration = config
+				}
 			} catch {
 				// API unreachable - ky logs to console
 			} finally {
