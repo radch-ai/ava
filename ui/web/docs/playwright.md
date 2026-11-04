@@ -4,9 +4,9 @@
 
 ## Testing Conventions
 
-- E2E is integration testing: the specs run against the **real backend** (`E2E_BACKEND_API_URL`) and a real browser. They never use mocks.
+- E2E is integration testing: the specs run against the **real backend** (`VITE_BACKEND_API_URL`) and a real browser. They never use mocks.
 - Unit-level correctness against the mock API belongs in Vitest — see `docs/vitest.md`.
-- To author or debug a spec without a backend, run `E2E_BACKEND_API_URL=http://127.0.0.1:4173/api VITE_USE_MOCKS=true bun run test:e2e`: the build bakes the backend URL, so pointing it at the preview origin makes the app self-served by the mock middleware, and the shared fixtures exchange the seeded token for a session cookie so specs enter the app directly. CI always runs against the real backend.
+- To author or debug a spec without a backend, run `VITE_BACKEND_API_URL=http://127.0.0.1:4173/api VITE_USE_MOCKS=true bun run test:e2e`: the build bakes the backend URL, so pointing it at the preview origin makes the app self-served by the mock middleware, and the shared fixtures exchange the seeded token for a session cookie so specs enter the app directly. CI always runs against the real backend.
 
 ## Coverage Model
 

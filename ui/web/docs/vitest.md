@@ -9,6 +9,7 @@
 
 - Unit tests run against the mock API, never a real backend.
 - Service and handler tests intercept HTTP with `msw/node` against `createHandlers(createSeedData())` from `src/lib/mocks` — the same handlers the dev server mounts in mock mode.
+- No env configuration is needed: the vite config injects a default `VITE_BACKEND_API_URL` into the test environment, and service tests stub it with `vi.stubEnv` where a specific value matters.
 - Component tests mock the `api` module directly.
 - End-to-end integration belongs in Playwright against the real backend — see `docs/playwright.md`.
 
