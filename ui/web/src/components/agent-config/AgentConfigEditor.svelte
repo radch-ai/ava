@@ -6,13 +6,12 @@
 	import UnsavedChangesDialog from '#components/unsaved-changes/UnsavedChangesDialog.svelte'
 	import {
 		AGENT_FIELDS,
-		type AgentConfiguration,
+		type AgentConfig,
+		type AgentIdentity,
 		type ConfigFieldName,
 		cloneConfiguration,
 		FIELD_CONFIGS,
-		getConfigurationField,
-		type HeartbeatConfig,
-		type SuperagentConfiguration
+		getConfigurationField
 	} from '#lib/types/agent'
 	import type { Tool } from '#lib/types/tool'
 	import AgentIconPicker from './AgentIconPicker.svelte'
@@ -25,10 +24,7 @@
 	/**
 	 * Compare soul configs
 	 */
-	function soulEquals(
-		a: AgentConfiguration['soul'],
-		b: AgentConfiguration['soul']
-	): boolean {
+	function soulEquals(a: AgentConfig['soul'], b: AgentConfig['soul']): boolean {
 		return JSON.stringify(a) === JSON.stringify(b)
 	}
 
@@ -36,16 +32,21 @@
 	 * Compare the name text only; icon is its own field, compared in the
 	 * generic field loop below
 	 */
-	function nameEquals(a: AgentConfiguration, b: AgentConfiguration): boolean {
+	function nameEquals(
+		a: Pick<AgentIdentity, 'name'>,
+		b: Pick<AgentIdentity, 'name'>
+	): boolean {
 		return a.name === b.name
 	}
 
 	interface Props {
-		configuration: AgentConfiguration
+		configuration: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>
 		/** All available tools */
 		availableTools?: Tool[]
 		/** Called when save is clicked with the configuration */
-		onSave: (config: AgentConfiguration) => void | Promise<void>
+		onSave: (
+			config: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>
+		) => void | Promise<void>
 		/** Called when cancel is confirmed (no changes or user discarded) */
 		onCancel: () => void
 		/** Label for the save button */
@@ -83,8 +84,10 @@
 	// lives in the Name panel, so it gets no sidebar entry of its own.
 	const navFields = $derived(fields.filter((field) => field !== 'icon'))
 
-	// Local working copy of configuration
-	let localConfiguration = $state<AgentConfiguration>()
+	// Local working copy of configuration.
+	let localConfiguration = $state<
+		AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>
+	>()
 
 	// Initialize local configuration when component mounts or configuration changes
 	$effect(() => {
@@ -231,7 +234,7 @@
 							</label>
 							<AgentIconPicker
 								id="agent-icon"
-								value={(config.icon ?? 'bot') as AgentIconName}
+								value={config.icon as AgentIconName}
 								onselect={(icon) => (config.icon = icon)}
 							/>
 						</div>
@@ -239,20 +242,16 @@
 				{:else if selectedField === 'soul'}
 					<SoulEditor bind:soul={localConfiguration.soul} />
 				{:else if selectedField === 'heartbeat'}
-					<HeartbeatEditor
-						bind:heartbeat={localConfiguration.heartbeat as HeartbeatConfig}
-					/>
+					<HeartbeatEditor bind:heartbeat={localConfiguration.heartbeat} />
 				{:else if selectedField === 'cronJobs' && isSuperagent}
-					{@const superagentConfig =
-						localConfiguration as SuperagentConfiguration}
-					<CronJobEditor bind:jobs={superagentConfig.cronJobs} />
+					<CronJobEditor bind:jobs={localConfiguration.cronJobs} />
 				{:else if selectedField === 'userContext' && isSuperagent}
-					{@const superagentConfig =
-						localConfiguration as SuperagentConfiguration}
 					<ConfigTextField
-						value={superagentConfig.userContext}
+						value={localConfiguration.userContext ?? ''}
 						config={FIELD_CONFIGS.userContext}
-						onchange={(v) => (superagentConfig.userContext = v)}
+						onchange={(v) => {
+							if (localConfiguration) localConfiguration.userContext = v
+						}}
 					/>
 				{:else if selectedField === 'toolsEnabled'}
 					<ToolsEditor

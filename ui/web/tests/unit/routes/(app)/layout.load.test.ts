@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getAgents } from '#lib/services/agent'
-import type { Agent } from '#lib/types/agent'
+import type { AgentIdentity } from '#lib/types/agent'
 import { load } from '../../../../src/routes/(app)/+layout'
 
 const { mockAuthStore } = vi.hoisted(() => ({
@@ -17,7 +17,7 @@ vi.mock('#lib/services/agent', () => ({
 
 const mockGetAgents = vi.mocked(getAgents)
 
-type LayoutResult = { agents: Agent[]; agentsError: string | null }
+type LayoutResult = { agents: AgentIdentity[]; agentsError: string | null }
 
 function loadEvent(): Parameters<typeof load>[0] {
 	return { depends: vi.fn() } as unknown as Parameters<typeof load>[0]
@@ -39,7 +39,7 @@ describe('app layout load', () => {
 	})
 
 	it('fetches agents and returns them as-is', async () => {
-		const agents: Agent[] = [
+		const agents: AgentIdentity[] = [
 			{
 				id: '_superagent',
 				name: 'Ava',

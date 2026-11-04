@@ -15,12 +15,12 @@ Run from `ui/web/` with [bun](https://bun.sh):
 - `bun run build` — production build
 - `bun run check` — svelte-check
 - `bun run biome-check` — biome (lint + format check; `bun run biome-write` auto-fixes)
-- `bun run test:unit` — vitest (unit + component)
-- `bun run test:e2e` — Playwright e2e (requires a running backend; the Playwright browser launches locally and is provisioned automatically by the postinstall hook)
+- `bun run test:unit` — vitest (unit + component), runs backend-free via msw/node — see `docs/vitest.md`
+- `bun run test:e2e` — Playwright e2e (browser provisioned by the postinstall hook); real backend by default, mock mode without one — see `docs/playwright.md`
 
 ### UI verification
 
-After changing anything user-facing (routes, components, styles, interactions), verify in a real browser before reporting done: run `bun run dev`, open the changed surface, and confirm the behavior visually. With `VITE_USE_MOCKS=true` the dev server itself serves a deterministic mock API (no backend needed; log in with the token `ava-mock-token`) — otherwise point `VITE_BACKEND_API_URL` at a running backend. Use Paseo's browser tools (browser_new_tab / browser_snapshot / browser_click / browser_screenshot) to drive and inspect the page — they are already available. Unit and component tests are not a substitute for this check.
+After changing anything user-facing (routes, components, styles, interactions), verify in a real browser before reporting done: run `bun run dev`, open the changed surface, and confirm the behavior visually. Without a backend: `VITE_USE_MOCKS=true VITE_BACKEND_API_URL=http://localhost:5173 bun run dev` serves the deterministic mock API from the dev server itself (log in with the token `ava-mock-token`) — otherwise point `VITE_BACKEND_API_URL` at a running backend. Use Paseo's browser tools (browser_new_tab / browser_snapshot / browser_click / browser_screenshot) to drive and inspect the page — they are already available. Unit and component tests are not a substitute for this check.
 
 ## Svelte MCP
 

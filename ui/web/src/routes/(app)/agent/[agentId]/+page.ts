@@ -6,7 +6,7 @@ import {
 	getAgentActivityFeed,
 	getAgentThread
 } from '#lib/services/agent'
-import { type Agent, SUPERAGENT_AGENT } from '#lib/types/agent'
+import { type AgentIdentity, SUPERAGENT_AGENT } from '#lib/types/agent'
 import type { PageLoad } from './$types'
 
 export const load: PageLoad = async ({ params, parent }) => {
@@ -19,7 +19,7 @@ export const load: PageLoad = async ({ params, parent }) => {
 	const agent =
 		params.agentId === SUPERAGENT_AGENT_ID
 			? SUPERAGENT_AGENT
-			: agents.find((a: Agent) => a.id === params.agentId)
+			: agents.find((a: AgentIdentity) => a.id === params.agentId)
 
 	if (!agent) {
 		error(404, `Agent '${params.agentId}' not found`)

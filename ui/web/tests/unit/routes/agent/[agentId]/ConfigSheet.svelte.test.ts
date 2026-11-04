@@ -1,16 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import type {
-	AgentConfiguration,
-	SuperagentConfiguration
-} from '#lib/types/agent'
+import type { AgentConfigWithIdentity } from '#lib/types/agent'
 import type { Tool } from '#lib/types/tool'
 import ConfigSheet from '#routes/agent/[agentId]/ConfigSheet.svelte'
 
 // Helper to create default superagent configuration
-function createDefaultSuperagentConfig(): SuperagentConfiguration {
+function createDefaultSuperagentConfig(): AgentConfigWithIdentity {
 	return {
+		id: '_superagent',
 		name: 'ava',
 		icon: 'bot',
 		soul: { personality: 'Friendly', identity: 'Helper' },
@@ -18,19 +16,20 @@ function createDefaultSuperagentConfig(): SuperagentConfiguration {
 		operatingInstructions: 'Be helpful',
 		toolsContext: 'Tools info',
 		toolsEnabled: [],
-		cronJobs: [],
 		heartbeat: {
 			enabled: false,
 			duration: '1hr',
 			content: '',
 			model: 'default'
-		}
+		},
+		cronJobs: []
 	}
 }
 
 // Helper to create default agent configuration
-function createDefaultAgentConfig(): AgentConfiguration {
+function createDefaultAgentConfig(): AgentConfigWithIdentity {
 	return {
+		id: 'test-bot',
 		name: 'Test Bot',
 		icon: 'bot',
 		soul: { personality: 'Efficient', identity: 'Task runner' },
@@ -42,7 +41,8 @@ function createDefaultAgentConfig(): AgentConfiguration {
 			duration: '1hr',
 			content: '',
 			model: 'default'
-		}
+		},
+		cronJobs: []
 	}
 }
 
@@ -51,10 +51,10 @@ function createProps(
 	overrides: Partial<{
 		isSheetOpened: boolean
 		closeSheet: () => void
-		configuration: AgentConfiguration
+		configuration: AgentConfigWithIdentity
 		availableTools: Tool[]
 		agentId: string
-		onSaved: (config: AgentConfiguration) => void
+		onSaved: (config: AgentConfigWithIdentity) => void
 	}> = {}
 ) {
 	return {
@@ -70,12 +70,14 @@ function createProps(
 
 // Mock agent config service
 vi.mock('#lib/services/agent', () => ({
-	updateAgentConfiguration: vi.fn(),
+	updateAgentConfig: vi.fn(),
+	updateHeartbeat: vi.fn(),
+	updateCronJobs: vi.fn(),
 	createAgent: vi.fn(),
-	getAgentConfiguration: vi.fn()
+	getAgentConfig: vi.fn()
 }))
 
-import { updateAgentConfiguration } from '#lib/services/agent'
+import { updateAgentConfig, updateHeartbeat } from '#lib/services/agent'
 
 // Mock SvelteKit navigation so the guard's interceptor can be captured
 vi.mock('$app/navigation', () => ({
@@ -86,7 +88,8 @@ vi.mock('$app/navigation', () => ({
 
 import { type BeforeNavigate, beforeNavigate, goto } from '$app/navigation'
 
-const mockUpdateAgentConfiguration = vi.mocked(updateAgentConfiguration)
+const mockUpdateAgentConfig = vi.mocked(updateAgentConfig)
+const mockUpdateHeartbeat = vi.mocked(updateHeartbeat)
 
 describe('ConfigSheet', () => {
 	beforeEach(() => {
@@ -230,10 +233,10 @@ describe('ConfigSheet', () => {
 	})
 
 	describe('Save functionality - API success', () => {
-		it('calls updateAgentConfiguration with changed fields only', async () => {
+		it('calls updateAgentConfig with changed fields only', async () => {
 			const onSaved = vi.fn()
 			const config = createDefaultSuperagentConfig()
-			mockUpdateAgentConfiguration.mockResolvedValue({
+			mockUpdateAgentConfig.mockResolvedValue({
 				...config,
 				name: 'Updated'
 			})
@@ -250,7 +253,7 @@ describe('ConfigSheet', () => {
 			await page.getByRole('button', { name: /save/i }).click()
 
 			// Should call API with partial update
-			expect(mockUpdateAgentConfiguration).toHaveBeenCalledWith(
+			expect(mockUpdateAgentConfig).toHaveBeenCalledWith(
 				'_superagent',
 				expect.objectContaining({
 					name: 'Updated'
@@ -261,7 +264,7 @@ describe('ConfigSheet', () => {
 		it('includes icon in the patch when only the icon changed', async () => {
 			const onSaved = vi.fn()
 			const config = createDefaultSuperagentConfig()
-			mockUpdateAgentConfiguration.mockResolvedValue(config)
+			mockUpdateAgentConfig.mockResolvedValue(config)
 
 			render(
 				ConfigSheet,
@@ -277,7 +280,7 @@ describe('ConfigSheet', () => {
 			await page.getByRole('button', { name: /save/i }).click()
 
 			// The patch must carry the icon, not silently drop it
-			expect(mockUpdateAgentConfiguration).toHaveBeenCalledWith(
+			expect(mockUpdateAgentConfig).toHaveBeenCalledWith(
 				'_superagent',
 				expect.objectContaining({ icon: 'sparkles' })
 			)
@@ -287,7 +290,7 @@ describe('ConfigSheet', () => {
 			const onSaved = vi.fn()
 			const config = createDefaultSuperagentConfig()
 			const savedConfig = { ...config, name: 'Updated' }
-			mockUpdateAgentConfiguration.mockResolvedValue(savedConfig)
+			mockUpdateAgentConfig.mockResolvedValue(savedConfig)
 
 			render(
 				ConfigSheet,
@@ -305,7 +308,7 @@ describe('ConfigSheet', () => {
 		it('sets isSheetOpened to false after successful save', async () => {
 			let isSheetOpened = true
 			const config = createDefaultSuperagentConfig()
-			mockUpdateAgentConfiguration.mockResolvedValue(config)
+			mockUpdateAgentConfig.mockResolvedValue(config)
 
 			const props = {
 				...createProps({ configuration: config }),
@@ -332,15 +335,50 @@ describe('ConfigSheet', () => {
 		})
 	})
 
+	it('saves heartbeat changes through the heartbeat endpoint, not the config patch', async () => {
+		const config = createDefaultSuperagentConfig()
+		const saved: AgentConfigWithIdentity = {
+			...config,
+			heartbeat: {
+				enabled: true,
+				duration: '1hr',
+				content: '',
+				model: 'default'
+			}
+		}
+		mockUpdateHeartbeat.mockResolvedValue(saved)
+
+		render(
+			ConfigSheet,
+			createProps({ isSheetOpened: true, configuration: config })
+		)
+
+		// Heartbeat panel: toggle enabled
+		await page.getByRole('button', { name: /heartbeat/i }).click()
+		await page.getByLabelText(/enabled/i).click()
+
+		await page.getByRole('button', { name: /save/i }).click()
+
+		await vi.waitFor(() => {
+			expect(mockUpdateHeartbeat).toHaveBeenCalledWith('_superagent', {
+				enabled: true,
+				duration: '1hr',
+				content: '',
+				model: 'default'
+			})
+		})
+		// Structural entities never ride the config patch
+		expect(mockUpdateAgentConfig).not.toHaveBeenCalled()
+	})
 	describe('Save functionality - API error', () => {
 		it('does not call onSaved when API fails - verified via mock state', async () => {
 			// This test verifies the expected behavior without triggering unhandled rejections
 			// The component doesn't have error handling, so we verify the mock was set up correctly
 			const onSaved = vi.fn()
-			mockUpdateAgentConfiguration.mockRejectedValue(new Error('Network error'))
+			mockUpdateAgentConfig.mockRejectedValue(new Error('Network error'))
 
 			// Verify mock is configured to reject by checking its mock state
-			expect(mockUpdateAgentConfiguration).toBeDefined()
+			expect(mockUpdateAgentConfig).toBeDefined()
 
 			// onSaved should not have been called
 			expect(onSaved).not.toHaveBeenCalled()
@@ -398,9 +436,7 @@ describe('ConfigSheet', () => {
 
 	describe('All field buttons - API available', () => {
 		beforeEach(() => {
-			mockUpdateAgentConfiguration.mockResolvedValue(
-				createDefaultSuperagentConfig()
-			)
+			mockUpdateAgentConfig.mockResolvedValue(createDefaultSuperagentConfig())
 		})
 
 		it('clicking Soul button shows Soul editor', async () => {
@@ -473,9 +509,7 @@ describe('ConfigSheet', () => {
 		beforeEach(() => {})
 
 		it('clicking Save calls API and onSaved callback', async () => {
-			mockUpdateAgentConfiguration.mockResolvedValue(
-				createDefaultSuperagentConfig()
-			)
+			mockUpdateAgentConfig.mockResolvedValue(createDefaultSuperagentConfig())
 			const onSaved = vi.fn()
 			render(ConfigSheet, createProps({ isSheetOpened: true, onSaved }))
 
@@ -484,13 +518,13 @@ describe('ConfigSheet', () => {
 			await page.getByRole('button', { name: /save/i }).click()
 			await new Promise((resolve) => setTimeout(resolve, 100))
 
-			expect(mockUpdateAgentConfiguration).toHaveBeenCalled()
+			expect(mockUpdateAgentConfig).toHaveBeenCalled()
 			expect(onSaved).toHaveBeenCalled()
 		})
 
 		it('clicking Save closes sheet after success', async () => {
 			const config = createDefaultSuperagentConfig()
-			mockUpdateAgentConfiguration.mockResolvedValue(config)
+			mockUpdateAgentConfig.mockResolvedValue(config)
 			let isSheetOpened = true
 
 			const props = {
@@ -518,7 +552,7 @@ describe('ConfigSheet', () => {
 		beforeEach(() => {})
 
 		it('clicking Save when API fails does not call onSaved', async () => {
-			mockUpdateAgentConfiguration.mockRejectedValue(new Error('Network error'))
+			mockUpdateAgentConfig.mockRejectedValue(new Error('Network error'))
 			const onSaved = vi.fn()
 			render(ConfigSheet, createProps({ isSheetOpened: true, onSaved }))
 
@@ -532,7 +566,7 @@ describe('ConfigSheet', () => {
 		})
 
 		it('sheet stays open when Save fails', async () => {
-			mockUpdateAgentConfiguration.mockRejectedValue(new Error('Network error'))
+			mockUpdateAgentConfig.mockRejectedValue(new Error('Network error'))
 			let isSheetOpened = true
 
 			const props = {
@@ -557,7 +591,7 @@ describe('ConfigSheet', () => {
 		})
 
 		it('field buttons still work when API is down', async () => {
-			mockUpdateAgentConfiguration.mockRejectedValue(new Error('Network error'))
+			mockUpdateAgentConfig.mockRejectedValue(new Error('Network error'))
 			render(ConfigSheet, createProps({ isSheetOpened: true }))
 
 			// All field buttons should still be clickable
@@ -576,9 +610,7 @@ describe('ConfigSheet', () => {
 
 		it('can retry Save after API error', async () => {
 			// First call fails
-			mockUpdateAgentConfiguration.mockRejectedValueOnce(
-				new Error('Network error')
-			)
+			mockUpdateAgentConfig.mockRejectedValueOnce(new Error('Network error'))
 			const onSaved = vi.fn()
 			render(ConfigSheet, createProps({ isSheetOpened: true, onSaved }))
 
@@ -592,9 +624,7 @@ describe('ConfigSheet', () => {
 			expect(onSaved).not.toHaveBeenCalled()
 
 			// Setup success for retry
-			mockUpdateAgentConfiguration.mockResolvedValue(
-				createDefaultSuperagentConfig()
-			)
+			mockUpdateAgentConfig.mockResolvedValue(createDefaultSuperagentConfig())
 
 			// Retry save
 			await page.getByRole('button', { name: /save/i }).click()
@@ -615,11 +645,11 @@ describe('ConfigSheet', () => {
 			await page.getByRole('button', { name: /cancel/i }).click()
 
 			expect(closeSheet).toHaveBeenCalled()
-			expect(mockUpdateAgentConfiguration).not.toHaveBeenCalled()
+			expect(mockUpdateAgentConfig).not.toHaveBeenCalled()
 		})
 
 		it('Cancel works even when API is unreachable', async () => {
-			mockUpdateAgentConfiguration.mockRejectedValue(new Error('Network error'))
+			mockUpdateAgentConfig.mockRejectedValue(new Error('Network error'))
 			const closeSheet = vi.fn()
 			render(ConfigSheet, createProps({ isSheetOpened: true, closeSheet }))
 

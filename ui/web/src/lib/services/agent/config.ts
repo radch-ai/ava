@@ -1,42 +1,70 @@
 import type {
-	AgentConfiguration,
-	SuperagentConfiguration
+	AgentConfig,
+	AgentConfigWithIdentity,
+	AgentIdentity,
+	CronJob,
+	HeartbeatConfig
 } from '#lib/types/agent'
 import { api } from '../api'
 
 export interface CreateAgentResponse {
 	id: string
-	name: string
 }
 
-export async function getAgentConfiguration(
+/** Identity and config text fields; heartbeat/cronJobs save via
+ * their own endpoints. */
+export type AgentConfigPatch = Partial<
+	Pick<AgentIdentity, 'name' | 'icon'> &
+		Omit<AgentConfig, 'heartbeat' | 'cronJobs'>
+>
+
+export async function getAgentConfig(
 	agentId: string
-): Promise<AgentConfiguration> {
-	return api.get(`agent/${agentId}`).json<AgentConfiguration>()
+): Promise<AgentConfigWithIdentity> {
+	return api.get(`agent/${agentId}`).json<AgentConfigWithIdentity>()
 }
 
-export async function updateAgentConfiguration(
+export async function updateAgentConfig(
 	agentId: string,
-	// Superagent fields are the full superset a patch may carry
-	configuration: Partial<SuperagentConfiguration>
-): Promise<AgentConfiguration> {
+	patch: AgentConfigPatch
+): Promise<AgentConfigWithIdentity> {
 	const response = await api
-		.patch(`agent/${agentId}`, { json: configuration })
-		.json<{ data?: AgentConfiguration } | AgentConfiguration>()
+		.patch(`agent/${agentId}`, { json: patch })
+		.json<{ data?: AgentConfigWithIdentity } | AgentConfigWithIdentity>()
 
 	if (response && typeof response === 'object' && 'data' in response) {
-		return response.data as AgentConfiguration
+		return response.data as AgentConfigWithIdentity
 	}
-	return response as AgentConfiguration
+	return response as AgentConfigWithIdentity
+}
+
+/** Save the agent's single heartbeat row. */
+export async function updateHeartbeat(
+	agentId: string,
+	heartbeat: HeartbeatConfig
+): Promise<AgentConfigWithIdentity> {
+	return api
+		.patch(`agent/${agentId}/heartbeat`, { json: heartbeat })
+		.json<AgentConfigWithIdentity>()
+}
+
+/** Save the cron job list; replaced wholesale. */
+export async function updateCronJobs(
+	agentId: string,
+	cronJobs: CronJob[]
+): Promise<AgentConfigWithIdentity> {
+	return api
+		.patch(`agent/${agentId}/cron-jobs`, { json: { cronJobs } })
+		.json<AgentConfigWithIdentity>()
 }
 
 /**
- * Create an agent from a configuration. The server derives the agent id
- * from the display name (`deriveAgentId` rules) and rejects invalid or
- * duplicate names — the client never invents an id.
+ * Create an agent. The server derives the id from the display name
+ * (`deriveAgentId`) and rejects invalid or duplicate names; fields
+ * that aren't columns are ignored.
  */
 export async function createAgent(
-	configuration: AgentConfiguration
+	configuration: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>
 ): Promise<CreateAgentResponse> {
 	return api.post('agent', { json: configuration }).json<CreateAgentResponse>()
 }

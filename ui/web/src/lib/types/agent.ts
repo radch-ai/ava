@@ -1,13 +1,5 @@
 /**
- * Agent Types
- *
- * Aligned with database schema:
- * - agents table: config (JSONB), tools_enabled (UUID[])
- * - heartbeat table: id, model, fk(user_id, agent_id), enabled, duration, content
- * - cron table: id, fk(user_id, agent_id), time, frequency, prompt
- * - user_tools table: referenced by tools_enabled UUID array
- *
- * At runtime: SELECT * FROM user_tools WHERE id = ANY(agent.tools_enabled)
+ * Agent domain types, defaults, and the field configs driving the UI.
  */
 
 // Icon data/types are pure TS with no component imports, keeping this
@@ -20,13 +12,14 @@ import {
 import { SUPERAGENT_AGENT_ID, SUPERAGENT_NAME } from '#lib/config'
 
 // ============================================================================
-// RUNTIME AGENT TYPE (for UI routing)
+// AGENT IDENTITY (id + display fields)
 // ============================================================================
 
 /**
- * Agent displayed in UI - uses icon name string for flexibility
+ * Agent identity — id plus the display fields; list entries and detail
+ * bodies both carry it
  */
-export interface Agent {
+export interface AgentIdentity {
 	/** Agent id used in URLs and API paths; `_`-prefixed ids are system-reserved. */
 	id: string
 	name: string
@@ -36,11 +29,15 @@ export interface Agent {
 /**
  * superagent agent definition - the primary assistant
  */
-export const SUPERAGENT_AGENT: Agent = {
+export const SUPERAGENT_AGENT: AgentIdentity = {
 	id: SUPERAGENT_AGENT_ID,
 	name: SUPERAGENT_NAME,
 	icon: 'message-square'
 }
+
+/** Identity (id, name, icon) plus every AgentConfig field at one
+ * level. */
+export interface AgentConfigWithIdentity extends AgentIdentity, AgentConfig {}
 
 // ============================================================================
 // SEPARATE TABLE ENTITIES
@@ -50,7 +47,6 @@ export const SUPERAGENT_AGENT: Agent = {
  * Heartbeat configuration (stored in separate heartbeat table)
  */
 export interface HeartbeatConfig {
-	id?: string
 	model: string
 	enabled: boolean
 	duration: '30m' | '1hr' | '2hr'
@@ -75,8 +71,7 @@ export interface CronJob {
 // ============================================================================
 
 /**
- * Soul configuration - stored as JSONB in database
- * Contains identity/personality information
+ * Soul: the agent's personality and identity texts.
  */
 export interface SoulConfig {
 	/** Personality traits and behavioral characteristics */
@@ -90,38 +85,25 @@ export interface SoulConfig {
 // ============================================================================
 
 /**
- * Core agent configuration fields (maps to agents table)
+ * Agent configuration. userContext is superagent-only; heartbeat
+ * starts disabled with empty fields (the superagent is seeded
+ * enabled); cronJobs is empty on regular agents.
  */
-export interface AgentConfigBase {
-	/** Display name for the agent */
-	name: string
-	/** Icon for the agent (from the agent-icons set) */
-	icon?: string
-	/** Agent personality/identity (stored as JSONB) */
+export interface AgentConfig {
+	/** Agent personality and identity texts */
 	soul: SoulConfig
+	/** Information about the user and their preferences — superagent only */
+	userContext?: string
 	/** Operating rules, priorities, and behavioral guidelines */
 	operatingInstructions: string
 	/** Notes about local tools, conventions, and integrations */
 	toolsContext: string
 	/** Array of tool IDs that this agent can use */
 	toolsEnabled: string[]
-}
-
-/**
- * Agent configuration — the base shape every agent uses
- */
-export interface AgentConfiguration extends AgentConfigBase {
-	heartbeat?: HeartbeatConfig
-}
-
-/**
- * Superagent configuration — extends the agent shape with the user
- * context and cron jobs only the superagent has
- */
-export interface SuperagentConfiguration extends AgentConfiguration {
+	/** Heartbeat config; disabled with empty fields until saved */
+	heartbeat: HeartbeatConfig
+	/** The agent's cron jobs — empty on regular agents */
 	cronJobs: CronJob[]
-	/** Information about the user and their preferences */
-	userContext: string
 }
 // ============================================================================
 // FIELD CONFIGS FOR UI
@@ -245,7 +227,7 @@ export type ConfigFieldName =
 /**
  * Get a random icon name
  */
-function getRandomIcon(): string {
+function getRandomIcon(): AgentIconName {
 	return ALL_AGENT_ICON_NAMES[
 		Math.floor(Math.random() * ALL_AGENT_ICON_NAMES.length)
 	]
@@ -262,45 +244,21 @@ export function createDefaultSoulConfig(): SoulConfig {
 }
 
 /**
- * Create default superagent configuration
+ * Create default agent configuration — the editor's starting shape.
+ * heartbeat starts disabled with empty fields; cron jobs start
+ * empty.
  */
-export function createDefaultSuperagentConfiguration(): SuperagentConfiguration {
+export function createDefaultAgentConfig(): AgentConfig &
+	Pick<AgentIdentity, 'name' | 'icon'> {
 	return {
 		name: '',
 		icon: getRandomIcon(),
 		soul: createDefaultSoulConfig(),
-		userContext: '',
 		operatingInstructions: '',
 		toolsContext: '',
 		toolsEnabled: [],
+		heartbeat: { model: '', enabled: false, duration: '1hr', content: '' },
 		cronJobs: []
-	}
-}
-
-/**
- * Create default agent configuration
- */
-export function createDefaultAgentConfiguration(): AgentConfiguration {
-	return {
-		name: '',
-		icon: getRandomIcon(),
-		soul: createDefaultSoulConfig(),
-		operatingInstructions: '',
-		toolsContext: '',
-		toolsEnabled: [],
-		heartbeat: createDefaultHeartbeatConfig()
-	}
-}
-
-/**
- * Create default heartbeat configuration
- */
-export function createDefaultHeartbeatConfig(): HeartbeatConfig {
-	return {
-		model: '',
-		enabled: false,
-		duration: '1hr',
-		content: ''
 	}
 }
 
@@ -311,9 +269,7 @@ export function createDefaultHeartbeatConfig(): HeartbeatConfig {
 /**
  * Deep clone configuration object
  */
-export function cloneConfiguration<T extends AgentConfiguration>(
-	configuration: T
-): T {
+export function cloneConfiguration<T extends AgentConfig>(configuration: T): T {
 	return JSON.parse(JSON.stringify(configuration))
 }
 
@@ -321,7 +277,7 @@ export function cloneConfiguration<T extends AgentConfiguration>(
  * Get a configuration field value safely
  */
 export function getConfigurationField(
-	configuration: AgentConfiguration,
+	configuration: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>,
 	field: ConfigFieldName
 ): unknown {
 	return (configuration as unknown as Record<string, unknown>)[field]
@@ -331,7 +287,7 @@ export function getConfigurationField(
  * Set a configuration field value safely
  */
 export function setConfigurationField(
-	configuration: AgentConfiguration,
+	configuration: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>,
 	field: ConfigFieldName,
 	value: unknown
 ): void {

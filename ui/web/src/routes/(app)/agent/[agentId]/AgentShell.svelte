@@ -8,7 +8,7 @@
 		getAgentActivityFeed,
 		mergePastFeed
 	} from '#lib/services/agent'
-	import type { Agent } from '#lib/types/agent'
+	import type { AgentIdentity } from '#lib/types/agent'
 	import ActivityContent from './ActivityContent.svelte'
 	import AgentHeader from './AgentHeader.svelte'
 	import ThreadContent from './ThreadContent.svelte'
@@ -20,7 +20,7 @@
 	}
 
 	interface Props {
-		agent: Agent
+		agent: AgentIdentity
 		activeTab?: 'conversation' | 'activity'
 		onTabChange?: (tab: 'conversation' | 'activity') => void
 		threadItems?: ThreadItem[]

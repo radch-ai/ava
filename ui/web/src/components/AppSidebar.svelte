@@ -12,13 +12,13 @@
 	import * as Tooltip from '#components/ui/tooltip'
 	import { authStore } from '#lib/auth'
 	import { APP_NAME } from '#lib/config'
-	import { type Agent, SUPERAGENT_AGENT } from '#lib/types/agent'
+	import { type AgentIdentity, SUPERAGENT_AGENT } from '#lib/types/agent'
 	import { resolve } from '$app/paths'
 	import { page } from '$app/state'
 
 	// The list only carries user-created agents; the superagent entry
 	// below comes from the client constant.
-	let { agents }: { agents: Agent[] } = $props()
+	let { agents }: { agents: AgentIdentity[] } = $props()
 
 	const sidebar = Sidebar.useSidebar()
 

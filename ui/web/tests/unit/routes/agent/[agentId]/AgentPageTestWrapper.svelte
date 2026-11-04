@@ -2,11 +2,11 @@
 	import type { Component } from 'svelte'
 	import * as Tooltip from '#components/ui/tooltip'
 	import type { ActivityFeed, AgentThread } from '#lib/services/agent'
-	import type { Agent } from '#lib/types/agent'
+	import type { AgentIdentity } from '#lib/types/agent'
 	import AgentPage from '#routes/agent/[agentId]/+page.svelte'
 
 	interface TestPageData {
-		agent: Agent
+		agent: AgentIdentity
 		activityFeed: ActivityFeed
 		activityError: string | null
 		thread: AgentThread | null

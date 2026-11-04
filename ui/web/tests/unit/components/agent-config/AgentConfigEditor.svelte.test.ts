@@ -2,15 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
 import { AgentConfigEditor } from '#components/agent-config'
-import type {
-	AgentConfiguration,
-	CronJob,
-	SuperagentConfiguration
-} from '#lib/types/agent'
+import type { AgentConfig, AgentIdentity, CronJob } from '#lib/types/agent'
 import type { Tool } from '#lib/types/tool'
 
 // Helper to create default superagent configuration
-function createDefaultSuperagentConfig(): SuperagentConfiguration {
+function createDefaultSuperagentConfig(): AgentConfig &
+	Pick<AgentIdentity, 'name' | 'icon'> {
 	return {
 		name: 'ava',
 		icon: 'bot',
@@ -30,7 +27,8 @@ function createDefaultSuperagentConfig(): SuperagentConfiguration {
 }
 
 // Helper to create default agent configuration
-function createDefaultAgentConfig(): AgentConfiguration {
+function createDefaultAgentConfig(): AgentConfig &
+	Pick<AgentIdentity, 'name' | 'icon'> {
 	return {
 		name: 'Test Bot',
 		icon: 'bot',
@@ -38,6 +36,7 @@ function createDefaultAgentConfig(): AgentConfiguration {
 		operatingInstructions: 'Complete tasks',
 		toolsContext: 'Test tools',
 		toolsEnabled: [],
+		cronJobs: [],
 		heartbeat: {
 			enabled: false,
 			duration: '1hr',
@@ -50,9 +49,11 @@ function createDefaultAgentConfig(): AgentConfiguration {
 // Helper to create props
 function createProps(
 	overrides: Partial<{
-		configuration: AgentConfiguration
+		configuration: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>
 		availableTools: Tool[]
-		onSave: (config: AgentConfiguration) => void | Promise<void>
+		onSave: (
+			config: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>
+		) => void | Promise<void>
 		onCancel: () => void
 		saveLabel: string
 		cancelLabel: string
@@ -655,7 +656,9 @@ describe('AgentConfigEditor', () => {
 
 	describe('Layout stability with scrolling content', () => {
 		// Helper to create config with many cron jobs
-		function createConfigWithCronJobs(count: number): SuperagentConfiguration {
+		function createConfigWithCronJobs(
+			count: number
+		): AgentConfig & Pick<AgentIdentity, 'name' | 'icon'> {
 			const jobs: CronJob[] = []
 			for (let i = 0; i < count; i++) {
 				jobs.push({
@@ -887,7 +890,7 @@ describe('AgentConfigEditor', () => {
 		})
 
 		it('shows existing cron jobs', async () => {
-			const config: SuperagentConfiguration = {
+			const config: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'> = {
 				...createDefaultSuperagentConfig(),
 				cronJobs: [
 					{
@@ -908,7 +911,7 @@ describe('AgentConfigEditor', () => {
 		})
 
 		it('deletes a cron job when delete button clicked', async () => {
-			const config: SuperagentConfiguration = {
+			const config: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'> = {
 				...createDefaultSuperagentConfig(),
 				cronJobs: [
 					{

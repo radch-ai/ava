@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
+	AgentConfig,
+	AgentConfigWithIdentity,
+	AgentIdentity,
 	CronJob,
-	HeartbeatConfig,
-	SuperagentConfiguration
+	HeartbeatConfig
 } from '#lib/types/agent'
 
 vi.mock('#lib/services/api', () => ({
@@ -14,22 +16,18 @@ vi.mock('#lib/services/api', () => ({
 }))
 
 import {
+	type AgentConfigPatch,
 	createAgent,
-	getAgentConfiguration,
-	updateAgentConfiguration
+	getAgentConfig,
+	updateAgentConfig,
+	updateCronJobs,
+	updateHeartbeat
 } from '#lib/services/agent'
 import { type ApiResponsePromise, api } from '#lib/services/api'
 
 function createTestConfig(
-	overrides?: Partial<SuperagentConfiguration>
-): SuperagentConfiguration {
-	const defaultHeartbeat: HeartbeatConfig = {
-		enabled: false,
-		duration: '1hr',
-		content: '',
-		model: 'default'
-	}
-
+	overrides?: Partial<AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>>
+): AgentConfig & Pick<AgentIdentity, 'name' | 'icon'> {
 	return {
 		name: 'Test Agent',
 		icon: 'bot',
@@ -38,29 +36,51 @@ function createTestConfig(
 		operatingInstructions: 'Test instructions',
 		toolsContext: 'Test tools',
 		toolsEnabled: [],
-		cronJobs: [],
 		heartbeat: defaultHeartbeat,
+		cronJobs: [],
 		...overrides
 	}
 }
+
+const defaultHeartbeat: HeartbeatConfig = {
+	enabled: false,
+	duration: '1hr',
+	content: '',
+	model: 'default'
+}
+
+/** The detail body the API answers: AgentConfigWithIdentity —
+ * identity and every config field flat at one level, entities
+ * included. */
+const toDetail = (
+	config: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>,
+	id = 'ava',
+	heartbeat: HeartbeatConfig = defaultHeartbeat,
+	cronJobs: CronJob[] = []
+): AgentConfigWithIdentity => ({
+	id,
+	...config,
+	heartbeat,
+	cronJobs
+})
 
 describe('agent/config service', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 	})
 
-	describe('getAgentConfiguration', () => {
-		it('fetches one agent config', async () => {
+	describe('getAgentConfig', () => {
+		it('fetches one agent with its configuration', async () => {
 			const mockConfig = createTestConfig()
 
 			vi.mocked(api.get).mockReturnValue({
-				json: async () => mockConfig
+				json: async () => toDetail(mockConfig)
 			} as ApiResponsePromise)
 
-			const result = await getAgentConfiguration('ava')
+			const result = await getAgentConfig('ava')
 
 			expect(api.get).toHaveBeenCalledWith('agent/ava')
-			expect(result).toEqual(mockConfig)
+			expect(result).toEqual(toDetail(mockConfig))
 		})
 
 		it('propagates errors from api', async () => {
@@ -70,12 +90,10 @@ describe('agent/config service', () => {
 				json: async () => Promise.reject(error)
 			} as ApiResponsePromise)
 
-			await expect(getAgentConfiguration('unknown')).rejects.toThrow(
-				'Network error'
-			)
+			await expect(getAgentConfig('unknown')).rejects.toThrow('Network error')
 		})
 
-		it('handles config with all optional fields', async () => {
+		it('carries the separate-table entities beside config', async () => {
 			const cronJobs: CronJob[] = [
 				{
 					id: 'cron-1',
@@ -92,52 +110,37 @@ describe('agent/config service', () => {
 					prompt: 'Evening report'
 				}
 			]
-			const fullConfig = createTestConfig({
-				toolsEnabled: ['web-search', 'code-execution'],
-				cronJobs,
-				heartbeat: {
+			const detail = toDetail(
+				createTestConfig({ toolsEnabled: ['web-search', 'code-execution'] }),
+				'ava',
+				{
 					enabled: true,
 					duration: '2hr',
 					content: 'Daily heartbeat',
 					model: 'gpt-4'
-				}
-			})
+				},
+				cronJobs
+			)
 
 			vi.mocked(api.get).mockReturnValue({
-				json: async () => fullConfig
+				json: async () => detail
 			} as ApiResponsePromise)
 
-			const result = (await getAgentConfiguration(
-				'ava'
-			)) as SuperagentConfiguration
+			const result = await getAgentConfig('ava')
 
 			expect(result.toolsEnabled).toEqual(['web-search', 'code-execution'])
-			expect(result.cronJobs).toHaveLength(2)
 			expect(result.heartbeat?.enabled).toBe(true)
-		})
-
-		it('handles minimal config with only required fields', async () => {
-			const minimalConfig = createTestConfig({
-				heartbeat: undefined
-			})
-
-			vi.mocked(api.get).mockReturnValue({
-				json: async () => minimalConfig
-			} as ApiResponsePromise)
-
-			const result = await getAgentConfiguration('ava')
-
-			expect(result.heartbeat).toBeUndefined()
+			expect(result.cronJobs).toHaveLength(2)
 		})
 
 		it('fetches config for different agent names', async () => {
 			const mockConfig = createTestConfig({ name: 'Test Bot' })
 
 			vi.mocked(api.get).mockReturnValue({
-				json: async () => mockConfig
+				json: async () => toDetail(mockConfig, 'test-bot')
 			} as ApiResponsePromise)
 
-			await getAgentConfiguration('test-bot')
+			await getAgentConfig('test-bot')
 
 			expect(api.get).toHaveBeenCalledWith('agent/test-bot')
 		})
@@ -146,111 +149,87 @@ describe('agent/config service', () => {
 			const mockConfig = createTestConfig()
 
 			vi.mocked(api.get).mockReturnValue({
-				json: async () => mockConfig
+				json: async () => toDetail(mockConfig, 'agent-with-dashes')
 			} as ApiResponsePromise)
 
-			await getAgentConfiguration('agent-with-dashes')
+			await getAgentConfig('agent-with-dashes')
 
 			expect(api.get).toHaveBeenCalledWith('agent/agent-with-dashes')
 		})
 	})
 
-	describe('updateAgentConfiguration', () => {
+	describe('updateAgentConfig', () => {
 		it('updates one agent config with wrapped response', async () => {
-			const mockConfig = createTestConfig({
-				name: 'Updated',
-				soul: { personality: 'P', identity: 'I' }
-			})
+			const detail = toDetail(createTestConfig({ name: 'Updated' }))
+			const patch: AgentConfigPatch = { name: 'Updated' }
 
 			vi.mocked(api.patch).mockReturnValue({
-				json: async () => ({ data: mockConfig })
+				json: async () => ({ data: detail })
 			} as ApiResponsePromise)
 
-			const result = await updateAgentConfiguration('ava', mockConfig)
+			const result = await updateAgentConfig('ava', patch)
 
-			expect(api.patch).toHaveBeenCalledWith('agent/ava', {
-				json: mockConfig
-			})
-			expect(result).toEqual(mockConfig)
+			expect(api.patch).toHaveBeenCalledWith('agent/ava', { json: patch })
+			expect(result).toEqual(detail)
 		})
 
 		it('updates one agent config with direct response', async () => {
-			const mockConfig = createTestConfig()
+			const detail = toDetail(createTestConfig())
+			const patch: AgentConfigPatch = {
+				operatingInstructions: 'Updated instructions'
+			}
 
 			vi.mocked(api.patch).mockReturnValue({
-				json: async () => mockConfig
+				json: async () => detail
 			} as ApiResponsePromise)
 
-			const result = await updateAgentConfiguration('ava', mockConfig)
+			const result = await updateAgentConfig('ava', patch)
 
-			expect(result).toEqual(mockConfig)
+			expect(result).toEqual(detail)
 		})
 
-		it('handles partial updates', async () => {
-			const partialUpdate = { name: 'Updated Name' }
-			const mockConfig = createTestConfig({ name: 'Updated Name' })
+		it('handles name-only updates', async () => {
+			const patch: AgentConfigPatch = { name: 'Updated Name' }
+			const detail = toDetail(createTestConfig({ name: 'Updated Name' }))
 
 			vi.mocked(api.patch).mockReturnValue({
-				json: async () => ({ data: mockConfig })
+				json: async () => ({ data: detail })
 			} as ApiResponsePromise)
 
-			const result = await updateAgentConfiguration('ava', partialUpdate)
+			const result = await updateAgentConfig('ava', patch)
 
-			expect(api.patch).toHaveBeenCalledWith('agent/ava', {
-				json: partialUpdate
-			})
-			expect(result).toEqual(mockConfig)
+			expect(api.patch).toHaveBeenCalledWith('agent/ava', { json: patch })
+			expect(result.name).toBe('Updated Name')
 		})
 
 		it('updates soul configuration', async () => {
-			const soulUpdate = {
-				soul: { personality: 'New personality', identity: 'New identity' }
-			}
-			const mockConfig = createTestConfig(soulUpdate)
+			const soul = { personality: 'New personality', identity: 'New identity' }
+			const patch: AgentConfigPatch = { soul }
+			const detail = toDetail(createTestConfig({ soul }))
 
 			vi.mocked(api.patch).mockReturnValue({
-				json: async () => ({ data: mockConfig })
+				json: async () => ({ data: detail })
 			} as ApiResponsePromise)
 
-			const result = await updateAgentConfiguration('ava', soulUpdate)
+			const result = await updateAgentConfig('ava', patch)
 
 			expect(result.soul.personality).toBe('New personality')
 			expect(result.soul.identity).toBe('New identity')
 		})
 
-		it('updates heartbeat configuration', async () => {
-			const heartbeatUpdate = {
-				heartbeat: {
-					enabled: true,
-					duration: '30m' as const,
-					content: 'Heartbeat content',
-					model: 'gpt-4'
-				}
-			}
-			const mockConfig = createTestConfig(heartbeatUpdate)
-
-			vi.mocked(api.patch).mockReturnValue({
-				json: async () => ({ data: mockConfig })
-			} as ApiResponsePromise)
-
-			const result = await updateAgentConfiguration('ava', heartbeatUpdate)
-
-			expect(result.heartbeat?.enabled).toBe(true)
-			expect(result.heartbeat?.duration).toBe('30m')
-		})
-
 		it('updates tools configuration', async () => {
-			const toolsUpdate = {
+			const configUpdate = {
 				toolsEnabled: ['web-search', 'code-execution', 'file-system'],
 				toolsContext: 'Updated tools context'
 			}
-			const mockConfig = createTestConfig(toolsUpdate)
+			const patch: AgentConfigPatch = configUpdate
+			const detail = toDetail(createTestConfig(configUpdate))
 
 			vi.mocked(api.patch).mockReturnValue({
-				json: async () => ({ data: mockConfig })
+				json: async () => ({ data: detail })
 			} as ApiResponsePromise)
 
-			const result = await updateAgentConfiguration('ava', toolsUpdate)
+			const result = await updateAgentConfig('ava', patch)
 
 			expect(result.toolsEnabled).toEqual([
 				'web-search',
@@ -260,7 +239,69 @@ describe('agent/config service', () => {
 			expect(result.toolsContext).toBe('Updated tools context')
 		})
 
-		it('updates cron jobs configuration', async () => {
+		it('propagates errors from patch', async () => {
+			const error = new Error('Update failed')
+
+			vi.mocked(api.patch).mockReturnValue({
+				json: async () => Promise.reject(error)
+			} as ApiResponsePromise)
+
+			await expect(
+				updateAgentConfig('ava', { name: 'New Name' })
+			).rejects.toThrow('Update failed')
+		})
+
+		it('handles updates for different agents', async () => {
+			const detail = toDetail(createTestConfig(), 'test-bot')
+
+			vi.mocked(api.patch).mockReturnValue({
+				json: async () => detail
+			} as ApiResponsePromise)
+
+			await updateAgentConfig('test-bot', {})
+
+			expect(api.patch).toHaveBeenCalledWith('agent/test-bot', { json: {} })
+		})
+	})
+
+	describe('updateHeartbeat', () => {
+		it('saves the heartbeat row to its own endpoint', async () => {
+			const heartbeat: HeartbeatConfig = {
+				enabled: true,
+				duration: '30m',
+				content: 'Heartbeat content',
+				model: 'gpt-4'
+			}
+			const detail = toDetail(createTestConfig(), 'ava', heartbeat)
+
+			vi.mocked(api.patch).mockReturnValue({
+				json: async () => detail
+			} as ApiResponsePromise)
+
+			const result = await updateHeartbeat('ava', heartbeat)
+
+			expect(api.patch).toHaveBeenCalledWith('agent/ava/heartbeat', {
+				json: heartbeat
+			})
+			expect(result.heartbeat?.enabled).toBe(true)
+			expect(result.heartbeat?.duration).toBe('30m')
+		})
+
+		it('propagates errors from patch', async () => {
+			const error = new Error('Update failed')
+
+			vi.mocked(api.patch).mockReturnValue({
+				json: async () => Promise.reject(error)
+			} as ApiResponsePromise)
+
+			await expect(updateHeartbeat('ava', defaultHeartbeat)).rejects.toThrow(
+				'Update failed'
+			)
+		})
+	})
+
+	describe('updateCronJobs', () => {
+		it('replaces the cron list on its own endpoint', async () => {
 			const cronJobs: CronJob[] = [
 				{
 					id: 'cron-1',
@@ -277,67 +318,29 @@ describe('agent/config service', () => {
 					prompt: 'Cleanup'
 				}
 			]
-			const cronUpdate = { cronJobs }
-			const mockConfig = createTestConfig(cronUpdate)
+			const detail = toDetail(
+				createTestConfig(),
+				'ava',
+				defaultHeartbeat,
+				cronJobs
+			)
 
 			vi.mocked(api.patch).mockReturnValue({
-				json: async () => ({ data: mockConfig })
+				json: async () => detail
 			} as ApiResponsePromise)
 
-			const result = (await updateAgentConfiguration(
-				'ava',
-				cronUpdate
-			)) as SuperagentConfiguration
+			const result = await updateCronJobs('ava', cronJobs)
 
+			expect(api.patch).toHaveBeenCalledWith('agent/ava/cron-jobs', {
+				json: { cronJobs }
+			})
 			expect(result.cronJobs).toHaveLength(2)
 		})
-
-		it('propagates errors from patch', async () => {
-			const error = new Error('Update failed')
-			const configUpdate = { name: 'New Name' }
-
-			vi.mocked(api.patch).mockReturnValue({
-				json: async () => Promise.reject(error)
-			} as ApiResponsePromise)
-
-			await expect(
-				updateAgentConfiguration('ava', configUpdate)
-			).rejects.toThrow('Update failed')
-		})
-
-		it('handles updates for different agents', async () => {
-			const mockConfig = createTestConfig()
-
-			vi.mocked(api.patch).mockReturnValue({
-				json: async () => mockConfig
-			} as ApiResponsePromise)
-
-			await updateAgentConfiguration('test-bot', mockConfig)
-
-			expect(api.patch).toHaveBeenCalledWith('agent/test-bot', {
-				json: mockConfig
-			})
-		})
-
-		it('handles empty update object', async () => {
-			const emptyUpdate = {}
-			const mockConfig = createTestConfig()
-
-			vi.mocked(api.patch).mockReturnValue({
-				json: async () => ({ data: mockConfig })
-			} as ApiResponsePromise)
-
-			const result = await updateAgentConfiguration('ava', emptyUpdate)
-
-			expect(api.patch).toHaveBeenCalledWith('agent/ava', { json: {} })
-			expect(result).toEqual(mockConfig)
-		})
 	})
-
 	describe('createAgent', () => {
-		it('posts the configuration to the agent collection', async () => {
+		it('posts the flat body — identity and config fields at one level', async () => {
 			const mockConfig = createTestConfig({ name: 'New Agent' })
-			const response = { id: 'new-agent', name: 'New Agent' }
+			const response = { id: 'new-agent' }
 
 			vi.mocked(api.post).mockReturnValue({
 				json: async () => response
@@ -353,7 +356,7 @@ describe('agent/config service', () => {
 
 		it('returns the server-derived id for display names with spaces', async () => {
 			const mockConfig = createTestConfig({ name: 'Research Team 2' })
-			const response = { id: 'research-team-2', name: 'Research Team 2' }
+			const response = { id: 'research-team-2' }
 
 			vi.mocked(api.post).mockReturnValue({
 				json: async () => response
@@ -362,7 +365,6 @@ describe('agent/config service', () => {
 			const result = await createAgent(mockConfig)
 
 			expect(result.id).toBe('research-team-2')
-			expect(result.name).toBe('Research Team 2')
 		})
 
 		it('propagates duplicate-name errors from the server', async () => {

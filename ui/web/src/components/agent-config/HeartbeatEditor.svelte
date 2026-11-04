@@ -5,6 +5,8 @@
 	import { FIELD_CONFIGS } from '#lib/types/agent'
 
 	interface Props {
+		/** The agent's heartbeat config — disabled with empty fields
+		 * until a row is saved. */
 		heartbeat: HeartbeatConfig
 	}
 

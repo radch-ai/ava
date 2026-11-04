@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
 import type { ActivityFeed, AgentActivityItem } from '#lib/services/agent'
-import type { Agent } from '#lib/types/agent'
+import type { AgentIdentity } from '#lib/types/agent'
 import TestWrapper from './TestWrapper.svelte'
 
 vi.mock('#lib/services/agent', () => ({
@@ -10,21 +10,23 @@ vi.mock('#lib/services/agent', () => ({
 	mergePastFeed: vi.fn(),
 	getAgentThread: vi.fn(),
 	mergePastThread: vi.fn(),
-	getAgentConfiguration: vi.fn(),
-	updateAgentConfiguration: vi.fn(),
+	getAgentConfig: vi.fn(),
+	updateAgentConfig: vi.fn(),
+	updateHeartbeat: vi.fn(),
+	updateCronJobs: vi.fn(),
 	createAgent: vi.fn()
 }))
 
 import {
 	getAgentActivityFeed,
-	getAgentConfiguration,
+	getAgentConfig,
 	mergePastFeed
 } from '#lib/services/agent'
-import type { SuperagentConfiguration } from '#lib/types/agent'
+import type { AgentConfigWithIdentity } from '#lib/types/agent'
 
 const mockGetAgentActivityFeed = vi.mocked(getAgentActivityFeed)
 const mockMergePastFeed = vi.mocked(mergePastFeed)
-const mockGetAgentConfiguration = vi.mocked(getAgentConfiguration)
+const mockGetAgentConfig = vi.mocked(getAgentConfig)
 
 interface ThreadItem {
 	id: string
@@ -32,13 +34,13 @@ interface ThreadItem {
 	content: string
 }
 
-const superagent: Agent = {
+const superagent: AgentIdentity = {
 	id: '_superagent',
 	name: 'Ava',
 	icon: 'message-square'
 }
 
-const agent: Agent = {
+const agent: AgentIdentity = {
 	id: 'support',
 	name: 'Support',
 	icon: 'bot'
@@ -64,8 +66,9 @@ function createTestFeed(
 	return { items, nextCursor }
 }
 
-function createDefaultTestConfig(): SuperagentConfiguration {
+function createDefaultTestConfig(): AgentConfigWithIdentity {
 	return {
+		id: '_superagent',
 		name: 'Test',
 		icon: 'bot',
 		soul: { personality: '', identity: '' },
@@ -73,13 +76,13 @@ function createDefaultTestConfig(): SuperagentConfiguration {
 		operatingInstructions: '',
 		toolsContext: '',
 		toolsEnabled: [],
-		cronJobs: [],
 		heartbeat: {
 			enabled: false,
 			duration: '1hr',
 			content: '',
 			model: 'default'
-		}
+		},
+		cronJobs: []
 	}
 }
 
@@ -93,7 +96,7 @@ describe('AgentShell', () => {
 		vi.clearAllMocks()
 		mockGetAgentActivityFeed.mockResolvedValue(createTestFeed())
 		mockMergePastFeed.mockImplementation((current) => current)
-		mockGetAgentConfiguration.mockResolvedValue(createDefaultTestConfig())
+		mockGetAgentConfig.mockResolvedValue(createDefaultTestConfig())
 	})
 
 	afterEach(async () => {

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SUPERAGENT_AGENT_ID } from '#lib/config'
-import type { Agent } from '#lib/types/agent'
+import type { AgentIdentity } from '#lib/types/agent'
 
 vi.mock('#lib/services/agent', () => ({
 	getAgentActivityFeed: vi.fn(),
@@ -13,10 +13,11 @@ import { load } from '../../../../../src/routes/(app)/agent/[agentId]/+page'
 const mockGetAgentActivityFeed = vi.mocked(getAgentActivityFeed)
 const mockGetAgentThread = vi.mocked(getAgentThread)
 
-const agentsList: Agent[] = [{ id: 'support', name: 'Support', icon: 'bot' }]
+const agentsList: AgentIdentity[] = [
+	{ id: 'support', name: 'Support', icon: 'bot' }
+]
 
-type ParentData = { agents: Agent[]; agentsError: string | null }
-
+type ParentData = { agents: AgentIdentity[]; agentsError: string | null }
 function loadEvent(
 	params: { agentId: string },
 	parentData: ParentData = { agents: agentsList, agentsError: null }
@@ -36,10 +37,9 @@ describe('agent page load', () => {
 
 	it('returns agent data with its activity feed', async () => {
 		const result = (await load(loadEvent({ agentId: 'support' }))) as {
-			agent: Agent
+			agent: AgentIdentity
 			thread: unknown
 		}
-
 		expect(result.agent.id).toBe('support')
 		expect(result.thread).toBeNull()
 		expect(mockGetAgentActivityFeed).toHaveBeenCalledWith('support')
@@ -49,7 +49,7 @@ describe('agent page load', () => {
 		const result = (await load(
 			loadEvent({ agentId: SUPERAGENT_AGENT_ID })
 		)) as {
-			agent: Agent
+			agent: AgentIdentity
 			thread: unknown
 			threadError: string | null
 			activityError: string | null
