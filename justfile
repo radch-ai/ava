@@ -20,12 +20,13 @@ default:
 
 ## --- tools / codegen ---
 
-# Install dev tools (sqlc, golang-migrate, goimports, golangci-lint) to ~/.local/bin.
+# Install dev tools (sqlc, golang-migrate, goimports, tygo, golangci-lint) to ~/.local/bin.
 install-tools:
     @mkdir -p ~/.local/bin
     GOBIN=~/.local/bin go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
     GOBIN=~/.local/bin go install -tags sqlite github.com/golang-migrate/migrate/v4/cmd/migrate@latest
     GOBIN=~/.local/bin go install golang.org/x/tools/cmd/goimports@latest
+    GOBIN=~/.local/bin go install github.com/gzuidhof/tygo@latest
     @if ! command -v golangci-lint >/dev/null 2>&1; then \
         curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b ~/.local/bin; \
     fi
@@ -42,6 +43,13 @@ sqlc-generate:
 [private]
 sqlc-generate-for service:
     @case " {{ sqlc_services }} " in *" {{ service }} "*) just sqlc-generate ;; esac
+
+
+# Regenerate the UI wire types from backend/apitypes (tygo.yaml →
+# ui/web/src/lib/types/gen/, gitignored — regenerate, never edit).
+typegen:
+    @just require_tool tygo
+    tygo generate
 
 ## --- build / run ---
 

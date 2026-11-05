@@ -1,4 +1,4 @@
-import type { AgentIdentity } from '#lib/types/agent'
+import type { AgentIdentity, GetAgentsResponse } from '#lib/types/agent'
 import { api } from '../api'
 
 /**
@@ -11,6 +11,6 @@ import { api } from '../api'
  */
 
 export async function getAgents(): Promise<AgentIdentity[]> {
-	const response = await api.get('agents').json<{ agents: AgentIdentity[] }>()
-	return response.agents
+	const response = await api.get('agents').json<GetAgentsResponse>()
+	return response.agents as AgentIdentity[]
 }

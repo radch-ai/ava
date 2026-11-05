@@ -17,8 +17,8 @@ import (
 
 // New builds the backend route table over an already-open,
 // already-migrated database; the binary entrypoint mounts it under
-// /api on its root mux. The contract source is the UI itself
-// (ui/web/src/lib/services and lib/mocks).
+// /api on its root mux. Wire types live in backend/apitypes — the
+// UI's TypeScript types are generated from it (`just typegen`);
 func New(sqlDB *sql.DB, logger zerolog.Logger) http.Handler {
 	queries := db.New(sqlDB)
 	mux := http.NewServeMux()

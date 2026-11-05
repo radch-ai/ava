@@ -15,6 +15,9 @@ import {
 	type AgentConfigWithIdentity,
 	type AgentIdentity,
 	type CronJob,
+	createDefaultHeartbeatConfig,
+	type ErrorResponse,
+	type GetAgentsResponse,
 	type HeartbeatConfig,
 	SUPERAGENT_AGENT
 } from '../types/agent.ts'
@@ -60,12 +63,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			name,
 			icon,
 			...config,
-			heartbeat: store.heartbeats.get(id) ?? {
-				model: '',
-				enabled: false,
-				duration: '1hr',
-				content: ''
-			},
+			heartbeat: store.heartbeats.get(id) ?? createDefaultHeartbeatConfig(),
 			cronJobs: store.cronJobs.get(id) ?? []
 		}
 	}
@@ -73,12 +71,17 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 		// The list mirrors the backend query: it never includes the system
 		// superagent. Per-id endpoints (config, thread) resolve it separately.
 
-		http.get('*/api/agents', () => HttpResponse.json({ agents: store.agents })),
+		http.get('*/api/agents', () =>
+			HttpResponse.json<GetAgentsResponse>({ agents: store.agents })
+		),
 
 		http.post('*/api/auth/exchange', async ({ request }) => {
 			const { token } = (await request.json()) as { token: string }
 			if (token !== store.token) {
-				return HttpResponse.json({ message: 'Invalid token' }, { status: 401 })
+				return HttpResponse.json<ErrorResponse>(
+					{ message: 'Invalid token' },
+					{ status: 401 }
+				)
 			}
 			return new HttpResponse(null, {
 				status: 200,
@@ -92,7 +95,10 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 		http.get('*/api/auth/me', ({ request }) =>
 			request.headers.get('cookie')?.includes('ava_session=')
 				? new HttpResponse(null, { status: 200 })
-				: HttpResponse.json({ message: 'No session' }, { status: 401 })
+				: HttpResponse.json<ErrorResponse>(
+						{ message: 'No session' },
+						{ status: 401 }
+					)
 		),
 
 		http.post(
@@ -111,7 +117,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 		// agents 404 until threads are enabled for them.
 		http.get('*/api/agent/:id/thread', ({ request, params }) => {
 			if (String(params.id) !== SUPERAGENT_AGENT_ID) {
-				return HttpResponse.json(
+				return HttpResponse.json<ErrorResponse>(
 					{ message: `Agent "${String(params.id)}" has no thread` },
 					{ status: 404 }
 				)
@@ -119,7 +125,10 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			const url = new URL(request.url)
 			const cursor = url.searchParams.get('cursor')
 			if (cursor && !store.thread.some((message) => message.id === cursor)) {
-				return HttpResponse.json({ message: 'Invalid cursor' }, { status: 400 })
+				return HttpResponse.json<ErrorResponse>(
+					{ message: 'Invalid cursor' },
+					{ status: 400 }
+				)
 			}
 			return HttpResponse.json(
 				paginate(
@@ -135,7 +144,10 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			const items = store.activity.get(String(params.id)) ?? []
 			const cursor = url.searchParams.get('cursor')
 			if (cursor && !items.some((item) => item.id === cursor)) {
-				return HttpResponse.json({ message: 'Invalid cursor' }, { status: 400 })
+				return HttpResponse.json<ErrorResponse>(
+					{ message: 'Invalid cursor' },
+					{ status: 400 }
+				)
 			}
 			return HttpResponse.json(
 				paginate(
@@ -150,7 +162,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			const id = String(params.id)
 			const detail = buildDetail(id)
 			if (!detail) {
-				return HttpResponse.json(
+				return HttpResponse.json<ErrorResponse>(
 					{ message: `Agent "${id}" not found` },
 					{ status: 404 }
 				)
@@ -162,7 +174,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			const id = String(params.id)
 			const current = store.configurations.get(id)
 			if (!current) {
-				return HttpResponse.json(
+				return HttpResponse.json<ErrorResponse>(
 					{ message: `Agent "${id}" not found` },
 					{ status: 404 }
 				)
@@ -176,10 +188,8 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				heartbeat: _hb,
 				cronJobs: _cron,
 				...configText
-			} = (await request.json()) as Partial<AgentConfig> & {
-				name?: string
-				icon?: string
-			}
+			} = (await request.json()) as Partial<AgentConfig> &
+				Partial<Pick<AgentIdentity, 'name' | 'icon'>>
 			const next: Omit<AgentConfig, 'heartbeat' | 'cronJobs'> = {
 				...current,
 				...configText,
@@ -204,7 +214,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 		http.patch('*/api/agent/:id/heartbeat', async ({ request, params }) => {
 			const id = String(params.id)
 			if (!store.configurations.has(id)) {
-				return HttpResponse.json(
+				return HttpResponse.json<ErrorResponse>(
 					{ message: `Agent "${id}" not found` },
 					{ status: 404 }
 				)
@@ -218,7 +228,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 		http.patch('*/api/agent/:id/cron-jobs', async ({ request, params }) => {
 			const id = String(params.id)
 			if (!store.configurations.has(id)) {
-				return HttpResponse.json(
+				return HttpResponse.json<ErrorResponse>(
 					{ message: `Agent "${id}" not found` },
 					{ status: 404 }
 				)
@@ -237,7 +247,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				AgentConfig
 			const name = body.name ?? ''
 			if (!isValidAgentName(name)) {
-				return HttpResponse.json(
+				return HttpResponse.json<ErrorResponse>(
 					{
 						message:
 							'Invalid agent name: use letters, digits and single spaces only'
@@ -251,7 +261,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				store.configurations.has(id) ||
 				store.agents.some((agent) => agent.id === id)
 			) {
-				return HttpResponse.json(
+				return HttpResponse.json<ErrorResponse>(
 					{ message: `An agent named "${name}" already exists` },
 					{ status: 409 }
 				)

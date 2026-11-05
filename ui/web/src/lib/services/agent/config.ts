@@ -2,14 +2,11 @@ import type {
 	AgentConfig,
 	AgentConfigWithIdentity,
 	AgentIdentity,
+	CreateAgentResponse,
 	CronJob,
 	HeartbeatConfig
 } from '#lib/types/agent'
 import { api } from '../api'
-
-export interface CreateAgentResponse {
-	id: string
-}
 
 /** Identity and config text fields; heartbeat/cronJobs save via
  * their own endpoints. */

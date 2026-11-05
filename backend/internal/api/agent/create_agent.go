@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/backend/internal/api"
 	"github.com/radch-ai/ava/backend/internal/db"
 )
@@ -35,32 +36,12 @@ func deriveAgentID(name string) string {
 	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(name)), " ", "-")
 }
 
-// createAgentRequest is the wire body: identity and config fields
-// at one level; only the column fields persist.
-type createAgentRequest struct {
-	Name string `json:"name"`
-	Icon string `json:"icon"`
-	Soul struct {
-		Personality string `json:"personality"`
-		Identity    string `json:"identity"`
-	} `json:"soul"`
-	UserContext           *string `json:"userContext"`
-	OperatingInstructions string  `json:"operatingInstructions"`
-	ToolsContext          string  `json:"toolsContext"`
-}
-
-// createAgentResponse is the mock's 201 body: just the id — the UI
-// navigates from it alone.
-type createAgentResponse struct {
-	ID string `json:"id"`
-}
-
 // CreateAgent answers the UI's createAgent(): derive the id from the
 // display name, reject invalid names (400) and colliding ids (409) —
 // never auto-suffixed.
 func CreateAgent(queries *db.Queries) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
-		var req createAgentRequest
+		var req apitypes.CreateAgentRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			return api.WriteError(w, http.StatusBadRequest, "Invalid request body")
 		}
@@ -97,6 +78,6 @@ func CreateAgent(queries *db.Queries) api.Handler {
 			return fmt.Errorf("insert agent: %w", err)
 		}
 
-		return api.WriteJSON(w, http.StatusCreated, createAgentResponse{ID: id})
+		return api.WriteJSON(w, http.StatusCreated, apitypes.CreateAgentResponse{ID: id})
 	}
 }

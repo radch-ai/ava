@@ -4,18 +4,19 @@
 	"version": "0.0.0",
 	"type": "module",
 	"scripts": {
-		"dev": "vite dev",
-		"build": "vite build",
+		"typegen": "cd ../.. && just typegen",
+		"dev": "bun run typegen && vite dev",
+		"build": "bun run typegen && vite build",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"postinstall": "playwright install chromium",
-		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"check": "bun run typegen && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"check:watch": "bun run typegen && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"biome-check": "biome check .",
 		"biome-write": "biome check --write .",
-		"test:unit": "vitest --run",
+		"test:unit": "bun run typegen && vitest --run",
 		"test": "bun run test:unit && bun run test:e2e",
-		"test:e2e": "playwright test"
+		"test:e2e": "bun run typegen && playwright test"
 	},
 	"imports": {
 		"#lib/*": "./src/lib/*",

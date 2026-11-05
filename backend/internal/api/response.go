@@ -10,18 +10,14 @@ import (
 	"net/http"
 
 	"github.com/rs/zerolog"
+
+	"github.com/radch-ai/ava/backend/apitypes"
 )
 
 // Handler serves one request. A non-nil error marks a server-side
 // fault (answered with a 500, or the response failed to encode);
 // handled client errors return nil — they need no log line.
 type Handler func(http.ResponseWriter, *http.Request) error
-
-// errorBody is the UI's error shape ({message}); the ky client
-// surfaces it verbatim in thrown errors.
-type errorBody struct {
-	Message string `json:"message"`
-}
 
 // WriteJSON writes status and the JSON-encoded body. The status goes
 // out before the body, so an encode error is returned for the caller
@@ -34,7 +30,7 @@ func WriteJSON(w http.ResponseWriter, status int, body any) error {
 
 // WriteError writes status with the UI's {message} error body.
 func WriteError(w http.ResponseWriter, status int, message string) error {
-	return WriteJSON(w, status, errorBody{Message: message})
+	return WriteJSON(w, status, apitypes.ErrorResponse{Message: message})
 }
 
 // Log adapts a Handler to http.HandlerFunc, logging returned errors

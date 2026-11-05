@@ -15,7 +15,8 @@
 			"tests/**/*.svelte",
 			"!src/components/ui",
 			"!src/lib/utils.ts",
-			"!src/lib/hooks/is-mobile.svelte.ts"
+			"!src/lib/hooks/is-mobile.svelte.ts",
+			"!src/lib/types/gen"
 		]
 	},
 	"formatter": {

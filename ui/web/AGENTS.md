@@ -11,6 +11,7 @@
 Run from `ui/web/` with [bun](https://bun.sh):
 
 - `bun install` — installs deps; the postinstall hook provisions the local test Chromium. Prerequisite once per system (root, usually baked into the dev image): `sudo bunx playwright install-deps chromium`
+- Wire types come from `backend/apitypes` via tygo into gitignored `src/lib/types/gen/` — `dev`/`check`/`check:watch`/`test:unit`/`test:e2e`/`build` regenerate them automatically (`bun run typegen` alone also works). Requires `tygo` on PATH from the root `just install-tools`; edit `backend/apitypes/*.go`, never the generated file
 - `bun run dev` — dev server
 - `bun run build` — production build
 - `bun run check` — svelte-check
