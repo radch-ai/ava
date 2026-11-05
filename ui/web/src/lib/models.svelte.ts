@@ -12,6 +12,7 @@ export class ModelsStore {
 	/** Provider-name groups in server order; empty until loaded. */
 	groups = $state<ModelGroup[]>([])
 	loaded = $state(false)
+	refreshing = $state(false)
 	error = $state<string | null>(null)
 	#inflight: Promise<void> | null = null
 
@@ -30,6 +31,7 @@ export class ModelsStore {
 	}
 
 	async #fetch(): Promise<void> {
+		this.refreshing = true
 		try {
 			const { providers } = await getProviders()
 			this.groups = providers.map((p) => ({
@@ -41,6 +43,7 @@ export class ModelsStore {
 		} catch (e) {
 			this.error = e instanceof Error ? e.message : 'Failed to load models'
 		} finally {
+			this.refreshing = false
 			this.#inflight = null
 		}
 	}

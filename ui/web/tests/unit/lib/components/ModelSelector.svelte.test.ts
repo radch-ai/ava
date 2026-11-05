@@ -1,8 +1,14 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
 import ModelSelector from '#components/ModelSelector.svelte'
-import type { ModelGroup } from '#lib/models'
+import { type ModelGroup, modelsStore } from '#lib/models'
+import { getProviders } from '#lib/services/providers'
+import type { GetProvidersResponse } from '#lib/types/provider'
+
+vi.mock('#lib/services/providers', () => ({
+	getProviders: vi.fn(async () => ({ defaultModel: 'auto', providers: [] }))
+}))
 
 describe('ModelSelector', () => {
 	const testModelGroups: ModelGroup[] = [
@@ -195,5 +201,87 @@ describe('ModelSelector', () => {
 			await button.click()
 			expect(buttonElement.getAttribute('aria-expanded')).toBe('true')
 		})
+	})
+})
+
+describe('ModelSelector catalog refresh', () => {
+	/** One provider with the given model ids, as GET /api/providers. */
+	function catalog(models: string[]): GetProvidersResponse {
+		return {
+			defaultModel: 'auto',
+			providers: [
+				{
+					id: 'p1',
+					name: 'OpenAI',
+					baseUrl: 'https://api.openai.com',
+					hasKey: false,
+					models
+				}
+			]
+		}
+	}
+
+	beforeEach(() => {
+		// Fresh store: every selector in the app shares this instance.
+		modelsStore.groups = []
+		modelsStore.loaded = false
+		modelsStore.error = null
+	})
+
+	afterEach(async () => {
+		cleanup()
+		vi.clearAllMocks()
+	})
+
+	it('shows the refresh control when reading the shared store', async () => {
+		vi.mocked(getProviders).mockResolvedValueOnce(catalog(['gpt-4']))
+		render(ModelSelector, {})
+
+		await page.getByRole('combobox').click()
+
+		await expect
+			.element(page.getByRole('button', { name: 'Refresh model list' }))
+			.toBeVisible()
+		await expect
+			.element(page.getByRole('option', { name: 'gpt-4' }))
+			.toBeVisible()
+	})
+
+	it('hides the refresh control when the caller supplies groups', async () => {
+		render(ModelSelector, {
+			modelGroups: [{ provider: 'OpenAI', models: ['gpt-4'] }]
+		})
+
+		await page.getByRole('combobox').click()
+
+		await expect
+			.element(page.getByRole('option', { name: 'gpt-4' }))
+			.toBeVisible()
+		const refreshButtons = await page
+			.getByRole('button', { name: 'Refresh model list' })
+			.elements()
+		expect(refreshButtons).toHaveLength(0)
+	})
+
+	it('refresh refetches the catalog and keeps the dropdown open', async () => {
+		vi.mocked(getProviders).mockResolvedValueOnce(catalog(['gpt-4']))
+		render(ModelSelector, {})
+		const trigger = page.getByRole('combobox')
+		await trigger.click()
+		await expect
+			.element(page.getByRole('option', { name: 'gpt-4' }))
+			.toBeVisible()
+
+		vi.mocked(getProviders).mockResolvedValueOnce(
+			catalog(['gpt-4', 'claude-3'])
+		)
+		await page.getByRole('button', { name: 'Refresh model list' }).click()
+
+		await expect
+			.element(page.getByRole('option', { name: 'claude-3' }))
+			.toBeVisible()
+		expect(getProviders).toHaveBeenCalledTimes(2)
+		const triggerElement = trigger.element() as HTMLButtonElement
+		expect(triggerElement.getAttribute('aria-expanded')).toBe('true')
 	})
 })

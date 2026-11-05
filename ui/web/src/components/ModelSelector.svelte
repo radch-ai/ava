@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { RefreshCw } from '@lucide/svelte'
 	import * as Select from '#components/ui/select'
 	import { defaultModel, type ModelGroup, modelsStore } from '#lib/models'
 	import { cn } from '#lib/utils'
@@ -53,6 +54,26 @@
 		{modelName}
 	</Select.Trigger>
 	<Select.Content class="opacity-80">
+		{#if !providedGroups}
+			<!-- Catalog header: refresh the shared store without closing
+				the dropdown. -->
+			<div class="flex justify-end border-b p-1">
+				<button
+					type="button"
+					aria-label="Refresh model list"
+					title="Refresh model list"
+					class="text-muted-foreground hover:text-foreground hover:bg-accent rounded-sm p-0.5"
+					onclick={(e) => {
+						e.stopPropagation()
+						void modelsStore.refresh()
+					}}
+				>
+					<RefreshCw
+						class={cn('size-3', modelsStore.refreshing && 'animate-spin')}
+					/>
+				</button>
+			</div>
+		{/if}
 		{#if showDefault}
 			<Select.Item value={defaultModel} label={defaultModel}
 				>{defaultModel}</Select.Item
