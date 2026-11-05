@@ -12,6 +12,7 @@ import (
 	"github.com/radch-ai/ava/backend/internal/api"
 	"github.com/radch-ai/ava/backend/internal/api/agent"
 	"github.com/radch-ai/ava/backend/internal/api/agents"
+	"github.com/radch-ai/ava/backend/internal/api/providers"
 	"github.com/radch-ai/ava/backend/internal/db"
 )
 
@@ -31,5 +32,9 @@ func New(sqlDB *sql.DB, logger zerolog.Logger) http.Handler {
 	mux.Handle("POST /api/agent/{id}/cron-jobs", api.Log(logger, agent.CreateCronJob(queries)))
 	mux.Handle("PATCH /api/agent/{id}/cron-jobs/{jobId}", api.Log(logger, agent.UpdateCronJob(queries)))
 	mux.Handle("DELETE /api/agent/{id}/cron-jobs/{jobId}", api.Log(logger, agent.DeleteCronJob(queries)))
+	mux.Handle("GET /api/providers", api.Log(logger, providers.GetProviders(queries)))
+	mux.Handle("POST /api/providers", api.Log(logger, providers.CreateProvider(queries)))
+	mux.Handle("PATCH /api/providers/{id}", api.Log(logger, providers.UpdateProvider(queries)))
+	mux.Handle("DELETE /api/providers/{id}", api.Log(logger, providers.DeleteProvider(queries)))
 	return mux
 }

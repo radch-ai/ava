@@ -16,11 +16,18 @@ import (
 )
 
 // cronStore opens a fresh store holding one regular agent and one
-// catalog model row jobs can reference.
+// scratch provider whose catalog model rows jobs can reference.
 func cronStore(t *testing.T) *db.Queries {
 	t.Helper()
 	sqlDB := testdb.Open(t)
-	if _, err := sqlDB.Exec("INSERT INTO models (id) VALUES ('m1'), ('m2')"); err != nil {
+	if _, err := sqlDB.Exec(
+		"INSERT INTO providers (id, name, base_url) VALUES ('p1', 'P1', 'https://p1.dev/v1')",
+	); err != nil {
+		t.Fatalf("seed provider: %v", err)
+	}
+	if _, err := sqlDB.Exec(
+		"INSERT INTO models (model_id, provider_id) VALUES ('m1', 'p1'), ('m2', 'p1')",
+	); err != nil {
 		t.Fatalf("seed models: %v", err)
 	}
 	queries := db.New(sqlDB)

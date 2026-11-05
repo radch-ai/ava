@@ -1,7 +1,5 @@
--- Seed the superagent and its heartbeat. "_superagent" matches the
--- UI's SUPERAGENT_AGENT_ID; texts mirror the mock's SUPERAGENT_CONFIG
--- (ui/web/src/lib/mocks/data.ts). "_"-prefixed ids are
--- system-reserved; the guards in the next migration keep the row
+-- The superagent and its heartbeat. "_"-prefixed ids are
+-- system-reserved; the next migration's guards keep the row
 -- undeletable and identity-frozen.
 
 INSERT INTO agents (id, name, icon, soul_personality, soul_identity,
