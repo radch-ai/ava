@@ -5,13 +5,13 @@
 	import { Input } from '#components/ui/input'
 	import UnsavedChangesDialog from '#components/unsaved-changes/UnsavedChangesDialog.svelte'
 	import {
-		AGENT_FIELDS,
 		type AgentConfig,
 		type AgentIdentity,
 		type ConfigFieldName,
 		cloneConfiguration,
 		FIELD_CONFIGS,
-		getConfigurationField
+		getAgentFields,
+		getChangedFields
 	} from '#lib/types/agent'
 	import type { Tool } from '#lib/types/tool'
 	import AgentIconPicker from './AgentIconPicker.svelte'
@@ -20,24 +20,6 @@
 	import HeartbeatEditor from './HeartbeatEditor.svelte'
 	import SoulEditor from './SoulEditor.svelte'
 	import ToolsEditor from './ToolsEditor.svelte'
-
-	/**
-	 * Compare soul configs
-	 */
-	function soulEquals(a: AgentConfig['soul'], b: AgentConfig['soul']): boolean {
-		return JSON.stringify(a) === JSON.stringify(b)
-	}
-
-	/**
-	 * Compare the name text only; icon is its own field, compared in the
-	 * generic field loop below
-	 */
-	function nameEquals(
-		a: Pick<AgentIdentity, 'name'>,
-		b: Pick<AgentIdentity, 'name'>
-	): boolean {
-		return a.name === b.name
-	}
 
 	interface Props {
 		configuration: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>
@@ -70,15 +52,13 @@
 		cancelLabel = 'Cancel',
 		helperText = 'Please review and edit the options above, then click Save to apply your changes.',
 		// bindable prop synced to parent via $effect
-		hasChanges = $bindable(),
+		hasChanges = $bindable(false),
 		isSuperagent: isSuperagentProp
 	}: Props = $props()
 
 	// Determine agent type from the isSuperagent prop
 	const isSuperagent = $derived(isSuperagentProp ?? false)
-	const fields = $derived(
-		isSuperagent ? AGENT_FIELDS.superagent : AGENT_FIELDS.agent
-	)
+	const fields = $derived(getAgentFields(isSuperagent))
 
 	// Nav shows one entry per panel; icon is tracked as a field but its picker
 	// lives in the Name panel, so it gets no sidebar entry of its own.
@@ -96,57 +76,23 @@
 		}
 	})
 
-	// Detect if there are unsaved changes by comparing to prop (internal derived)
-	const hasLocalChanges = $derived.by(() => {
-		if (!localConfiguration || !configuration) return false
-
-		// Compare name text; icon is compared as its own field in the loop below
-		if (!nameEquals(localConfiguration, configuration)) return true
-
-		// Compare soul
-		if (!soulEquals(localConfiguration.soul, configuration.soul)) return true
-
-		// Compare other fields
-		for (const field of fields) {
-			if (field === 'name' || field === 'soul') continue // Already compared above
-			const localValue = getConfigurationField(localConfiguration, field)
-			const originalValue = getConfigurationField(configuration, field)
-			if (JSON.stringify(localValue) !== JSON.stringify(originalValue)) {
-				return true
-			}
+	// Track which specific fields have unsaved changes
+	let dirtyFields = $derived.by(() => {
+		if (!localConfiguration || !configuration) {
+			return new SvelteSet<ConfigFieldName>()
 		}
-		return false
+		return new SvelteSet(
+			getChangedFields(localConfiguration, configuration, isSuperagent)
+		)
 	})
+
+	// Anything unsaved? Derived from the dirty set so guards, markers and
+	// save patches can never disagree
+	const hasLocalChanges = $derived(dirtyFields.size > 0)
 
 	// Sync to bindable prop
 	$effect(() => {
 		hasChanges = hasLocalChanges
-	})
-
-	// Track which specific fields have unsaved changes
-	let dirtyFields = $derived.by(() => {
-		const dirty = new SvelteSet<ConfigFieldName>()
-		if (!localConfiguration || !configuration) return dirty
-
-		for (const field of fields) {
-			if (field === 'name') {
-				// Compare name text only; icon tracked as its own field
-				if (!nameEquals(localConfiguration, configuration)) {
-					dirty.add(field)
-				}
-			} else if (field === 'soul') {
-				if (!soulEquals(localConfiguration.soul, configuration.soul)) {
-					dirty.add(field)
-				}
-			} else {
-				const localValue = getConfigurationField(localConfiguration, field)
-				const originalValue = getConfigurationField(configuration, field)
-				if (JSON.stringify(localValue) !== JSON.stringify(originalValue)) {
-					dirty.add(field)
-				}
-			}
-		}
-		return dirty
 	})
 
 	// Currently selected field
@@ -162,9 +108,19 @@
 		}
 	})
 
+	// Save failures from the parent's onSave reject through; shown once
+	// here for every consumer
+	let saveError = $state<string | null>(null)
+
 	async function handleSave() {
-		if (localConfiguration) {
+		if (!localConfiguration) return
+		saveError = null
+		try {
 			await onSave(localConfiguration)
+		} catch (error) {
+			// Parents let save failures reject through — the editor owns
+			// displaying them (same banner for every consumer)
+			saveError = error instanceof Error ? error.message : 'Failed to save'
 		}
 	}
 
@@ -286,6 +242,14 @@
 		<p class="text-muted-foreground text-xs">
 			{helperText}
 		</p>
+		{#if saveError}
+			<p
+				role="alert"
+				class="bg-destructive/10 text-destructive rounded-lg p-3 text-center text-sm"
+			>
+				{saveError}
+			</p>
+		{/if}
 		<div class="flex gap-4">
 			<Button size="lg" class="sm:min-w-36" onclick={handleSave}
 				>{saveLabel}</Button

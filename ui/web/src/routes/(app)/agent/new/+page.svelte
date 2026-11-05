@@ -31,8 +31,6 @@
 		void guard?.bypassNavigation(() => history.back())
 	}
 
-	let createError = $state<string | null>(null)
-
 	async function handleSave(
 		config: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>
 	) {
@@ -40,27 +38,21 @@
 		if (!name) return
 
 		if (!isValidAgentName(name)) {
-			createError =
+			throw new Error(
 				'Invalid agent name: use letters, digits and single spaces only'
-			return
-		}
-		createError = null
-
-		try {
-			// The server derives the id from the display name and rejects
-			// invalid or duplicate names; the client never invents an id.
-			const createdAgent = await createAgent({ ...config, name })
-			// Refresh the agents list so the sidebar shows the new agent.
-			// Awaited so the target page's parent data already includes the
-			// new agent when its load looks it up.
-			await invalidate('app:agents')
-			await guard?.bypassNavigation(() =>
-				goto(resolve('/(app)/agent/[agentId]', { agentId: createdAgent.id }))
 			)
-		} catch (error) {
-			createError =
-				error instanceof Error ? error.message : 'Failed to create agent'
 		}
+
+		// The server derives the id from the display name and rejects
+		// invalid or duplicate names; the client never invents an id.
+		const createdAgent = await createAgent({ ...config, name })
+		// Refresh the agents list so the sidebar shows the new agent.
+		// Awaited so the target page's parent data already includes the
+		// new agent when its load looks it up.
+		await invalidate('app:agents')
+		await guard?.bypassNavigation(() =>
+			goto(resolve('/(app)/agent/[agentId]', { agentId: createdAgent.id }))
+		)
 	}
 </script>
 
@@ -72,14 +64,6 @@
 
 	<!-- Configuration Editor (full screen) -->
 	<div class="flex-1 overflow-auto rounded-lg border">
-		{#if createError}
-			<p
-				role="alert"
-				class="bg-destructive/10 text-destructive rounded-lg p-3 text-center text-sm"
-			>
-				{createError}
-			</p>
-		{/if}
 		<AgentConfigEditor
 			{configuration}
 			onSave={handleSave}

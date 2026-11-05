@@ -293,3 +293,30 @@ export function setConfigurationField(
 ): void {
 	;(configuration as unknown as Record<string, unknown>)[field] = value
 }
+
+/**
+ * Field list for an agent type — single source of truth for rendering,
+ * dirty tracking and save patches
+ */
+export function getAgentFields(isSuperagent: boolean) {
+	return isSuperagent ? AGENT_FIELDS.superagent : AGENT_FIELDS.agent
+}
+
+/**
+ * Field names whose local value differs from the saved configuration
+ */
+export function getChangedFields(
+	local: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>,
+	original: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>,
+	isSuperagent: boolean
+): ConfigFieldName[] {
+	const changed: ConfigFieldName[] = []
+	for (const field of getAgentFields(isSuperagent)) {
+		const localValue = getConfigurationField(local, field)
+		const originalValue = getConfigurationField(original, field)
+		if (JSON.stringify(localValue) !== JSON.stringify(originalValue)) {
+			changed.push(field)
+		}
+	}
+	return changed
+}

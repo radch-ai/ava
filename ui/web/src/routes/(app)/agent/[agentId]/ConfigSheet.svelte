@@ -13,10 +13,10 @@
 		updateHeartbeat
 	} from '#lib/services/agent'
 	import {
-		AGENT_FIELDS,
 		type AgentConfig,
 		type AgentConfigWithIdentity,
 		type AgentIdentity,
+		getChangedFields,
 		getConfigurationField,
 		setConfigurationField
 	} from '#lib/types/agent'
@@ -74,43 +74,35 @@
 		config: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>
 	) {
 		// Build partial update with only changed fields
-		const fields = isSuperagent ? AGENT_FIELDS.superagent : AGENT_FIELDS.agent
 		const changes: Partial<AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>> =
 			{}
-
-		for (const field of fields) {
-			const localValue = getConfigurationField(config, field)
-			const originalValue = getConfigurationField(configuration, field)
-			if (JSON.stringify(localValue) !== JSON.stringify(originalValue)) {
-				setConfigurationField(
-					changes as AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>,
-					field,
-					localValue
-				)
-			}
+		for (const field of getChangedFields(config, configuration, isSuperagent)) {
+			setConfigurationField(
+				changes as AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>,
+				field,
+				getConfigurationField(config, field)
+			)
 		}
 		// Heartbeat and cron jobs go to their own endpoints; the rest
 		// is one patch.
 		const { heartbeat, cronJobs, ...patch } = changes
 
-		try {
-			let savedConfig: AgentConfigWithIdentity | undefined
-			if (Object.keys(patch).length > 0) {
-				savedConfig = await updateAgentConfig(agentId, patch)
-			}
-			if (heartbeat) {
-				savedConfig = await updateHeartbeat(agentId, heartbeat)
-			}
-			if (cronJobs !== undefined) {
-				savedConfig = await updateCronJobs(agentId, cronJobs)
-			}
-			if (savedConfig) {
-				onSaved(savedConfig)
-			}
-			isSheetOpened = false
-		} catch {
-			// Keep sheet open on error so user can retry
+		// A rejected call surfaces via the editor's save-error banner;
+		// the sheet only closes on a fully successful save.
+		let savedConfig: AgentConfigWithIdentity | undefined
+		if (Object.keys(patch).length > 0) {
+			savedConfig = await updateAgentConfig(agentId, patch)
 		}
+		if (heartbeat) {
+			savedConfig = await updateHeartbeat(agentId, heartbeat)
+		}
+		if (cronJobs !== undefined) {
+			savedConfig = await updateCronJobs(agentId, cronJobs)
+		}
+		if (savedConfig) {
+			onSaved(savedConfig)
+		}
+		isSheetOpened = false
 	}
 
 	function handleCancel() {
