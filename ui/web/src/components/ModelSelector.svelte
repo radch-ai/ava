@@ -53,7 +53,7 @@
 	>
 		{modelName}
 	</Select.Trigger>
-	<Select.Content class="opacity-80">
+	<Select.Content>
 		{#if !providedGroups}
 			<!-- Catalog header: refresh the shared store without closing
 				the dropdown. -->
