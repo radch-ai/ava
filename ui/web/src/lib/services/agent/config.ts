@@ -1,6 +1,7 @@
 import type {
 	AgentConfig,
 	AgentConfigWithIdentity,
+	AgentEditableFields,
 	AgentIdentity,
 	CreateAgentResponse,
 	CronJob,
@@ -8,25 +9,18 @@ import type {
 } from '#lib/types/agent'
 import { api } from '../api'
 
-/** Identity and config text fields; heartbeat/cronJobs save via
- * their own endpoints. */
-export type AgentConfigPatch = Partial<
-	Pick<AgentIdentity, 'name' | 'icon'> &
-		Omit<AgentConfig, 'heartbeat' | 'cronJobs'>
->
-
 export async function getAgentConfig(
 	agentId: string
 ): Promise<AgentConfigWithIdentity> {
-	return api.get(`agent/${agentId}`).json<AgentConfigWithIdentity>()
+	return api.get(`agent/${agentId}/config`).json<AgentConfigWithIdentity>()
 }
 
 export async function updateAgentConfig(
 	agentId: string,
-	patch: AgentConfigPatch
+	patch: AgentEditableFields
 ): Promise<AgentConfigWithIdentity> {
 	const response = await api
-		.patch(`agent/${agentId}`, { json: patch })
+		.patch(`agent/${agentId}/config`, { json: patch })
 		.json<{ data?: AgentConfigWithIdentity } | AgentConfigWithIdentity>()
 
 	if (response && typeof response === 'object' && 'data' in response) {
@@ -45,14 +39,35 @@ export async function updateHeartbeat(
 		.json<AgentConfigWithIdentity>()
 }
 
-/** Save the cron job list; replaced wholesale. */
-export async function updateCronJobs(
+/** Fetch the agent's cron jobs — only the Cron Jobs panel calls this. */
+export async function getCronJobs(agentId: string): Promise<CronJob[]> {
+	const { cronJobs } = await api
+		.get(`agent/${agentId}/cron-jobs`)
+		.json<{ cronJobs: CronJob[] }>()
+	return cronJobs
+}
+
+/** Create one cron job; the server mints the id. */
+export async function createCronJob(
 	agentId: string,
-	cronJobs: CronJob[]
-): Promise<AgentConfigWithIdentity> {
+	job: CronJob
+): Promise<CronJob> {
+	return api.post(`agent/${agentId}/cron-jobs`, { json: job }).json<CronJob>()
+}
+
+/** Save the full edited cron job by id. */
+export async function updateCronJob(
+	agentId: string,
+	job: CronJob
+): Promise<CronJob> {
 	return api
-		.patch(`agent/${agentId}/cron-jobs`, { json: { cronJobs } })
-		.json<AgentConfigWithIdentity>()
+		.patch(`agent/${agentId}/cron-jobs/${job.id}`, { json: job })
+		.json<CronJob>()
+}
+
+/** Delete one cron job by id. */
+export async function deleteCronJob(agentId: string, jobId: string) {
+	await api.delete(`agent/${agentId}/cron-jobs/${jobId}`)
 }
 
 /**

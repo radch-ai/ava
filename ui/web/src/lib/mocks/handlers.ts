@@ -46,6 +46,17 @@ function paginate<T extends CursorItem>(
 }
 
 /**
+ * Apply the row rule the backend enforces: cronExpression is carried
+ * only while the frequency is 'custom'; any other frequency clears it.
+ */
+function normalizeCronJob(job: CronJob): CronJob {
+	return {
+		...job,
+		cronExpression: job.frequency === 'custom' ? job.cronExpression : undefined
+	}
+}
+
+/**
  * Build handlers over the given store. Handlers close over the store, so
  * each consumer gets isolated state.
  */
@@ -63,8 +74,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			name,
 			icon,
 			...config,
-			heartbeat: store.heartbeats.get(id) ?? createDefaultHeartbeatConfig(),
-			cronJobs: store.cronJobs.get(id) ?? []
+			heartbeat: store.heartbeats.get(id) ?? createDefaultHeartbeatConfig()
 		}
 	}
 	return [
@@ -158,7 +168,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			)
 		}),
 
-		http.get('*/api/agent/:id', ({ params }) => {
+		http.get('*/api/agent/:id/config', ({ params }) => {
 			const id = String(params.id)
 			const detail = buildDetail(id)
 			if (!detail) {
@@ -170,7 +180,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			return HttpResponse.json(detail)
 		}),
 
-		http.patch('*/api/agent/:id', async ({ request, params }) => {
+		http.patch('*/api/agent/:id/config', async ({ request, params }) => {
 			const id = String(params.id)
 			const current = store.configurations.get(id)
 			if (!current) {
@@ -180,20 +190,19 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				)
 			}
 			// name/icon update the list entry, text updates the config;
-			// heartbeat/cronJobs have their own endpoints.
+			// heartbeat has its own endpoint.
 			const {
 				name,
 				icon,
 				soul,
 				heartbeat: _hb,
-				cronJobs: _cron,
 				...configText
 			} = (await request.json()) as Partial<AgentConfig> &
 				Partial<Pick<AgentIdentity, 'name' | 'icon'>>
-			const next: Omit<AgentConfig, 'heartbeat' | 'cronJobs'> = {
+			const next: Omit<AgentConfig, 'heartbeat'> = {
 				...current,
 				...configText,
-				soul: { ...current.soul, ...soul }
+				...(soul !== undefined && { soul })
 			}
 			store.configurations.set(id, next)
 			// Keep the list entry in sync so refetches reflect renames/icon
@@ -224,8 +233,11 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			return HttpResponse.json(buildDetail(id))
 		}),
 
-		// The cron list: replaced wholesale on each save.
-		http.patch('*/api/agent/:id/cron-jobs', async ({ request, params }) => {
+		// Cron jobs: per-row endpoints, fetched lazily — the list only
+		// loads when the Cron Jobs panel opens. cronExpression survives
+		// only while the frequency is 'custom', the same row rule the
+		// backend enforces.
+		http.get('*/api/agent/:id/cron-jobs', ({ params }) => {
 			const id = String(params.id)
 			if (!store.configurations.has(id)) {
 				return HttpResponse.json<ErrorResponse>(
@@ -233,9 +245,73 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 					{ status: 404 }
 				)
 			}
-			const { cronJobs } = (await request.json()) as { cronJobs: CronJob[] }
-			store.cronJobs.set(id, cronJobs)
-			return HttpResponse.json(buildDetail(id))
+			return HttpResponse.json({ cronJobs: store.cronJobs.get(id) ?? [] })
+		}),
+
+		http.post('*/api/agent/:id/cron-jobs', async ({ request, params }) => {
+			const id = String(params.id)
+			if (!store.configurations.has(id)) {
+				return HttpResponse.json<ErrorResponse>(
+					{ message: `Agent "${id}" not found` },
+					{ status: 404 }
+				)
+			}
+			const body = (await request.json()) as CronJob
+			const stored = normalizeCronJob({ ...body, id: crypto.randomUUID() })
+			const jobs = store.cronJobs.get(id) ?? []
+			store.cronJobs.set(id, [...jobs, stored])
+			return HttpResponse.json(stored, { status: 201 })
+		}),
+
+		http.patch(
+			'*/api/agent/:id/cron-jobs/:jobId',
+			async ({ request, params }) => {
+				const id = String(params.id)
+				if (!store.configurations.has(id)) {
+					return HttpResponse.json<ErrorResponse>(
+						{ message: `Agent "${id}" not found` },
+						{ status: 404 }
+					)
+				}
+				const jobId = String(params.jobId)
+				const jobs = store.cronJobs.get(id) ?? []
+				if (!jobs.some((job) => job.id === jobId)) {
+					return HttpResponse.json<ErrorResponse>(
+						{ message: `Cron job "${jobId}" not found` },
+						{ status: 404 }
+					)
+				}
+				const job = (await request.json()) as CronJob
+				const stored = normalizeCronJob({ ...job, id: jobId })
+				store.cronJobs.set(
+					id,
+					jobs.map((existing) => (existing.id === jobId ? stored : existing))
+				)
+				return HttpResponse.json(stored)
+			}
+		),
+
+		http.delete('*/api/agent/:id/cron-jobs/:jobId', ({ params }) => {
+			const id = String(params.id)
+			if (!store.configurations.has(id)) {
+				return HttpResponse.json<ErrorResponse>(
+					{ message: `Agent "${id}" not found` },
+					{ status: 404 }
+				)
+			}
+			const jobId = String(params.jobId)
+			const jobs = store.cronJobs.get(id) ?? []
+			if (!jobs.some((job) => job.id === jobId)) {
+				return HttpResponse.json<ErrorResponse>(
+					{ message: `Cron job "${jobId}" not found` },
+					{ status: 404 }
+				)
+			}
+			store.cronJobs.set(
+				id,
+				jobs.filter((job) => job.id !== jobId)
+			)
+			return new HttpResponse(null, { status: 204 })
 		}),
 
 		// Create: the server owns id derivation. Invalid names are rejected

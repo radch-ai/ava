@@ -7,11 +7,7 @@
 		UnsavedChangesGuards
 	} from '#components/unsaved-changes'
 	import { SUPERAGENT_AGENT_ID } from '#lib/config'
-	import {
-		updateAgentConfig,
-		updateCronJobs,
-		updateHeartbeat
-	} from '#lib/services/agent'
+	import { updateAgentConfig, updateHeartbeat } from '#lib/services/agent'
 	import {
 		type AgentConfig,
 		type AgentConfigWithIdentity,
@@ -83,9 +79,8 @@
 				getConfigurationField(config, field)
 			)
 		}
-		// Heartbeat and cron jobs go to their own endpoints; the rest
-		// is one patch.
-		const { heartbeat, cronJobs, ...patch } = changes
+		// Heartbeat goes to its own endpoint; the rest is one patch.
+		const { heartbeat, ...patch } = changes
 
 		// A rejected call surfaces via the editor's save-error banner;
 		// the sheet only closes on a fully successful save.
@@ -96,9 +91,7 @@
 		if (heartbeat) {
 			savedConfig = await updateHeartbeat(agentId, heartbeat)
 		}
-		if (cronJobs !== undefined) {
-			savedConfig = await updateCronJobs(agentId, cronJobs)
-		}
+
 		if (savedConfig) {
 			onSaved(savedConfig)
 		}
@@ -129,6 +122,7 @@
 		<!-- Kept separate so other consumers (e.g. /agent/new)can use the editor
 		 			directly with their own save behavior (createAgent vs updateAgentConfig) -->
 		<AgentConfigEditor
+			{agentId}
 			{configuration}
 			{availableTools}
 			onSave={handleSave}

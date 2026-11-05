@@ -5,11 +5,12 @@
 		UnsavedChangesGuards,
 		type UnsavedChangesGuardsExports
 	} from '#components/unsaved-changes'
-	import { createAgent } from '#lib/services/agent'
+	import { createAgent, updateHeartbeat } from '#lib/services/agent'
 	import {
 		type AgentConfig,
 		type AgentIdentity,
-		createDefaultAgentConfig
+		createDefaultAgentConfig,
+		createDefaultHeartbeatConfig
 	} from '#lib/types/agent'
 	import { goto, invalidate } from '$app/navigation'
 	import { resolve } from '$app/paths'
@@ -46,6 +47,14 @@
 		// The server derives the id from the display name and rejects
 		// invalid or duplicate names; the client never invents an id.
 		const createdAgent = await createAgent({ ...config, name })
+		// The heartbeat row is written by its own endpoint; skip the
+		// call when the editor still holds the disabled default.
+		if (
+			JSON.stringify(config.heartbeat) !==
+			JSON.stringify(createDefaultHeartbeatConfig())
+		) {
+			await updateHeartbeat(createdAgent.id, config.heartbeat)
+		}
 		// Refresh the agents list so the sidebar shows the new agent.
 		// Awaited so the target page's parent data already includes the
 		// new agent when its load looks it up.

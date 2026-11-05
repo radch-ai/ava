@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
 import * as agentConfig from '#lib/services/agent'
+import { getCronJobs } from '#lib/services/agent/config'
+import { invalidateCronJobs } from '#lib/services/agent/cron-jobs.svelte'
 import NewAgentPage from '#routes/agent/new/+page.svelte'
 
 // Mock the agent config service
@@ -10,6 +12,19 @@ vi.mock('#lib/services/agent', () => ({
 	getAgentConfig: vi.fn(),
 	updateAgentConfig: vi.fn(),
 	updateHeartbeat: vi.fn()
+}))
+
+// The cron cache imports the service module directly; mock that path
+// too so the placeholder test can pin that nothing is fetched.
+vi.mock('#lib/services/agent/config', () => ({
+	createAgent: vi.fn(),
+	getAgentConfig: vi.fn(),
+	updateAgentConfig: vi.fn(),
+	updateHeartbeat: vi.fn(),
+	getCronJobs: vi.fn(),
+	createCronJob: vi.fn(),
+	updateCronJob: vi.fn(),
+	deleteCronJob: vi.fn()
 }))
 
 // Mock SvelteKit navigation
@@ -442,5 +457,26 @@ describe('New Agent Page', () => {
 			expect(mockInvalidate).not.toHaveBeenCalled()
 			expect(goto).not.toHaveBeenCalled()
 		})
+	})
+})
+
+describe('Cron Jobs on the new-agent page', () => {
+	afterEach(() => {
+		cleanup()
+		invalidateCronJobs()
+		vi.clearAllMocks()
+	})
+
+	it('shows the create-first placeholder and fetches nothing', async () => {
+		render(NewAgentPage)
+
+		await page.getByRole('button', { name: /cron jobs/i }).click()
+
+		await expect
+			.element(
+				page.getByText('Create Agent first and then edit from Agent Settings.')
+			)
+			.toBeVisible()
+		expect(getCronJobs).not.toHaveBeenCalled()
 	})
 })

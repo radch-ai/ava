@@ -11,19 +11,23 @@ vi.mock('#lib/services/api', () => ({
 	api: {
 		get: vi.fn(),
 		patch: vi.fn(),
-		post: vi.fn()
+		post: vi.fn(),
+		delete: vi.fn()
 	}
 }))
 
 import {
-	type AgentConfigPatch,
 	createAgent,
+	createCronJob,
+	deleteCronJob,
 	getAgentConfig,
+	getCronJobs,
 	updateAgentConfig,
-	updateCronJobs,
+	updateCronJob,
 	updateHeartbeat
 } from '#lib/services/agent'
 import { type ApiResponsePromise, api } from '#lib/services/api'
+import type { AgentEditableFields } from '#lib/types/agent'
 
 function createTestConfig(
 	overrides?: Partial<AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>>
@@ -37,7 +41,6 @@ function createTestConfig(
 		toolsContext: 'Test tools',
 		toolsEnabled: [],
 		heartbeat: defaultHeartbeat,
-		cronJobs: [],
 		...overrides
 	}
 }
@@ -50,18 +53,15 @@ const defaultHeartbeat: HeartbeatConfig = {
 }
 
 /** The detail body the API answers: AgentConfigWithIdentity —
- * identity and every config field flat at one level, entities
- * included. */
+ * identity and every config field flat at one level. */
 const toDetail = (
 	config: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>,
 	id = 'ava',
-	heartbeat: HeartbeatConfig = defaultHeartbeat,
-	cronJobs: CronJob[] = []
+	heartbeat: HeartbeatConfig = defaultHeartbeat
 ): AgentConfigWithIdentity => ({
 	id,
 	...config,
-	heartbeat,
-	cronJobs
+	heartbeat
 })
 
 describe('agent/config service', () => {
@@ -79,7 +79,7 @@ describe('agent/config service', () => {
 
 			const result = await getAgentConfig('ava')
 
-			expect(api.get).toHaveBeenCalledWith('agent/ava')
+			expect(api.get).toHaveBeenCalledWith('agent/ava/config')
 			expect(result).toEqual(toDetail(mockConfig))
 		})
 
@@ -94,22 +94,6 @@ describe('agent/config service', () => {
 		})
 
 		it('carries the separate-table entities beside config', async () => {
-			const cronJobs: CronJob[] = [
-				{
-					id: 'cron-1',
-					time: '09:00',
-					frequency: 'daily',
-					model: 'gpt-4',
-					prompt: 'Morning digest'
-				},
-				{
-					id: 'cron-2',
-					time: '17:00',
-					frequency: 'daily',
-					model: 'gpt-4',
-					prompt: 'Evening report'
-				}
-			]
 			const detail = toDetail(
 				createTestConfig({ toolsEnabled: ['web-search', 'code-execution'] }),
 				'ava',
@@ -118,8 +102,7 @@ describe('agent/config service', () => {
 					duration: '2hr',
 					content: 'Daily heartbeat',
 					model: 'gpt-4'
-				},
-				cronJobs
+				}
 			)
 
 			vi.mocked(api.get).mockReturnValue({
@@ -130,7 +113,6 @@ describe('agent/config service', () => {
 
 			expect(result.toolsEnabled).toEqual(['web-search', 'code-execution'])
 			expect(result.heartbeat?.enabled).toBe(true)
-			expect(result.cronJobs).toHaveLength(2)
 		})
 
 		it('fetches config for different agent names', async () => {
@@ -142,7 +124,7 @@ describe('agent/config service', () => {
 
 			await getAgentConfig('test-bot')
 
-			expect(api.get).toHaveBeenCalledWith('agent/test-bot')
+			expect(api.get).toHaveBeenCalledWith('agent/test-bot/config')
 		})
 
 		it('handles special characters in agent name', async () => {
@@ -154,14 +136,14 @@ describe('agent/config service', () => {
 
 			await getAgentConfig('agent-with-dashes')
 
-			expect(api.get).toHaveBeenCalledWith('agent/agent-with-dashes')
+			expect(api.get).toHaveBeenCalledWith('agent/agent-with-dashes/config')
 		})
 	})
 
 	describe('updateAgentConfig', () => {
 		it('updates one agent config with wrapped response', async () => {
 			const detail = toDetail(createTestConfig({ name: 'Updated' }))
-			const patch: AgentConfigPatch = { name: 'Updated' }
+			const patch: AgentEditableFields = { name: 'Updated' }
 
 			vi.mocked(api.patch).mockReturnValue({
 				json: async () => ({ data: detail })
@@ -169,13 +151,15 @@ describe('agent/config service', () => {
 
 			const result = await updateAgentConfig('ava', patch)
 
-			expect(api.patch).toHaveBeenCalledWith('agent/ava', { json: patch })
+			expect(api.patch).toHaveBeenCalledWith('agent/ava/config', {
+				json: patch
+			})
 			expect(result).toEqual(detail)
 		})
 
 		it('updates one agent config with direct response', async () => {
 			const detail = toDetail(createTestConfig())
-			const patch: AgentConfigPatch = {
+			const patch: AgentEditableFields = {
 				operatingInstructions: 'Updated instructions'
 			}
 
@@ -189,7 +173,7 @@ describe('agent/config service', () => {
 		})
 
 		it('handles name-only updates', async () => {
-			const patch: AgentConfigPatch = { name: 'Updated Name' }
+			const patch: AgentEditableFields = { name: 'Updated Name' }
 			const detail = toDetail(createTestConfig({ name: 'Updated Name' }))
 
 			vi.mocked(api.patch).mockReturnValue({
@@ -198,13 +182,15 @@ describe('agent/config service', () => {
 
 			const result = await updateAgentConfig('ava', patch)
 
-			expect(api.patch).toHaveBeenCalledWith('agent/ava', { json: patch })
+			expect(api.patch).toHaveBeenCalledWith('agent/ava/config', {
+				json: patch
+			})
 			expect(result.name).toBe('Updated Name')
 		})
 
 		it('updates soul configuration', async () => {
 			const soul = { personality: 'New personality', identity: 'New identity' }
-			const patch: AgentConfigPatch = { soul }
+			const patch: AgentEditableFields = { soul }
 			const detail = toDetail(createTestConfig({ soul }))
 
 			vi.mocked(api.patch).mockReturnValue({
@@ -222,7 +208,7 @@ describe('agent/config service', () => {
 				toolsEnabled: ['web-search', 'code-execution', 'file-system'],
 				toolsContext: 'Updated tools context'
 			}
-			const patch: AgentConfigPatch = configUpdate
+			const patch: AgentEditableFields = configUpdate
 			const detail = toDetail(createTestConfig(configUpdate))
 
 			vi.mocked(api.patch).mockReturnValue({
@@ -260,7 +246,9 @@ describe('agent/config service', () => {
 
 			await updateAgentConfig('test-bot', {})
 
-			expect(api.patch).toHaveBeenCalledWith('agent/test-bot', { json: {} })
+			expect(api.patch).toHaveBeenCalledWith('agent/test-bot/config', {
+				json: {}
+			})
 		})
 	})
 
@@ -300,41 +288,59 @@ describe('agent/config service', () => {
 		})
 	})
 
-	describe('updateCronJobs', () => {
-		it('replaces the cron list on its own endpoint', async () => {
-			const cronJobs: CronJob[] = [
-				{
-					id: 'cron-1',
-					time: '09:00',
-					frequency: 'weekly',
-					model: 'gpt-4',
-					prompt: 'Weekly digest'
-				},
-				{
-					id: 'cron-2',
-					time: '00:00',
-					frequency: 'daily',
-					model: 'gpt-4',
-					prompt: 'Cleanup'
-				}
-			]
-			const detail = toDetail(
-				createTestConfig(),
-				'ava',
-				defaultHeartbeat,
-				cronJobs
-			)
+	describe('cron job endpoints', () => {
+		const job: CronJob = {
+			id: 'cron-1',
+			time: '09:00',
+			frequency: 'custom',
+			cronExpression: '0 9 * * 1',
+			model: 'auto',
+			prompt: 'Weekly digest'
+		}
 
-			vi.mocked(api.patch).mockReturnValue({
-				json: async () => detail
+		it('getCronJobs unwraps the list', async () => {
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => ({ cronJobs: [job] })
 			} as ApiResponsePromise)
 
-			const result = await updateCronJobs('ava', cronJobs)
+			const result = await getCronJobs('ava')
 
-			expect(api.patch).toHaveBeenCalledWith('agent/ava/cron-jobs', {
-				json: { cronJobs }
+			expect(api.get).toHaveBeenCalledWith('agent/ava/cron-jobs')
+			expect(result).toEqual([job])
+		})
+
+		it('createCronJob posts the full job and returns the stored row', async () => {
+			vi.mocked(api.post).mockReturnValue({
+				json: async () => job
+			} as ApiResponsePromise)
+
+			const result = await createCronJob('ava', job)
+
+			expect(api.post).toHaveBeenCalledWith('agent/ava/cron-jobs', {
+				json: job
 			})
-			expect(result.cronJobs).toHaveLength(2)
+			expect(result.id).toBe('cron-1')
+		})
+
+		it('updateCronJob patches the full edited job by id', async () => {
+			vi.mocked(api.patch).mockReturnValue({
+				json: async () => job
+			} as ApiResponsePromise)
+
+			const result = await updateCronJob('ava', job)
+
+			expect(api.patch).toHaveBeenCalledWith('agent/ava/cron-jobs/cron-1', {
+				json: job
+			})
+			expect(result.prompt).toBe('Weekly digest')
+		})
+
+		it('deleteCronJob issues the delete without parsing a body', async () => {
+			vi.mocked(api.delete).mockReturnValue({} as ApiResponsePromise)
+
+			await deleteCronJob('ava', 'cron-1')
+
+			expect(api.delete).toHaveBeenCalledWith('agent/ava/cron-jobs/cron-1')
 		})
 	})
 	describe('createAgent', () => {

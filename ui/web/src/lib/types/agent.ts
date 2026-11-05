@@ -20,7 +20,7 @@ import { SUPERAGENT_AGENT_ID, SUPERAGENT_NAME } from '#lib/config'
 // regenerate, never edit. HeartbeatDuration and CronFrequency are
 // literal unions there.
 export type {
-	AgentConfig,
+	AgentEditableFields,
 	CreateAgentRequest,
 	CreateAgentResponse,
 	CronFrequency,
@@ -33,7 +33,8 @@ export type {
 } from '#lib/types/gen/apitypes.gen'
 
 import type {
-	AgentConfig,
+	AgentConfig as GenAgentConfig,
+	AgentConfigWithIdentity as GenAgentConfigWithIdentity,
 	AgentIdentity as GenAgentIdentity,
 	HeartbeatConfig,
 	SoulConfig
@@ -49,6 +50,29 @@ export interface AgentIdentity extends Omit<GenAgentIdentity, 'icon'> {
 }
 
 /**
+ * AgentConfig flattened from the gen embedding, with the editable
+ * fields required the way a loaded config always carries them —
+ * userContext stays optional (superagent-only). The gen type's
+ * name/icon belong to the identity and are dropped here; cron jobs
+ * are fetched separately (services/agent/cron-jobs).
+ */
+export type AgentConfig = Pick<GenAgentConfig, 'heartbeat'> &
+	Required<
+		Omit<GenAgentConfig['AgentEditableFields'], 'name' | 'icon' | 'userContext'>
+	> & { userContext?: string }
+
+/**
+ * Identity (id, name, icon) plus every AgentConfig field at one
+ * level — the GET/PATCH detail body, icon narrowed like
+ * AgentIdentity.
+ */
+export type AgentConfigWithIdentity = Omit<
+	GenAgentConfigWithIdentity['AgentIdentity'],
+	'icon'
+> &
+	AgentConfig & { icon: AgentIconName }
+
+/**
  * superagent agent definition - the primary assistant
  */
 export const SUPERAGENT_AGENT: AgentIdentity = {
@@ -56,10 +80,6 @@ export const SUPERAGENT_AGENT: AgentIdentity = {
 	name: SUPERAGENT_NAME,
 	icon: 'message-square'
 }
-
-/** Identity (id, name, icon) plus every AgentConfig field at one
- * level. */
-export interface AgentConfigWithIdentity extends AgentIdentity, AgentConfig {}
 
 // ============================================================================
 // FIELD CONFIGS FOR UI
@@ -201,16 +221,16 @@ export function createDefaultSoulConfig(): SoulConfig {
 
 /**
  * Create the disabled heartbeat default: empty fields until a row is
- * saved (the superagent is seeded enabled).
+ * saved (the superagent is seeded enabled). model 'auto' follows the
+ * default routing — the backend stores it as NULL.
  */
 export function createDefaultHeartbeatConfig(): HeartbeatConfig {
-	return { model: '', enabled: false, duration: '1hr', content: '' }
+	return { model: 'auto', enabled: false, duration: '1hr', content: '' }
 }
 
 /**
  * Create default agent configuration — the editor's starting shape.
- * heartbeat starts disabled with empty fields; cron jobs start
- * empty.
+ * heartbeat starts disabled with empty fields.
  */
 export function createDefaultAgentConfig(): AgentConfig &
 	Pick<AgentIdentity, 'name' | 'icon'> {
@@ -221,8 +241,7 @@ export function createDefaultAgentConfig(): AgentConfig &
 		operatingInstructions: '',
 		toolsContext: '',
 		toolsEnabled: [],
-		heartbeat: createDefaultHeartbeatConfig(),
-		cronJobs: []
+		heartbeat: createDefaultHeartbeatConfig()
 	}
 }
 
@@ -267,7 +286,9 @@ export function getAgentFields(isSuperagent: boolean) {
 }
 
 /**
- * Field names whose local value differs from the saved configuration
+ * Field names whose local value differs from the saved configuration.
+ * Cron jobs are excluded: they save from their own editor, never
+ * through the agent config save.
  */
 export function getChangedFields(
 	local: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>,
@@ -276,6 +297,7 @@ export function getChangedFields(
 ): ConfigFieldName[] {
 	const changed: ConfigFieldName[] = []
 	for (const field of getAgentFields(isSuperagent)) {
+		if (field === 'cronJobs') continue
 		const localValue = getConfigurationField(local, field)
 		const originalValue = getConfigurationField(original, field)
 		if (JSON.stringify(localValue) !== JSON.stringify(originalValue)) {

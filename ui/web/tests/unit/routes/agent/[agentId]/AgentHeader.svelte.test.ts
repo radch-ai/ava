@@ -32,8 +32,7 @@ function createDefaultTestConfig(): AgentConfigWithIdentity {
 			duration: '1hr',
 			content: '',
 			model: 'default'
-		},
-		cronJobs: []
+		}
 	}
 }
 

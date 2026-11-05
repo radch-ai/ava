@@ -21,8 +21,7 @@ function createDefaultSuperagentConfig(): AgentConfigWithIdentity {
 			duration: '1hr',
 			content: '',
 			model: 'default'
-		},
-		cronJobs: []
+		}
 	}
 }
 
@@ -41,8 +40,7 @@ function createDefaultAgentConfig(): AgentConfigWithIdentity {
 			duration: '1hr',
 			content: '',
 			model: 'default'
-		},
-		cronJobs: []
+		}
 	}
 }
 
@@ -67,14 +65,15 @@ function createProps(
 		...overrides
 	}
 }
-
-// Mock agent config service
-vi.mock('#lib/services/agent', () => ({
+vi.mock('#lib/services/agent/config', () => ({
 	updateAgentConfig: vi.fn(),
 	updateHeartbeat: vi.fn(),
-	updateCronJobs: vi.fn(),
 	createAgent: vi.fn(),
-	getAgentConfig: vi.fn()
+	getAgentConfig: vi.fn(),
+	getCronJobs: vi.fn(),
+	createCronJob: vi.fn(),
+	updateCronJob: vi.fn(),
+	deleteCronJob: vi.fn()
 }))
 
 import { updateAgentConfig, updateHeartbeat } from '#lib/services/agent'

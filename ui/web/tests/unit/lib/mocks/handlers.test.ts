@@ -126,7 +126,7 @@ describe('mock API handlers', () => {
 	})
 
 	it('serves agent configuration and 404s for unknown agents', async () => {
-		const res = await fetch(`${BASE}/agent/scribe`)
+		const res = await fetch(`${BASE}/agent/scribe/config`)
 		expect(res.status).toBe(200)
 		const detail = (await res.json()) as {
 			id: string
@@ -148,35 +148,38 @@ describe('mock API handlers', () => {
 		expect(Array.isArray(detail.toolsEnabled)).toBe(true)
 		// The body is flat: heartbeat rides beside the config fields —
 		// a full config even without a saved row. Scribe has no row:
-		// disabled with empty fields; only the superagent is seeded.
+		// disabled with empty fields and the default routing ('auto');
+		// only the superagent is seeded.
 		expect(detail.heartbeat).toEqual({
-			model: '',
+			model: 'auto',
 			enabled: false,
 			duration: '1hr',
 			content: ''
 		})
 
-		const superagentRes = await fetch(`${BASE}/agent/_superagent`)
+		const superagentRes = await fetch(`${BASE}/agent/_superagent/config`)
 		expect(superagentRes.status).toBe(200)
 		const superagentDetail = (await superagentRes.json()) as {
 			name: string
 			heartbeat: { model: string; enabled: boolean; duration: string }
-			cronJobs: unknown[]
+			cronJobs?: unknown[]
 		}
 		expect(superagentDetail.name).toBe('Ava')
 		expect(superagentDetail.heartbeat.model).toBe('auto')
 		expect(superagentDetail.heartbeat.enabled).toBe(true)
 		expect(superagentDetail.heartbeat.duration).toBe('30m')
-		expect(superagentDetail.cronJobs).toEqual([])
+		// Cron jobs are fetched lazily from their own endpoint - the
+		// detail body never carries them.
+		expect(superagentDetail.cronJobs).toBeUndefined()
 
-		const missing = await fetch(`${BASE}/agent/ghost`)
+		const missing = await fetch(`${BASE}/agent/ghost/config`)
 		expect(missing.status).toBe(404)
 		const body = (await missing.json()) as { message: string }
 		expect(body.message).toContain('not found')
 	})
 
 	it('merges PATCHed configuration fields and persists them', async () => {
-		const res = await fetch(`${BASE}/agent/scribe`, {
+		const res = await fetch(`${BASE}/agent/scribe/config`, {
 			method: 'PATCH',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({
@@ -190,10 +193,14 @@ describe('mock API handlers', () => {
 			soul: { personality: string; identity: string }
 		}
 		expect(updated.operatingInstructions).toBe('Updated instructions')
+		// Shallow merge: a present soul replaces the whole object — the
+		// client always sends both sub-fields.
 		expect(updated.soul.identity).toBe('New identity')
-		expect(typeof updated.soul.personality).toBe('string')
+		expect(updated.soul.personality).toBeUndefined()
 
-		const reread = (await (await fetch(`${BASE}/agent/scribe`)).json()) as {
+		const reread = (await (
+			await fetch(`${BASE}/agent/scribe/config`)
+		).json()) as {
 			operatingInstructions: string
 		}
 		expect(reread.operatingInstructions).toBe('Updated instructions')
@@ -227,7 +234,9 @@ describe('mock API handlers', () => {
 		})
 
 		// The row persists; the config patch never carries it.
-		const reread = (await (await fetch(`${BASE}/agent/scribe`)).json()) as {
+		const reread = (await (
+			await fetch(`${BASE}/agent/scribe/config`)
+		).json()) as {
 			heartbeat: { content: string }
 		}
 		expect(reread.heartbeat.content).toBe('Rewritten check')
@@ -245,41 +254,78 @@ describe('mock API handlers', () => {
 		expect(missing.status).toBe(404)
 	})
 
-	it('replaces the cron list on its own endpoint', async () => {
-		const res = await fetch(`${BASE}/agent/_superagent/cron-jobs`, {
-			method: 'PATCH',
+	it('serves per-row cron endpoints on their own lazy list', async () => {
+		// The list starts empty and is fetched on demand.
+		const empty = await fetch(`${BASE}/agent/_superagent/cron-jobs`)
+		expect(empty.status).toBe(200)
+		const emptyBody = (await empty.json()) as { cronJobs: unknown[] }
+		expect(emptyBody.cronJobs).toEqual([])
+
+		// Create: the server mints the id.
+		const created = await fetch(`${BASE}/agent/_superagent/cron-jobs`, {
+			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({
-				cronJobs: [
-					{
-						id: 'job-1',
-						time: '09:00',
-						frequency: 'custom',
-						cronExpression: '0 9 * * *',
-						model: 'auto',
-						prompt: 'Morning digest'
-					}
-				]
+				time: '09:00',
+				frequency: 'custom',
+				cronExpression: '0 9 * * *',
+				model: 'auto',
+				prompt: 'Morning digest'
 			})
 		})
-		expect(res.status).toBe(200)
-		const detail = (await res.json()) as {
-			cronJobs: { id: string; cronExpression?: string }[]
+		expect(created.status).toBe(201)
+		const stored = (await created.json()) as {
+			id: string
+			cronExpression?: string
 		}
-		expect(detail.cronJobs).toHaveLength(1)
-		expect(detail.cronJobs[0]?.cronExpression).toBe('0 9 * * *')
+		expect(stored.id).not.toBe('')
+		expect(stored.cronExpression).toBe('0 9 * * *')
 
-		const replaced = await fetch(`${BASE}/agent/_superagent/cron-jobs`, {
-			method: 'PATCH',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ cronJobs: [] })
-		})
-		expect(replaced.status).toBe(200)
-		const emptied = (await replaced.json()) as { cronJobs: unknown[] }
-		expect(emptied.cronJobs).toEqual([])
+		// Full-job edit by id: switching to daily drops the expression.
+		const patched = await fetch(
+			`${BASE}/agent/_superagent/cron-jobs/${stored.id}`,
+			{
+				method: 'PATCH',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					time: '10:30',
+					frequency: 'daily',
+					model: 'auto',
+					prompt: 'Morning digest'
+				})
+			}
+		)
+		expect(patched.status).toBe(200)
+		const updated = (await patched.json()) as {
+			time: string
+			cronExpression?: string
+		}
+		expect(updated.time).toBe('10:30')
+		expect(updated.cronExpression).toBeUndefined()
+
+		// Guards: unknown job and unknown agent 404.
+		const missingJob = await fetch(
+			`${BASE}/agent/_superagent/cron-jobs/ghost`,
+			{ method: 'PATCH', body: JSON.stringify({}) }
+		)
+		expect(missingJob.status).toBe(404)
+		const missingAgent = await fetch(`${BASE}/agent/ghost/cron-jobs`)
+		expect(missingAgent.status).toBe(404)
+
+		// Delete by id is a 204; a second delete 404s.
+		const removed = await fetch(
+			`${BASE}/agent/_superagent/cron-jobs/${stored.id}`,
+			{ method: 'DELETE' }
+		)
+		expect(removed.status).toBe(204)
+		const again = await fetch(
+			`${BASE}/agent/_superagent/cron-jobs/${stored.id}`,
+			{ method: 'DELETE' }
+		)
+		expect(again.status).toBe(404)
 	})
 	it("updates the agents list entry when PATCH changes the agent's name or icon", async () => {
-		const res = await fetch(`${BASE}/agent/scribe`, {
+		const res = await fetch(`${BASE}/agent/scribe/config`, {
 			method: 'PATCH',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({ name: 'Scribe Two', icon: 'bot' })
@@ -317,7 +363,7 @@ describe('mock API handlers', () => {
 		expect(entry?.name).toBe('Research Team')
 
 		const config = (await (
-			await fetch(`${BASE}/agent/research-team`)
+			await fetch(`${BASE}/agent/research-team/config`)
 		).json()) as { name: string }
 		expect(config.name).toBe('Research Team')
 	})

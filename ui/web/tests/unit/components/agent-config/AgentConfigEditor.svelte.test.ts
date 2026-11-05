@@ -2,8 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
 import { AgentConfigEditor } from '#components/agent-config'
+import { createCronJob, deleteCronJob, getCronJobs } from '#lib/services/agent'
+import { invalidateCronJobs } from '#lib/services/agent/cron-jobs.svelte'
 import type { AgentConfig, AgentIdentity, CronJob } from '#lib/types/agent'
 import type { Tool } from '#lib/types/tool'
+
+vi.mock('#lib/services/agent/config', () => ({
+	getCronJobs: vi.fn(),
+	createCronJob: vi.fn(),
+	updateCronJob: vi.fn(),
+	deleteCronJob: vi.fn()
+}))
 
 // Helper to create default superagent configuration
 function createDefaultSuperagentConfig(): AgentConfig &
@@ -16,7 +25,6 @@ function createDefaultSuperagentConfig(): AgentConfig &
 		operatingInstructions: 'Be helpful',
 		toolsContext: 'Tools info',
 		toolsEnabled: [],
-		cronJobs: [],
 		heartbeat: {
 			enabled: false,
 			duration: '1hr',
@@ -36,7 +44,6 @@ function createDefaultAgentConfig(): AgentConfig &
 		operatingInstructions: 'Complete tasks',
 		toolsContext: 'Test tools',
 		toolsEnabled: [],
-		cronJobs: [],
 		heartbeat: {
 			enabled: false,
 			duration: '1hr',
@@ -62,8 +69,8 @@ function createProps(
 	}> = {}
 ) {
 	return {
+		agentId: '_superagent',
 		configuration: createDefaultSuperagentConfig(),
-		availableTools: [] as Tool[],
 		onSave: vi.fn(),
 		onCancel: vi.fn(),
 		saveLabel: 'Save',
@@ -81,8 +88,8 @@ describe('AgentConfigEditor', () => {
 
 	afterEach(async () => {
 		cleanup()
+		invalidateCronJobs()
 	})
-
 	describe('Layout structure', () => {
 		it('renders two-panel layout with field list and content area', async () => {
 			render(AgentConfigEditor, createProps())
@@ -655,10 +662,9 @@ describe('AgentConfigEditor', () => {
 	})
 
 	describe('Layout stability with scrolling content', () => {
-		// Helper to create config with many cron jobs
-		function createConfigWithCronJobs(
-			count: number
-		): AgentConfig & Pick<AgentIdentity, 'name' | 'icon'> {
+		// The cron list comes from its endpoint now; seed the mock with
+		// many rows and render the plain superagent config.
+		function mockManyCronJobs(count: number) {
 			const jobs: CronJob[] = []
 			for (let i = 0; i < count; i++) {
 				jobs.push({
@@ -670,10 +676,7 @@ describe('AgentConfigEditor', () => {
 					prompt: `Scheduled prompt number ${i} - This is a longer prompt to test how the layout handles content that might wrap to multiple lines and take up more vertical space.`
 				})
 			}
-			return {
-				...createDefaultSuperagentConfig(),
-				cronJobs: jobs
-			}
+			vi.mocked(getCronJobs).mockResolvedValue(jobs)
 		}
 
 		beforeEach(() => {
@@ -681,8 +684,8 @@ describe('AgentConfigEditor', () => {
 		})
 
 		it('renders 20 cron jobs without crashing', async () => {
-			const config = createConfigWithCronJobs(20)
-			render(AgentConfigEditor, createProps({ configuration: config }))
+			mockManyCronJobs(20)
+			render(AgentConfigEditor, createProps())
 
 			await page.getByRole('button', { name: /cron jobs/i }).click()
 
@@ -693,11 +696,8 @@ describe('AgentConfigEditor', () => {
 		})
 
 		it('scrolls only the content area, not the field list', async () => {
-			const config = createConfigWithCronJobs(20)
-			const { container } = render(
-				AgentConfigEditor,
-				createProps({ configuration: config })
-			)
+			mockManyCronJobs(20)
+			const { container } = render(AgentConfigEditor, createProps())
 
 			await page.getByRole('button', { name: /cron jobs/i }).click()
 
@@ -711,11 +711,8 @@ describe('AgentConfigEditor', () => {
 		})
 
 		it('buttons remain fixed at bottom when content scrolls', async () => {
-			const config = createConfigWithCronJobs(20)
-			const { container } = render(
-				AgentConfigEditor,
-				createProps({ configuration: config })
-			)
+			mockManyCronJobs(20)
+			const { container } = render(AgentConfigEditor, createProps())
 
 			await page.getByRole('button', { name: /cron jobs/i }).click()
 
@@ -732,8 +729,8 @@ describe('AgentConfigEditor', () => {
 		})
 
 		it('field list does not scroll when content area scrolls', async () => {
-			const config = createConfigWithCronJobs(20)
-			render(AgentConfigEditor, createProps({ configuration: config }))
+			mockManyCronJobs(20)
+			render(AgentConfigEditor, createProps())
 
 			await page.getByRole('button', { name: /cron jobs/i }).click()
 
@@ -747,11 +744,8 @@ describe('AgentConfigEditor', () => {
 		})
 
 		it('maintains layout when switching between fields with different content heights', async () => {
-			const config = createConfigWithCronJobs(20)
-			const { container } = render(
-				AgentConfigEditor,
-				createProps({ configuration: config })
-			)
+			mockManyCronJobs(20)
+			const { container } = render(AgentConfigEditor, createProps())
 
 			// Start with Name (small content)
 			await expect.element(page.getByLabelText(/name/i)).toBeVisible()
@@ -781,11 +775,8 @@ describe('AgentConfigEditor', () => {
 		})
 
 		it('bottom buttons div height stays constant when switching fields', async () => {
-			const config = createConfigWithCronJobs(20)
-			const { container } = render(
-				AgentConfigEditor,
-				createProps({ configuration: config })
-			)
+			mockManyCronJobs(20)
+			const { container } = render(AgentConfigEditor, createProps())
 
 			// Get the bottom div (the one with border-t AND items-end, not the top section)
 			const bottomDiv = container.querySelector('.border-t.items-end')
@@ -816,8 +807,8 @@ describe('AgentConfigEditor', () => {
 		})
 
 		it('bottom buttons stay visible when content overflows', async () => {
-			const config = createConfigWithCronJobs(20)
-			render(AgentConfigEditor, createProps({ configuration: config }))
+			mockManyCronJobs(20)
+			render(AgentConfigEditor, createProps())
 
 			// Switch to cron jobs which has lots of content
 			await page.getByRole('button', { name: /cron jobs/i }).click()
@@ -890,19 +881,16 @@ describe('AgentConfigEditor', () => {
 		})
 
 		it('shows existing cron jobs', async () => {
-			const config: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'> = {
-				...createDefaultSuperagentConfig(),
-				cronJobs: [
-					{
-						id: 'test-job',
-						time: '09:00',
-						frequency: 'daily',
-						model: 'default',
-						prompt: 'Test prompt'
-					}
-				]
-			}
-			render(AgentConfigEditor, createProps({ configuration: config }))
+			vi.mocked(getCronJobs).mockResolvedValue([
+				{
+					id: 'test-job',
+					time: '09:00',
+					frequency: 'daily',
+					model: 'default',
+					prompt: 'Test prompt'
+				}
+			])
+			render(AgentConfigEditor, createProps())
 
 			await page.getByRole('button', { name: /cron jobs/i }).click()
 
@@ -911,27 +899,26 @@ describe('AgentConfigEditor', () => {
 		})
 
 		it('deletes a cron job when delete button clicked', async () => {
-			const config: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'> = {
-				...createDefaultSuperagentConfig(),
-				cronJobs: [
-					{
-						id: 'test-job',
-						time: '09:00',
-						frequency: 'daily',
-						model: 'default',
-						prompt: 'Test prompt'
-					}
-				]
-			}
-			render(AgentConfigEditor, createProps({ configuration: config }))
+			vi.mocked(getCronJobs).mockResolvedValue([
+				{
+					id: 'test-job',
+					time: '09:00',
+					frequency: 'daily',
+					model: 'default',
+					prompt: 'Test prompt'
+				}
+			])
+			vi.mocked(deleteCronJob).mockResolvedValue(undefined)
+			render(AgentConfigEditor, createProps())
 
 			await page.getByRole('button', { name: /cron jobs/i }).click()
-
-			// Click delete button
 			await page.getByRole('button', { name: /delete/i }).click()
 
 			// Job should be removed from display
-			expect(page.getByText('Test prompt').query()).toBeNull()
+			await expect
+				.element(page.getByText(/no scheduled prompts/i))
+				.toBeVisible()
+			expect(deleteCronJob).toHaveBeenCalledWith('_superagent', 'test-job')
 		})
 	})
 
@@ -1062,11 +1049,42 @@ describe('AgentConfigEditor', () => {
 			const nameInput = page.getByLabelText(/name/i)
 			await nameInput.fill('New Name')
 
-			// Wait for reactivity to sync
-			await new Promise((resolve) => setTimeout(resolve, 50))
-
-			// Should now have changes
+			// The dirty asterisk on the Name nav entry is the signal
+			await expect
+				.element(page.getByRole('button', { name: /^name\s*\*$/i }))
+				.toBeVisible()
 			expect(hasChanges).toBe(true)
+		})
+
+		it('stays false for cron job edits - cron is not part of the sheet save', async () => {
+			let hasChanges = false
+			const props = {
+				...createProps(),
+				get hasChanges() {
+					return hasChanges
+				},
+				set hasChanges(value: boolean) {
+					hasChanges = value
+				}
+			}
+
+			vi.mocked(getCronJobs).mockResolvedValue([])
+			vi.mocked(createCronJob).mockImplementation(async (_id, job) => job)
+			render(AgentConfigEditor, props)
+
+			await page.getByRole('button', { name: /cron jobs/i }).click()
+			await page.getByRole('button', { name: /add scheduled prompt/i }).click()
+			await page.getByLabelText(/prompt/i).fill('Weekly cache cleanup')
+			await page
+				.getByRole('button', { name: /^save$/i })
+				.first()
+				.click()
+
+			// The staged row is the completion signal; the sheet stays clean
+			await expect
+				.element(page.getByText('Weekly cache cleanup').first())
+				.toBeVisible()
+			expect(hasChanges).toBe(false)
 		})
 	})
 

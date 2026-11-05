@@ -24,5 +24,12 @@ func New(sqlDB *sql.DB, logger zerolog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/agents", api.Log(logger, agents.GetAgents(queries)))
 	mux.Handle("POST /api/agent", api.Log(logger, agent.CreateAgent(queries)))
+	mux.Handle("GET /api/agent/{id}/config", api.Log(logger, agent.GetAgentConfig(queries)))
+	mux.Handle("PATCH /api/agent/{id}/config", api.Log(logger, agent.UpdateAgentConfig(queries)))
+	mux.Handle("PATCH /api/agent/{id}/heartbeat", api.Log(logger, agent.UpdateHeartbeat(queries)))
+	mux.Handle("GET /api/agent/{id}/cron-jobs", api.Log(logger, agent.GetCronJobs(queries)))
+	mux.Handle("POST /api/agent/{id}/cron-jobs", api.Log(logger, agent.CreateCronJob(queries)))
+	mux.Handle("PATCH /api/agent/{id}/cron-jobs/{jobId}", api.Log(logger, agent.UpdateCronJob(queries)))
+	mux.Handle("DELETE /api/agent/{id}/cron-jobs/{jobId}", api.Log(logger, agent.DeleteCronJob(queries)))
 	return mux
 }

@@ -22,8 +22,9 @@
 	import ToolsEditor from './ToolsEditor.svelte'
 
 	interface Props {
+		/** The agent whose config is edited; undefined on the new-agent page */
+		agentId?: string
 		configuration: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>
-		/** All available tools */
 		availableTools?: Tool[]
 		/** Called when save is clicked with the configuration */
 		onSave: (
@@ -44,6 +45,7 @@
 	}
 
 	let {
+		agentId,
 		configuration,
 		availableTools = [],
 		onSave,
@@ -61,8 +63,17 @@
 	const fields = $derived(getAgentFields(isSuperagent))
 
 	// Nav shows one entry per panel; icon is tracked as a field but its picker
-	// lives in the Name panel, so it gets no sidebar entry of its own.
-	const navFields = $derived(fields.filter((field) => field !== 'icon'))
+	// lives in the Name panel, so it gets no sidebar entry of its own. The
+	// new-agent page (no agent yet) shows the cron entry too - as a
+	// placeholder panel.
+	const showCronJobs = $derived(isSuperagent || agentId === undefined)
+	const navFields = $derived([
+		...fields.filter((field) => field !== 'icon'),
+		...((fields as readonly ConfigFieldName[]).includes('cronJobs') ||
+		!showCronJobs
+			? []
+			: (['cronJobs'] as ConfigFieldName[]))
+	])
 
 	// Local working copy of configuration.
 	let localConfiguration = $state<
@@ -199,8 +210,8 @@
 					<SoulEditor bind:soul={localConfiguration.soul} />
 				{:else if selectedField === 'heartbeat'}
 					<HeartbeatEditor bind:heartbeat={localConfiguration.heartbeat} />
-				{:else if selectedField === 'cronJobs' && isSuperagent}
-					<CronJobEditor bind:jobs={localConfiguration.cronJobs} />
+				{:else if selectedField === 'cronJobs' && showCronJobs}
+					<CronJobEditor {agentId} />
 				{:else if selectedField === 'userContext' && isSuperagent}
 					<ConfigTextField
 						value={localConfiguration.userContext ?? ''}

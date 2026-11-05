@@ -15,6 +15,9 @@ CREATE TABLE IF NOT EXISTS agents (
     user_context           TEXT NULL,
     operating_instructions TEXT NOT NULL,
     tools_context          TEXT NOT NULL,
+    -- Per-agent enabled-tool list: JSON text of a string array,
+    -- empty by default and never NULL.
+    tools_enabled          TEXT NOT NULL DEFAULT '[]',
     created_at             BIGINT NOT NULL
         DEFAULT (CAST((julianday('now') - 2440587.5) * 86400000000 AS INTEGER))
 );
