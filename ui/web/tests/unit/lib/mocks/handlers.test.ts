@@ -463,4 +463,204 @@ describe('mock API handlers', () => {
 			expect(res.headers.get('set-cookie')).toContain('ava_session=;')
 		})
 	})
+
+	describe('provider catalog endpoints', () => {
+		it('answers the whole catalog with provider-prefixed model ids and no api keys', async () => {
+			const body = (await (await fetch(`${BASE}/providers`)).json()) as {
+				defaultModel: string
+				providers: Array<{
+					id: string
+					name: string
+					hasKey: boolean
+					apiKey?: string
+					models: string[]
+				}>
+			}
+			expect(body.defaultModel).toBe('auto')
+			expect(body.providers.map((p) => p.name)).toEqual([
+				'Anthropic',
+				'Gemini',
+				'Grok',
+				'OpenAI'
+			])
+			expect(body.providers.find((p) => p.name === 'OpenAI')?.models).toEqual([
+				'openai/gpt-3.5-turbo',
+				'openai/gpt-4'
+			])
+			// The key never leaves the store.
+			for (const provider of body.providers) {
+				expect(provider).not.toHaveProperty('apiKey')
+				expect(provider.hasKey).toBe(false)
+			}
+		})
+
+		it('creates providers via POST with an opaque id and validates input', async () => {
+			const created = await fetch(`${BASE}/providers`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					name: 'Mistral',
+					baseUrl: 'https://api.mistral.ai/v1',
+					apiKey: 'sk-m'
+				})
+			})
+			expect(created.status).toBe(201)
+			const { id } = (await created.json()) as { id: string }
+			// The id is server-generated and opaque — nothing derives
+			// from the display name.
+			expect(id).not.toBe('mistral')
+			expect(id.length).toBeGreaterThan(0)
+
+			const noName = await fetch(`${BASE}/providers`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ name: '  ', baseUrl: 'https://x.dev' })
+			})
+			expect(noName.status).toBe(400)
+
+			const badUrl = await fetch(`${BASE}/providers`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ name: 'No URL' })
+			})
+			expect(badUrl.status).toBe(400)
+
+			// The created row masks its key in GET responses.
+			const listed = (await (await fetch(`${BASE}/providers`)).json()) as {
+				providers: Array<{ id: string; hasKey: boolean }>
+			}
+			expect(listed.providers.find((p) => p.id === id)?.hasKey).toBe(true)
+		})
+
+		it('replaces the model list on PATCH and keeps a blank apiKey', async () => {
+			const created = await fetch(`${BASE}/providers`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					name: 'Mistral',
+					baseUrl: 'https://api.mistral.ai/v1',
+					apiKey: 'sk-m'
+				})
+			})
+			const { id } = (await created.json()) as { id: string }
+
+			const res = await fetch(`${BASE}/providers/${id}`, {
+				method: 'PATCH',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					models: ['mistral/mistral-large', 'mistral/mistral-small']
+				})
+			})
+			expect(res.status).toBe(200)
+			const provider = (await res.json()) as {
+				models: string[]
+				hasKey: boolean
+			}
+			expect(provider.models).toEqual([
+				'mistral/mistral-large',
+				'mistral/mistral-small'
+			])
+			// No apiKey in the patch: the stored key survives.
+			expect(provider.hasKey).toBe(true)
+
+			const empty = await fetch(`${BASE}/providers/${id}`, {
+				method: 'PATCH',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ models: ['mistral/mistral-large', ''] })
+			})
+			expect(empty.status).toBe(400)
+
+			const duplicate = await fetch(`${BASE}/providers/${id}`, {
+				method: 'PATCH',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					models: ['mistral/mistral-large', 'mistral/mistral-large']
+				})
+			})
+			expect(duplicate.status).toBe(400)
+
+			const missing = await fetch(`${BASE}/providers/ghost`, {
+				method: 'PATCH',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ name: 'Ghost' })
+			})
+			expect(missing.status).toBe(404)
+		})
+
+		it('refuses to claim a model id another provider owns', async () => {
+			const res = await fetch(`${BASE}/providers/grok`, {
+				method: 'PATCH',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ models: ['grok/grok-1', 'openai/gpt-4'] })
+			})
+			expect(res.status).toBe(409)
+			expect(await res.json()).toEqual({
+				message: 'Model "openai/gpt-4" already belongs to another provider'
+			})
+
+			// grok's models are untouched by the rejected replace.
+			const listed = (await (await fetch(`${BASE}/providers`)).json()) as {
+				providers: Array<{ id: string; models: string[] }>
+			}
+			expect(listed.providers.find((p) => p.id === 'grok')?.models).toEqual([
+				'grok/grok-1'
+			])
+		})
+
+		it('releases cron references when the model is dropped, then deletes the provider', async () => {
+			const created = await fetch(`${BASE}/providers`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					name: 'Pin Target',
+					baseUrl: 'https://api.mistral.ai/v1'
+				})
+			})
+			const { id } = (await created.json()) as { id: string }
+			await fetch(`${BASE}/providers/${id}`, {
+				method: 'PATCH',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ models: ['pinned/mistral-large'] })
+			})
+
+			// A cron job on the superagent pins pinned/mistral-large.
+			const pinned = (await (
+				await fetch(`${BASE}/agent/_superagent/cron-jobs`, {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						time: '09:00',
+						frequency: 'daily',
+						model: 'pinned/mistral-large',
+						prompt: 'digest'
+					})
+				})
+			).json()) as { id: string }
+
+			// Dropping the model no longer rejects: the job falls back
+			// to default routing.
+			const clear = await fetch(`${BASE}/providers/${id}`, {
+				method: 'PATCH',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ models: [] })
+			})
+			expect(clear.status).toBe(200)
+			const list = (await (
+				await fetch(`${BASE}/agent/_superagent/cron-jobs`)
+			).json()) as { cronJobs: Array<{ id: string; model: string }> }
+			expect(list.cronJobs.find((job) => job.id === pinned.id)?.model).toBe(
+				'auto'
+			)
+
+			const deleted = await fetch(`${BASE}/providers/${id}`, {
+				method: 'DELETE'
+			})
+			expect(deleted.status).toBe(200)
+			expect(await deleted.json()).toEqual({ message: 'Provider deleted' })
+			const gone = await fetch(`${BASE}/providers/${id}`, {
+				method: 'DELETE'
+			})
+			expect(gone.status).toBe(404)
+		})
+	})
 })

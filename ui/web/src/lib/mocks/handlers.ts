@@ -22,7 +22,7 @@ import {
 	SUPERAGENT_AGENT
 } from '../types/agent.ts'
 import { deriveAgentId, isValidAgentName } from './agent-id.ts'
-import type { MockStore } from './data.ts'
+import type { MockStore, ProviderRow } from './data.ts'
 
 interface CursorItem {
 	id: string
@@ -77,6 +77,36 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			heartbeat: store.heartbeats.get(id) ?? createDefaultHeartbeatConfig()
 		}
 	}
+
+	// The provider catalog answers like the backend: the stored apiKey
+	// never leaves in a response (hasKey is the field), and model ids
+	// are qualified with their provider's prefix.
+	const providerView = (row: ProviderRow) => ({
+		id: row.id,
+		name: row.name,
+		baseUrl: row.baseUrl,
+		hasKey: row.apiKey !== '',
+		models: row.models
+	})
+
+	// Release dropped models' references to default routing, mirroring
+	// the schema's ON DELETE SET NULL ('auto' is the wire sentinel).
+	const releaseModels = (dropped: Iterable<string>) => {
+		const gone = dropped instanceof Set ? dropped : new Set(dropped)
+		for (const heartbeat of store.heartbeats.values()) {
+			if (heartbeat.model && gone.has(heartbeat.model)) {
+				heartbeat.model = 'auto'
+			}
+		}
+		for (const jobs of store.cronJobs.values()) {
+			for (const job of jobs) {
+				if (job.model && gone.has(job.model)) {
+					job.model = 'auto'
+				}
+			}
+		}
+	}
+
 	return [
 		// The list mirrors the backend query: it never includes the system
 		// superagent. Per-id endpoints (config, thread) resolve it separately.
@@ -358,6 +388,133 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			}
 			store.agents.push(agent)
 			return HttpResponse.json({ id }, { status: 201 })
+		}),
+
+		// The provider catalog: GET answers the whole thing. Writes:
+		// opaque uuid ids (nothing derives from the name), model ids
+		// as the user typed them (provider-prefixed by convention),
+		// and in-use models refuse removal with 409.
+		http.get('*/api/providers', () =>
+			HttpResponse.json({
+				defaultModel: 'auto',
+				providers: store.providers.map(providerView)
+			})
+		),
+
+		http.post('*/api/providers', async ({ request }) => {
+			const body = (await request.json()) as {
+				name?: string
+				baseUrl?: string
+				apiKey?: string
+			}
+			const name = (body.name ?? '').trim()
+			if (name === '') {
+				return HttpResponse.json(
+					{ message: 'Provider name is required' },
+					{ status: 400 }
+				)
+			}
+			const baseUrl = body.baseUrl ?? ''
+			if (!/^https?:\/\/\S+/.test(baseUrl)) {
+				return HttpResponse.json(
+					{ message: 'Invalid baseUrl: must be an http(s) URL' },
+					{ status: 400 }
+				)
+			}
+			const row = {
+				id: crypto.randomUUID(),
+				name,
+				baseUrl,
+				apiKey: body.apiKey ?? '',
+				models: [] as string[]
+			}
+			store.providers.push(row)
+			return HttpResponse.json({ id: row.id }, { status: 201 })
+		}),
+
+		http.patch('*/api/providers/:id', async ({ request, params }) => {
+			const id = String(params.id)
+			const row = store.providers.find((provider) => provider.id === id)
+			if (!row) {
+				return HttpResponse.json(
+					{ message: `Provider "${id}" not found` },
+					{ status: 404 }
+				)
+			}
+			const body = (await request.json()) as {
+				name?: string
+				baseUrl?: string
+				apiKey?: string
+				models?: string[]
+			}
+			if (body.name !== undefined && body.name.trim() === '') {
+				return HttpResponse.json(
+					{ message: 'Provider name is required' },
+					{ status: 400 }
+				)
+			}
+			if (body.baseUrl !== undefined && !/^https?:\/\/\S+/.test(body.baseUrl)) {
+				return HttpResponse.json(
+					{ message: 'Invalid baseUrl: must be an http(s) URL' },
+					{ status: 400 }
+				)
+			}
+			if (body.models !== undefined) {
+				const kept = new Set<string>()
+				for (const model of body.models) {
+					if (model.trim() === '') {
+						return HttpResponse.json(
+							{ message: 'Model id cannot be empty' },
+							{ status: 400 }
+						)
+					}
+					if (kept.has(model)) {
+						return HttpResponse.json(
+							{ message: `Duplicate model id "${model}"` },
+							{ status: 400 }
+						)
+					}
+					kept.add(model)
+				}
+				// Dropped models don't block the replace - their rows fall
+				// back to default routing.
+				releaseModels(row.models.filter((m) => !kept.has(m)))
+				// An id owned by another provider cannot be claimed.
+				for (const model of body.models) {
+					const owner = store.providers.find(
+						(p) => p.id !== id && p.models.includes(model)
+					)
+					if (owner) {
+						return HttpResponse.json(
+							{
+								message: `Model "${model}" already belongs to another provider`
+							},
+							{ status: 409 }
+						)
+					}
+				}
+				row.models = body.models
+			}
+			if (body.name !== undefined) row.name = body.name
+			if (body.baseUrl !== undefined) row.baseUrl = body.baseUrl
+			if (body.apiKey !== undefined) row.apiKey = body.apiKey
+			return HttpResponse.json(providerView(row))
+		}),
+
+		http.delete('*/api/providers/:id', ({ params }) => {
+			const id = String(params.id)
+			const index = store.providers.findIndex((provider) => provider.id === id)
+			if (index === -1) {
+				return HttpResponse.json(
+					{ message: `Provider "${id}" not found` },
+					{ status: 404 }
+				)
+			}
+			// Referenced models don't block the delete - their rows fall
+			// back to default routing.
+			releaseModels(store.providers[index].models)
+			store.providers.splice(index, 1)
+			return HttpResponse.json({ message: 'Provider deleted' })
 		})
 	]
 }

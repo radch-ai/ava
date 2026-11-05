@@ -7,6 +7,16 @@ import type {
 	CronJob,
 	HeartbeatConfig
 } from '../types/agent.ts'
+/** A provider row as the mock stores it — apiKey included but never
+ * sent in a response (hasKey is the response field). ids are opaque
+ * (uuid), never derived from the name. */
+export interface ProviderRow {
+	id: string
+	name: string
+	baseUrl: string
+	apiKey: string
+	models: string[]
+}
 
 /** Mutable in-memory state the mock handlers read from and write to. */
 export interface MockStore {
@@ -17,6 +27,8 @@ export interface MockStore {
 	heartbeats: Map<string, HeartbeatConfig>
 	/** Cron rows per agent id — superagent only today. */
 	cronJobs: Map<string, CronJob[]>
+	/** The provider catalog, id-ordered like the backend's query. */
+	providers: ProviderRow[]
 	thread: ThreadMessage[]
 	activity: Map<string, AgentActivityItem[]>
 	/** The one token POST /auth/exchange accepts. */
@@ -66,6 +78,41 @@ const HEARTBEATS: Record<string, HeartbeatConfig> = {
 const CRON_JOBS: Record<string, CronJob[]> = {
 	[SUPERAGENT_AGENT_ID]: []
 }
+
+/** The provider catalog seed: the groups the UI once hardcoded,
+ * model ids plain, providers keyless until the user pastes one.
+ * Seed ids are stable slugs (opaque to the UI); created rows get
+ * uuids. */
+const PROVIDER_SEEDS: ProviderRow[] = [
+	{
+		id: 'anthropic',
+		name: 'Anthropic',
+		baseUrl: 'https://api.anthropic.com/v1',
+		apiKey: '',
+		models: ['anthropic/claude-3-sonnet']
+	},
+	{
+		id: 'gemini',
+		name: 'Gemini',
+		baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+		apiKey: '',
+		models: ['gemini/gemini-pro', 'gemini/gemini-ultra']
+	},
+	{
+		id: 'grok',
+		name: 'Grok',
+		baseUrl: 'https://api.x.ai/v1',
+		apiKey: '',
+		models: ['grok/grok-1']
+	},
+	{
+		id: 'openai',
+		name: 'OpenAI',
+		baseUrl: 'https://api.openai.com/v1',
+		apiKey: '',
+		models: ['openai/gpt-3.5-turbo', 'openai/gpt-4']
+	}
+]
 
 const CONFIGURATIONS: Array<
 	[string, Omit<AgentConfig, 'heartbeat' | 'cronJobs'>]
@@ -230,6 +277,7 @@ export function createSeedData(): MockStore {
 		configurations: new Map(CONFIGURATIONS),
 		heartbeats: new Map(Object.entries(HEARTBEATS)),
 		cronJobs: new Map(Object.entries(CRON_JOBS)),
+		providers: structuredClone(PROVIDER_SEEDS),
 		thread,
 		activity: seedActivity(),
 		token: 'ava-mock-token'

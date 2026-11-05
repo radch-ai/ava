@@ -1,42 +1,18 @@
-// src/lib/models.ts
-
-export interface Model {
-	id: string
-	name: string
-}
+/**
+ * Model catalog — the selector-facing module.
+ *
+ * `defaultModel` is the reserved default-routing id ('auto', the
+ * seeded catalog row); it exists before any fetch and is what
+ * selectors fall back to. The catalog itself is user-saved via the
+ * API: `modelsStore` loads it from /api/providers and the providers
+ * page edits it. Group entries are plain model ids.
+ */
 
 export interface ModelGroup {
 	provider: string
-	models: Model[]
+	models: string[]
 }
 
-const modelsConfig = {
-	defaultModel: 'auto',
-	providers: [
-		{
-			provider: 'OpenAI',
-			models: [
-				{ id: 'gpt-4', name: 'GPT-4' },
-				{ id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' }
-			]
-		},
-		{
-			provider: 'Anthropic',
-			models: [{ id: 'claude-3-sonnet', name: 'Claude 3 Sonnet' }]
-		},
-		{
-			provider: 'Gemini',
-			models: [
-				{ id: 'gemini-pro', name: 'Gemini Pro' },
-				{ id: 'gemini-ultra', name: 'Gemini Ultra' }
-			]
-		},
-		{
-			provider: 'Grok',
-			models: [{ id: 'grok-1', name: 'Grok-1' }]
-		}
-	]
-}
+export const defaultModel = 'auto'
 
-export const defaultModel = modelsConfig.defaultModel
-export const modelGroups: ModelGroup[] = modelsConfig.providers
+export { modelsStore } from './models.svelte'

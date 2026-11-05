@@ -8,14 +8,11 @@ describe('ModelSelector', () => {
 	const testModelGroups: ModelGroup[] = [
 		{
 			provider: 'OpenAI',
-			models: [
-				{ id: 'gpt-4', name: 'GPT-4' },
-				{ id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' }
-			]
+			models: ['gpt-4', 'gpt-3.5-turbo']
 		},
 		{
 			provider: 'Anthropic',
-			models: [{ id: 'claude-3-sonnet', name: 'Claude 3 Sonnet' }]
+			models: ['claude-3-sonnet']
 		}
 	]
 
@@ -45,7 +42,7 @@ describe('ModelSelector', () => {
 			})
 
 			const button = page.getByRole('combobox')
-			await expect.element(button).toHaveTextContent('GPT-4')
+			await expect.element(button).toHaveTextContent('gpt-4')
 		})
 
 		it('shows "Select model" for unknown model id', async () => {
@@ -86,9 +83,9 @@ describe('ModelSelector', () => {
 			const button = page.getByRole('combobox')
 			await button.click()
 
-			await expect.element(page.getByText('GPT-4')).toBeVisible()
-			await expect.element(page.getByText('GPT-3.5 Turbo')).toBeVisible()
-			await expect.element(page.getByText('Claude 3 Sonnet')).toBeVisible()
+			await expect.element(page.getByText('gpt-4')).toBeVisible()
+			await expect.element(page.getByText('gpt-3.5-turbo')).toBeVisible()
+			await expect.element(page.getByText('claude-3-sonnet')).toBeVisible()
 		})
 
 		it('shows provider group headings', async () => {
@@ -125,7 +122,7 @@ describe('ModelSelector', () => {
 			await button.click()
 
 			await expect
-				.element(page.getByRole('option', { name: 'GPT-4' }))
+				.element(page.getByRole('option', { name: 'gpt-4' }))
 				.toBeVisible()
 
 			const options = await page.getByRole('option').all()
@@ -141,10 +138,10 @@ describe('ModelSelector', () => {
 			const button = page.getByRole('combobox')
 			await button.click()
 
-			const gpt4Option = page.getByText('GPT-4')
+			const gpt4Option = page.getByText('gpt-4')
 			await gpt4Option.click()
 
-			await expect.element(button).toHaveTextContent('GPT-4')
+			await expect.element(button).toHaveTextContent('gpt-4')
 		})
 
 		it('closes dropdown after selection', async () => {
@@ -154,10 +151,10 @@ describe('ModelSelector', () => {
 			await button.click()
 
 			await expect
-				.element(page.getByRole('option', { name: 'GPT-3.5 Turbo' }))
+				.element(page.getByRole('option', { name: 'gpt-3.5-turbo' }))
 				.toBeVisible()
 
-			const option = page.getByRole('option', { name: 'GPT-3.5 Turbo' })
+			const option = page.getByRole('option', { name: 'gpt-3.5-turbo' })
 			await option.click()
 
 			const buttonElement = button.element() as HTMLButtonElement
@@ -170,12 +167,12 @@ describe('ModelSelector', () => {
 			const button = page.getByRole('combobox')
 
 			await button.click()
-			await page.getByText('GPT-3.5 Turbo').click()
-			await expect.element(button).toHaveTextContent('GPT-3.5 Turbo')
+			await page.getByText('gpt-3.5-turbo').click()
+			await expect.element(button).toHaveTextContent('gpt-3.5-turbo')
 
 			await button.click()
-			await page.getByText('Claude 3 Sonnet').click()
-			await expect.element(button).toHaveTextContent('Claude 3 Sonnet')
+			await page.getByText('claude-3-sonnet').click()
+			await expect.element(button).toHaveTextContent('claude-3-sonnet')
 		})
 	})
 

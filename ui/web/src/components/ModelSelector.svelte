@@ -1,12 +1,12 @@
 <script lang="ts">
 	import * as Select from '#components/ui/select'
-	import { defaultModel, type ModelGroup, modelGroups } from '#lib/models'
+	import { defaultModel, type ModelGroup, modelsStore } from '#lib/models'
 	import { cn } from '#lib/utils'
 
 	let {
 		class: className,
 		value = $bindable(defaultModel),
-		modelGroups: providedGroups = modelGroups,
+		modelGroups: providedGroups,
 		showDefault = true
 	}: {
 		class?: string
@@ -15,25 +15,30 @@
 		showDefault?: boolean
 	} = $props()
 
-	// Flatten all models for finding the selected one
-	const allModels = $derived(providedGroups.flatMap((g) => g.models))
+	// Catalog from the store unless the caller supplies groups; the
+	// store loads once per session, shared by every selector.
+	const groups = $derived(providedGroups ?? modelsStore.groups)
+	$effect(() => {
+		void modelsStore.ensureLoaded()
+	})
 
-	// Find the longest model name for minimum width (include defaultModel in calculation)
+	// Flatten all models for finding the selected one
+	const allModels = $derived(groups.flatMap((g) => g.models))
+
+	// Find the longest model id for minimum width (include
+	// defaultModel in calculation)
 	const minWidth = $derived.by(() => {
-		const longestName = allModels.reduce(
-			(max, m) => Math.max(m.name.length, max),
-			0
-		)
+		const longestId = allModels.reduce((max, m) => Math.max(m.length, max), 0)
 		// Account for defaultModel display
 		const maxLen = showDefault
-			? Math.max(longestName, defaultModel.length)
-			: longestName
+			? Math.max(longestId, defaultModel.length)
+			: longestId
 		return `${maxLen + 2}ch`
 	})
 
 	let modelName = $derived.by(() => {
 		if (value === defaultModel) return defaultModel
-		return allModels.find((m) => m.id === value)?.name ?? 'Select model'
+		return allModels.includes(value) ? value : 'Select model'
 	})
 </script>
 
@@ -53,15 +58,20 @@
 				>{defaultModel}</Select.Item
 			>
 		{/if}
-		{#each providedGroups as group (group.provider)}
+		{#each groups as group (group.provider)}
 			<Select.Group>
 				<Select.GroupHeading>{group.provider}</Select.GroupHeading>
-				{#each group.models as model (model.id)}
-					<Select.Item value={model.id} label={model.name}>
-						{model.name}
+				{#each group.models as model (model)}
+					<Select.Item value={model} label={model}>
+						{model}
 					</Select.Item>
 				{/each}
 			</Select.Group>
 		{/each}
+		{#if modelsStore.error}
+			<div class="text-destructive px-2 py-1.5 text-xs">
+				{modelsStore.error}
+			</div>
+		{/if}
 	</Select.Content>
 </Select.Root>
