@@ -84,3 +84,50 @@ func TestSystemAgentsCannotBeDeleted(t *testing.T) {
 		t.Fatalf("delete research: %v", err)
 	}
 }
+
+func TestSystemAgentIdentityCannotBeChanged(t *testing.T) {
+	sqlDB := testdb.Open(t)
+	queries := db.New(sqlDB)
+
+	// The trigger aborts id/name/icon rewrites of "_"-prefixed rows —
+	// every code path, not just endpoints.
+	for _, stmt := range []string{
+		`UPDATE agents SET id = 'ava' WHERE id = '_superagent'`,
+		`UPDATE agents SET name = 'Not Ava' WHERE id = '_superagent'`,
+		`UPDATE agents SET icon = 'globe' WHERE id = '_superagent'`,
+		`UPDATE agents SET name = 'Not Ava', icon = 'globe' WHERE id = '_superagent'`,
+	} {
+		_, err := sqlDB.Exec(stmt)
+		if err == nil || !strings.Contains(err.Error(), "system agents cannot change id, name, or icon") {
+			t.Errorf("%s: err = %v, want trigger abort", stmt, err)
+		}
+	}
+
+	// A whole-row save that rewrites identity with the current values
+	// passes: only actual changes abort.
+	if _, err := sqlDB.Exec(
+		`UPDATE agents SET name = 'Ava', icon = 'message-square',
+		        soul_personality = 'edited' WHERE id = '_superagent'`); err != nil {
+		t.Fatalf("same-value rewrite + config edit: %v", err)
+	}
+	var name, personality string
+	if err := sqlDB.QueryRow(
+		`SELECT name, soul_personality FROM agents WHERE id = '_superagent'`,
+	).Scan(&name, &personality); err != nil {
+		t.Fatalf("read _superagent: %v", err)
+	}
+	if name != "Ava" || personality != "edited" {
+		t.Errorf("after config edit = %q/%q, want Ava/edited", name, personality)
+	}
+
+	// Non-system rows rename freely.
+	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
+		ID: "research", Name: "Research", Icon: "globe",
+	}); err != nil {
+		t.Fatalf("insert research: %v", err)
+	}
+	if _, err := sqlDB.Exec(
+		`UPDATE agents SET name = 'Research II', icon = 'search' WHERE id = 'research'`); err != nil {
+		t.Fatalf("rename research: %v", err)
+	}
+}
