@@ -29,6 +29,8 @@
 	let models = $state<string[]>([...(provider?.models ?? [])])
 	let error = $state<string | null>(null)
 	let saving = $state(false)
+	// Delete is armed on first click, fired on the second.
+	let confirmingDelete = $state(false)
 
 	function addModel(): void {
 		models.push('')
@@ -71,6 +73,8 @@
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to delete provider'
 			saving = false
+		} finally {
+			confirmingDelete = false
 		}
 	}
 </script>
@@ -161,14 +165,32 @@
 
 	<div class="flex items-center justify-end gap-2 border-t pt-3">
 		{#if provider}
-			<Button
-				variant="destructive"
-				type="button"
-				disabled={saving}
-				onclick={() => void remove()}
-			>
-				Delete
-			</Button>
+			{#if confirmingDelete}
+				<Button
+					variant="destructive"
+					type="button"
+					disabled={saving}
+					onclick={() => void remove()}
+				>
+					Delete provider?
+				</Button>
+				<Button
+					variant="outline"
+					type="button"
+					onclick={() => (confirmingDelete = false)}
+				>
+					Keep
+				</Button>
+			{:else}
+				<Button
+					variant="destructive"
+					type="button"
+					disabled={saving}
+					onclick={() => (confirmingDelete = true)}
+				>
+					Delete
+				</Button>
+			{/if}
 		{/if}
 		<Button variant="ghost" type="button" onclick={oncancel}>Cancel</Button>
 		<Button type="submit" disabled={saving}>

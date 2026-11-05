@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Pencil } from '@lucide/svelte'
+	import { KeyRound, Pencil } from '@lucide/svelte'
 	import { Button } from '#components/ui/button'
 	import { modelsStore } from '#lib/models'
 	import { invalidateAll } from '$app/navigation'
@@ -23,22 +23,17 @@
 </script>
 
 <div class="mx-auto max-w-[var(--content-max-width)] space-y-6 px-6 py-8">
-	<header class="flex items-start justify-between gap-4 border-b pb-4">
-		<p class="text-muted-foreground max-w-2xl text-sm">
-			You can add <strong>API keys</strong> for services like
-			<strong>OpenAI, Anthropic, Gemini</strong>
-			and other providers. Provide the <strong>base URL</strong> for the API and
-			<strong>specify the models</strong>
-			available for use. Agents pick from this catalog when choosing a model.
+	<header class="flex items-center justify-between gap-4 border-b pb-4">
+		<p class="text-muted-foreground text-sm">
+			Providers are the connections your agents pick models from.
 		</p>
 		{#if editing !== 'new'}
 			<Button
-				class="h-fit"
 				onclick={() => {
 					editing = 'new'
 				}}
 			>
-				Add New API / Models
+				Add provider
 			</Button>
 		{/if}
 	</header>
@@ -53,26 +48,45 @@
 		<ProviderForm {onsaved} oncancel={() => (editing = null)} />
 	{/if}
 
-	<section>
+	<section class="divide-y rounded-lg border">
 		{#each data.providers as provider (provider.id)}
 			{#if editing === provider.id}
 				<ProviderForm {provider} {onsaved} oncancel={() => (editing = null)} />
 			{:else}
-				<div class="flex items-start justify-between gap-4 border-b p-2">
-					<div class="flex-1">
-						<h3 class="font-semibold">{provider.name}</h3>
-						<p class="text-muted-foreground text-sm">
-							Base URL: {provider.baseUrl}
-							{provider.hasKey ? '' : '· no API key set'}
+				<div
+					class="hover:bg-muted/40 flex items-center justify-between gap-4 p-4 transition-colors"
+				>
+					<div class="min-w-0 flex-1 space-y-1.5">
+						<div class="flex items-center gap-2">
+							<h3 class="font-semibold">{provider.name}</h3>
+							<span
+								class="flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium
+									{provider.hasKey
+									? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+									: 'bg-muted text-muted-foreground'}"
+							>
+								{#if provider.hasKey}
+									<KeyRound class="size-3" />
+								{/if}
+								{provider.hasKey ? 'Key set' : 'No key'}
+							</span>
+						</div>
+						<p class="text-muted-foreground truncate text-sm">
+							{provider.baseUrl}
 						</p>
-						<h4 class="pt-1 text-sm font-semibold">Models:</h4>
-						<ul>
-							{#each provider.models as model (model)}
-								<li class="text-muted-foreground text-sm">{model}</li>
-							{:else}
-								<li class="text-muted-foreground text-sm">None yet</li>
-							{/each}
-						</ul>
+						{#if provider.models.length > 0}
+							<div class="flex flex-wrap gap-1.5 pt-0.5">
+								{#each provider.models as model (model)}
+									<span
+										class="bg-muted text-muted-foreground rounded-full px-2 py-0.5 font-mono text-xs"
+									>
+										{model}
+									</span>
+								{/each}
+							</div>
+						{:else}
+							<p class="text-muted-foreground text-xs">No models yet</p>
+						{/if}
 					</div>
 					<Button
 						size="sm"
@@ -87,7 +101,7 @@
 				</div>
 			{/if}
 		{:else}
-			<p class="text-muted-foreground py-4 text-sm">
+			<p class="text-muted-foreground p-4 text-sm">
 				No providers yet — add one above.
 			</p>
 		{/each}

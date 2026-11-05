@@ -69,14 +69,11 @@ describe('Providers & Models page', () => {
 			.element(page.getByRole('heading', { name: 'OpenAI' }))
 			.toBeVisible()
 		await expect
-			.element(page.getByText('Base URL: https://api.openai.com/v1'))
+			.element(page.getByText('https://api.openai.com/v1', { exact: true }))
 			.toBeVisible()
 		// The stored key never leaves the API; the row says whether one is set.
-		await expect
-			.element(
-				page.getByText('Base URL: https://api.mistral.ai/v1 · no API key set')
-			)
-			.toBeVisible()
+		await expect.element(page.getByText('Key set')).toBeVisible()
+		await expect.element(page.getByText('No key')).toBeVisible()
 		await expect
 			.element(page.getByText('openai/gpt-4o', { exact: true }))
 			.toBeVisible()
@@ -88,7 +85,7 @@ describe('Providers & Models page', () => {
 	it('opens the blank form on Add New API / Models and returns on Cancel', async () => {
 		renderPage([])
 
-		await page.getByRole('button', { name: 'Add New API / Models' }).click()
+		await page.getByRole('button', { name: 'Add provider' }).click()
 		// A new provider has no models until saved — the form says so.
 		await expect
 			.element(page.getByText('Save the provider first, then add its models.'))
@@ -125,6 +122,22 @@ describe('Providers & Models page', () => {
 				}
 			)
 		})
+	})
+
+	it('deletes only after the confirm click', async () => {
+		vi.mocked(providersService.deleteProvider).mockResolvedValue(undefined)
+		renderPage([openai])
+
+		await page.getByRole('button', { name: 'Edit' }).click()
+		await page.getByRole('button', { name: 'Delete' }).click()
+		// Armed: the row asks before wiping the provider and its models.
+		await expect
+			.element(page.getByRole('button', { name: 'Delete provider?' }))
+			.toBeVisible()
+		expect(providersService.deleteProvider).not.toHaveBeenCalled()
+
+		await page.getByRole('button', { name: 'Delete provider?' }).click()
+		expect(providersService.deleteProvider).toHaveBeenCalledWith('provider-1')
 	})
 
 	it('surfaces the service error when saving fails', async () => {
