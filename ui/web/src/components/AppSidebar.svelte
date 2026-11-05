@@ -158,32 +158,24 @@
 				</Sidebar.Menu>
 			</Sidebar.GroupContent>
 		</Sidebar.Group>
-		<Sidebar.Separator />
-		<Sidebar.Group>
-			<Sidebar.GroupLabel>Settings</Sidebar.GroupLabel>
-			<Sidebar.GroupContent>
-				<Sidebar.Menu>
-					<Sidebar.MenuItem>
-						<Sidebar.MenuButton
-							isActive={page.route.id === '/(app)/settings/providers'}
-						>
-							{#snippet child({ props })}
-								<a href={resolve('/(app)/settings/providers')} {...props}>
-									<Server class="size-4" />
-									<span class="font-medium group-data-[collapsible=icon]:hidden"
-										>Providers &amp; Models</span
-									>
-								</a>
-							{/snippet}
-						</Sidebar.MenuButton>
-					</Sidebar.MenuItem>
-				</Sidebar.Menu>
-			</Sidebar.GroupContent>
-		</Sidebar.Group>
 	</Sidebar.Content>
 	<Sidebar.Separator />
 	<Sidebar.Footer>
 		<Sidebar.Menu>
+			<Sidebar.MenuItem>
+				<Sidebar.MenuButton
+					isActive={page.route.id === '/(app)/settings/providers'}
+				>
+					{#snippet child({ props })}
+						<a href={resolve('/(app)/settings/providers')} {...props}>
+							<Server class="size-4" />
+							<span class="font-medium group-data-[collapsible=icon]:hidden"
+								>Providers &amp; Models</span
+							>
+						</a>
+					{/snippet}
+				</Sidebar.MenuButton>
+			</Sidebar.MenuItem>
 			<Sidebar.MenuItem>
 				<Sidebar.MenuButton
 					size="sm"
