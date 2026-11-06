@@ -8,7 +8,10 @@ export type {
 	CreateProviderRequest,
 	CreateProviderResponse,
 	DeleteProviderResponse,
+	GetModelsResponse,
 	GetProvidersResponse,
+	ModelGroup,
 	Provider,
+	ProviderModelsResponse,
 	UpdateProviderRequest
 } from '#lib/types/gen/apitypes.gen'

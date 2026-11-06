@@ -1,6 +1,8 @@
 package providers
 
-// DeleteProvider endpoint tests; DB rules live in internal/schema.
+// DeleteProvider endpoint tests: user rows go away, system-provider
+// attachments revert to keyless, stored model strings survive.
+
 import (
 	"net/http"
 	"strings"
@@ -9,21 +11,24 @@ import (
 	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
-func TestDeleteProvider(t *testing.T) {
-	sqlDB := seedCatalog(t)
-	rec := do(t, sqlDB, http.MethodDelete, "/api/providers/grok", "")
+// A row is gone after delete.
+func TestDeleteProviderUserRow(t *testing.T) {
+	sqlDB := testdb.Open(t)
+	created := do(t, sqlDB, http.MethodPost, "/api/providers",
+		`{"name":"Mistral","baseUrl":"`+noAuthURL(t)+`"}`)
+	id := createdID(t, created)
+
+	rec := do(t, sqlDB, http.MethodDelete, "/api/providers/"+id, "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	want := `{"message":"Provider deleted"}`
-	if got := body(rec); got != want {
-		t.Errorf("body = %s, want %s", got, want)
+	if got := body(rec); got != `{"message":"Provider deleted"}` {
+		t.Errorf("body = %s, want delete message", got)
 	}
 
-	// Gone from the catalog: no grok provider, no grok models.
 	rec = do(t, sqlDB, http.MethodGet, "/api/providers", "")
-	if contains(body(rec), `"grok"`) || contains(body(rec), `"grok/grok-1"`) {
-		t.Error("grok still listed after delete")
+	if strings.Contains(body(rec), `"Mistral"`) {
+		t.Error("deleted provider still listed")
 	}
 }
 
@@ -39,9 +44,10 @@ func TestDeleteProviderNotFound(t *testing.T) {
 	}
 }
 
-// A referenced model does not block the delete.
-func TestDeleteProviderWithReferencedModel(t *testing.T) {
-	sqlDB := seedCatalog(t)
+// A stored model string survives its provider's delete — staleness
+// is caught at call time, not by a SET NULL sweep.
+func TestDeleteProviderLeavesStoredModelStrings(t *testing.T) {
+	sqlDB := testdb.Open(t)
 	if _, err := sqlDB.Exec(
 		`INSERT INTO agents (id, name, icon, soul_personality, soul_identity, operating_instructions, tools_context)
 		 VALUES ('d1', 'Del', 'globe', '', '', '', '')`); err != nil {
@@ -49,13 +55,19 @@ func TestDeleteProviderWithReferencedModel(t *testing.T) {
 	}
 	if _, err := sqlDB.Exec(
 		`INSERT INTO cron_jobs (id, agent_id, time, frequency, model, prompt)
-		 VALUES ('j1', 'd1', '09:00', 'daily', 'gemini/gemini-pro', 'digest')`); err != nil {
+		 VALUES ('j1', 'd1', '09:00', 'daily', 'mistral/m1', 'digest')`,
+	); err != nil {
 		t.Fatalf("insert cron job: %v", err)
 	}
+	created := do(t, sqlDB, http.MethodPost, "/api/providers",
+		`{"name":"Mistral","baseUrl":"`+noAuthURL(t)+`"}`)
+	id := createdID(t, created)
+	if rec := do(t, sqlDB, http.MethodPatch, "/api/providers/"+id, `{"models":["mistral/m1"]}`); rec.Code != http.StatusOK {
+		t.Fatalf("seed models: %d", rec.Code)
+	}
 
-	rec := do(t, sqlDB, http.MethodDelete, "/api/providers/gemini", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
+	if rec := do(t, sqlDB, http.MethodDelete, "/api/providers/"+id, ""); rec.Code != http.StatusOK {
+		t.Fatalf("delete: %d", rec.Code)
 	}
 	var model any
 	if err := sqlDB.QueryRow(
@@ -63,12 +75,7 @@ func TestDeleteProviderWithReferencedModel(t *testing.T) {
 	).Scan(&model); err != nil {
 		t.Fatalf("read cron job: %v", err)
 	}
-	if model != nil {
-		t.Errorf("cron job model after provider delete = %v, want NULL (default routing)", model)
+	if model != "mistral/m1" {
+		t.Errorf("cron job model after provider delete = %v, want mistral/m1 (stored verbatim)", model)
 	}
-}
-
-// contains: substring probe for the gone-from-list assertion.
-func contains(s, sub string) bool {
-	return strings.Contains(s, sub)
 }

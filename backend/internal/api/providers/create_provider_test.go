@@ -1,6 +1,7 @@
 package providers
 
-// CreateProvider endpoint tests: uuid ids and validation answers.
+// CreateProvider endpoint tests: uuid ids, validation answers, and
+// the save-time connection check.
 
 import (
 	"encoding/json"
@@ -11,27 +12,86 @@ import (
 	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
-func TestCreateProvider(t *testing.T) {
+// A keyless create still probes: a no-auth endpoint (local
+// OpenAI-compatible server) saves; a dead URL saves nothing.
+func TestCreateProviderKeylessProbes(t *testing.T) {
 	sqlDB := testdb.Open(t)
 	rec := do(t, sqlDB, http.MethodPost, "/api/providers",
-		`{"name":"Mistral","baseUrl":"https://api.mistral.ai/v1","apiKey":"sk-x"}`)
+		`{"name":"Ollama","baseUrl":"`+noAuthURL(t)+`"}`)
 	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want 201", rec.Code)
+		t.Fatalf("no-auth status = %d, want 201 (body %s)", rec.Code, body(rec))
 	}
 	var created struct{ ID string }
 	if err := json.Unmarshal([]byte(body(rec)), &created); err != nil {
 		t.Fatalf("decode 201 body: %v", err)
 	}
 	// The id is a minted uuid - nothing derives from the name.
-	if created.ID == "" || created.ID == "mistral" {
+	if created.ID == "" || created.ID == "ollama" {
 		t.Errorf("id = %q, want a non-empty uuid distinct from the name", created.ID)
 	}
 
-	// The created provider lists with its key masked (never echoed).
 	rec = do(t, sqlDB, http.MethodGet, "/api/providers", "")
-	wantEntry := `"name":"Mistral","baseUrl":"https://api.mistral.ai/v1","hasKey":true,"models":[]`
+	wantEntry := `"hasKey":false`
 	if !strings.Contains(body(rec), wantEntry) {
 		t.Errorf("list missing entry %s (got %s)", wantEntry, body(rec))
+	}
+
+	sqlDB = testdb.Open(t)
+	rec = do(t, sqlDB, http.MethodPost, "/api/providers",
+		`{"name":"Dead","baseUrl":"http://127.0.0.1:1/v1"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("keyless-dead status = %d, want 400", rec.Code)
+	}
+	var n int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM providers`).Scan(&n); err != nil {
+		t.Fatalf("count providers: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("providers after dead keyless create = %d, want 0", n)
+	}
+}
+
+// A keyed create probes first: success saves, a rejected key saves
+// nothing.
+func TestCreateProviderProbe(t *testing.T) {
+	url := fakeProvider(t).URL
+
+	sqlDB := testdb.Open(t)
+	rec := do(t, sqlDB, http.MethodPost, "/api/providers",
+		`{"name":"Fake","baseUrl":"`+url+`","apiKey":"k-1"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("ok-key status = %d, want 201 (body %s)", rec.Code, body(rec))
+	}
+
+	sqlDB = testdb.Open(t)
+	rec = do(t, sqlDB, http.MethodPost, "/api/providers",
+		`{"name":"Fake","baseUrl":"`+url+`","apiKey":"wrong"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad-key status = %d, want 400", rec.Code)
+	}
+	want := `{"message":"Connection check failed: endpoint rejected the request (401) — key missing or invalid"}`
+	if got := body(rec); got != want {
+		t.Errorf("body = %s, want %s", got, want)
+	}
+	var n int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM providers`).Scan(&n); err != nil {
+		t.Fatalf("count providers: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("providers after rejected create = %d, want 0 (nothing saved)", n)
+	}
+}
+
+// An unreachable base URL fails the check the same way.
+func TestCreateProviderProbeUnreachable(t *testing.T) {
+	sqlDB := testdb.Open(t)
+	rec := do(t, sqlDB, http.MethodPost, "/api/providers",
+		`{"name":"Dead","baseUrl":"http://127.0.0.1:1/v1","apiKey":"k-1"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	if got := body(rec); !strings.Contains(got, "Connection check failed: could not reach") {
+		t.Errorf("body = %s, want could-not-reach failure", got)
 	}
 }
 

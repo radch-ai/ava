@@ -1,8 +1,7 @@
 package schema_test
 
 // Heartbeat and cron-job invariants: per-agent heartbeat singleton,
-// cron rows, model FK targets, cascades. Raw SQL: the schema rules
-// are under test.
+// cron rows, cascades. Raw SQL: the schema rules are under test.
 
 import (
 	"strings"
@@ -22,8 +21,8 @@ func TestSeedSuperagentHeartbeat(t *testing.T) {
 	).Scan(&model, &enabled, &duration, &content); err != nil {
 		t.Fatalf("seed heartbeat row: %v", err)
 	}
-	// NULL model = follow the default routing — no sentinel string in
-	// a column that references models.
+	// NULL model = follow the default routing — no sentinel string
+	// in the column.
 	if model != nil {
 		t.Errorf("seed model = %v, want NULL (follow default)", model)
 	}
@@ -36,21 +35,6 @@ func TestSeedSuperagentHeartbeat(t *testing.T) {
 	wantContent := "Check agent heartbeats and flag anything stalled. If nothing needs attention, reply NO_REPLY."
 	if content != wantContent {
 		t.Errorf("seed content = %q, want the NO_REPLY check", content)
-	}
-}
-
-func TestHeartbeatModelFKEnforced(t *testing.T) {
-	sqlDB := testdb.Open(t)
-	if _, err := sqlDB.Exec(
-		`INSERT INTO agents (id, name, icon, soul_personality, soul_identity, operating_instructions, tools_context)
-		 VALUES ('fk-probe', 'Probe', 'globe', '', '', '', '')`); err != nil {
-		t.Fatalf("insert agent: %v", err)
-	}
-	_, err := sqlDB.Exec(
-		`INSERT INTO heartbeat (agent_id, model, enabled, duration, content)
-		 VALUES ('fk-probe', 'gpt-5', 1, '30m', 'x')`)
-	if err == nil || !strings.Contains(err.Error(), "FOREIGN KEY") {
-		t.Fatalf("unknown model err = %v, want FOREIGN KEY constraint failure", err)
 	}
 }
 

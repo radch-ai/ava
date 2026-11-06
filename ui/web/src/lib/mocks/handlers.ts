@@ -22,7 +22,7 @@ import {
 	SUPERAGENT_AGENT
 } from '../types/agent.ts'
 import { deriveAgentId, isValidAgentName } from './agent-id.ts'
-import type { MockStore, ProviderRow } from './data.ts'
+import { type MockStore, PROVIDER_SEED_DATA, type ProviderRow } from './data.ts'
 
 interface CursorItem {
 	id: string
@@ -79,33 +79,36 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 	}
 
 	// The provider catalog answers like the backend: the stored apiKey
-	// never leaves in a response (hasKey is the field), and model ids
-	// are qualified with their provider's prefix.
+	// never leaves in a response (hasKey is the field); rows carry
+	// custom model ids only.
 	const providerView = (row: ProviderRow) => ({
 		id: row.id,
 		name: row.name,
 		baseUrl: row.baseUrl,
 		hasKey: row.apiKey !== '',
-		models: row.models
+		models: [...row.models].sort()
 	})
 
-	// Release dropped models' references to default routing, mirroring
-	// the schema's ON DELETE SET NULL ('auto' is the wire sentinel).
-	const releaseModels = (dropped: Iterable<string>) => {
-		const gone = dropped instanceof Set ? dropped : new Set(dropped)
-		for (const heartbeat of store.heartbeats.values()) {
-			if (heartbeat.model && gone.has(heartbeat.model)) {
-				heartbeat.model = 'auto'
-			}
-		}
-		for (const jobs of store.cronJobs.values()) {
-			for (const job of jobs) {
-				if (job.model && gone.has(job.model)) {
-					job.model = 'auto'
-				}
-			}
-		}
-	}
+	// System models for a row: the template's deterministic list for
+	// a well-known base URL (mock stand-in for the live fetch), []
+	// otherwise.
+	const systemModelsFor = (row: Pick<ProviderRow, 'baseUrl'>) =>
+		PROVIDER_SEED_DATA.find((seed) => seed.baseUrl === row.baseUrl)
+			?.systemModels ?? []
+
+	// The save-time connection check, deterministic in mock mode: the
+	// sentinel key fails, everything else passes — keyed or keyless,
+	// mirroring the backend's always-probe save.
+	const connectionCheck = (apiKey: string) =>
+		apiKey === 'bad-key'
+			? HttpResponse.json(
+					{
+						message:
+							'Connection check failed: endpoint rejected the request (401) — key missing or invalid'
+					},
+					{ status: 400 }
+				)
+			: null
 
 	return [
 		// The list mirrors the backend query: it never includes the system
@@ -390,16 +393,54 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			return HttpResponse.json({ id }, { status: 201 })
 		}),
 
-		// The provider catalog: GET answers the whole thing. Writes:
-		// opaque uuid ids (nothing derives from the name), model ids
-		// as the user typed them (provider-prefixed by convention),
-		// and in-use models refuse removal with 409.
+		// The provider catalog. GET answers the merged view; writes:
+		// opaque uuid ids (nothing derives from the name), custom
+		// model ids as typed, and keyed saves pass a connection check
+		// (the sentinel key 'bad-key' fails it deterministically).
 		http.get('*/api/providers', () =>
 			HttpResponse.json({
 				defaultModel: 'auto',
 				providers: store.providers.map(providerView)
 			})
 		),
+
+		// The selector catalog: grouped models only, no config.
+		http.get('*/api/models', () => {
+			const names: string[] = []
+			const grouped = new Map<string, string[]>()
+			for (const row of store.providers) {
+				const ids = [
+					...new Set([...row.models, ...systemModelsFor(row)])
+				].sort()
+				if (ids.length === 0) continue
+				const existing = grouped.get(row.name)
+				if (existing) {
+					grouped.set(row.name, [...new Set([...existing, ...ids])].sort())
+				} else {
+					names.push(row.name)
+					grouped.set(row.name, ids)
+				}
+			}
+			return HttpResponse.json({
+				groups: names.map((name) => ({
+					provider: name,
+					models: grouped.get(name)
+				}))
+			})
+		}),
+
+		// One provider's system models, for the settings-page expand.
+		http.get('*/api/providers/:id/models', ({ params }) => {
+			const id = String(params.id)
+			const row = store.providers.find((provider) => provider.id === id)
+			if (!row) {
+				return HttpResponse.json(
+					{ message: `Provider "${id}" not found` },
+					{ status: 404 }
+				)
+			}
+			return HttpResponse.json({ systemModels: systemModelsFor(row) })
+		}),
 
 		http.post('*/api/providers', async ({ request }) => {
 			const body = (await request.json()) as {
@@ -421,6 +462,8 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 					{ status: 400 }
 				)
 			}
+			const failure = connectionCheck(body.apiKey ?? '')
+			if (failure) return failure
 			const row = {
 				id: crypto.randomUUID(),
 				name,
@@ -476,13 +519,10 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 					}
 					kept.add(model)
 				}
-				// Dropped models don't block the replace - their rows fall
-				// back to default routing.
-				releaseModels(row.models.filter((m) => !kept.has(m)))
-				// An id owned by another provider cannot be claimed.
+				// Custom ids are globally unique across providers.
 				for (const model of body.models) {
 					const owner = store.providers.find(
-						(p) => p.id !== id && p.models.includes(model)
+						(provider) => provider.id !== id && provider.models.includes(model)
 					)
 					if (owner) {
 						return HttpResponse.json(
@@ -494,6 +534,14 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 					}
 				}
 				row.models = body.models
+			}
+			// A connection-touching patch re-checks the effective
+			// configuration — keyed or keyless — before anything mutates.
+			if (body.apiKey !== undefined || body.baseUrl !== undefined) {
+				const failure = connectionCheck(
+					body.apiKey === undefined ? row.apiKey : body.apiKey
+				)
+				if (failure) return failure
 			}
 			if (body.name !== undefined) row.name = body.name
 			if (body.baseUrl !== undefined) row.baseUrl = body.baseUrl
@@ -510,9 +558,6 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 					{ status: 404 }
 				)
 			}
-			// Referenced models don't block the delete - their rows fall
-			// back to default routing.
-			releaseModels(store.providers[index].models)
 			store.providers.splice(index, 1)
 			return HttpResponse.json({ message: 'Provider deleted' })
 		})

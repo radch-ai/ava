@@ -1,13 +1,16 @@
 // PATCH /api/providers/{id} - edit a connection and/or replace its
-// model list wholesale.
+// custom model list wholesale. Patching a system provider's slug
+// upserts its attachment row.
 package providers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/radch-ai/ava/backend/apitypes"
@@ -15,10 +18,10 @@ import (
 	"github.com/radch-ai/ava/backend/internal/db"
 )
 
-// UpdateProvider applies absent-keeps patch semantics and replaces
-// the models list wholesale. Ownership rules live in the schema:
-// SET NULL releases dropped references, UNIQUE (model_id) rejects a
-// claimed id (mapped to 409 below).
+// UpdateProvider applies absent-keeps patch semantics: name,
+// baseUrl, apiKey, and the wholesale models replace. Every check
+// (shape, ownership, connection) runs before the one atomic
+// full-row write, so a rejected patch changes nothing.
 func UpdateProvider(queries *db.Queries) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		id := r.PathValue("id")
@@ -30,16 +33,15 @@ func UpdateProvider(queries *db.Queries) api.Handler {
 		// Validate the patch before touching any row, so a bad body
 		// changes nothing.
 		if req.Name != nil && strings.TrimSpace(*req.Name) == "" {
-			return api.WriteError(w, http.StatusBadRequest,
-				"Provider name is required")
+			return api.WriteError(w, http.StatusBadRequest, "Provider name is required")
 		}
 		if req.BaseURL != nil && !isValidBaseURL(*req.BaseURL) {
 			return api.WriteError(w, http.StatusBadRequest,
 				"Invalid baseUrl: must be an http(s) URL")
 		}
 		if req.Models != nil {
-			if msg := modelListProblem(*req.Models); msg != "" {
-				return api.WriteError(w, http.StatusBadRequest, msg)
+			if problem := modelListProblem(*req.Models); problem != "" {
+				return api.WriteError(w, http.StatusBadRequest, problem)
 			}
 		}
 
@@ -49,12 +51,17 @@ func UpdateProvider(queries *db.Queries) api.Handler {
 				fmt.Sprintf("Provider %q not found", id))
 		} else if err != nil {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-			return fmt.Errorf("read provider: %w", err)
+			return fmt.Errorf("read provider %q: %w", id, err)
+		}
+		name, baseURL, apiKey, modelsJSON := row.Name, row.BaseUrl, row.ApiKey, row.Models
+		custom, err := decodeModels(modelsJSON)
+		if err != nil {
+			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+			return fmt.Errorf("decode models for provider %q: %w", id, err)
 		}
 
-		// Apply the patch over the stored row: absent fields keep
-		// their values.
-		name, baseURL, apiKey := row.Name, row.BaseUrl, row.ApiKey
+		// Apply the patch over the base: absent fields keep their
+		// values.
 		if req.Name != nil {
 			name = *req.Name
 		}
@@ -64,32 +71,33 @@ func UpdateProvider(queries *db.Queries) api.Handler {
 		if req.APIKey != nil {
 			apiKey = *req.APIKey
 		}
-		if err := queries.UpdateProvider(r.Context(), db.UpdateProviderParams{
-			Name: name, BaseUrl: baseURL, ApiKey: apiKey, ID: id,
-		}); err != nil {
-			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-			return fmt.Errorf("update provider: %w", err)
+		if req.Models != nil {
+			problem, err := ownershipProblem(r.Context(), queries, id, *req.Models)
+			if err != nil {
+				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+				return err
+			}
+			if problem != "" {
+				return api.WriteError(w, http.StatusConflict, problem)
+			}
+			custom = *req.Models
 		}
 
-		if req.Models != nil {
-			if err := queries.DeleteProviderModels(r.Context(), id); err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("delete provider models: %w", err)
+		// A patch touching the connection re-verifies the effective
+		// configuration — keyed or keyless — before saving.
+		if req.BaseURL != nil || req.APIKey != nil {
+			if err := probeConnection(r.Context(), baseURL, apiKey); err != nil {
+				return api.WriteError(w, http.StatusBadRequest,
+					"Connection check failed: "+err.Error())
 			}
-			for _, m := range *req.Models {
-				if err := queries.CreateModel(r.Context(), db.CreateModelParams{
-					ModelID: m, ProviderID: id,
-				}); err != nil {
-					// UNIQUE (model_id): another provider owns the id.
-					if strings.Contains(err.Error(),
-						"UNIQUE constraint failed: models.model_id") {
-						return api.WriteError(w, http.StatusConflict,
-							fmt.Sprintf("Model %q already belongs to another provider", m))
-					}
-					_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-					return fmt.Errorf("insert model %s: %w", m, err)
-				}
-			}
+		}
+
+		if err := queries.UpdateProvider(r.Context(), db.UpdateProviderParams{
+			Name: name, BaseUrl: baseURL, ApiKey: apiKey,
+			Models: encodeModels(custom), ID: id,
+		}); err != nil {
+			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+			return fmt.Errorf("update provider %q: %w", id, err)
 		}
 
 		provider, err := buildProvider(r.Context(), queries, id)
@@ -99,6 +107,31 @@ func UpdateProvider(queries *db.Queries) api.Handler {
 		}
 		return api.WriteJSON(w, http.StatusOK, provider)
 	}
+}
+
+// ownershipProblem returns the 409 message when a candidate id is
+// already claimed by another provider's custom list; "" when the
+// list is claimable.
+func ownershipProblem(ctx context.Context, queries *db.Queries, id string, models []string) (string, error) {
+	rows, err := queries.ListProviders(ctx)
+	if err != nil {
+		return "", fmt.Errorf("list providers: %w", err)
+	}
+	for _, row := range rows {
+		if row.ID == id {
+			continue
+		}
+		custom, err := decodeModels(row.Models)
+		if err != nil {
+			return "", fmt.Errorf("decode models for provider %q: %w", row.ID, err)
+		}
+		for _, m := range models {
+			if slices.Contains(custom, m) {
+				return fmt.Sprintf("Model %q already belongs to another provider", m), nil
+			}
+		}
+	}
+	return "", nil
 }
 
 // modelListProblem returns the 400 message for a models list that

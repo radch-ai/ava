@@ -1,104 +1,97 @@
 package schema_test
 
-// Model-catalog DB-enforced rules, via raw SQL.
+// Provider/model catalog DB-enforced rules, via raw SQL. Custom
+// models are a JSON array on the provider row; system models are
+// never DB state.
 
 import (
-	"database/sql"
 	"testing"
 
 	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
-// The catalog is user configuration, not seed data; the fake
-// starter catalog exists only in the UI mocks.
+// The catalog is user configuration, not seed data.
 func TestCatalogIsUnseeded(t *testing.T) {
 	sqlDB := testdb.Open(t)
-	for _, table := range []string{"providers", "models"} {
-		var n int
-		if err := sqlDB.QueryRow(
-			`SELECT COUNT(*) FROM ` + table,
-		).Scan(&n); err != nil {
-			t.Fatalf("count %s: %v", table, err)
-		}
-		if n != 0 {
-			t.Errorf("seeded %s = %d, want 0 (catalog is user configuration)", table, n)
-		}
+	var n int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM providers`).Scan(&n); err != nil {
+		t.Fatalf("count providers: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("seeded providers = %d, want 0 (catalog is user configuration)", n)
 	}
 }
 
-// seedCatalog opens a store with one scratch provider and model.
-func seedCatalog(t *testing.T) *sql.DB {
-	t.Helper()
+// There is no models table: system models are fetched, custom models
+// live on the provider row. Any 'models' table is a leftover.
+func TestNoModelsTable(t *testing.T) {
+	sqlDB := testdb.Open(t)
+	var name string
+	err := sqlDB.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'models'`,
+	).Scan(&name)
+	if err == nil {
+		t.Fatal("models table exists, want it gone (custom models are a provider column)")
+	}
+}
+
+// A provider row without models defaults to an empty JSON array.
+func TestProviderModelsDefaultsEmpty(t *testing.T) {
 	sqlDB := testdb.Open(t)
 	if _, err := sqlDB.Exec(
 		`INSERT INTO providers (id, name, base_url) VALUES ('p1', 'P1', 'https://p1.dev/v1')`,
 	); err != nil {
 		t.Fatalf("seed provider: %v", err)
 	}
-	if _, err := sqlDB.Exec(
-		`INSERT INTO models (model_id, provider_id) VALUES ('p1/m1', 'p1')`,
-	); err != nil {
-		t.Fatalf("seed model: %v", err)
-	}
-	return sqlDB
-}
-
-// UNIQUE (model_id): a second provider's claim fails.
-func TestModelIdOwnedByOneProvider(t *testing.T) {
-	sqlDB := seedCatalog(t)
-	if _, err := sqlDB.Exec(
-		`INSERT INTO providers (id, name, base_url) VALUES ('p2', 'P2', 'https://p2.dev/v1')`,
-	); err != nil {
-		t.Fatalf("seed second provider: %v", err)
-	}
-	if _, err := sqlDB.Exec(
-		`INSERT INTO models (model_id, provider_id) VALUES ('p1/m1', 'p2')`,
-	); err == nil {
-		t.Fatal("duplicate model id under second provider succeeded, want UNIQUE constraint failure")
-	}
-}
-
-// Deleting a provider takes its models with it (ON DELETE CASCADE).
-func TestProviderDeleteCascadesModels(t *testing.T) {
-	sqlDB := seedCatalog(t)
-	if _, err := sqlDB.Exec(`DELETE FROM providers WHERE id = 'p1'`); err != nil {
-		t.Fatalf("delete provider: %v", err)
-	}
-	var n int
+	var models string
 	if err := sqlDB.QueryRow(
-		`SELECT COUNT(*) FROM models WHERE provider_id = 'p1'`,
-	).Scan(&n); err != nil {
-		t.Fatalf("count models: %v", err)
+		`SELECT models FROM providers WHERE id = 'p1'`,
+	).Scan(&models); err != nil {
+		t.Fatalf("read models: %v", err)
 	}
-	if n != 0 {
-		t.Errorf("provider models after delete = %d, want 0 (cascade)", n)
+	if models != "[]" {
+		t.Errorf("models default = %q, want []", models)
 	}
 }
 
-// A dropped model hands referencing heartbeat/cron rows back to
-// NULL routing (ON DELETE SET NULL).
-func TestProviderDeleteNullsModelReferences(t *testing.T) {
-	sqlDB := seedCatalog(t)
+// heartbeat.model / cron_jobs.model are plain strings: an id absent
+// from every catalog persists (staleness is caught at call time, not
+// by the schema).
+func TestModelColumnsAcceptUncatalogedIds(t *testing.T) {
+	sqlDB := testdb.Open(t)
 	if _, err := sqlDB.Exec(
 		`INSERT INTO agents (id, name, icon, soul_personality, soul_identity, operating_instructions, tools_context)
-		 VALUES ('ref-probe', 'Probe', 'globe', '', '', '', '')`); err != nil {
-		t.Fatalf("insert agent: %v", err)
+		 VALUES ('a1', 'A1', 'globe', '', '', '', '')`); err != nil {
+		t.Fatalf("seed agent: %v", err)
 	}
 	if _, err := sqlDB.Exec(
 		`INSERT INTO heartbeat (agent_id, model, enabled, duration, content)
-		 VALUES ('ref-probe', 'p1/m1', 1, '30m', 'x')`); err != nil {
-		t.Fatalf("insert heartbeat: %v", err)
+		 VALUES ('a1', 'ghost/m1', 1, '30m', 'x')`); err != nil {
+		t.Fatalf("seed heartbeat with uncataloged model: %v", err)
+	}
+	if _, err := sqlDB.Exec(
+		`INSERT INTO cron_jobs (id, agent_id, time, frequency, model, prompt)
+		 VALUES ('j1', 'a1', '09:00', 'daily', 'ghost/m2', 'x')`); err != nil {
+		t.Fatalf("seed cron job with uncataloged model: %v", err)
+	}
+
+	// Deleting the provider leaves the stored strings as-is; no
+	// SET NULL sweep exists.
+	if _, err := sqlDB.Exec(
+		`INSERT INTO providers (id, name, base_url) VALUES ('p1', 'P1', 'https://p1.dev/v1')`,
+	); err != nil {
+		t.Fatalf("seed provider: %v", err)
 	}
 	if _, err := sqlDB.Exec(`DELETE FROM providers WHERE id = 'p1'`); err != nil {
 		t.Fatalf("delete provider: %v", err)
 	}
-	var model any
+	var m string
 	if err := sqlDB.QueryRow(
-		`SELECT model FROM heartbeat WHERE agent_id = 'ref-probe'`,
-	).Scan(&model); err != nil {
-		t.Fatalf("read heartbeat: %v", err)
+		`SELECT model FROM heartbeat WHERE agent_id = 'a1'`,
+	).Scan(&m); err != nil {
+		t.Fatalf("read heartbeat model: %v", err)
 	}
-	if model != nil {
-		t.Errorf("heartbeat model after provider delete = %v, want NULL (default routing)", model)
+	if m != "ghost/m1" {
+		t.Errorf("heartbeat model after provider delete = %q, want ghost/m1 (stored verbatim)", m)
 	}
 }

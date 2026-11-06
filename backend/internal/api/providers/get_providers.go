@@ -1,8 +1,8 @@
-// GET /api/providers - the whole catalog in one response.
+// GET /api/providers - the settings-page catalog: stored rows with
+// their custom models inline.
 package providers
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/radch-ai/ava/backend/apitypes"
@@ -10,44 +10,34 @@ import (
 	"github.com/radch-ai/ava/backend/internal/db"
 )
 
-// GetProviders answers the UI's getProviders(): the reserved default
-// model plus every provider (creation order) with its model-id
-// strings (id order).
+// GetProviders answers the stored connections in creation order.
+// models carries custom ids only — system models resolve behind
+// GET /api/providers/{id}/models and GET /api/models.
 func GetProviders(queries *db.Queries) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		rows, err := queries.ListProviders(r.Context())
 		if err != nil {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-			return fmt.Errorf("list providers: %w", err)
+			return err
 		}
-
 		out := apitypes.GetProvidersResponse{
 			DefaultModel: DefaultModel,
-			Providers:    make([]apitypes.Provider, len(rows)),
+			Providers:    make([]apitypes.Provider, 0, len(rows)),
 		}
-		index := make(map[string]int, len(rows))
-		for i, row := range rows {
-			out.Providers[i] = apitypes.Provider{
+		for _, row := range rows {
+			custom, err := decodeModels(row.Models)
+			if err != nil {
+				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+				return err
+			}
+			out.Providers = append(out.Providers, apitypes.Provider{
 				ID:      row.ID,
 				Name:    row.Name,
 				BaseURL: row.BaseUrl,
 				HasKey:  row.ApiKey != "",
-				Models:  []string{},
-			}
-			index[row.ID] = i
+				Models:  custom,
+			})
 		}
-
-		models, err := queries.ListModels(r.Context())
-		if err != nil {
-			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-			return fmt.Errorf("list models: %w", err)
-		}
-		for _, m := range models {
-			if i, found := index[m.ProviderID]; found {
-				out.Providers[i].Models = append(out.Providers[i].Models, m.ModelID)
-			}
-		}
-
 		return api.WriteJSON(w, http.StatusOK, out)
 	}
 }

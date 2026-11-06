@@ -33,6 +33,8 @@ func New(sqlDB *sql.DB, logger zerolog.Logger) http.Handler {
 	mux.Handle("PATCH /api/agent/{id}/cron-jobs/{jobId}", api.Log(logger, agent.UpdateCronJob(queries)))
 	mux.Handle("DELETE /api/agent/{id}/cron-jobs/{jobId}", api.Log(logger, agent.DeleteCronJob(queries)))
 	mux.Handle("GET /api/providers", api.Log(logger, providers.GetProviders(queries)))
+	mux.Handle("GET /api/models", api.Log(logger, providers.GetModels(queries)))
+	mux.Handle("GET /api/providers/{id}/models", api.Log(logger, providers.GetProviderModels(queries)))
 	mux.Handle("POST /api/providers", api.Log(logger, providers.CreateProvider(queries)))
 	mux.Handle("PATCH /api/providers/{id}", api.Log(logger, providers.UpdateProvider(queries)))
 	mux.Handle("DELETE /api/providers/{id}", api.Log(logger, providers.DeleteProvider(queries)))

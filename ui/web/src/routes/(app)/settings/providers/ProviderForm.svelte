@@ -5,6 +5,7 @@
 	import {
 		createProvider,
 		deleteProvider,
+		getModelsByProvider,
 		updateProvider
 	} from '#lib/services/providers'
 	import type { Provider } from '#lib/types/provider'
@@ -29,6 +30,24 @@
 	let models = $state<string[]>([...(provider?.models ?? [])])
 	let error = $state<string | null>(null)
 	let saving = $state(false)
+	// Delete is armed on first click, fired on the second.
+	// System models: fetched when an existing provider's form opens;
+	// read-only, never part of the save payload.
+	let systemModels = $state<string[] | null>(null)
+	let systemModelsError = $state<string | null>(null)
+
+	$effect(() => {
+		if (!provider) return
+		getModelsByProvider(provider.id)
+			.then(({ systemModels: ids }) => {
+				systemModels = ids
+			})
+			.catch((e: unknown) => {
+				systemModelsError =
+					e instanceof Error ? e.message : 'Failed to load models'
+			})
+	})
+
 	// Delete is armed on first click, fired on the second.
 	let confirmingDelete = $state(false)
 
@@ -120,7 +139,34 @@
 
 	<div class="space-y-2">
 		<div class="flex items-center justify-between border-t pt-3">
-			<h3 class="text-sm font-medium">Models</h3>
+			<h3 class="text-sm font-medium">System models</h3>
+			<span class="text-muted-foreground text-xs"
+				>fetched from the provider</span
+			>
+		</div>
+		{#if systemModelsError}
+			<p class="text-destructive text-sm">{systemModelsError}</p>
+		{:else if systemModels === null}
+			<p class="text-muted-foreground text-sm">Loading…</p>
+		{:else if systemModels.length === 0}
+			<p class="text-muted-foreground text-sm">
+				None found — no key, or the endpoint serves no list.
+			</p>
+		{:else}
+			<!-- A few rows visible, the rest behind the scroll. -->
+			<ul
+				class="bg-muted/30 max-h-24 space-y-1 overflow-y-auto rounded-md p-2 font-mono text-xs"
+			>
+				{#each systemModels as model (model)}
+					<li class="text-muted-foreground px-1">{model}</li>
+				{/each}
+			</ul>
+		{/if}
+	</div>
+
+	<div class="space-y-2">
+		<div class="flex items-center justify-between border-t pt-3">
+			<h3 class="text-sm font-medium">Custom models</h3>
 			{#if provider}
 				<Button size="sm" variant="outline" type="button" onclick={addModel}>
 					Add model
@@ -129,11 +175,11 @@
 		</div>
 		{#if !provider}
 			<p class="text-muted-foreground text-sm">
-				Save the provider first, then add its models.
+				Save the provider first, then add custom models.
 			</p>
 		{:else if models.length === 0}
 			<p class="text-muted-foreground text-sm">
-				No models — agents can only pick this provider once it has models.
+				No custom models — the system list above already serves selectors.
 			</p>
 		{/if}
 		{#each models as model, index (index)}

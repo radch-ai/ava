@@ -1,11 +1,11 @@
 /**
  * Model-catalog store — the selector-facing shape of GET
- * /api/providers. Selectors render the reserved default ('auto')
- * plus these groups; the providers page edits the catalog and calls
+ * /api/models. Selectors render the reserved default ('auto') plus
+ * these groups; the providers page edits the catalog and calls
  * refresh().
  */
 
-import { getProviders } from '#lib/services/providers'
+import { getModels } from '#lib/services/providers'
 import type { ModelGroup } from './models'
 
 export class ModelsStore {
@@ -33,11 +33,8 @@ export class ModelsStore {
 	async #fetch(): Promise<void> {
 		this.refreshing = true
 		try {
-			const { providers } = await getProviders()
-			this.groups = providers.map((p) => ({
-				provider: p.name,
-				models: [...p.models]
-			}))
+			const { groups } = await getModels()
+			this.groups = groups ?? []
 			this.loaded = true
 			this.error = null
 		} catch (e) {

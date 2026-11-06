@@ -79,40 +79,50 @@ const CRON_JOBS: Record<string, CronJob[]> = {
 	[SUPERAGENT_AGENT_ID]: []
 }
 
-/** The provider catalog seed: the groups the UI once hardcoded,
- * model ids plain, providers keyless until the user pastes one.
- * Seed ids are stable slugs (opaque to the UI); created rows get
- * uuids. */
-const PROVIDER_SEEDS: ProviderRow[] = [
+/** Demo catalog seed — the mock's stand-in for connections a user
+ * added by hand. systemModels is the deterministic stand-in for the
+ * live fetch a saved connection would do, keyed or keyless. */
+export const PROVIDER_SEED_DATA: Array<{
+	id: string
+	name: string
+	baseUrl: string
+	systemModels: string[]
+}> = [
 	{
 		id: 'anthropic',
 		name: 'Anthropic',
 		baseUrl: 'https://api.anthropic.com/v1',
-		apiKey: '',
-		models: ['anthropic/claude-3-sonnet']
+		systemModels: ['anthropic/claude-3-sonnet']
 	},
 	{
 		id: 'gemini',
 		name: 'Gemini',
 		baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-		apiKey: '',
-		models: ['gemini/gemini-pro', 'gemini/gemini-ultra']
+		systemModels: ['gemini/gemini-pro', 'gemini/gemini-ultra']
 	},
 	{
 		id: 'grok',
 		name: 'Grok',
 		baseUrl: 'https://api.x.ai/v1',
-		apiKey: '',
-		models: ['grok/grok-1']
+		systemModels: ['grok/grok-1']
 	},
 	{
 		id: 'openai',
 		name: 'OpenAI',
 		baseUrl: 'https://api.openai.com/v1',
-		apiKey: '',
-		models: ['openai/gpt-3.5-turbo', 'openai/gpt-4']
+		systemModels: ['openai/gpt-3.5-turbo', 'openai/gpt-4']
 	}
 ]
+
+/** The seeded rows: keyless, no custom models — mirroring a store
+ * the user created them against. */
+const PROVIDER_SEEDS: ProviderRow[] = PROVIDER_SEED_DATA.map((row) => ({
+	id: row.id,
+	name: row.name,
+	baseUrl: row.baseUrl,
+	apiKey: '',
+	models: []
+}))
 
 const CONFIGURATIONS: Array<
 	[string, Omit<AgentConfig, 'heartbeat' | 'cronJobs'>]

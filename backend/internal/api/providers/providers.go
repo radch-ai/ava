@@ -1,14 +1,16 @@
-// Package providers serves /api/providers: the model catalog, one
-// row per connection with its model-id strings. api_key is
-// write-only (responses carry hasKey); provider ids are server
-// minted uuids, model ids plain unique strings.
+// Package providers serves the provider catalog: stored connections
+// with their custom model ids, plus the fetched system lists. Rows
+// are user-created; api_key is write-only (responses carry hasKey);
+// provider ids are server-minted uuids.
 package providers
 
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/radch-ai/ava/backend/apitypes"
@@ -36,21 +38,45 @@ func isValidBaseURL(raw string) bool {
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
-// buildProvider renders one provider with its models.
+// buildProvider renders one provider response from its stored row.
 func buildProvider(ctx context.Context, queries *db.Queries, id string) (apitypes.Provider, error) {
 	row, err := queries.GetProvider(ctx, id)
 	if err != nil {
 		return apitypes.Provider{}, fmt.Errorf("read provider: %w", err)
 	}
-	models, err := queries.ListProviderModels(ctx, id)
+	custom, err := decodeModels(row.Models)
 	if err != nil {
-		return apitypes.Provider{}, fmt.Errorf("list provider models: %w", err)
+		return apitypes.Provider{}, fmt.Errorf("decode models for provider %q: %w", id, err)
 	}
 	return apitypes.Provider{
 		ID:      row.ID,
 		Name:    row.Name,
 		BaseURL: row.BaseUrl,
 		HasKey:  row.ApiKey != "",
-		Models:  models,
+		Models:  custom,
 	}, nil
+}
+
+// decodeModels parses the providers.models JSON array column.
+func decodeModels(s string) ([]string, error) {
+	if s == "" {
+		return []string{}, nil
+	}
+	var models []string
+	if err := json.Unmarshal([]byte(s), &models); err != nil {
+		return nil, err
+	}
+	if models == nil {
+		models = []string{}
+	}
+	return models, nil
+}
+
+// encodeModels writes the custom list back to the column shape,
+// canonically sorted (a string slice marshal cannot fail).
+func encodeModels(models []string) string {
+	sorted := append([]string(nil), models...)
+	slices.Sort(sorted)
+	b, _ := json.Marshal(sorted)
+	return string(b)
 }

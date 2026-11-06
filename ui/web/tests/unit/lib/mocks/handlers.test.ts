@@ -465,7 +465,7 @@ describe('mock API handlers', () => {
 	})
 
 	describe('provider catalog endpoints', () => {
-		it('answers the whole catalog with provider-prefixed model ids and no api keys', async () => {
+		it('answers the merged catalog: starters keyless, custom models only', async () => {
 			const body = (await (await fetch(`${BASE}/providers`)).json()) as {
 				defaultModel: string
 				providers: Array<{
@@ -483,15 +483,27 @@ describe('mock API handlers', () => {
 				'Grok',
 				'OpenAI'
 			])
-			expect(body.providers.find((p) => p.name === 'OpenAI')?.models).toEqual([
-				'openai/gpt-3.5-turbo',
-				'openai/gpt-4'
-			])
-			// The key never leaves the store.
+			// Rows carry custom ids only — system models live behind
+			// the models endpoints.
 			for (const provider of body.providers) {
+				expect(provider.models).toEqual([])
 				expect(provider).not.toHaveProperty('apiKey')
 				expect(provider.hasKey).toBe(false)
 			}
+
+			// The selector catalog groups system models by provider.
+			const models = (await (await fetch(`${BASE}/models`)).json()) as {
+				groups: Array<{ provider: string; models: string[] }>
+			}
+			expect(
+				models.groups.find((g) => g.provider === 'OpenAI')?.models
+			).toEqual(['openai/gpt-3.5-turbo', 'openai/gpt-4'])
+
+			// The settings expand serves one starter's system list.
+			const openai = (
+				await (await fetch(`${BASE}/providers/openai/models`)).json()
+			).systemModels as string[]
+			expect(openai).toEqual(['openai/gpt-3.5-turbo', 'openai/gpt-4'])
 		})
 
 		it('creates providers via POST with an opaque id and validates input', async () => {
@@ -588,26 +600,42 @@ describe('mock API handlers', () => {
 		})
 
 		it('refuses to claim a model id another provider owns', async () => {
-			const res = await fetch(`${BASE}/providers/grok`, {
+			// A custom id belongs to the provider that typed it first.
+			const first = await fetch(`${BASE}/providers`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ name: 'One', baseUrl: 'https://one.dev/v1' })
+			})
+			const { id: one } = (await first.json()) as { id: string }
+			await fetch(`${BASE}/providers/${one}`, {
 				method: 'PATCH',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ models: ['grok/grok-1', 'openai/gpt-4'] })
+				body: JSON.stringify({ models: ['one/m1'] })
 			})
-			expect(res.status).toBe(409)
-			expect(await res.json()).toEqual({
-				message: 'Model "openai/gpt-4" already belongs to another provider'
+			const second = await fetch(`${BASE}/providers`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ name: 'Two', baseUrl: 'https://two.dev/v1' })
+			})
+			const { id: two } = (await second.json()) as { id: string }
+			const claim = await fetch(`${BASE}/providers/${two}`, {
+				method: 'PATCH',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ models: ['one/m1'] })
+			})
+			expect(claim.status).toBe(409)
+			expect(await claim.json()).toEqual({
+				message: 'Model "one/m1" already belongs to another provider'
 			})
 
-			// grok's models are untouched by the rejected replace.
+			// The rejected replace saved nothing.
 			const listed = (await (await fetch(`${BASE}/providers`)).json()) as {
 				providers: Array<{ id: string; models: string[] }>
 			}
-			expect(listed.providers.find((p) => p.id === 'grok')?.models).toEqual([
-				'grok/grok-1'
-			])
+			expect(listed.providers.find((p) => p.id === two)?.models).toEqual([])
 		})
 
-		it('releases cron references when the model is dropped, then deletes the provider', async () => {
+		it('keeps stored model strings when the model or provider goes away', async () => {
 			const created = await fetch(`${BASE}/providers`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
@@ -637,26 +665,32 @@ describe('mock API handlers', () => {
 				})
 			).json()) as { id: string }
 
-			// Dropping the model no longer rejects: the job falls back
-			// to default routing.
+			// Dropping the model leaves the stored string verbatim —
+			// staleness is caught at call time, not by a sweep.
 			const clear = await fetch(`${BASE}/providers/${id}`, {
 				method: 'PATCH',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ models: [] })
 			})
 			expect(clear.status).toBe(200)
-			const list = (await (
+			const afterDrop = (await (
 				await fetch(`${BASE}/agent/_superagent/cron-jobs`)
 			).json()) as { cronJobs: Array<{ id: string; model: string }> }
-			expect(list.cronJobs.find((job) => job.id === pinned.id)?.model).toBe(
-				'auto'
-			)
+			expect(
+				afterDrop.cronJobs.find((job) => job.id === pinned.id)?.model
+			).toBe('pinned/mistral-large')
 
 			const deleted = await fetch(`${BASE}/providers/${id}`, {
 				method: 'DELETE'
 			})
 			expect(deleted.status).toBe(200)
 			expect(await deleted.json()).toEqual({ message: 'Provider deleted' })
+			const afterDelete = (await (
+				await fetch(`${BASE}/agent/_superagent/cron-jobs`)
+			).json()) as { cronJobs: Array<{ id: string; model: string }> }
+			expect(
+				afterDelete.cronJobs.find((job) => job.id === pinned.id)?.model
+			).toBe('pinned/mistral-large')
 			const gone = await fetch(`${BASE}/providers/${id}`, {
 				method: 'DELETE'
 			})

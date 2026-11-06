@@ -8,6 +8,8 @@ import ProvidersPage from '#routes/settings/providers/+page.svelte'
 // Mock the provider catalog service — the page never hits the network.
 vi.mock('#lib/services/providers', () => ({
 	getProviders: vi.fn(),
+	getModels: vi.fn(async () => ({ groups: [] })),
+	getModelsByProvider: vi.fn(async () => ({ systemModels: [] })),
 	createProvider: vi.fn(),
 	updateProvider: vi.fn(),
 	deleteProvider: vi.fn()
@@ -88,7 +90,9 @@ describe('Providers & Models page', () => {
 		await page.getByRole('button', { name: 'Add provider' }).click()
 		// A new provider has no models until saved — the form says so.
 		await expect
-			.element(page.getByText('Save the provider first, then add its models.'))
+			.element(
+				page.getByText('Save the provider first, then add custom models.')
+			)
 			.toBeVisible()
 
 		await page.getByRole('button', { name: 'Cancel' }).click()

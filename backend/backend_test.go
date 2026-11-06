@@ -56,4 +56,11 @@ func TestRoutes(t *testing.T) {
 	if code := do(http.MethodDelete, "/api/agent/_superagent/cron-jobs/nope", ""); code != http.StatusNotFound {
 		t.Errorf("DELETE /api/agent/_superagent/cron-jobs/nope = %d, want 404", code)
 	}
+	// The selector catalog and per-provider system models.
+	if code := do(http.MethodGet, "/api/models", ""); code != http.StatusOK {
+		t.Errorf("GET /api/models = %d, want 200", code)
+	}
+	if code := do(http.MethodGet, "/api/providers/nope/models", ""); code != http.StatusNotFound {
+		t.Errorf("GET /api/providers/nope/models = %d, want 404", code)
+	}
 }

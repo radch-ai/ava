@@ -1,5 +1,5 @@
-// POST /api/providers - add a connection. Models arrive later, via
-// PATCH on the created provider.
+// POST /api/providers - add a connection. Custom models arrive
+// later, via PATCH on the created provider.
 package providers
 
 import (
@@ -14,7 +14,9 @@ import (
 )
 
 // CreateProvider validates the body (non-empty name, http(s) base
-// URL), mints the uuid id and answers 201 with it.
+// URL), verifies the connection — keyed or keyless — against the
+// provider's model list before anything is written, and answers 201
+// with the minted uuid id.
 func CreateProvider(queries *db.Queries) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		var req apitypes.CreateProviderRequest
@@ -30,6 +32,15 @@ func CreateProvider(queries *db.Queries) api.Handler {
 			return api.WriteError(w, http.StatusBadRequest,
 				"Invalid baseUrl: must be an http(s) URL")
 		}
+
+		// Every create claims a working connection — keyed or
+		// keyless — so every create is verified before saving. A
+		// rejected key or URL writes nothing.
+		if err := probeConnection(r.Context(), req.BaseURL, req.APIKey); err != nil {
+			return api.WriteError(w, http.StatusBadRequest,
+				"Connection check failed: "+err.Error())
+		}
+
 		id, err := newUUID()
 		if err != nil {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
@@ -41,6 +52,7 @@ func CreateProvider(queries *db.Queries) api.Handler {
 			Name:    req.Name,
 			BaseUrl: req.BaseURL,
 			ApiKey:  req.APIKey,
+			Models:  "[]",
 		}); err != nil {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return fmt.Errorf("insert provider: %w", err)

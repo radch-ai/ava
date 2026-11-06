@@ -3,11 +3,11 @@ import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
 import ModelSelector from '#components/ModelSelector.svelte'
 import { type ModelGroup, modelsStore } from '#lib/models'
-import { getProviders } from '#lib/services/providers'
-import type { GetProvidersResponse } from '#lib/types/provider'
+import { getModels } from '#lib/services/providers'
+import type { GetModelsResponse } from '#lib/types/provider'
 
 vi.mock('#lib/services/providers', () => ({
-	getProviders: vi.fn(async () => ({ defaultModel: 'auto', providers: [] }))
+	getModels: vi.fn(async () => ({ groups: [] }))
 }))
 
 describe('ModelSelector', () => {
@@ -205,16 +205,12 @@ describe('ModelSelector', () => {
 })
 
 describe('ModelSelector catalog refresh', () => {
-	/** One provider with the given model ids, as GET /api/providers. */
-	function catalog(models: string[]): GetProvidersResponse {
+	/** One provider group with the given model ids, as GET /api/models. */
+	function catalog(models: string[]): GetModelsResponse {
 		return {
-			defaultModel: 'auto',
-			providers: [
+			groups: [
 				{
-					id: 'p1',
-					name: 'OpenAI',
-					baseUrl: 'https://api.openai.com',
-					hasKey: false,
+					provider: 'OpenAI',
 					models
 				}
 			]
@@ -234,7 +230,7 @@ describe('ModelSelector catalog refresh', () => {
 	})
 
 	it('shows the refresh control when reading the shared store', async () => {
-		vi.mocked(getProviders).mockResolvedValueOnce(catalog(['gpt-4']))
+		vi.mocked(getModels).mockResolvedValueOnce(catalog(['gpt-4']))
 		render(ModelSelector, {})
 
 		await page.getByRole('combobox').click()
@@ -264,7 +260,7 @@ describe('ModelSelector catalog refresh', () => {
 	})
 
 	it('refresh refetches the catalog and keeps the dropdown open', async () => {
-		vi.mocked(getProviders).mockResolvedValueOnce(catalog(['gpt-4']))
+		vi.mocked(getModels).mockResolvedValueOnce(catalog(['gpt-4']))
 		render(ModelSelector, {})
 		const trigger = page.getByRole('combobox')
 		await trigger.click()
@@ -272,15 +268,13 @@ describe('ModelSelector catalog refresh', () => {
 			.element(page.getByRole('option', { name: 'gpt-4' }))
 			.toBeVisible()
 
-		vi.mocked(getProviders).mockResolvedValueOnce(
-			catalog(['gpt-4', 'claude-3'])
-		)
+		vi.mocked(getModels).mockResolvedValueOnce(catalog(['gpt-4', 'claude-3']))
 		await page.getByRole('button', { name: 'Refresh model list' }).click()
 
 		await expect
 			.element(page.getByRole('option', { name: 'claude-3' }))
 			.toBeVisible()
-		expect(getProviders).toHaveBeenCalledTimes(2)
+		expect(getModels).toHaveBeenCalledTimes(2)
 		const triggerElement = trigger.element() as HTMLButtonElement
 		expect(triggerElement.getAttribute('aria-expanded')).toBe('true')
 	})
