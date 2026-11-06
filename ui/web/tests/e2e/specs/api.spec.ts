@@ -63,7 +63,7 @@ test.describe('API integration', () => {
 
 		// Now update it
 		let patchCalled = false
-		await page.route('**/api/agent/*', (route, request) => {
+		await page.route('**/api/agent/**', (route, request) => {
 			if (request.method() === 'PATCH') {
 				patchCalled = true
 			}
