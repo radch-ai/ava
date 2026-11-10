@@ -13,6 +13,7 @@ import (
 	"github.com/radch-ai/ava/backend/internal/api/agent"
 	"github.com/radch-ai/ava/backend/internal/api/agents"
 	"github.com/radch-ai/ava/backend/internal/api/providers"
+	"github.com/radch-ai/ava/backend/internal/api/vaults"
 	"github.com/radch-ai/ava/backend/internal/db"
 	"github.com/radch-ai/ava/backend/internal/vault"
 )
@@ -52,5 +53,8 @@ func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte) (http.Handler, 
 	mux.Handle("POST /api/providers", api.Log(logger, providers.CreateProvider(queries, vaultStore)))
 	mux.Handle("PATCH /api/providers/{id}", api.Log(logger, providers.UpdateProvider(queries, vaultStore)))
 	mux.Handle("DELETE /api/providers/{id}", api.Log(logger, providers.DeleteProvider(queries, vaultStore)))
+	mux.Handle("GET /api/vault", api.Log(logger, vaults.GetVault(vaultStore)))
+	mux.Handle("PUT /api/vault/{name}", api.Log(logger, vaults.PutSecret(vaultStore)))
+	mux.Handle("DELETE /api/vault/{name}", api.Log(logger, vaults.DeleteSecret(vaultStore)))
 	return mux, nil
 }
