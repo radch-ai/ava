@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"net/http"
@@ -28,7 +29,10 @@ func TestServerChain(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
 
-	apiHandler := backend.New(sqlDB, logger)
+	apiHandler, err := backend.New(sqlDB, logger, bytes.Repeat([]byte{0x42}, 32))
+	if err != nil {
+		t.Fatalf("backend.New: %v", err)
+	}
 	wsHandler, err := gateway.New(&gateway.Config{}, logger)
 	if err != nil {
 		t.Fatalf("gateway.New: %v", err)

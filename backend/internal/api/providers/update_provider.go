@@ -16,13 +16,14 @@ import (
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/backend/internal/api"
 	"github.com/radch-ai/ava/backend/internal/db"
+	"github.com/radch-ai/ava/backend/internal/vault"
 )
 
 // UpdateProvider applies absent-keeps patch semantics: name,
 // baseUrl, apiKey, and the wholesale models replace. Every check
-// (shape, ownership, connection) runs before the one atomic
-// full-row write, so a rejected patch changes nothing.
-func UpdateProvider(queries *db.Queries) api.Handler {
+// (shape, ownership, connection) runs before any write, so a
+// rejected patch changes nothing.
+func UpdateProvider(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		id := r.PathValue("id")
 		var req apitypes.UpdateProviderRequest
@@ -53,7 +54,8 @@ func UpdateProvider(queries *db.Queries) api.Handler {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return fmt.Errorf("read provider %q: %w", id, err)
 		}
-		name, baseURL, apiKey, modelsJSON := row.Name, row.BaseUrl, row.ApiKey, row.Models
+		name, baseURL, modelsJSON := row.Name, row.BaseUrl, row.Models
+		apiKey := providerKey(r.Context(), vaultStore, id)
 		custom, err := decodeModels(modelsJSON)
 		if err != nil {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
@@ -93,14 +95,30 @@ func UpdateProvider(queries *db.Queries) api.Handler {
 		}
 
 		if err := queries.UpdateProvider(r.Context(), db.UpdateProviderParams{
-			Name: name, BaseUrl: baseURL, ApiKey: apiKey,
+			Name: name, BaseUrl: baseURL,
 			Models: encodeModels(custom), ID: id,
 		}); err != nil {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return fmt.Errorf("update provider %q: %w", id, err)
 		}
 
-		provider, err := buildProvider(r.Context(), queries, id)
+		// The key entry follows the row: replace on a supplied key,
+		// remove on an explicit empty one.
+		if req.APIKey != nil {
+			if *req.APIKey == "" {
+				if err := vaultStore.Delete(r.Context(), vault.NameRuntime,
+					providerEntryName(id)); err != nil && !errors.Is(err, vault.ErrNotFound) {
+					_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+					return fmt.Errorf("remove key for provider %q: %w", id, err)
+				}
+			} else if err := vaultStore.Put(r.Context(), vault.NameRuntime,
+				providerEntryName(id), kindProvider, []byte(*req.APIKey), nil); err != nil {
+				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+				return fmt.Errorf("seal key for provider %q: %w", id, err)
+			}
+		}
+
+		provider, err := buildProvider(r.Context(), queries, vaultStore, id)
 		if err != nil {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return err

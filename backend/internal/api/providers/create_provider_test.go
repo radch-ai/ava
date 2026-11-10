@@ -80,6 +80,12 @@ func TestCreateProviderProbe(t *testing.T) {
 	if n != 0 {
 		t.Errorf("providers after rejected create = %d, want 0 (nothing saved)", n)
 	}
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM vault_entries`).Scan(&n); err != nil {
+		t.Fatalf("count vault entries: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("vault entries after rejected create = %d, want 0 (nothing sealed)", n)
+	}
 }
 
 // An unreachable base URL fails the check the same way.

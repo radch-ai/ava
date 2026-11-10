@@ -11,11 +11,11 @@ import (
 	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
-// A row is gone after delete.
+// A row is gone after delete, its sealed key entry with it.
 func TestDeleteProviderUserRow(t *testing.T) {
 	sqlDB := testdb.Open(t)
 	created := do(t, sqlDB, http.MethodPost, "/api/providers",
-		`{"name":"Mistral","baseUrl":"`+noAuthURL(t)+`"}`)
+		`{"name":"Mistral","baseUrl":"`+noAuthURL(t)+`","apiKey":"k-1"}`)
 	id := createdID(t, created)
 
 	rec := do(t, sqlDB, http.MethodDelete, "/api/providers/"+id, "")
@@ -29,6 +29,13 @@ func TestDeleteProviderUserRow(t *testing.T) {
 	rec = do(t, sqlDB, http.MethodGet, "/api/providers", "")
 	if strings.Contains(body(rec), `"Mistral"`) {
 		t.Error("deleted provider still listed")
+	}
+	var n int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM vault_entries`).Scan(&n); err != nil {
+		t.Fatalf("count vault entries: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("vault entries after provider delete = %d, want 0", n)
 	}
 }
 

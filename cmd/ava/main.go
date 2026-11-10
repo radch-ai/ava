@@ -1,7 +1,8 @@
-// Command ava runs the ava server.
+// Command ava runs the ava server; its subcommands rotate vault keys.
 package main
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"os"
@@ -21,25 +22,102 @@ var Version = "dev"
 
 // config holds the server-level values the binary itself consumes.
 type config struct {
-	Addr   string
-	DBPath string
+	Addr      string
+	DBPath    string
+	MasterKey []byte
 }
 
-// loadConfig binds env vars onto the config —
-// all env reading lives here. AVA_DB names the SQLite file and is required;
-// the ":memory:" sentinel runs the database in-process (dev only — the
-// justfile run recipe defaults to it).
+// loadConfig binds env vars onto the config — all env reading lives here.
+//
+// AVA_DB: SQLite file, required; ":memory:" runs the database
+// in-process (dev only — the justfile run recipe defaults to it).
+//
+// AVA_SECRETS_MASTER_KEY: secret-vault master key, required — see
+// .env.example for format and the restart-stability requirement.
 func loadConfig(logger zerolog.Logger) config {
 	return config{
-		Addr:   utils.GetEnv("AVA_ADDR", ":8080"),
-		DBPath: utils.GetEnvRequired("AVA_DB", logger),
+		Addr:      utils.GetEnv("AVA_ADDR", ":8080"),
+		DBPath:    utils.GetEnvRequired("AVA_DB", logger),
+		MasterKey: masterKeyFromEnv(logger, "AVA_SECRETS_MASTER_KEY"),
 	}
+}
+
+// masterKeyFromEnv reads one master-key env var and parses it.
+func masterKeyFromEnv(logger zerolog.Logger, envVar string) []byte {
+	key, err := backend.MasterKeyFromHex(utils.GetEnvRequired(envVar, logger))
+	if err != nil {
+		logger.Fatal().Err(err).Str("env_var", envVar).
+			Msg("generate with openssl rand -hex 32")
+	}
+	return key
 }
 
 func main() {
 	// Setup logging first (reads log level from env)
 	logger := utils.SetupLogger("ava", "AVA")
 
+	// No subcommand: serve. Rotation subcommands manage vault keys.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "rotate-master":
+			runRotateMaster(logger)
+			return
+		case "rotate-keys":
+			runRotateKeys(logger)
+			return
+		default:
+			logger.Fatal().Str("subcommand", os.Args[1]).
+				Msg("unknown subcommand (rotate-master, rotate-keys)")
+		}
+	}
+
+	serve(logger)
+}
+
+// runRotateMaster re-wraps the vault keyset under a new master key,
+// read from an interactive prompt (entries hidden). Afterwards boot
+// the server with the new value in AVA_SECRETS_MASTER_KEY.
+func runRotateMaster(logger zerolog.Logger) {
+	oldKey := masterKeyFromEnv(logger, "AVA_SECRETS_MASTER_KEY")
+	newKey, err := backend.PromptNewMasterKey(os.Stdin, os.Stdout)
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Reading new master key failed")
+	}
+	if bytes.Equal(oldKey, newKey) {
+		logger.Fatal().Msg("new master key equals the current key")
+	}
+	sqlDB, err := sqlstore.OpenSQLite(utils.GetEnvRequired("AVA_DB", logger))
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Failed to open store")
+	}
+	defer func() { _ = sqlDB.Close() }()
+
+	if err := backend.RotateMaster(sqlDB, oldKey, newKey); err != nil {
+		logger.Fatal().Err(err).Msg("Master key rotation failed")
+	}
+	logger.Info().Msg("master key rotated — set AVA_SECRETS_MASTER_KEY to the new key")
+}
+
+// runRotateKeys mints and promotes a fresh vault data key and
+// re-seals every stored entry under it.
+func runRotateKeys(logger zerolog.Logger) {
+	masterKey := masterKeyFromEnv(logger, "AVA_SECRETS_MASTER_KEY")
+	sqlDB, err := sqlstore.OpenSQLite(utils.GetEnvRequired("AVA_DB", logger))
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Failed to open store")
+	}
+	defer func() { _ = sqlDB.Close() }()
+
+	resealed, err := backend.RotateKeys(sqlDB, masterKey)
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Data key rotation failed")
+	}
+	logger.Info().Int("resealed", resealed).
+		Msg("vault data keys rotated; every entry re-sealed")
+}
+
+// serve runs the API server.
+func serve(logger zerolog.Logger) {
 	logger.Info().Str("version", Version).Msg("starting ava")
 
 	// Load configuration
@@ -60,7 +138,10 @@ func main() {
 	}
 	logger.Info().Str("path", cfg.DBPath).Msg("store ready")
 
-	apiHandler := backend.New(sqlDB, logger)
+	apiHandler, err := backend.New(sqlDB, logger, cfg.MasterKey)
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Vault bootstrap failed")
+	}
 
 	wsHandler, err := gateway.New(&gateway.Config{}, logger)
 	if err != nil {

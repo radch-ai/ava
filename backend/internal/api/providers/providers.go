@@ -1,7 +1,8 @@
 // Package providers serves the provider catalog: stored connections
 // with their custom model ids, plus the fetched system lists. Rows
-// are user-created; api_key is write-only (responses carry hasKey);
-// provider ids are server-minted uuids.
+// are user-created; keys are sealed in the runtime vault and never
+// echo back (responses carry hasKey); provider ids are server-minted
+// uuids.
 package providers
 
 import (
@@ -15,6 +16,7 @@ import (
 
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/backend/internal/db"
+	"github.com/radch-ai/ava/backend/internal/vault"
 )
 
 // DefaultModel is the routing fallback heartbeats and cron jobs
@@ -38,8 +40,9 @@ func isValidBaseURL(raw string) bool {
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
-// buildProvider renders one provider response from its stored row.
-func buildProvider(ctx context.Context, queries *db.Queries, id string) (apitypes.Provider, error) {
+// buildProvider renders one provider response from its stored row;
+// hasKey is runtime-vault entry existence.
+func buildProvider(ctx context.Context, queries *db.Queries, vaultStore *vault.Store, id string) (apitypes.Provider, error) {
 	row, err := queries.GetProvider(ctx, id)
 	if err != nil {
 		return apitypes.Provider{}, fmt.Errorf("read provider: %w", err)
@@ -48,13 +51,33 @@ func buildProvider(ctx context.Context, queries *db.Queries, id string) (apitype
 	if err != nil {
 		return apitypes.Provider{}, fmt.Errorf("decode models for provider %q: %w", id, err)
 	}
+	hasKey, err := vaultStore.Has(ctx, vault.NameRuntime, providerEntryName(id))
+	if err != nil {
+		return apitypes.Provider{}, fmt.Errorf("read key state for provider %q: %w", id, err)
+	}
 	return apitypes.Provider{
 		ID:      row.ID,
 		Name:    row.Name,
 		BaseURL: row.BaseUrl,
-		HasKey:  row.ApiKey != "",
+		HasKey:  hasKey,
 		Models:  custom,
 	}, nil
+}
+
+// providerEntryName is the runtime-vault name of a provider's key
+// entry; kindProvider is its kind.
+func providerEntryName(id string) string { return "provider:" + id }
+
+const kindProvider = "provider"
+
+// providerKey reads the provider's stored key; "" when none is stored
+// or the entry does not open — fail-closed at this read.
+func providerKey(ctx context.Context, vaultStore *vault.Store, id string) string {
+	plaintext, _, err := vaultStore.Get(ctx, vault.NameRuntime, providerEntryName(id))
+	if err != nil {
+		return ""
+	}
+	return string(plaintext)
 }
 
 // decodeModels parses the providers.models JSON array column.
