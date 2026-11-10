@@ -9,6 +9,7 @@ require (
 	github.com/openai/openai-go v1.12.0
 	github.com/rs/zerolog v1.35.1
 	github.com/tink-crypto/tink-go/v2 v2.9.0
+	golang.org/x/term v0.44.0
 	modernc.org/sqlite v1.59.0
 )
 

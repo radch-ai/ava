@@ -6,6 +6,10 @@ SELECT wrapped_keyset FROM vault_keyset WHERE id = 1;
 -- First boot only; id is pinned to 1 by the table CHECK.
 INSERT INTO vault_keyset (id, wrapped_keyset) VALUES (1, ?);
 
+-- name: UpdateVaultKeyset :exec
+-- Keyset rotation rewrites the single wrapped blob in place.
+UPDATE vault_keyset SET wrapped_keyset = ? WHERE id = 1;
+
 -- name: PutVaultEntry :exec
 -- Upsert at the (vault, name) address.
 INSERT INTO vault_entries (vault, name, kind, envelope, meta, updated_at)

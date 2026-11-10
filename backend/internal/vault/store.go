@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/tink-crypto/tink-go/v2/aead"
 	"github.com/tink-crypto/tink-go/v2/tink"
 
 	"github.com/radch-ai/ava/backend/internal/db"
@@ -44,9 +45,13 @@ type Store struct {
 // means a different master key initialized this database — fatal at boot.
 func NewStore(sqlDB *sql.DB, master tink.AEAD) (*Store, error) {
 	queries := db.New(sqlDB)
-	entryAEAD, err := loadOrMintKeysetAEAD(queries, master)
+	handle, err := loadOrMintKeysetHandle(queries, master)
 	if err != nil {
 		return nil, err
+	}
+	entryAEAD, err := aead.New(handle)
+	if err != nil {
+		return nil, fmt.Errorf("vault entry AEAD: %w", err)
 	}
 	return &Store{q: queries, aead: entryAEAD}, nil
 }

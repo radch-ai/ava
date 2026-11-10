@@ -4,9 +4,23 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 )
+
+// MasterKeyFromHex parses the one wire form master keys travel in:
+// 64 hex chars (openssl rand -hex 32) decoding to 32 bytes.
+func MasterKeyFromHex(s string) ([]byte, error) {
+	key, err := hex.DecodeString(s)
+	if err != nil {
+		return nil, fmt.Errorf("master key: not 64 hex chars: %w", err)
+	}
+	if len(key) != 32 {
+		return nil, fmt.Errorf("master key: got %d bytes, want 32", len(key))
+	}
+	return key, nil
+}
 
 // MasterAEAD is the stdlib AES-256-GCM adapter implementing Tink's AEAD
 // interface over the master key. It wraps only the keyset blob in the

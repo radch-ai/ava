@@ -1,9 +1,9 @@
-// Command ava runs the ava server.
+// Command ava runs the ava server; its subcommands rotate vault keys.
 package main
 
 import (
+	"bytes"
 	"context"
-	"encoding/hex"
 	"net/http"
 	"os"
 	"os/signal"
@@ -35,27 +35,89 @@ type config struct {
 // AVA_SECRETS_MASTER_KEY: secret-vault master key, required — see
 // .env.example for format and the restart-stability requirement.
 func loadConfig(logger zerolog.Logger) config {
-	masterHex := utils.GetEnvRequired("AVA_SECRETS_MASTER_KEY", logger)
-	masterKey, err := hex.DecodeString(masterHex)
-	if err != nil {
-		logger.Fatal().Str("env_var", "AVA_SECRETS_MASTER_KEY").
-			Msg("must be 64 hex chars (openssl rand -hex 32)")
-	}
-	if len(masterKey) != 32 {
-		logger.Fatal().Str("env_var", "AVA_SECRETS_MASTER_KEY").
-			Msg("must decode to 32 bytes (openssl rand -hex 32)")
-	}
 	return config{
 		Addr:      utils.GetEnv("AVA_ADDR", ":8080"),
 		DBPath:    utils.GetEnvRequired("AVA_DB", logger),
-		MasterKey: masterKey,
+		MasterKey: masterKeyFromEnv(logger, "AVA_SECRETS_MASTER_KEY"),
 	}
+}
+
+// masterKeyFromEnv reads one master-key env var and parses it.
+func masterKeyFromEnv(logger zerolog.Logger, envVar string) []byte {
+	key, err := backend.MasterKeyFromHex(utils.GetEnvRequired(envVar, logger))
+	if err != nil {
+		logger.Fatal().Err(err).Str("env_var", envVar).
+			Msg("generate with openssl rand -hex 32")
+	}
+	return key
 }
 
 func main() {
 	// Setup logging first (reads log level from env)
 	logger := utils.SetupLogger("ava", "AVA")
 
+	// No subcommand: serve. Rotation subcommands manage vault keys.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "rotate-master":
+			runRotateMaster(logger)
+			return
+		case "rotate-keys":
+			runRotateKeys(logger)
+			return
+		default:
+			logger.Fatal().Str("subcommand", os.Args[1]).
+				Msg("unknown subcommand (rotate-master, rotate-keys)")
+		}
+	}
+
+	serve(logger)
+}
+
+// runRotateMaster re-wraps the vault keyset under a new master key,
+// read from an interactive prompt (entries hidden). Afterwards boot
+// the server with the new value in AVA_SECRETS_MASTER_KEY.
+func runRotateMaster(logger zerolog.Logger) {
+	oldKey := masterKeyFromEnv(logger, "AVA_SECRETS_MASTER_KEY")
+	newKey, err := backend.PromptNewMasterKey(os.Stdin, os.Stdout)
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Reading new master key failed")
+	}
+	if bytes.Equal(oldKey, newKey) {
+		logger.Fatal().Msg("new master key equals the current key")
+	}
+	sqlDB, err := sqlstore.OpenSQLite(utils.GetEnvRequired("AVA_DB", logger))
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Failed to open store")
+	}
+	defer func() { _ = sqlDB.Close() }()
+
+	if err := backend.RotateMaster(sqlDB, oldKey, newKey); err != nil {
+		logger.Fatal().Err(err).Msg("Master key rotation failed")
+	}
+	logger.Info().Msg("master key rotated — set AVA_SECRETS_MASTER_KEY to the new key")
+}
+
+// runRotateKeys mints and promotes a fresh vault data key and
+// re-seals every stored entry under it.
+func runRotateKeys(logger zerolog.Logger) {
+	masterKey := masterKeyFromEnv(logger, "AVA_SECRETS_MASTER_KEY")
+	sqlDB, err := sqlstore.OpenSQLite(utils.GetEnvRequired("AVA_DB", logger))
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Failed to open store")
+	}
+	defer func() { _ = sqlDB.Close() }()
+
+	resealed, err := backend.RotateKeys(sqlDB, masterKey)
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Data key rotation failed")
+	}
+	logger.Info().Int("resealed", resealed).
+		Msg("vault data keys rotated; every entry re-sealed")
+}
+
+// serve runs the API server.
+func serve(logger zerolog.Logger) {
 	logger.Info().Str("version", Version).Msg("starting ava")
 
 	// Load configuration
