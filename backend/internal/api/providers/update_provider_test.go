@@ -160,6 +160,30 @@ func TestUpdateProviderProbe(t *testing.T) {
 	}
 }
 
+// Clearing the key with an explicit empty string removes the vault
+// entry when the keyless connection still checks out.
+func TestUpdateProviderClearKey(t *testing.T) {
+	sqlDB := testdb.Open(t)
+	created := do(t, sqlDB, http.MethodPost, "/api/providers",
+		`{"name":"Local","baseUrl":"`+noAuthURL(t)+`","apiKey":"k-1"}`)
+	id := createdID(t, created)
+
+	rec := do(t, sqlDB, http.MethodPatch, "/api/providers/"+id, `{"apiKey":""}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clear status = %d, want 200", rec.Code)
+	}
+	if want := `"hasKey":false`; !containsStr(body(rec), want) {
+		t.Errorf("body = %s, want hasKey false", body(rec))
+	}
+	var n int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM vault_entries`).Scan(&n); err != nil {
+		t.Fatalf("count vault entries: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("vault entries after clear = %d, want 0", n)
+	}
+}
+
 // A baseUrl patch re-probes with the stored key: moving to a dead
 // URL changes nothing.
 func TestUpdateProviderBaseUrlReprobes(t *testing.T) {

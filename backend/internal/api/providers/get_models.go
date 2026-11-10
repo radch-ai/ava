@@ -8,6 +8,7 @@ import (
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/backend/internal/api"
 	"github.com/radch-ai/ava/backend/internal/db"
+	"github.com/radch-ai/ava/backend/internal/vault"
 )
 
 // GetModels answers one group per stored provider (custom ∪ fetched
@@ -15,7 +16,7 @@ import (
 // order. Providers sharing a display name merge into one group;
 // providers with no models at all are dropped. No connection config
 // rides along.
-func GetModels(queries *db.Queries) api.Handler {
+func GetModels(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		rows, err := queries.ListProviders(r.Context())
 		if err != nil {
@@ -31,7 +32,7 @@ func GetModels(queries *db.Queries) api.Handler {
 				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 				return err
 			}
-			system := systemModels(r.Context(), row.BaseUrl, row.ApiKey)
+			system := systemModels(r.Context(), row.BaseUrl, providerKey(r.Context(), vaultStore, row.ID))
 			ids := mergeIDs(custom, system)
 			if len(ids) == 0 {
 				continue

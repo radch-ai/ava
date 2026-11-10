@@ -16,6 +16,14 @@ import (
 // ErrNotFound: no entry exists at the exact (vault, name).
 var ErrNotFound = errors.New("vault entry not found")
 
+// Vault names: "runtime" holds secrets the app's runtime uses on the
+// user's behalf; "secrets" holds user-stored secrets for agent
+// consumption.
+const (
+	NameRuntime = "runtime"
+	NameSecrets = "secrets"
+)
+
 // EntryMeta is the listable face of an entry — never a secret value.
 type EntryMeta struct {
 	Name      string
@@ -83,6 +91,19 @@ func (s *Store) Get(ctx context.Context, vaultName, name string) (plaintext, met
 		return nil, nil, fmt.Errorf("open vault entry %s/%s: %w", vaultName, name, err)
 	}
 	return plaintext, []byte(row.Meta), nil
+}
+
+// Has reports whether an entry exists at the exact (vault, name) —
+// the existence check behind hasKey-style flags; no plaintext.
+func (s *Store) Has(ctx context.Context, vaultName, name string) (bool, error) {
+	_, err := s.q.GetVaultEntry(ctx, db.GetVaultEntryParams{Vault: vaultName, Name: name})
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("load vault entry %s/%s: %w", vaultName, name, err)
+	}
+	return true, nil
 }
 
 // Replace seals plaintext over an existing entry; a missing entry is

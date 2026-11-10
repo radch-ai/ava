@@ -16,8 +16,8 @@ func TestGetProviderModelsUserProvider(t *testing.T) {
 	sqlDB := testdb.Open(t)
 	url := fakeProvider(t).URL
 	for _, stmt := range []string{
-		`INSERT INTO providers (id, name, base_url, api_key, models)
-		 VALUES ('u-1', 'Fake', '` + url + `', 'k-1', '["custom-1"]')`,
+		`INSERT INTO providers (id, name, base_url, models)
+		 VALUES ('u-1', 'Fake', '` + url + `', '["custom-1"]')`,
 		`INSERT INTO providers (id, name, base_url, models)
 		 VALUES ('u-2', 'Local', '` + noAuthURL(t) + `', '[]')`,
 		`INSERT INTO providers (id, name, base_url, models)
@@ -27,6 +27,7 @@ func TestGetProviderModelsUserProvider(t *testing.T) {
 			t.Fatalf("seed provider: %v", err)
 		}
 	}
+	seedKey(t, sqlDB, "u-1", "k-1")
 
 	rec := do(t, sqlDB, http.MethodGet, "/api/providers/u-1/models", "")
 	if rec.Code != http.StatusOK {

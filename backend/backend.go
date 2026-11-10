@@ -31,9 +31,8 @@ func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte) (http.Handler, 
 	if err != nil {
 		return nil, err
 	}
-	// Unwrapping the keyset is the boot check: a wrong master key
-	// cannot open it.
-	if _, err := vault.NewStore(sqlDB, master); err != nil {
+	vaultStore, err := vault.NewStore(sqlDB, master)
+	if err != nil {
 		return nil, err
 	}
 	queries := db.New(sqlDB)
@@ -47,11 +46,11 @@ func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte) (http.Handler, 
 	mux.Handle("POST /api/agent/{id}/cron-jobs", api.Log(logger, agent.CreateCronJob(queries)))
 	mux.Handle("PATCH /api/agent/{id}/cron-jobs/{jobId}", api.Log(logger, agent.UpdateCronJob(queries)))
 	mux.Handle("DELETE /api/agent/{id}/cron-jobs/{jobId}", api.Log(logger, agent.DeleteCronJob(queries)))
-	mux.Handle("GET /api/providers", api.Log(logger, providers.GetProviders(queries)))
-	mux.Handle("GET /api/models", api.Log(logger, providers.GetModels(queries)))
-	mux.Handle("GET /api/providers/{id}/models", api.Log(logger, providers.GetProviderModels(queries)))
-	mux.Handle("POST /api/providers", api.Log(logger, providers.CreateProvider(queries)))
-	mux.Handle("PATCH /api/providers/{id}", api.Log(logger, providers.UpdateProvider(queries)))
-	mux.Handle("DELETE /api/providers/{id}", api.Log(logger, providers.DeleteProvider(queries)))
+	mux.Handle("GET /api/providers", api.Log(logger, providers.GetProviders(queries, vaultStore)))
+	mux.Handle("GET /api/models", api.Log(logger, providers.GetModels(queries, vaultStore)))
+	mux.Handle("GET /api/providers/{id}/models", api.Log(logger, providers.GetProviderModels(queries, vaultStore)))
+	mux.Handle("POST /api/providers", api.Log(logger, providers.CreateProvider(queries, vaultStore)))
+	mux.Handle("PATCH /api/providers/{id}", api.Log(logger, providers.UpdateProvider(queries, vaultStore)))
+	mux.Handle("DELETE /api/providers/{id}", api.Log(logger, providers.DeleteProvider(queries, vaultStore)))
 	return mux, nil
 }

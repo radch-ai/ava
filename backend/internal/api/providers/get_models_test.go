@@ -31,8 +31,8 @@ func TestGetModelsMergesLiveAndCustom(t *testing.T) {
 	sqlDB := testdb.Open(t)
 	url := fakeProvider(t).URL
 	for _, stmt := range []string{
-		`INSERT INTO providers (id, name, base_url, api_key, models)
-		 VALUES ('u-1', 'Fake', '` + url + `', 'k-1', '["live-a","custom-1"]')`,
+		`INSERT INTO providers (id, name, base_url, models)
+		 VALUES ('u-1', 'Fake', '` + url + `', '["live-a","custom-1"]')`,
 		// Custom-only row against a rejecting endpoint: no group.
 		`INSERT INTO providers (id, name, base_url, models)
 		 VALUES ('u-2', 'Empty', '` + url + `', '[]')`,
@@ -41,6 +41,7 @@ func TestGetModelsMergesLiveAndCustom(t *testing.T) {
 			t.Fatalf("seed provider: %v", err)
 		}
 	}
+	seedKey(t, sqlDB, "u-1", "k-1")
 
 	rec := do(t, sqlDB, http.MethodGet, "/api/models", "")
 	if rec.Code != http.StatusOK {
@@ -59,15 +60,17 @@ func TestGetModelsMergesGroupsByName(t *testing.T) {
 	sqlDB := testdb.Open(t)
 	url := fakeProvider(t).URL
 	for _, stmt := range []string{
-		`INSERT INTO providers (id, name, base_url, api_key, models)
-		 VALUES ('u-1', 'OpenAI', '` + url + `', 'k-1', '[]')`,
-		`INSERT INTO providers (id, name, base_url, api_key, models)
-		 VALUES ('u-2', 'OpenAI', '` + url + `', 'k-1', '["custom-1"]')`,
+		`INSERT INTO providers (id, name, base_url, models)
+		 VALUES ('u-1', 'OpenAI', '` + url + `', '[]')`,
+		`INSERT INTO providers (id, name, base_url, models)
+		 VALUES ('u-2', 'OpenAI', '` + url + `', '["custom-1"]')`,
 	} {
 		if _, err := sqlDB.Exec(stmt); err != nil {
 			t.Fatalf("seed provider: %v", err)
 		}
 	}
+	seedKey(t, sqlDB, "u-1", "k-1")
+	seedKey(t, sqlDB, "u-2", "k-1")
 
 	rec := do(t, sqlDB, http.MethodGet, "/api/models", "")
 	if rec.Code != http.StatusOK {
@@ -85,11 +88,12 @@ func TestGetModelsCarriesNoConfig(t *testing.T) {
 	sqlDB := testdb.Open(t)
 	url := fakeProvider(t).URL
 	if _, err := sqlDB.Exec(
-		`INSERT INTO providers (id, name, base_url, api_key, models)
-		 VALUES ('u-1', 'Fake', '` + url + `', 'k-1', '[]')`,
+		`INSERT INTO providers (id, name, base_url, models)
+		 VALUES ('u-1', 'Fake', '` + url + `', '[]')`,
 	); err != nil {
 		t.Fatalf("seed provider: %v", err)
 	}
+	seedKey(t, sqlDB, "u-1", "k-1")
 	rec := do(t, sqlDB, http.MethodGet, "/api/models", "")
 	if b := body(rec); strings.Contains(b, `"k-1"`) || strings.Contains(b, url) || strings.Contains(b, "baseUrl") {
 		t.Errorf("body leaks connection config: %s", b)
