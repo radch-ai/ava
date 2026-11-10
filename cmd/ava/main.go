@@ -148,10 +148,11 @@ func serve(logger zerolog.Logger) {
 		logger.Fatal().Err(err).Msg("Failed to create gateway handler")
 	}
 
-	// Component mounts: backend under /api, gateway at /ws. The /healthz
-	// probe comes from utils.Serve.
+	// Component mounts: backend under /api (prefix stripped — backend
+	// routes are mount-relative), gateway at /ws. The /healthz probe
+	// comes from utils.Serve.
 	root := http.NewServeMux()
-	root.Handle("/api/", apiHandler)
+	root.Handle("/api/", http.StripPrefix("/api", apiHandler))
 	root.Handle("GET /ws", wsHandler)
 
 	if err := utils.Serve(ctx, root, cfg.Addr, logger); err != nil {

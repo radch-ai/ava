@@ -50,15 +50,16 @@ func TestServerChain(t *testing.T) {
 	addr := ln.Addr().String()
 	_ = ln.Close()
 
-	// Same mounts main builds: backend under /api, gateway at /ws. The
-	// backend mount is wrapped to stamp a header, proving requests are
+	// Same mounts main builds: backend under /api (prefix stripped —
+	// backend routes are mount-relative), gateway at /ws. The backend
+	// mount is wrapped to stamp a header, proving requests are
 	// delegated to the mounted handler.
 	stampedAPI := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Chain", "api")
 		apiHandler.ServeHTTP(w, r)
 	})
 	root := http.NewServeMux()
-	root.Handle("/api/", stampedAPI)
+	root.Handle("/api/", http.StripPrefix("/api", stampedAPI))
 	root.Handle("GET /ws", wsHandler)
 
 	done := make(chan error, 1)

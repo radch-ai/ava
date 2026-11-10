@@ -34,44 +34,44 @@ func TestRoutes(t *testing.T) {
 		return rec.Code
 	}
 
-	if code := do(http.MethodPost, "/api/agents", ""); code != http.StatusMethodNotAllowed {
-		t.Errorf("POST /api/agents = %d, want 405", code)
+	if code := do(http.MethodPost, "/agents", ""); code != http.StatusMethodNotAllowed {
+		t.Errorf("POST /agents = %d, want 405", code)
 	}
-	if code := do(http.MethodGet, "/api/agents", ""); code != http.StatusOK {
-		t.Errorf("GET /api/agents = %d, want 200", code)
+	if code := do(http.MethodGet, "/agents", ""); code != http.StatusOK {
+		t.Errorf("GET /agents = %d, want 200", code)
 	}
-	if code := do(http.MethodGet, "/api/nope", ""); code != http.StatusNotFound {
-		t.Errorf("GET /api/nope = %d, want 404", code)
+	if code := do(http.MethodGet, "/nope", ""); code != http.StatusNotFound {
+		t.Errorf("GET /nope = %d, want 404", code)
 	}
 	// The save surface's per-agent routes.
-	if code := do(http.MethodGet, "/api/agent/_superagent/config", ""); code != http.StatusOK {
-		t.Errorf("GET /api/agent/_superagent/config = %d, want 200", code)
+	if code := do(http.MethodGet, "/agent/_superagent/config", ""); code != http.StatusOK {
+		t.Errorf("GET /agent/_superagent/config = %d, want 200", code)
 	}
-	if code := do(http.MethodGet, "/api/agent/ghost/config", ""); code != http.StatusNotFound {
-		t.Errorf("GET /api/agent/ghost/config = %d, want 404", code)
+	if code := do(http.MethodGet, "/agent/ghost/config", ""); code != http.StatusNotFound {
+		t.Errorf("GET /agent/ghost/config = %d, want 404", code)
 	}
-	if code := do(http.MethodPatch, "/api/agent/_superagent/config", "{}"); code != http.StatusOK {
-		t.Errorf("PATCH /api/agent/_superagent/config = %d, want 200", code)
+	if code := do(http.MethodPatch, "/agent/_superagent/config", "{}"); code != http.StatusOK {
+		t.Errorf("PATCH /agent/_superagent/config = %d, want 200", code)
 	}
-	if code := do(http.MethodPatch, "/api/agent/_superagent/heartbeat",
+	if code := do(http.MethodPatch, "/agent/_superagent/heartbeat",
 		`{"model":"auto","enabled":true,"duration":"30m","content":"x"}`); code != http.StatusOK {
-		t.Errorf("PATCH /api/agent/_superagent/heartbeat = %d, want 200", code)
+		t.Errorf("PATCH /agent/_superagent/heartbeat = %d, want 200", code)
 	}
-	if code := do(http.MethodGet, "/api/agent/_superagent/cron-jobs", ""); code != http.StatusOK {
-		t.Errorf("GET /api/agent/_superagent/cron-jobs = %d, want 200", code)
+	if code := do(http.MethodGet, "/agent/_superagent/cron-jobs", ""); code != http.StatusOK {
+		t.Errorf("GET /agent/_superagent/cron-jobs = %d, want 200", code)
 	}
-	if code := do(http.MethodGet, "/api/agent/ghost/cron-jobs", ""); code != http.StatusNotFound {
-		t.Errorf("GET /api/agent/ghost/cron-jobs = %d, want 404", code)
+	if code := do(http.MethodGet, "/agent/ghost/cron-jobs", ""); code != http.StatusNotFound {
+		t.Errorf("GET /agent/ghost/cron-jobs = %d, want 404", code)
 	}
-	if code := do(http.MethodDelete, "/api/agent/_superagent/cron-jobs/nope", ""); code != http.StatusNotFound {
-		t.Errorf("DELETE /api/agent/_superagent/cron-jobs/nope = %d, want 404", code)
+	if code := do(http.MethodDelete, "/agent/_superagent/cron-jobs/nope", ""); code != http.StatusNotFound {
+		t.Errorf("DELETE /agent/_superagent/cron-jobs/nope = %d, want 404", code)
 	}
 	// The selector catalog and per-provider system models.
-	if code := do(http.MethodGet, "/api/models", ""); code != http.StatusOK {
-		t.Errorf("GET /api/models = %d, want 200", code)
+	if code := do(http.MethodGet, "/models", ""); code != http.StatusOK {
+		t.Errorf("GET /models = %d, want 200", code)
 	}
-	if code := do(http.MethodGet, "/api/providers/nope/models", ""); code != http.StatusNotFound {
-		t.Errorf("GET /api/providers/nope/models = %d, want 404", code)
+	if code := do(http.MethodGet, "/providers/nope/models", ""); code != http.StatusNotFound {
+		t.Errorf("GET /providers/nope/models = %d, want 404", code)
 	}
 }
 

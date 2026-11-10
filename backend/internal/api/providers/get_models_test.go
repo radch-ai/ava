@@ -15,7 +15,7 @@ import (
 // key fetches them.
 func TestGetModelsEmptyStore(t *testing.T) {
 	sqlDB := testdb.Open(t)
-	rec := do(t, sqlDB, http.MethodGet, "/api/models", "")
+	rec := do(t, sqlDB, http.MethodGet, "/models", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -43,7 +43,7 @@ func TestGetModelsMergesLiveAndCustom(t *testing.T) {
 	}
 	seedKey(t, sqlDB, "u-1", "k-1")
 
-	rec := do(t, sqlDB, http.MethodGet, "/api/models", "")
+	rec := do(t, sqlDB, http.MethodGet, "/models", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -72,7 +72,7 @@ func TestGetModelsMergesGroupsByName(t *testing.T) {
 	seedKey(t, sqlDB, "u-1", "k-1")
 	seedKey(t, sqlDB, "u-2", "k-1")
 
-	rec := do(t, sqlDB, http.MethodGet, "/api/models", "")
+	rec := do(t, sqlDB, http.MethodGet, "/models", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -94,7 +94,7 @@ func TestGetModelsCarriesNoConfig(t *testing.T) {
 		t.Fatalf("seed provider: %v", err)
 	}
 	seedKey(t, sqlDB, "u-1", "k-1")
-	rec := do(t, sqlDB, http.MethodGet, "/api/models", "")
+	rec := do(t, sqlDB, http.MethodGet, "/models", "")
 	if b := body(rec); strings.Contains(b, `"k-1"`) || strings.Contains(b, url) || strings.Contains(b, "baseUrl") {
 		t.Errorf("body leaks connection config: %s", b)
 	}

@@ -16,7 +16,7 @@ import (
 // OpenAI-compatible server) saves; a dead URL saves nothing.
 func TestCreateProviderKeylessProbes(t *testing.T) {
 	sqlDB := testdb.Open(t)
-	rec := do(t, sqlDB, http.MethodPost, "/api/providers",
+	rec := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Ollama","baseUrl":"`+noAuthURL(t)+`"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("no-auth status = %d, want 201 (body %s)", rec.Code, body(rec))
@@ -30,14 +30,14 @@ func TestCreateProviderKeylessProbes(t *testing.T) {
 		t.Errorf("id = %q, want a non-empty uuid distinct from the name", created.ID)
 	}
 
-	rec = do(t, sqlDB, http.MethodGet, "/api/providers", "")
+	rec = do(t, sqlDB, http.MethodGet, "/providers", "")
 	wantEntry := `"hasKey":false`
 	if !strings.Contains(body(rec), wantEntry) {
 		t.Errorf("list missing entry %s (got %s)", wantEntry, body(rec))
 	}
 
 	sqlDB = testdb.Open(t)
-	rec = do(t, sqlDB, http.MethodPost, "/api/providers",
+	rec = do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Dead","baseUrl":"http://127.0.0.1:1/v1"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("keyless-dead status = %d, want 400", rec.Code)
@@ -57,14 +57,14 @@ func TestCreateProviderProbe(t *testing.T) {
 	url := fakeProvider(t).URL
 
 	sqlDB := testdb.Open(t)
-	rec := do(t, sqlDB, http.MethodPost, "/api/providers",
+	rec := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Fake","baseUrl":"`+url+`","apiKey":"k-1"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("ok-key status = %d, want 201 (body %s)", rec.Code, body(rec))
 	}
 
 	sqlDB = testdb.Open(t)
-	rec = do(t, sqlDB, http.MethodPost, "/api/providers",
+	rec = do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Fake","baseUrl":"`+url+`","apiKey":"wrong"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad-key status = %d, want 400", rec.Code)
@@ -91,7 +91,7 @@ func TestCreateProviderProbe(t *testing.T) {
 // An unreachable base URL fails the check the same way.
 func TestCreateProviderProbeUnreachable(t *testing.T) {
 	sqlDB := testdb.Open(t)
-	rec := do(t, sqlDB, http.MethodPost, "/api/providers",
+	rec := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Dead","baseUrl":"http://127.0.0.1:1/v1","apiKey":"k-1"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
@@ -118,7 +118,7 @@ func TestCreateProviderValidation(t *testing.T) {
 		{`not json`, `{"message":"Invalid request body"}`},
 	}
 	for _, tc := range cases {
-		rec := do(t, sqlDB, http.MethodPost, "/api/providers", tc.body)
+		rec := do(t, sqlDB, http.MethodPost, "/providers", tc.body)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("POST %s status = %d, want 400", tc.body, rec.Code)
 		}

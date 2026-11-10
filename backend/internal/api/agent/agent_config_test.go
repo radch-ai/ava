@@ -52,8 +52,8 @@ func configStore(t *testing.T) *db.Queries {
 func TestGetAgentConfigSeededSuperagent(t *testing.T) {
 	queries := db.New(testdb.Open(t))
 
-	rec, err := serve(t, "GET /api/agent/{id}/config", GetAgentConfig(queries),
-		http.MethodGet, "/api/agent/_superagent/config", "")
+	rec, err := serve(t, "GET /agent/{id}/config", GetAgentConfig(queries),
+		http.MethodGet, "/agent/_superagent/config", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,8 +75,8 @@ func TestGetAgentConfigSeededSuperagent(t *testing.T) {
 func TestGetAgentConfigUnknownAgent(t *testing.T) {
 	queries := db.New(testdb.Open(t))
 
-	rec, err := serve(t, "GET /api/agent/{id}/config", GetAgentConfig(queries),
-		http.MethodGet, "/api/agent/ghost/config", "")
+	rec, err := serve(t, "GET /agent/{id}/config", GetAgentConfig(queries),
+		http.MethodGet, "/agent/ghost/config", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,8 +92,8 @@ func TestGetAgentConfigUnknownAgent(t *testing.T) {
 func TestUpdateAgentConfigAppliesPatch(t *testing.T) {
 	queries := configStore(t)
 
-	rec, err := serve(t, "PATCH /api/agent/{id}/config", UpdateAgentConfig(queries),
-		http.MethodPatch, "/api/agent/research/config", `{
+	rec, err := serve(t, "PATCH /agent/{id}/config", UpdateAgentConfig(queries),
+		http.MethodPatch, "/agent/research/config", `{
 			"name": "Research Two", "icon": "bot",
 			"soul": {"personality": "skeptical", "identity": "checks sources"},
 			"operatingInstructions": "verify twice",
@@ -130,8 +130,8 @@ func TestUpdateAgentConfigAppliesPatch(t *testing.T) {
 func TestUpdateAgentConfigSoulReplacesWhole(t *testing.T) {
 	queries := configStore(t)
 
-	rec, err := serve(t, "PATCH /api/agent/{id}/config", UpdateAgentConfig(queries),
-		http.MethodPatch, "/api/agent/research/config", `{"soul":{"personality":"only this"}}`)
+	rec, err := serve(t, "PATCH /agent/{id}/config", UpdateAgentConfig(queries),
+		http.MethodPatch, "/agent/research/config", `{"soul":{"personality":"only this"}}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,8 +153,8 @@ func TestUpdateAgentConfigSoulReplacesWhole(t *testing.T) {
 func TestUpdateAgentConfigSkipsSystemIdentity(t *testing.T) {
 	queries := db.New(testdb.Open(t))
 
-	rec, err := serve(t, "PATCH /api/agent/{id}/config", UpdateAgentConfig(queries),
-		http.MethodPatch, "/api/agent/_superagent/config", `{
+	rec, err := serve(t, "PATCH /agent/{id}/config", UpdateAgentConfig(queries),
+		http.MethodPatch, "/agent/_superagent/config", `{
 			"name": "Nope", "icon": "bot",
 			"soul": {"personality": "patched", "identity": "patched"}
 		}`)
@@ -176,8 +176,8 @@ func TestUpdateAgentConfigSkipsSystemIdentity(t *testing.T) {
 func TestUpdateAgentConfigEmptyPatchIsNoop(t *testing.T) {
 	queries := configStore(t)
 
-	rec, err := serve(t, "PATCH /api/agent/{id}/config", UpdateAgentConfig(queries),
-		http.MethodPatch, "/api/agent/research/config", `{}`)
+	rec, err := serve(t, "PATCH /agent/{id}/config", UpdateAgentConfig(queries),
+		http.MethodPatch, "/agent/research/config", `{}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,8 +192,8 @@ func TestUpdateAgentConfigEmptyPatchIsNoop(t *testing.T) {
 func TestUpdateAgentConfigUnknownAgent(t *testing.T) {
 	queries := db.New(testdb.Open(t))
 
-	rec, err := serve(t, "PATCH /api/agent/{id}/config", UpdateAgentConfig(queries),
-		http.MethodPatch, "/api/agent/ghost/config", `{"name":"X"}`)
+	rec, err := serve(t, "PATCH /agent/{id}/config", UpdateAgentConfig(queries),
+		http.MethodPatch, "/agent/ghost/config", `{"name":"X"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,8 +205,8 @@ func TestUpdateAgentConfigUnknownAgent(t *testing.T) {
 func TestUpdateAgentConfigMalformedBody(t *testing.T) {
 	queries := configStore(t)
 
-	rec, err := serve(t, "PATCH /api/agent/{id}/config", UpdateAgentConfig(queries),
-		http.MethodPatch, "/api/agent/research/config", `not-json`)
+	rec, err := serve(t, "PATCH /agent/{id}/config", UpdateAgentConfig(queries),
+		http.MethodPatch, "/agent/research/config", `not-json`)
 	if err != nil {
 		t.Fatal(err)
 	}

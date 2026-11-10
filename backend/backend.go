@@ -19,8 +19,8 @@ import (
 )
 
 // New builds the backend route table over an already-open,
-// already-migrated database; the binary entrypoint mounts it under
-// /api on its root mux.
+// already-migrated database. Routes are mount-relative: the binary
+// entrypoint mounts the handler under /api, stripping the prefix.
 //
 // masterKey unlocks the secret vault: a key that does not unwrap the
 // stored keyset fails here, at boot.
@@ -38,23 +38,23 @@ func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte) (http.Handler, 
 	}
 	queries := db.New(sqlDB)
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/agents", api.Log(logger, agents.GetAgents(queries)))
-	mux.Handle("POST /api/agent", api.Log(logger, agent.CreateAgent(queries)))
-	mux.Handle("GET /api/agent/{id}/config", api.Log(logger, agent.GetAgentConfig(queries)))
-	mux.Handle("PATCH /api/agent/{id}/config", api.Log(logger, agent.UpdateAgentConfig(queries)))
-	mux.Handle("PATCH /api/agent/{id}/heartbeat", api.Log(logger, agent.UpdateHeartbeat(queries)))
-	mux.Handle("GET /api/agent/{id}/cron-jobs", api.Log(logger, agent.GetCronJobs(queries)))
-	mux.Handle("POST /api/agent/{id}/cron-jobs", api.Log(logger, agent.CreateCronJob(queries)))
-	mux.Handle("PATCH /api/agent/{id}/cron-jobs/{jobId}", api.Log(logger, agent.UpdateCronJob(queries)))
-	mux.Handle("DELETE /api/agent/{id}/cron-jobs/{jobId}", api.Log(logger, agent.DeleteCronJob(queries)))
-	mux.Handle("GET /api/providers", api.Log(logger, providers.GetProviders(queries, vaultStore)))
-	mux.Handle("GET /api/models", api.Log(logger, providers.GetModels(queries, vaultStore)))
-	mux.Handle("GET /api/providers/{id}/models", api.Log(logger, providers.GetProviderModels(queries, vaultStore)))
-	mux.Handle("POST /api/providers", api.Log(logger, providers.CreateProvider(queries, vaultStore)))
-	mux.Handle("PATCH /api/providers/{id}", api.Log(logger, providers.UpdateProvider(queries, vaultStore)))
-	mux.Handle("DELETE /api/providers/{id}", api.Log(logger, providers.DeleteProvider(queries, vaultStore)))
-	mux.Handle("GET /api/vault", api.Log(logger, vaults.GetVault(vaultStore)))
-	mux.Handle("PUT /api/vault/{name}", api.Log(logger, vaults.PutSecret(vaultStore)))
-	mux.Handle("DELETE /api/vault/{name}", api.Log(logger, vaults.DeleteSecret(vaultStore)))
+	mux.Handle("GET /agents", api.Log(logger, agents.GetAgents(queries)))
+	mux.Handle("POST /agent", api.Log(logger, agent.CreateAgent(queries)))
+	mux.Handle("GET /agent/{id}/config", api.Log(logger, agent.GetAgentConfig(queries)))
+	mux.Handle("PATCH /agent/{id}/config", api.Log(logger, agent.UpdateAgentConfig(queries)))
+	mux.Handle("PATCH /agent/{id}/heartbeat", api.Log(logger, agent.UpdateHeartbeat(queries)))
+	mux.Handle("GET /agent/{id}/cron-jobs", api.Log(logger, agent.GetCronJobs(queries)))
+	mux.Handle("POST /agent/{id}/cron-jobs", api.Log(logger, agent.CreateCronJob(queries)))
+	mux.Handle("PATCH /agent/{id}/cron-jobs/{jobId}", api.Log(logger, agent.UpdateCronJob(queries)))
+	mux.Handle("DELETE /agent/{id}/cron-jobs/{jobId}", api.Log(logger, agent.DeleteCronJob(queries)))
+	mux.Handle("GET /providers", api.Log(logger, providers.GetProviders(queries, vaultStore)))
+	mux.Handle("GET /models", api.Log(logger, providers.GetModels(queries, vaultStore)))
+	mux.Handle("GET /providers/{id}/models", api.Log(logger, providers.GetProviderModels(queries, vaultStore)))
+	mux.Handle("POST /providers", api.Log(logger, providers.CreateProvider(queries, vaultStore)))
+	mux.Handle("PATCH /providers/{id}", api.Log(logger, providers.UpdateProvider(queries, vaultStore)))
+	mux.Handle("DELETE /providers/{id}", api.Log(logger, providers.DeleteProvider(queries, vaultStore)))
+	mux.Handle("GET /vault", api.Log(logger, vaults.GetVault(vaultStore)))
+	mux.Handle("PUT /vault/{name}", api.Log(logger, vaults.PutSecret(vaultStore)))
+	mux.Handle("DELETE /vault/{name}", api.Log(logger, vaults.DeleteSecret(vaultStore)))
 	return mux, nil
 }

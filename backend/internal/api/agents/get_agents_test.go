@@ -32,7 +32,7 @@ func getAgents(t *testing.T, queries *db.Queries) (int, string, error) {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	err := GetAgents(queries)(rec,
-		httptest.NewRequest(http.MethodGet, "/api/agents", nil))
+		httptest.NewRequest(http.MethodGet, "/agents", nil))
 	return rec.Code, strings.TrimSpace(rec.Body.String()), err
 }
 

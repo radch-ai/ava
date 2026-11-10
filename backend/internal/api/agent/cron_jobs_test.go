@@ -39,7 +39,7 @@ func cronStore(t *testing.T) *db.Queries {
 
 func TestGetCronJobsEmptyList(t *testing.T) {
 	queries := cronStore(t)
-	rec, err := serve(t, "GET /api/agent/{id}/cron-jobs", GetCronJobs(queries), http.MethodGet, "/api/agent/research/cron-jobs", "")
+	rec, err := serve(t, "GET /agent/{id}/cron-jobs", GetCronJobs(queries), http.MethodGet, "/agent/research/cron-jobs", "")
 	if err != nil {
 		t.Fatalf("serve: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestCreateCronJobMintsID(t *testing.T) {
 
 	custom := "*/5 * * * *"
 	body := `{"time":"09:00","frequency":"custom","cronExpression":"*/5 * * * *","model":"auto","prompt":"hi"}`
-	rec, err := serve(t, "POST /api/agent/{id}/cron-jobs", CreateCronJob(queries), http.MethodPost, "/api/agent/research/cron-jobs", body)
+	rec, err := serve(t, "POST /agent/{id}/cron-jobs", CreateCronJob(queries), http.MethodPost, "/agent/research/cron-jobs", body)
 	if err != nil {
 		t.Fatalf("serve: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestCreateCronJobMintsID(t *testing.T) {
 		t.Errorf("model = %q, want auto", job.Model)
 	}
 
-	rec, err = serve(t, "POST /api/agent/{id}/cron-jobs", CreateCronJob(queries), http.MethodPost, "/api/agent/research/cron-jobs",
+	rec, err = serve(t, "POST /agent/{id}/cron-jobs", CreateCronJob(queries), http.MethodPost, "/agent/research/cron-jobs",
 		`{"time":"10:00","frequency":"daily","cronExpression":"ignored","model":"m1","prompt":"yo"}`)
 	if err != nil {
 		t.Fatalf("serve: %v", err)
@@ -103,7 +103,7 @@ func TestCreateCronJobMintsID(t *testing.T) {
 func TestCreateCronJobGuards(t *testing.T) {
 	queries := cronStore(t)
 
-	rec, err := serve(t, "POST /api/agent/{id}/cron-jobs", CreateCronJob(queries), http.MethodPost, "/api/agent/research/cron-jobs", "{bad json")
+	rec, err := serve(t, "POST /agent/{id}/cron-jobs", CreateCronJob(queries), http.MethodPost, "/agent/research/cron-jobs", "{bad json")
 	if err != nil {
 		t.Fatalf("serve: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestCreateCronJobGuards(t *testing.T) {
 		t.Errorf("bad body = %d %s, want 400", rec.Code, rec.Body)
 	}
 
-	rec, err = serve(t, "POST /api/agent/{id}/cron-jobs", CreateCronJob(queries), http.MethodPost, "/api/agent/ghost/cron-jobs",
+	rec, err = serve(t, "POST /agent/{id}/cron-jobs", CreateCronJob(queries), http.MethodPost, "/agent/ghost/cron-jobs",
 		`{"time":"09:00","frequency":"daily","prompt":"x"}`)
 	if err != nil {
 		t.Fatalf("serve: %v", err)
@@ -124,7 +124,7 @@ func TestCreateCronJobGuards(t *testing.T) {
 func TestUpdateCronJobFullRewrite(t *testing.T) {
 	queries := cronStore(t)
 
-	rec, err := serve(t, "POST /api/agent/{id}/cron-jobs", CreateCronJob(queries), http.MethodPost, "/api/agent/research/cron-jobs",
+	rec, err := serve(t, "POST /agent/{id}/cron-jobs", CreateCronJob(queries), http.MethodPost, "/agent/research/cron-jobs",
 		`{"time":"09:00","frequency":"custom","cronExpression":"0 9 * * *","model":"m1","prompt":"old"}`)
 	if err != nil || rec.Code != http.StatusCreated {
 		t.Fatalf("seed: %d %v", rec.Code, err)
@@ -135,7 +135,7 @@ func TestUpdateCronJobFullRewrite(t *testing.T) {
 	}
 
 	// custom -> daily clears the expression; model auto -> NULL.
-	rec, err = serve(t, "PATCH /api/agent/{id}/cron-jobs/{jobId}", UpdateCronJob(queries), http.MethodPatch, "/api/agent/research/cron-jobs/"+seeded.ID,
+	rec, err = serve(t, "PATCH /agent/{id}/cron-jobs/{jobId}", UpdateCronJob(queries), http.MethodPatch, "/agent/research/cron-jobs/"+seeded.ID,
 		`{"time":"10:00","frequency":"daily","cronExpression":"0 9 * * *","model":"auto","prompt":"new"}`)
 	if err != nil {
 		t.Fatalf("serve: %v", err)
@@ -158,7 +158,7 @@ func TestUpdateCronJobFullRewrite(t *testing.T) {
 	}
 
 	// daily -> custom stores the expression; concrete model roundtrips.
-	rec, err = serve(t, "PATCH /api/agent/{id}/cron-jobs/{jobId}", UpdateCronJob(queries), http.MethodPatch, "/api/agent/research/cron-jobs/"+seeded.ID,
+	rec, err = serve(t, "PATCH /agent/{id}/cron-jobs/{jobId}", UpdateCronJob(queries), http.MethodPatch, "/agent/research/cron-jobs/"+seeded.ID,
 		`{"time":"11:00","frequency":"custom","cronExpression":"15 3 * * *","model":"m2","prompt":"new"}`)
 	if err != nil {
 		t.Fatalf("serve: %v", err)
@@ -180,7 +180,7 @@ func TestUpdateCronJobFullRewrite(t *testing.T) {
 func TestUpdateCronJobUnknowns(t *testing.T) {
 	queries := cronStore(t)
 
-	rec, err := serve(t, "PATCH /api/agent/{id}/cron-jobs/{jobId}", UpdateCronJob(queries), http.MethodPatch, "/api/agent/ghost/cron-jobs/j1",
+	rec, err := serve(t, "PATCH /agent/{id}/cron-jobs/{jobId}", UpdateCronJob(queries), http.MethodPatch, "/agent/ghost/cron-jobs/j1",
 		`{"time":"09:00","frequency":"daily","prompt":"x"}`)
 	if err != nil {
 		t.Fatalf("serve: %v", err)
@@ -189,7 +189,7 @@ func TestUpdateCronJobUnknowns(t *testing.T) {
 		t.Errorf("unknown agent = %d %s, want 404", rec.Code, rec.Body)
 	}
 
-	rec, err = serve(t, "PATCH /api/agent/{id}/cron-jobs/{jobId}", UpdateCronJob(queries), http.MethodPatch, "/api/agent/research/cron-jobs/missing",
+	rec, err = serve(t, "PATCH /agent/{id}/cron-jobs/{jobId}", UpdateCronJob(queries), http.MethodPatch, "/agent/research/cron-jobs/missing",
 		`{"time":"09:00","frequency":"daily","prompt":"x"}`)
 	if err != nil {
 		t.Fatalf("serve: %v", err)
@@ -202,7 +202,7 @@ func TestUpdateCronJobUnknowns(t *testing.T) {
 func TestDeleteCronJob(t *testing.T) {
 	queries := cronStore(t)
 
-	rec, err := serve(t, "POST /api/agent/{id}/cron-jobs", CreateCronJob(queries), http.MethodPost, "/api/agent/research/cron-jobs",
+	rec, err := serve(t, "POST /agent/{id}/cron-jobs", CreateCronJob(queries), http.MethodPost, "/agent/research/cron-jobs",
 		`{"time":"09:00","frequency":"daily","prompt":"x"}`)
 	if err != nil || rec.Code != http.StatusCreated {
 		t.Fatalf("seed: %d %v", rec.Code, err)
@@ -212,7 +212,7 @@ func TestDeleteCronJob(t *testing.T) {
 		t.Fatalf("decode seed: %v", err)
 	}
 
-	rec, err = serve(t, "DELETE /api/agent/{id}/cron-jobs/{jobId}", DeleteCronJob(queries), http.MethodDelete, "/api/agent/research/cron-jobs/"+seeded.ID, "")
+	rec, err = serve(t, "DELETE /agent/{id}/cron-jobs/{jobId}", DeleteCronJob(queries), http.MethodDelete, "/agent/research/cron-jobs/"+seeded.ID, "")
 	if err != nil {
 		t.Fatalf("serve: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestDeleteCronJob(t *testing.T) {
 		t.Errorf("delete = %d %q, want 204 empty", rec.Code, rec.Body)
 	}
 
-	rec, err = serve(t, "DELETE /api/agent/{id}/cron-jobs/{jobId}", DeleteCronJob(queries), http.MethodDelete, "/api/agent/research/cron-jobs/"+seeded.ID, "")
+	rec, err = serve(t, "DELETE /agent/{id}/cron-jobs/{jobId}", DeleteCronJob(queries), http.MethodDelete, "/agent/research/cron-jobs/"+seeded.ID, "")
 	if err != nil {
 		t.Fatalf("serve: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestDeleteCronJob(t *testing.T) {
 
 func TestDetailBundleHasNoCronJobs(t *testing.T) {
 	queries := cronStore(t)
-	rec, err := serve(t, "GET /api/agent/{id}/config", GetAgentConfig(queries), http.MethodGet, "/api/agent/research/config", "")
+	rec, err := serve(t, "GET /agent/{id}/config", GetAgentConfig(queries), http.MethodGet, "/agent/research/config", "")
 	if err != nil {
 		t.Fatalf("serve: %v", err)
 	}

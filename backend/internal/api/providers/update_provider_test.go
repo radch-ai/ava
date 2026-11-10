@@ -17,10 +17,10 @@ import (
 func TestUpdateProviderPatchKeepsAbsentFields(t *testing.T) {
 	sqlDB := testdb.Open(t)
 	url := noAuthURL(t)
-	created := do(t, sqlDB, http.MethodPost, "/api/providers",
+	created := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Mistral","baseUrl":"`+url+`"}`)
 	id := createdID(t, created)
-	patch := do(t, sqlDB, http.MethodPatch, "/api/providers/"+id, `{"name":"Mistral Pro"}`)
+	patch := do(t, sqlDB, http.MethodPatch, "/providers/"+id, `{"name":"Mistral Pro"}`)
 	if patch.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", patch.Code)
 	}
@@ -35,11 +35,11 @@ func TestUpdateProviderPatchKeepsAbsentFields(t *testing.T) {
 func TestUpdateProviderModelsReplace(t *testing.T) {
 	sqlDB := testdb.Open(t)
 	url := noAuthURL(t)
-	created := do(t, sqlDB, http.MethodPost, "/api/providers",
+	created := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Fake","baseUrl":"`+url+`"}`)
 	id := createdID(t, created)
 
-	patch := do(t, sqlDB, http.MethodPatch, "/api/providers/"+id,
+	patch := do(t, sqlDB, http.MethodPatch, "/providers/"+id,
 		`{"models":["f/m2","f/m1"]}`)
 	if patch.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", patch.Code)
@@ -49,7 +49,7 @@ func TestUpdateProviderModelsReplace(t *testing.T) {
 		t.Errorf("body = %s, want %s", got, want)
 	}
 
-	patch = do(t, sqlDB, http.MethodPatch, "/api/providers/"+id, `{"models":[]}`)
+	patch = do(t, sqlDB, http.MethodPatch, "/providers/"+id, `{"models":[]}`)
 	if patch.Code != http.StatusOK {
 		t.Fatalf("clear status = %d, want 200", patch.Code)
 	}
@@ -60,7 +60,7 @@ func TestUpdateProviderModelsReplace(t *testing.T) {
 
 func TestUpdateProviderModelsValidation(t *testing.T) {
 	sqlDB := testdb.Open(t)
-	created := do(t, sqlDB, http.MethodPost, "/api/providers",
+	created := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Fake","baseUrl":"`+noAuthURL(t)+`"}`)
 	id := createdID(t, created)
 
@@ -72,7 +72,7 @@ func TestUpdateProviderModelsValidation(t *testing.T) {
 		{`{"models":["x","x"]}`, `{"message":"Duplicate model id \"x\""}`},
 	}
 	for _, tc := range cases {
-		rec := do(t, sqlDB, http.MethodPatch, "/api/providers/"+id, tc.body)
+		rec := do(t, sqlDB, http.MethodPatch, "/providers/"+id, tc.body)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("PATCH %s status = %d, want 400", tc.body, rec.Code)
 		}
@@ -88,17 +88,17 @@ func TestUpdateProviderModelsValidation(t *testing.T) {
 func TestUpdateProviderModelOwnedByAnother(t *testing.T) {
 	sqlDB := testdb.Open(t)
 	url := noAuthURL(t)
-	first := do(t, sqlDB, http.MethodPost, "/api/providers",
+	first := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"One","baseUrl":"`+url+`"}`)
 	id1 := createdID(t, first)
-	if rec := do(t, sqlDB, http.MethodPatch, "/api/providers/"+id1, `{"models":["one/m1"]}`); rec.Code != http.StatusOK {
+	if rec := do(t, sqlDB, http.MethodPatch, "/providers/"+id1, `{"models":["one/m1"]}`); rec.Code != http.StatusOK {
 		t.Fatalf("seed models: %d", rec.Code)
 	}
-	second := do(t, sqlDB, http.MethodPost, "/api/providers",
+	second := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Two","baseUrl":"`+url+`"}`)
 	id2 := createdID(t, second)
 
-	rec := do(t, sqlDB, http.MethodPatch, "/api/providers/"+id2,
+	rec := do(t, sqlDB, http.MethodPatch, "/providers/"+id2,
 		`{"models":["two/m1","one/m1"]}`)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409", rec.Code)
@@ -109,7 +109,7 @@ func TestUpdateProviderModelOwnedByAnother(t *testing.T) {
 	}
 	// Atomic: the rejected list saved nothing — provider Two keeps
 	// an empty custom list.
-	rec = do(t, sqlDB, http.MethodGet, "/api/providers", "")
+	rec = do(t, sqlDB, http.MethodGet, "/providers", "")
 	if containsStr(rec.Body.String(), "two/m1") {
 		t.Errorf("rejected replace leaked partial state: %s", body(rec))
 	}
@@ -122,11 +122,11 @@ func TestUpdateProviderProbe(t *testing.T) {
 	url := fakeProvider(t).URL
 
 	sqlDB := testdb.Open(t)
-	created := do(t, sqlDB, http.MethodPost, "/api/providers",
+	created := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Fake","baseUrl":"`+url+`","apiKey":"k-1"}`)
 	id := createdID(t, created)
 
-	rec := do(t, sqlDB, http.MethodPatch, "/api/providers/"+id, `{"apiKey":"wrong"}`)
+	rec := do(t, sqlDB, http.MethodPatch, "/providers/"+id, `{"apiKey":"wrong"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad-key status = %d, want 400", rec.Code)
 	}
@@ -135,14 +135,14 @@ func TestUpdateProviderProbe(t *testing.T) {
 		t.Errorf("body = %s, want %s", got, want)
 	}
 	// Nothing saved: the stored key survives.
-	rec = do(t, sqlDB, http.MethodGet, "/api/providers", "")
+	rec = do(t, sqlDB, http.MethodGet, "/providers", "")
 	if want := `"id":"` + id + `","name":"Fake","baseUrl":"` + url + `","hasKey":true`; !containsStr(body(rec), want) {
 		t.Errorf("rejected key was saved: %s", body(rec))
 	}
 
 	// Detaching the key from an auth-required endpoint is a broken
 	// configuration: rejected, nothing saved.
-	rec = do(t, sqlDB, http.MethodPatch, "/api/providers/"+id, `{"apiKey":""}`)
+	rec = do(t, sqlDB, http.MethodPatch, "/providers/"+id, `{"apiKey":""}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("detach status = %d, want 400", rec.Code)
 	}
@@ -151,7 +151,7 @@ func TestUpdateProviderProbe(t *testing.T) {
 	}
 
 	// A patch not touching the connection doesn't probe.
-	rec = do(t, sqlDB, http.MethodPatch, "/api/providers/"+id, `{"name":"Fake 2"}`)
+	rec = do(t, sqlDB, http.MethodPatch, "/providers/"+id, `{"name":"Fake 2"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("name-only status = %d, want 200", rec.Code)
 	}
@@ -164,11 +164,11 @@ func TestUpdateProviderProbe(t *testing.T) {
 // entry when the keyless connection still checks out.
 func TestUpdateProviderClearKey(t *testing.T) {
 	sqlDB := testdb.Open(t)
-	created := do(t, sqlDB, http.MethodPost, "/api/providers",
+	created := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Local","baseUrl":"`+noAuthURL(t)+`","apiKey":"k-1"}`)
 	id := createdID(t, created)
 
-	rec := do(t, sqlDB, http.MethodPatch, "/api/providers/"+id, `{"apiKey":""}`)
+	rec := do(t, sqlDB, http.MethodPatch, "/providers/"+id, `{"apiKey":""}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("clear status = %d, want 200", rec.Code)
 	}
@@ -189,11 +189,11 @@ func TestUpdateProviderClearKey(t *testing.T) {
 func TestUpdateProviderBaseUrlReprobes(t *testing.T) {
 	url := fakeProvider(t).URL
 	sqlDB := testdb.Open(t)
-	created := do(t, sqlDB, http.MethodPost, "/api/providers",
+	created := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Fake","baseUrl":"`+url+`","apiKey":"k-1"}`)
 	id := createdID(t, created)
 
-	rec := do(t, sqlDB, http.MethodPatch, "/api/providers/"+id,
+	rec := do(t, sqlDB, http.MethodPatch, "/providers/"+id,
 		`{"baseUrl":"http://127.0.0.1:1/v1"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
@@ -202,7 +202,7 @@ func TestUpdateProviderBaseUrlReprobes(t *testing.T) {
 		t.Errorf("body = %s, want could-not-reach failure", got)
 	}
 	// The stored URL survived the rejected patch.
-	rec = do(t, sqlDB, http.MethodGet, "/api/providers", "")
+	rec = do(t, sqlDB, http.MethodGet, "/providers", "")
 	if want := `"baseUrl":"` + url + `"`; !containsStr(body(rec), want) {
 		t.Errorf("rejected baseUrl was saved: %s", body(rec))
 	}
@@ -210,7 +210,7 @@ func TestUpdateProviderBaseUrlReprobes(t *testing.T) {
 
 func TestUpdateProviderNotFound(t *testing.T) {
 	sqlDB := testdb.Open(t)
-	rec := do(t, sqlDB, http.MethodPatch, "/api/providers/nope", `{"name":"X"}`)
+	rec := do(t, sqlDB, http.MethodPatch, "/providers/nope", `{"name":"X"}`)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}

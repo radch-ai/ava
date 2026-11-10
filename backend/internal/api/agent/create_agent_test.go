@@ -22,7 +22,7 @@ func create(t *testing.T, queries *db.Queries, body string) (*httptest.ResponseR
 	t.Helper()
 	rec := httptest.NewRecorder()
 	err := CreateAgent(queries)(rec,
-		httptest.NewRequest(http.MethodPost, "/api/agent", strings.NewReader(body)))
+		httptest.NewRequest(http.MethodPost, "/agent", strings.NewReader(body)))
 	return rec, err
 }
 

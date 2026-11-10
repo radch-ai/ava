@@ -29,7 +29,7 @@ func TestGetProviderModelsUserProvider(t *testing.T) {
 	}
 	seedKey(t, sqlDB, "u-1", "k-1")
 
-	rec := do(t, sqlDB, http.MethodGet, "/api/providers/u-1/models", "")
+	rec := do(t, sqlDB, http.MethodGet, "/providers/u-1/models", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -39,7 +39,7 @@ func TestGetProviderModelsUserProvider(t *testing.T) {
 		t.Errorf("body = %s, want %s", got, want)
 	}
 
-	rec = do(t, sqlDB, http.MethodGet, "/api/providers/u-2/models", "")
+	rec = do(t, sqlDB, http.MethodGet, "/providers/u-2/models", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -47,7 +47,7 @@ func TestGetProviderModelsUserProvider(t *testing.T) {
 		t.Errorf("body = %s, want the no-auth live list", got)
 	}
 
-	rec = do(t, sqlDB, http.MethodGet, "/api/providers/u-3/models", "")
+	rec = do(t, sqlDB, http.MethodGet, "/providers/u-3/models", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -58,7 +58,7 @@ func TestGetProviderModelsUserProvider(t *testing.T) {
 
 func TestGetProviderModelsNotFound(t *testing.T) {
 	sqlDB := testdb.Open(t)
-	rec := do(t, sqlDB, http.MethodGet, "/api/providers/nope/models", "")
+	rec := do(t, sqlDB, http.MethodGet, "/providers/nope/models", "")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}

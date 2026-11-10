@@ -14,11 +14,11 @@ import (
 // A row is gone after delete, its sealed key entry with it.
 func TestDeleteProviderUserRow(t *testing.T) {
 	sqlDB := testdb.Open(t)
-	created := do(t, sqlDB, http.MethodPost, "/api/providers",
+	created := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Mistral","baseUrl":"`+noAuthURL(t)+`","apiKey":"k-1"}`)
 	id := createdID(t, created)
 
-	rec := do(t, sqlDB, http.MethodDelete, "/api/providers/"+id, "")
+	rec := do(t, sqlDB, http.MethodDelete, "/providers/"+id, "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -26,7 +26,7 @@ func TestDeleteProviderUserRow(t *testing.T) {
 		t.Errorf("body = %s, want delete message", got)
 	}
 
-	rec = do(t, sqlDB, http.MethodGet, "/api/providers", "")
+	rec = do(t, sqlDB, http.MethodGet, "/providers", "")
 	if strings.Contains(body(rec), `"Mistral"`) {
 		t.Error("deleted provider still listed")
 	}
@@ -41,7 +41,7 @@ func TestDeleteProviderUserRow(t *testing.T) {
 
 func TestDeleteProviderNotFound(t *testing.T) {
 	sqlDB := testdb.Open(t)
-	rec := do(t, sqlDB, http.MethodDelete, "/api/providers/nope", "")
+	rec := do(t, sqlDB, http.MethodDelete, "/providers/nope", "")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}
@@ -66,14 +66,14 @@ func TestDeleteProviderLeavesStoredModelStrings(t *testing.T) {
 	); err != nil {
 		t.Fatalf("insert cron job: %v", err)
 	}
-	created := do(t, sqlDB, http.MethodPost, "/api/providers",
+	created := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Mistral","baseUrl":"`+noAuthURL(t)+`"}`)
 	id := createdID(t, created)
-	if rec := do(t, sqlDB, http.MethodPatch, "/api/providers/"+id, `{"models":["mistral/m1"]}`); rec.Code != http.StatusOK {
+	if rec := do(t, sqlDB, http.MethodPatch, "/providers/"+id, `{"models":["mistral/m1"]}`); rec.Code != http.StatusOK {
 		t.Fatalf("seed models: %d", rec.Code)
 	}
 
-	if rec := do(t, sqlDB, http.MethodDelete, "/api/providers/"+id, ""); rec.Code != http.StatusOK {
+	if rec := do(t, sqlDB, http.MethodDelete, "/providers/"+id, ""); rec.Code != http.StatusOK {
 		t.Fatalf("delete: %d", rec.Code)
 	}
 	var model any

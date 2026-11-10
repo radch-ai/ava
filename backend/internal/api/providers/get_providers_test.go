@@ -28,15 +28,15 @@ func do(t *testing.T, sqlDB *sql.DB, method, target, body string) *httptest.Resp
 	mux := http.NewServeMux()
 	switch method {
 	case http.MethodGet:
-		mux.Handle("GET /api/providers", api.Log(zerolog.Nop(), GetProviders(queries, vaultStore)))
-		mux.Handle("GET /api/providers/{id}/models", api.Log(zerolog.Nop(), GetProviderModels(queries, vaultStore)))
-		mux.Handle("GET /api/models", api.Log(zerolog.Nop(), GetModels(queries, vaultStore)))
+		mux.Handle("GET /providers", api.Log(zerolog.Nop(), GetProviders(queries, vaultStore)))
+		mux.Handle("GET /providers/{id}/models", api.Log(zerolog.Nop(), GetProviderModels(queries, vaultStore)))
+		mux.Handle("GET /models", api.Log(zerolog.Nop(), GetModels(queries, vaultStore)))
 	case http.MethodPost:
-		mux.Handle("POST /api/providers", api.Log(zerolog.Nop(), CreateProvider(queries, vaultStore)))
+		mux.Handle("POST /providers", api.Log(zerolog.Nop(), CreateProvider(queries, vaultStore)))
 	case http.MethodPatch:
-		mux.Handle("PATCH /api/providers/{id}", api.Log(zerolog.Nop(), UpdateProvider(queries, vaultStore)))
+		mux.Handle("PATCH /providers/{id}", api.Log(zerolog.Nop(), UpdateProvider(queries, vaultStore)))
 	case http.MethodDelete:
-		mux.Handle("DELETE /api/providers/{id}", api.Log(zerolog.Nop(), DeleteProvider(queries, vaultStore)))
+		mux.Handle("DELETE /providers/{id}", api.Log(zerolog.Nop(), DeleteProvider(queries, vaultStore)))
 	default:
 		t.Fatalf("unsupported method %s", method)
 	}
@@ -80,7 +80,7 @@ func body(rec *httptest.ResponseRecorder) string {
 // The empty store lists nothing: providers are rows users create.
 func TestGetProvidersEmptyStore(t *testing.T) {
 	sqlDB := testdb.Open(t)
-	rec := do(t, sqlDB, http.MethodGet, "/api/providers", "")
+	rec := do(t, sqlDB, http.MethodGet, "/providers", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -104,7 +104,7 @@ func TestGetProvidersListsRows(t *testing.T) {
 		}
 	}
 	seedKey(t, sqlDB, "p-1", "k")
-	rec := do(t, sqlDB, http.MethodGet, "/api/providers", "")
+	rec := do(t, sqlDB, http.MethodGet, "/providers", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}

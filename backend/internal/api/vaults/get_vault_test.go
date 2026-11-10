@@ -23,9 +23,9 @@ func do(t *testing.T, sqlDB *sql.DB, method, target, body string) *httptest.Resp
 	t.Helper()
 	vaultStore := newTestStore(t, sqlDB)
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/vault", api.Log(zerolog.Nop(), GetVault(vaultStore)))
-	mux.Handle("PUT /api/vault/{name}", api.Log(zerolog.Nop(), PutSecret(vaultStore)))
-	mux.Handle("DELETE /api/vault/{name}", api.Log(zerolog.Nop(), DeleteSecret(vaultStore)))
+	mux.Handle("GET /vault", api.Log(zerolog.Nop(), GetVault(vaultStore)))
+	mux.Handle("PUT /vault/{name}", api.Log(zerolog.Nop(), PutSecret(vaultStore)))
+	mux.Handle("DELETE /vault/{name}", api.Log(zerolog.Nop(), DeleteSecret(vaultStore)))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(method, target, strings.NewReader(body)))
 	return rec
@@ -63,7 +63,7 @@ func TestGetListsMetadataOnly(t *testing.T) {
 	seedEntry(t, sqlDB, vault.NameSecrets, "openai-key", "secret", "sk-live-1")
 	seedEntry(t, sqlDB, vault.NameSecrets, "anthropic-key", "secret", "sk-ant-2")
 
-	rec := do(t, sqlDB, http.MethodGet, "/api/vault", "")
+	rec := do(t, sqlDB, http.MethodGet, "/vault", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body)
 	}
@@ -81,7 +81,7 @@ func TestGetListsMetadataOnly(t *testing.T) {
 }
 
 func TestGetEmpty(t *testing.T) {
-	rec := do(t, testdb.Open(t), http.MethodGet, "/api/vault", "")
+	rec := do(t, testdb.Open(t), http.MethodGet, "/vault", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body)
 	}
@@ -97,7 +97,7 @@ func TestGetHidesRuntimeVault(t *testing.T) {
 	seedEntry(t, sqlDB, vault.NameRuntime, "provider:p-1", "provider", "k-1")
 	seedEntry(t, sqlDB, vault.NameSecrets, "openai-key", "secret", "sk-1")
 
-	rec := do(t, sqlDB, http.MethodGet, "/api/vault", "")
+	rec := do(t, sqlDB, http.MethodGet, "/vault", "")
 	if strings.Contains(rec.Body.String(), "provider:p-1") {
 		t.Fatalf("list leaked runtime entry: %s", rec.Body)
 	}
@@ -115,7 +115,7 @@ func TestGetReturnsMeta(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	rec := do(t, sqlDB, http.MethodGet, "/api/vault", "")
+	rec := do(t, sqlDB, http.MethodGet, "/vault", "")
 	want := `{"secrets":[{"name":"db-url","kind":"secret","meta":{"note":"staging"}}]}`
 	if got := strings.TrimSpace(rec.Body.String()); got != want {
 		t.Fatalf("body = %s\nwant %s", got, want)

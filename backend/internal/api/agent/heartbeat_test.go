@@ -14,8 +14,8 @@ import (
 func TestUpdateHeartbeatUnknownAgent(t *testing.T) {
 	queries := db.New(testdb.Open(t))
 
-	rec, err := serve(t, "PATCH /api/agent/{id}/heartbeat", UpdateHeartbeat(queries),
-		http.MethodPatch, "/api/agent/ghost/heartbeat",
+	rec, err := serve(t, "PATCH /agent/{id}/heartbeat", UpdateHeartbeat(queries),
+		http.MethodPatch, "/agent/ghost/heartbeat",
 		`{"model":"auto","enabled":false,"duration":"1hr","content":""}`)
 	if err != nil {
 		t.Fatal(err)
@@ -37,8 +37,8 @@ func TestUpdateHeartbeatUpsertsSingleRow(t *testing.T) {
 	patch := `{"model":"auto","enabled":true,"duration":"30m","content":"first"}`
 	for _, body := range []string{patch,
 		`{"model":"auto","enabled":false,"duration":"1hr","content":"second"}`} {
-		rec, err := serve(t, "PATCH /api/agent/{id}/heartbeat", UpdateHeartbeat(queries),
-			http.MethodPatch, "/api/agent/research/heartbeat", body)
+		rec, err := serve(t, "PATCH /agent/{id}/heartbeat", UpdateHeartbeat(queries),
+			http.MethodPatch, "/agent/research/heartbeat", body)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -82,8 +82,8 @@ func TestUpdateHeartbeatModelAutoStoresNULL(t *testing.T) {
 		`{"model":"auto","enabled":false,"duration":"1hr","content":""}`,
 		`{"model":"","enabled":false,"duration":"1hr","content":""}`,
 	} {
-		rec, err := serve(t, "PATCH /api/agent/{id}/heartbeat", UpdateHeartbeat(queries),
-			http.MethodPatch, "/api/agent/research/heartbeat", body)
+		rec, err := serve(t, "PATCH /agent/{id}/heartbeat", UpdateHeartbeat(queries),
+			http.MethodPatch, "/agent/research/heartbeat", body)
 		if err != nil {
 			t.Fatal(err)
 		}

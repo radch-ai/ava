@@ -11,7 +11,7 @@ import (
 
 func TestPutSecretCreates(t *testing.T) {
 	sqlDB := testdb.Open(t)
-	rec := do(t, sqlDB, http.MethodPut, "/api/vault/openai-key",
+	rec := do(t, sqlDB, http.MethodPut, "/vault/openai-key",
 		`{"kind":"secret","value":"sk-1"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body)
@@ -35,9 +35,9 @@ func TestPutSecretCreates(t *testing.T) {
 // place — one entry, new value.
 func TestPutSecretReplaces(t *testing.T) {
 	sqlDB := testdb.Open(t)
-	do(t, sqlDB, http.MethodPut, "/api/vault/openai-key",
+	do(t, sqlDB, http.MethodPut, "/vault/openai-key",
 		`{"kind":"secret","value":"sk-old"}`)
-	rec := do(t, sqlDB, http.MethodPut, "/api/vault/openai-key",
+	rec := do(t, sqlDB, http.MethodPut, "/vault/openai-key",
 		`{"kind":"secret","value":"sk-new"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body)
@@ -73,7 +73,7 @@ func TestPutSecretValidation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			rec := do(t, testdb.Open(t), http.MethodPut, "/api/vault/n", tc.body)
+			rec := do(t, testdb.Open(t), http.MethodPut, "/vault/n", tc.body)
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body)
 			}
