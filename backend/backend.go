@@ -14,13 +14,28 @@ import (
 	"github.com/radch-ai/ava/backend/internal/api/agents"
 	"github.com/radch-ai/ava/backend/internal/api/providers"
 	"github.com/radch-ai/ava/backend/internal/db"
+	"github.com/radch-ai/ava/backend/internal/vault"
 )
 
 // New builds the backend route table over an already-open,
 // already-migrated database; the binary entrypoint mounts it under
-// /api on its root mux. Wire types live in backend/apitypes — the
-// UI's TypeScript types are generated from it (`just typegen`);
-func New(sqlDB *sql.DB, logger zerolog.Logger) http.Handler {
+// /api on its root mux.
+//
+// masterKey unlocks the secret vault: a key that does not unwrap the
+// stored keyset fails here, at boot.
+//
+// Wire types live in backend/apitypes — the UI's TypeScript types are
+// generated from it (`just typegen`).
+func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte) (http.Handler, error) {
+	master, err := vault.NewMasterAEAD(masterKey)
+	if err != nil {
+		return nil, err
+	}
+	// Unwrapping the keyset is the boot check: a wrong master key
+	// cannot open it.
+	if _, err := vault.NewStore(sqlDB, master); err != nil {
+		return nil, err
+	}
 	queries := db.New(sqlDB)
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/agents", api.Log(logger, agents.GetAgents(queries)))
@@ -38,5 +53,5 @@ func New(sqlDB *sql.DB, logger zerolog.Logger) http.Handler {
 	mux.Handle("POST /api/providers", api.Log(logger, providers.CreateProvider(queries)))
 	mux.Handle("PATCH /api/providers/{id}", api.Log(logger, providers.UpdateProvider(queries)))
 	mux.Handle("DELETE /api/providers/{id}", api.Log(logger, providers.DeleteProvider(queries)))
-	return mux
+	return mux, nil
 }

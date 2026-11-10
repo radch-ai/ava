@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"net/http"
 	"os"
 	"os/signal"
@@ -21,18 +22,33 @@ var Version = "dev"
 
 // config holds the server-level values the binary itself consumes.
 type config struct {
-	Addr   string
-	DBPath string
+	Addr      string
+	DBPath    string
+	MasterKey []byte
 }
 
-// loadConfig binds env vars onto the config —
-// all env reading lives here. AVA_DB names the SQLite file and is required;
-// the ":memory:" sentinel runs the database in-process (dev only — the
-// justfile run recipe defaults to it).
+// loadConfig binds env vars onto the config — all env reading lives here.
+//
+// AVA_DB: SQLite file, required; ":memory:" runs the database
+// in-process (dev only — the justfile run recipe defaults to it).
+//
+// AVA_SECRETS_MASTER_KEY: secret-vault master key, required — see
+// .env.example for format and the restart-stability requirement.
 func loadConfig(logger zerolog.Logger) config {
+	masterHex := utils.GetEnvRequired("AVA_SECRETS_MASTER_KEY", logger)
+	masterKey, err := hex.DecodeString(masterHex)
+	if err != nil {
+		logger.Fatal().Str("env_var", "AVA_SECRETS_MASTER_KEY").
+			Msg("must be 64 hex chars (openssl rand -hex 32)")
+	}
+	if len(masterKey) != 32 {
+		logger.Fatal().Str("env_var", "AVA_SECRETS_MASTER_KEY").
+			Msg("must decode to 32 bytes (openssl rand -hex 32)")
+	}
 	return config{
-		Addr:   utils.GetEnv("AVA_ADDR", ":8080"),
-		DBPath: utils.GetEnvRequired("AVA_DB", logger),
+		Addr:      utils.GetEnv("AVA_ADDR", ":8080"),
+		DBPath:    utils.GetEnvRequired("AVA_DB", logger),
+		MasterKey: masterKey,
 	}
 }
 
@@ -60,7 +76,10 @@ func main() {
 	}
 	logger.Info().Str("path", cfg.DBPath).Msg("store ready")
 
-	apiHandler := backend.New(sqlDB, logger)
+	apiHandler, err := backend.New(sqlDB, logger, cfg.MasterKey)
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Vault bootstrap failed")
+	}
 
 	wsHandler, err := gateway.New(&gateway.Config{}, logger)
 	if err != nil {
