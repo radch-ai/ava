@@ -2,7 +2,8 @@ package vault_test
 
 // Store behavior over the real migration chain — round-trips, keyset
 // boot custody, fail-closed associated data, replace/delete. Table
-// rules live in backend/internal/schema.
+// rules live in backend/internal/schema. Seeding and tampering go
+// through the query layer; raw SQL only where no query exists.
 import (
 	"bytes"
 	"context"
@@ -11,7 +12,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/radch-ai/ava/backend/internal/db"
 	"github.com/radch-ai/ava/backend/internal/testdb"
 	"github.com/radch-ai/ava/backend/internal/vault"
 	"github.com/radch-ai/ava/backend/sqlstore"
@@ -121,12 +124,13 @@ func TestWrongMasterKeyFailsBoot(t *testing.T) {
 func TestKeysetTamperRejected(t *testing.T) {
 	path := seedFileDB(t)
 
-	db, err := sqlstore.OpenSQLite(path)
+	sqlDB, err := sqlstore.OpenSQLite(path)
 	if err != nil {
 		t.Fatalf("reopen sqlite: %v", err)
 	}
-	defer func() { _ = db.Close() }()
-	if _, err := db.Exec(`UPDATE vault_keyset SET wrapped_keyset = 'AAAA'`); err != nil {
+	defer func() { _ = sqlDB.Close() }()
+	// Tamper through the query layer's keyset write.
+	if err := db.New(sqlDB).UpdateVaultKeyset(context.Background(), "AAAA"); err != nil {
 		t.Fatalf("tamper keyset: %v", err)
 	}
 
@@ -134,18 +138,19 @@ func TestKeysetTamperRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("master aead: %v", err)
 	}
-	if _, err := vault.NewStore(db, master); err == nil {
+	if _, err := vault.NewStore(sqlDB, master); err == nil {
 		t.Fatal("tampered keyset accepted, want failure")
 	}
 }
 
 func TestCopiedEnvelopeFailsClosed(t *testing.T) {
 	ctx := context.Background()
-	db := openMemoryDB(t)
-	store := newStore(t, db, keyBytes(0xA1))
+	sqlDB := openMemoryDB(t)
+	store := newStore(t, sqlDB, keyBytes(0xA1))
 	if err := store.Put(ctx, "runtime", "provider:p1", "secret", []byte("sk-live-1"), nil); err != nil {
 		t.Fatalf("put: %v", err)
 	}
+	queries := db.New(sqlDB)
 
 	// Same envelope re-addressed to a different vault or name: each
 	// must fail at the AEAD tag, while the original still opens.
@@ -153,12 +158,22 @@ func TestCopiedEnvelopeFailsClosed(t *testing.T) {
 		{"secrets", "provider:p1"},
 		{"runtime", "provider:p2"},
 	}
+	src, err := queries.GetVaultEntry(ctx, db.GetVaultEntryParams{
+		Vault: "runtime",
+		Name:  "provider:p1",
+	})
+	if err != nil {
+		t.Fatalf("read source envelope: %v", err)
+	}
 	for _, c := range copies {
-		if _, err := db.Exec(`
-			INSERT INTO vault_entries (vault, name, kind, envelope, meta, updated_at)
-			SELECT ?, ?, kind, envelope, meta, updated_at
-			FROM vault_entries WHERE vault = 'runtime' AND name = 'provider:p1'`,
-			c[0], c[1]); err != nil {
+		if err := queries.PutVaultEntry(ctx, db.PutVaultEntryParams{
+			Vault:     c[0],
+			Name:      c[1],
+			Kind:      "secret",
+			Envelope:  src.Envelope,
+			Meta:      src.Meta,
+			UpdatedAt: time.Now().UnixMilli(),
+		}); err != nil {
 			t.Fatalf("copy to %v: %v", c, err)
 		}
 		if _, _, err := store.Get(ctx, c[0], c[1]); err == nil {

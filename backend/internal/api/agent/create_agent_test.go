@@ -168,9 +168,12 @@ func TestCreateAgentConfigOptional(t *testing.T) {
 func TestCreateAgentStoreFailure(t *testing.T) {
 	sqlDB := testdb.Open(t)
 	queries := db.New(sqlDB)
-	// Break the store under the handler.
-	if _, err := sqlDB.Exec(`DROP TABLE agents`); err != nil {
-		t.Fatalf("drop agents: %v", err)
+	// Break the store under the handler. Referencing tables drop first
+	// so the teardown stays valid under foreign_keys=ON.
+	for _, table := range []string{"heartbeat", "cron_jobs", "agents"} {
+		if _, err := sqlDB.Exec(`DROP TABLE ` + table); err != nil {
+			t.Fatalf("drop %s: %v", table, err)
+		}
 	}
 
 	rec, err := create(t, queries, `{"name":"Scribe","icon":"pencil"}`)

@@ -12,10 +12,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 
 	"github.com/radch-ai/ava/backend"
+	"github.com/radch-ai/ava/backend/internal/db"
 	"github.com/radch-ai/ava/backend/internal/testdb"
 	"github.com/radch-ai/ava/backend/internal/vault"
 )
@@ -75,7 +77,10 @@ func TestRoutes(t *testing.T) {
 	}
 }
 
-// tamperedVault seeds one entry in vaultName, then corrupts its envelope.
+// tamperedVault seeds one entry in vaultName, then corrupts its envelope
+// via the query layer — tests use generated queries wherever one exists;
+// raw SQL is reserved for what queries can't express (teardown DDL,
+// schema introspection) and must hold under foreign_keys=ON.
 func tamperedVault(t *testing.T, vaultName string) *sql.DB {
 	t.Helper()
 	sqlDB := testdb.Open(t)
@@ -91,9 +96,16 @@ func tamperedVault(t *testing.T, vaultName string) *sql.DB {
 		"entry-1", "kind", []byte("value"), nil); err != nil {
 		t.Fatalf("seed entry: %v", err)
 	}
-	if _, err := sqlDB.Exec(
-		`UPDATE vault_entries SET envelope = 'AAAA' WHERE vault = ?`, vaultName); err != nil {
-		t.Fatalf("tamper envelope: %v", err)
+	// Corrupt through the app's own update-only write path.
+	n, err := db.New(sqlDB).ReplaceVaultEntry(context.Background(), db.ReplaceVaultEntryParams{
+		Envelope:  "AAAA",
+		Meta:      "",
+		UpdatedAt: time.Now().UnixMilli(),
+		Vault:     vaultName,
+		Name:      "entry-1",
+	})
+	if err != nil || n != 1 {
+		t.Fatalf("tamper envelope: rows=%d err=%v", n, err)
 	}
 	return sqlDB
 }

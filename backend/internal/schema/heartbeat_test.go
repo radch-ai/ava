@@ -4,7 +4,6 @@ package schema_test
 // cron rows, cascades. Raw SQL: the schema rules are under test.
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/radch-ai/ava/backend/internal/testdb"
@@ -43,11 +42,20 @@ func TestHeartbeatSingletonPerAgent(t *testing.T) {
 
 	// agent_id is the primary key: a second row for the same agent
 	// cannot exist — updates land on the one row, never a duplicate.
-	_, err := sqlDB.Exec(
+	// Assert the outcome, not the driver's error wording.
+	if _, err := sqlDB.Exec(
 		`INSERT INTO heartbeat (agent_id, model, enabled, duration, content)
-		 VALUES ('_superagent', NULL, 0, '1hr', 'duplicate')`)
-	if err == nil || !strings.Contains(err.Error(), "UNIQUE") {
-		t.Fatalf("second heartbeat err = %v, want UNIQUE constraint failure", err)
+		 VALUES ('_superagent', NULL, 0, '1hr', 'duplicate')`); err == nil {
+		t.Fatal("second heartbeat insert succeeded, want constraint failure")
+	}
+	var n int
+	if err := sqlDB.QueryRow(
+		`SELECT COUNT(*) FROM heartbeat WHERE agent_id = '_superagent'`,
+	).Scan(&n); err != nil {
+		t.Fatalf("count heartbeats: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("heartbeat rows for _superagent = %d, want 1 (the seed row only)", n)
 	}
 }
 
