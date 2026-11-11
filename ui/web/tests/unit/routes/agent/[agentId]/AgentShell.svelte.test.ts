@@ -52,7 +52,7 @@ function createTestActivityItem(
 	return {
 		id: `activity-${Math.random()}`,
 		createdAt: new Date().toISOString(),
-		triggeredBy: 'user',
+		triggeredBy: 'cron',
 		action: 'Test action',
 		status: 'completed',
 		...overrides

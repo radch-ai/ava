@@ -52,7 +52,7 @@ function createActivityItem(
 		createdAt: new Date().toISOString(),
 		action: 'Test action',
 		status: 'completed',
-		triggeredBy: 'user@example.com',
+		triggeredBy: 'cron',
 		...overrides
 	}
 }
@@ -187,14 +187,14 @@ describe('AgentPage (non-superagent branch)', () => {
 						items: [
 							createActivityItem({
 								action: 'Processed ticket',
-								triggeredBy: 'admin@example.com'
+								triggeredBy: 'heartbeat'
 							})
 						]
 					})
 				})
 			})
 
-			await expect.element(page.getByText(/admin@example.com/)).toBeVisible()
+			await expect.element(page.getByText(/heartbeat/)).toBeVisible()
 			await expect.element(page.getByText('completed')).toBeVisible()
 		})
 

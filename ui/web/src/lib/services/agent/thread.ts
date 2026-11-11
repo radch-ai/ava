@@ -1,13 +1,9 @@
+import type { ThreadMessage } from '#lib/types/agent'
 import { api } from '../api'
 import type { CursorPage } from '../utils/cursor'
 import { mergePastPages } from '../utils/cursor'
 
-export interface ThreadMessage {
-	id: string
-	role: 'user' | 'assistant'
-	content: string
-	createdAt: string
-}
+export type { ThreadMessage }
 
 export type AgentThread = CursorPage<ThreadMessage>
 

@@ -20,6 +20,10 @@ import { SUPERAGENT_AGENT_ID, SUPERAGENT_NAME } from '#lib/config'
 // regenerate, never edit. HeartbeatDuration and CronFrequency are
 // literal unions there.
 export type {
+	ActivityPage,
+	ActivityStatus,
+	ActivityTrigger,
+	AgentActivityItem,
 	AgentEditableFields,
 	CreateAgentRequest,
 	CreateAgentResponse,
@@ -29,7 +33,10 @@ export type {
 	GetAgentsResponse,
 	HeartbeatConfig,
 	HeartbeatDuration,
-	SoulConfig
+	SoulConfig,
+	ThreadMessage,
+	ThreadPage,
+	ThreadRole
 } from '#lib/types/gen/apitypes.gen'
 
 import type {

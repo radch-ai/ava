@@ -1,3 +1,4 @@
+import type { ActivityTrigger } from '#lib/types/agent'
 import { SUPERAGENT_AGENT_ID, SUPERAGENT_NAME } from '../config.ts'
 import type { AgentActivityItem } from '../services/agent/activity.ts'
 import type { ThreadMessage } from '../services/agent/thread.ts'
@@ -238,7 +239,7 @@ const ACTIVITY_ACTIONS: Record<string, string[]> = {
 	sentinel: ['auth.scan', 'alert.send', 'heartbeat.run']
 }
 
-const ACTIVITY_TRIGGERS = ['user', 'ava', 'heartbeat', 'cron']
+const ACTIVITY_TRIGGERS = ['heartbeat', 'cron'] satisfies ActivityTrigger[]
 
 function seedActivity(): Map<string, AgentActivityItem[]> {
 	const activity = new Map<string, AgentActivityItem[]>()

@@ -10,7 +10,7 @@ function createTestActivityItem(
 	return {
 		id: `activity-${Math.random()}`,
 		createdAt: new Date().toISOString(),
-		triggeredBy: 'user',
+		triggeredBy: 'cron',
 		action: 'Test action',
 		status: 'completed',
 		...overrides
@@ -53,13 +53,13 @@ describe('ActivityContent', () => {
 			render(ActivityContent, {
 				items: [
 					createTestActivityItem({
-						triggeredBy: 'system',
+						triggeredBy: 'cron',
 						action: 'Scheduled task'
 					})
 				]
 			})
 
-			await expect.element(page.getByText(/system/)).toBeVisible()
+			await expect.element(page.getByText(/cron/)).toBeVisible()
 		})
 	})
 

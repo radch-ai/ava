@@ -156,18 +156,24 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				})
 		),
 
-		// Per-agent thread. Only the superagent has a thread today; other
-		// agents 404 until threads are enabled for them.
+		// Per-agent thread, matching the backend: any known agent serves
+		// its thread (only the superagent has messages today; others
+		// page empty), unknown agents 404.
 		http.get('*/api/agent/:id/thread', ({ request, params }) => {
-			if (String(params.id) !== SUPERAGENT_AGENT_ID) {
+			const url = new URL(request.url)
+			const id = String(params.id)
+			const known =
+				id === SUPERAGENT_AGENT_ID ||
+				store.agents.some((agent) => agent.id === id)
+			if (!known) {
 				return HttpResponse.json<ErrorResponse>(
-					{ message: `Agent "${String(params.id)}" has no thread` },
+					{ message: `Agent "${id}" not found` },
 					{ status: 404 }
 				)
 			}
-			const url = new URL(request.url)
+			const thread = id === SUPERAGENT_AGENT_ID ? store.thread : []
 			const cursor = url.searchParams.get('cursor')
-			if (cursor && !store.thread.some((message) => message.id === cursor)) {
+			if (cursor && !thread.some((message) => message.id === cursor)) {
 				return HttpResponse.json<ErrorResponse>(
 					{ message: 'Invalid cursor' },
 					{ status: 400 }
@@ -175,7 +181,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			}
 			return HttpResponse.json(
 				paginate(
-					store.thread,
+					thread,
 					Math.max(1, Number(url.searchParams.get('limit')) || 20),
 					cursor
 				)

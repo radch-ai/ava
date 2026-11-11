@@ -20,7 +20,7 @@ function createActivityItem(
 	return {
 		id: 'act-1',
 		createdAt: '2024-01-01T00:00:00Z',
-		triggeredBy: 'user',
+		triggeredBy: 'cron',
 		action: 'run',
 		status: 'completed',
 		...overrides
@@ -46,7 +46,7 @@ describe('agent/activity service', () => {
 				items: [
 					{
 						id: 'act-1',
-						triggeredBy: 'user',
+						triggeredBy: 'cron',
 						action: 'run',
 						status: 'completed',
 						message: 'Finished',
@@ -131,7 +131,7 @@ describe('agent/activity service', () => {
 				items: [
 					{
 						id: 'act-1',
-						triggeredBy: 'user',
+						triggeredBy: 'cron',
 						action: 'run',
 						createdAt: '2024-01-01T00:00:00Z'
 					}
@@ -151,7 +151,7 @@ describe('agent/activity service', () => {
 				items: [
 					{
 						id: 'act-1',
-						triggeredBy: 'user',
+						triggeredBy: 'cron',
 						action: 'run',
 						status: 'success',
 						createdAt: '2024-01-01T00:00:00Z'
@@ -172,7 +172,7 @@ describe('agent/activity service', () => {
 				items: [
 					{
 						id: 'act-1',
-						triggeredBy: 'user',
+						triggeredBy: 'cron',
 						action: 'run',
 						status: 'completed',
 						createdAt: '2024-01-01T00:00:00Z'
@@ -192,7 +192,7 @@ describe('agent/activity service', () => {
 				items: [
 					{
 						id: 'act-1',
-						triggeredBy: 'user',
+						triggeredBy: 'cron',
 						action: 'run',
 						status: 'completed',
 						createdAt: '2024-01-01T00:00:00Z'
@@ -360,7 +360,7 @@ describe('agent/activity service', () => {
 					items: [
 						{
 							id: `act-${status}`,
-							triggeredBy: 'user',
+							triggeredBy: 'cron',
 							action: 'test',
 							status,
 							createdAt: '2024-01-01T00:00:00Z'
@@ -384,7 +384,7 @@ describe('agent/activity service', () => {
 				items: [
 					{
 						id: 'act-1',
-						triggeredBy: 'user',
+						triggeredBy: 'cron',
 						action: 'run',
 						status: 'completed',
 						createdAt: '2024-01-01T00:00:00Z'
@@ -407,7 +407,7 @@ describe('agent/activity service', () => {
 				items: [
 					{
 						id: 'act-1',
-						triggeredBy: 'user',
+						triggeredBy: 'cron',
 						action: 'run',
 						status: 'completed',
 						message: 'Task completed successfully',
@@ -450,12 +450,12 @@ describe('agent/activity service', () => {
 			expect(api.get).toHaveBeenCalledWith('agent/ava/activity?limit=20')
 		})
 
-		it('handles special characters in triggeredBy field', async () => {
+		it('passes triggeredBy through unchanged', async () => {
 			const page = {
 				items: [
 					{
 						id: 'act-1',
-						triggeredBy: 'user@example.com',
+						triggeredBy: 'cron',
 						action: 'run',
 						status: 'completed',
 						createdAt: '2024-01-01T00:00:00Z'
@@ -470,7 +470,7 @@ describe('agent/activity service', () => {
 
 			const result = await getAgentActivityFeed('ava')
 
-			expect(result.items[0]?.triggeredBy).toBe('user@example.com')
+			expect(result.items[0]?.triggeredBy).toBe('cron')
 		})
 
 		it('throws on null items array', async () => {
@@ -505,7 +505,7 @@ describe('agent/activity service', () => {
 			const malformedPage = {
 				items: [
 					{
-						triggeredBy: 'user',
+						triggeredBy: 'cron',
 						action: 'run',
 						status: 'completed',
 						createdAt: '2024-01-01T00:00:00Z'
@@ -526,7 +526,7 @@ describe('agent/activity service', () => {
 				items: [
 					{
 						id: 123,
-						triggeredBy: 'user',
+						triggeredBy: 'cron',
 						action: 'run',
 						status: 'completed',
 						createdAt: '2024-01-01T00:00:00Z'
@@ -567,7 +567,7 @@ describe('agent/activity service', () => {
 				items: [
 					{
 						id: 'act-1',
-						triggeredBy: 'user',
+						triggeredBy: 'cron',
 						status: 'completed',
 						createdAt: '2024-01-01T00:00:00Z'
 					}
@@ -587,7 +587,7 @@ describe('agent/activity service', () => {
 				items: [
 					{
 						id: 'act-1',
-						triggeredBy: 'user',
+						triggeredBy: 'cron',
 						action: 'run',
 						status: 'completed'
 					}
@@ -607,7 +607,7 @@ describe('agent/activity service', () => {
 				items: [
 					{
 						id: 'act-1',
-						triggeredBy: 'user',
+						triggeredBy: 'cron',
 						action: 'run',
 						status: 'completed',
 						message: 123,

@@ -1,15 +1,9 @@
+import type { AgentActivityItem } from '#lib/types/agent'
 import { api } from '../api'
 import type { CursorPage } from '../utils/cursor'
 import { mergePastPages } from '../utils/cursor'
 
-export interface AgentActivityItem {
-	id: string
-	createdAt: string
-	triggeredBy: string
-	action: string
-	status: 'running' | 'completed' | 'failed'
-	message?: string
-}
+export type { AgentActivityItem }
 
 export type ActivityFeed = CursorPage<AgentActivityItem>
 

@@ -44,7 +44,7 @@ function createActivityFeed(
 			createdAt: new Date(Date.now() - index * 60_000).toISOString(),
 			action: item.action,
 			status: item.status ?? 'completed',
-			triggeredBy: item.triggeredBy ?? 'user',
+			triggeredBy: item.triggeredBy ?? 'cron',
 			message: item.message
 		})),
 		nextCursor: opts.nextCursor ?? null

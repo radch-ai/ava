@@ -91,9 +91,17 @@ describe('mock API handlers', () => {
 		expect(third.nextCursor).toBeNull()
 	})
 
-	it('404s the thread endpoint for agents without a thread', async () => {
-		const res = await fetch(`${BASE}/agent/research/thread`)
-		expect(res.status).toBe(404)
+	it('serves known agents an empty thread and 404s unknown agents', async () => {
+		const empty = (await (
+			await fetch(`${BASE}/agent/research/thread`)
+		).json()) as {
+			items: { id: string }[]
+			nextCursor: string | null
+		}
+		expect(empty.items).toEqual([])
+		expect(empty.nextCursor).toBeNull()
+		const missing = await fetch(`${BASE}/agent/ghost/thread`)
+		expect(missing.status).toBe(404)
 	})
 
 	it('rejects an unknown thread cursor with 400', async () => {
