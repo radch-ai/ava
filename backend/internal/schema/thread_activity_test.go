@@ -136,7 +136,7 @@ func TestThreadAndActivityCreatedAtDefault(t *testing.T) {
 	} {
 		var created int64
 		if err := sqlDB.QueryRow(
-			`SELECT created_at FROM ` + table + ` WHERE id = ?`, id,
+			`SELECT created_at FROM `+table+` WHERE id = ?`, id,
 		).Scan(&created); err != nil {
 			t.Fatalf("select %s.created_at: %v", table, err)
 		}

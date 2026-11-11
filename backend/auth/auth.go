@@ -1,8 +1,7 @@
 // Package auth is the token→session auth layer: exchange, session
 // guard, and the vault-backed session store (sessions.go). A session
 // is a 256-bit cookie id sealed server-side, so logout revokes it
-// there. The backend mounts this around its route table; a SaaS fork
-// swaps the layer for real auth services.
+// there.
 package auth
 
 import (

@@ -5,11 +5,7 @@ import { api } from '../services/api'
 /**
  * Token-session auth store.
  *
- * Public surface is the provider seam: an alternative auth provider
- * implements the same methods and swaps the export in `./index.ts` — no
- * component or call-site changes. Scheme specifics live only in here:
- *
- * - credential = HttpOnly `ava_session` cookie set by `POST /auth/exchange`
+ * Credential = HttpOnly `ava_session` cookie set by `POST /auth/exchange`.
  */
 export class AuthStore {
 	isAuthenticated = $state(false)
@@ -33,7 +29,7 @@ export class AuthStore {
 		await goto(resolve('/login'))
 	}
 
-	/** Exchange a long-lived token for the session cookie. Token-provider only. */
+	/** Exchange a long-lived token for the session cookie. */
 	async submitToken(token: string): Promise<void> {
 		await api.post('auth/exchange', { json: { token } })
 		this.isAuthenticated = true
