@@ -31,17 +31,17 @@ func UpdateHeartbeat(queries *db.Queries) api.Handler {
 			return fmt.Errorf("get agent %q: %w", id, err)
 		}
 
-		enabled := int64(0)
-		if req.Enabled {
-			enabled = 1
-		}
-		if err := queries.UpdateHeartbeat(r.Context(), db.UpdateHeartbeatParams{
+		params := db.UpdateHeartbeatParams{
 			AgentID:  id,
 			Model:    modelToDB(req.Model),
-			Enabled:  enabled,
+			Enabled:  0,
 			Duration: string(req.Duration),
 			Content:  req.Content,
-		}); err != nil {
+		}
+		if req.Enabled {
+			params.Enabled = 1
+		}
+		if err := queries.UpdateHeartbeat(r.Context(), params); err != nil {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return fmt.Errorf("upsert heartbeat for %q: %w", id, err)
 		}
