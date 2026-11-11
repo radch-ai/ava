@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/radch-ai/ava/backend"
+	"github.com/radch-ai/ava/backend/auth"
 	"github.com/radch-ai/ava/backend/sqlstore"
 	"github.com/radch-ai/ava/gateway"
 	"github.com/radch-ai/ava/utils"
@@ -25,6 +26,7 @@ type config struct {
 	Addr      string
 	DBPath    string
 	MasterKey []byte
+	Token     string
 }
 
 // loadConfig binds env vars onto the config — all env reading lives here.
@@ -34,11 +36,15 @@ type config struct {
 //
 // AVA_SECRETS_MASTER_KEY: secret-vault master key, required — see
 // .env.example for format and the restart-stability requirement.
+//
+// AVA_UI_TOKEN: the UI access token exchanged at login for a session
+// cookie, required.
 func loadConfig(logger zerolog.Logger) config {
 	return config{
 		Addr:      utils.GetEnv("AVA_ADDR", ":8080"),
 		DBPath:    utils.GetEnvRequired("AVA_DB", logger),
 		MasterKey: masterKeyFromEnv(logger, "AVA_SECRETS_MASTER_KEY"),
+		Token:     utils.GetEnvRequired("AVA_UI_TOKEN", logger),
 	}
 }
 
@@ -138,19 +144,23 @@ func serve(logger zerolog.Logger) {
 	}
 	logger.Info().Str("path", cfg.DBPath).Msg("store ready")
 
-	apiHandler, err := backend.New(sqlDB, logger, cfg.MasterKey)
+	apiRouter, authSessions, err := backend.New(sqlDB, logger, cfg.MasterKey)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Vault bootstrap failed")
 	}
+	authMiddleware, err := auth.NewMiddleware(cfg.Token, authSessions)
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Auth bootstrap failed")
+	}
+	apiHandler := authMiddleware.Authenticate(apiRouter)
 
 	wsHandler, err := gateway.New(&gateway.Config{}, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Failed to create gateway handler")
 	}
 
-	// Component mounts: backend under /api (prefix stripped — backend
-	// routes are mount-relative), gateway at /ws. The /healthz probe
-	// comes from utils.Serve.
+	// Component mounts: the API under /api, prefix stripped on the way
+	// in; gateway at /ws; /healthz comes from utils.Serve.
 	root := http.NewServeMux()
 	root.Handle("/api/", http.StripPrefix("/api", apiHandler))
 	root.Handle("GET /ws", wsHandler)

@@ -13,7 +13,7 @@ func TestLoadConfig(t *testing.T) {
 	t.Setenv("AVA_ADDR", "127.0.0.1:9999")
 	t.Setenv("AVA_DB", "/tmp/some-ava.db")
 	t.Setenv("AVA_SECRETS_MASTER_KEY", hex.EncodeToString(master))
-
+	t.Setenv("AVA_UI_TOKEN", "ui-token-xyz")
 	cfg := loadConfig(zerolog.Nop())
 
 	if cfg.Addr != "127.0.0.1:9999" {
@@ -24,5 +24,8 @@ func TestLoadConfig(t *testing.T) {
 	}
 	if !bytes.Equal(cfg.MasterKey, master) {
 		t.Errorf("master key = %x, want %x", cfg.MasterKey, master)
+	}
+	if cfg.Token != "ui-token-xyz" {
+		t.Errorf("ui token = %q, want ui-token-xyz", cfg.Token)
 	}
 }

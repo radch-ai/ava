@@ -3,23 +3,28 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/rs/zerolog"
 
 	"github.com/radch-ai/ava/backend"
+	"github.com/radch-ai/ava/backend/auth"
 	"github.com/radch-ai/ava/backend/sqlstore"
 	"github.com/radch-ai/ava/gateway"
 	"github.com/radch-ai/ava/utils"
 )
 
+const chainToken = "chain-ui-token-0123456789"
+
 // TestServerChain exercises the full wiring: utils.Serve's outer mux
-// (healthz + delegation) on top of main's component mounts. Every
-// endpoint is reached the way a real client would.
+// (healthz + delegation) on top of main's component mounts, auth
+// included. Every endpoint is reached the way a real client would.
 func TestServerChain(t *testing.T) {
 	logger := zerolog.Nop()
 
@@ -29,10 +34,16 @@ func TestServerChain(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
 
-	apiHandler, err := backend.New(sqlDB, logger, bytes.Repeat([]byte{0x42}, 32))
+	apiRouter, authSessions, err := backend.New(sqlDB, logger, bytes.Repeat([]byte{0x42}, 32))
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}
+	authMiddleware, err := auth.NewMiddleware(chainToken, authSessions)
+	if err != nil {
+		t.Fatalf("auth.NewMiddleware: %v", err)
+	}
+	apiHandler := authMiddleware.Authenticate(apiRouter)
+
 	wsHandler, err := gateway.New(&gateway.Config{}, logger)
 	if err != nil {
 		t.Fatalf("gateway.New: %v", err)
@@ -50,10 +61,9 @@ func TestServerChain(t *testing.T) {
 	addr := ln.Addr().String()
 	_ = ln.Close()
 
-	// Same mounts main builds: backend under /api (prefix stripped —
-	// backend routes are mount-relative), gateway at /ws. The backend
-	// mount is wrapped to stamp a header, proving requests are
-	// delegated to the mounted handler.
+	// Same mounts main builds: the API guarded by the auth middleware,
+	// stamped to prove delegation, then the /api prefix stripped at the
+	// mount; gateway at /ws.
 	stampedAPI := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Chain", "api")
 		apiHandler.ServeHTTP(w, r)
@@ -66,10 +76,9 @@ func TestServerChain(t *testing.T) {
 	go func() {
 		done <- utils.Serve(ctx, root, addr, logger)
 	}()
-
 	waitUp := func(path string) {
 		t.Helper()
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			resp, err := http.Get("http://" + addr + path)
 			if err == nil {
 				_ = resp.Body.Close()
@@ -79,54 +88,80 @@ func TestServerChain(t *testing.T) {
 		}
 		t.Fatalf("server never came up for %s", path)
 	}
-	check := func(method, path string, wantStatus int) {
+
+	// do runs one request, optionally carrying the session cookie.
+	do := func(method, path, sessionID string) *http.Response {
 		t.Helper()
-		req, _ := http.NewRequest(method, "http://"+addr+path, nil)
+		var body io.Reader
+		if method == http.MethodPost && strings.HasSuffix(path, "/auth/exchange") {
+			body = strings.NewReader(`{"token":"` + chainToken + `"}`)
+		}
+		req, _ := http.NewRequest(method, "http://"+addr+path, body)
+		if sessionID != "" {
+			req.AddCookie(&http.Cookie{Name: "ava_session", Value: sessionID})
+		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("%s %s: %v", method, path, err)
 		}
-		defer func() { _ = resp.Body.Close() }()
+		t.Cleanup(func() { _ = resp.Body.Close() })
+		return resp
+	}
+
+	check := func(method, path string, wantStatus int, sessionID string) {
+		t.Helper()
+		resp := do(method, path, sessionID)
 		if resp.StatusCode != wantStatus {
 			t.Errorf("%s %s status = %d, want %d", method, path, resp.StatusCode, wantStatus)
 		}
 	}
 
-	checkHeader := func(method, path, name, want string) {
+	// exchange returns the session cookie the response set, if any.
+	exchange := func() string {
 		t.Helper()
-		req, _ := http.NewRequest(method, "http://"+addr+path, nil)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("%s %s: %v", method, path, err)
+		for _, c := range do(http.MethodPost, "/api/auth/exchange", "").Cookies() {
+			if c.Name == "ava_session" {
+				return c.Value
+			}
 		}
-		defer func() { _ = resp.Body.Close() }()
-		if got := resp.Header.Get(name); got != want {
-			t.Errorf("%s %s header %s = %q, want %q", method, path, name, got, want)
-		}
+		return ""
 	}
 
 	waitUp("/healthz")
 
-	// Serve's own endpoint.
-	check(http.MethodGet, "/healthz", http.StatusOK)
-	check(http.MethodPost, "/healthz", http.StatusMethodNotAllowed)
+	// Serve's own endpoint, and the mounts it delegates to.
+	check(http.MethodGet, "/healthz", http.StatusOK, "")
+	check(http.MethodPost, "/healthz", http.StatusMethodNotAllowed, "")
+	check(http.MethodGet, "/ws", http.StatusUpgradeRequired, "")
+	check(http.MethodGet, "/", http.StatusNotFound, "")
 
-	// Delegated to the app mux: gateway rejects a plain GET without
-	// upgrade headers; the backend serves its routes under /api and
-	// 404s everything else; unknown root paths 404.
-	check(http.MethodGet, "/ws", http.StatusUpgradeRequired)
-	check(http.MethodGet, "/api/", http.StatusNotFound)
-	checkHeader(http.MethodGet, "/api/", "X-Chain", "api")
-	check(http.MethodGet, "/api/agents", http.StatusOK)
-	check(http.MethodGet, "/", http.StatusNotFound)
+	// Unauthenticated, the guard owns everything under /api.
+	check(http.MethodGet, "/api/", http.StatusUnauthorized, "")
+	check(http.MethodGet, "/api/agents", http.StatusUnauthorized, "")
+
+	// Exchange mints a session through the whole chain, and the session
+	// unlocks the backend — the stamp proves the request still reaches
+	// the mounted handler.
+	session := exchange()
+	if session == "" {
+		t.Fatal("exchange set no ava_session cookie")
+	}
+	check(http.MethodGet, "/api/auth/me", http.StatusOK, session)
+	resp := do(http.MethodGet, "/api/agents", session)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("authed agents status = %d, want 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get("X-Chain"); got != "api" {
+		t.Errorf("authed agents header X-Chain = %q, want %q", got, "api")
+	}
 
 	cancel()
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Errorf("Serve returned error: %v", err)
+			t.Fatalf("Serve: %v", err)
 		}
-	case <-time.After(35 * time.Second):
-		t.Fatal("Serve did not stop after context cancel")
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down")
 	}
 }
