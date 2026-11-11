@@ -15,7 +15,7 @@ import (
 
 // Absent fields are no-ops; a withheld apiKey keeps the stored key.
 func TestUpdateProviderPatchKeepsAbsentFields(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	url := noAuthURL(t)
 	created := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Mistral","baseUrl":"`+url+`"}`)
@@ -33,7 +33,7 @@ func TestUpdateProviderPatchKeepsAbsentFields(t *testing.T) {
 // The models list is replaced wholesale: plain id strings, non-empty
 // and unique; an empty list clears the custom models.
 func TestUpdateProviderModelsReplace(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	url := noAuthURL(t)
 	created := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Fake","baseUrl":"`+url+`"}`)
@@ -59,7 +59,7 @@ func TestUpdateProviderModelsReplace(t *testing.T) {
 }
 
 func TestUpdateProviderModelsValidation(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	created := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Fake","baseUrl":"`+noAuthURL(t)+`"}`)
 	id := createdID(t, created)
@@ -86,7 +86,7 @@ func TestUpdateProviderModelsValidation(t *testing.T) {
 // another provider owns is a 409, and the rejected replace changes
 // nothing (the write is one atomic statement).
 func TestUpdateProviderModelOwnedByAnother(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	url := noAuthURL(t)
 	first := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"One","baseUrl":"`+url+`"}`)
@@ -121,7 +121,7 @@ func TestUpdateProviderModelOwnedByAnother(t *testing.T) {
 func TestUpdateProviderProbe(t *testing.T) {
 	url := fakeProvider(t).URL
 
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	created := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Fake","baseUrl":"`+url+`","apiKey":"k-1"}`)
 	id := createdID(t, created)
@@ -163,7 +163,7 @@ func TestUpdateProviderProbe(t *testing.T) {
 // Clearing the key with an explicit empty string removes the vault
 // entry when the keyless connection still checks out.
 func TestUpdateProviderClearKey(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	created := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Local","baseUrl":"`+noAuthURL(t)+`","apiKey":"k-1"}`)
 	id := createdID(t, created)
@@ -188,7 +188,7 @@ func TestUpdateProviderClearKey(t *testing.T) {
 // URL changes nothing.
 func TestUpdateProviderBaseUrlReprobes(t *testing.T) {
 	url := fakeProvider(t).URL
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	created := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Fake","baseUrl":"`+url+`","apiKey":"k-1"}`)
 	id := createdID(t, created)
@@ -209,7 +209,7 @@ func TestUpdateProviderBaseUrlReprobes(t *testing.T) {
 }
 
 func TestUpdateProviderNotFound(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	rec := do(t, sqlDB, http.MethodPatch, "/providers/nope", `{"name":"X"}`)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)

@@ -9,7 +9,7 @@ import (
 )
 
 func TestVaultKeysetIsASingleRow(t *testing.T) {
-	db := testdb.Open(t)
+	db := testdb.Open(t, true)
 
 	if _, err := db.Exec(`INSERT INTO vault_keyset (id, wrapped_keyset) VALUES (1, 'AAAA')`); err != nil {
 		t.Fatalf("first keyset row: %v", err)
@@ -23,7 +23,7 @@ func TestVaultKeysetIsASingleRow(t *testing.T) {
 }
 
 func TestVaultEntryAddressIsUnique(t *testing.T) {
-	db := testdb.Open(t)
+	db := testdb.Open(t, true)
 
 	insert := `INSERT INTO vault_entries (vault, name, kind, envelope, meta, updated_at)
 		VALUES ('runtime', 'provider:p1', 'secret', 'AAAA', '', 0)`
@@ -42,7 +42,7 @@ func TestVaultEntryAddressIsUnique(t *testing.T) {
 }
 
 func TestVaultEntryVaultIsChecked(t *testing.T) {
-	db := testdb.Open(t)
+	db := testdb.Open(t, true)
 
 	if _, err := db.Exec(`INSERT INTO vault_entries (vault, name, kind, envelope, meta, updated_at)
 		VALUES ('runtime', 'provider:p1', 'secret', 'AAAA', '', 0)`); err != nil {

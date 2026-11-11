@@ -13,7 +13,7 @@ import (
 // the same live list against a no-auth endpoint and an empty list —
 // not null — when the endpoint rejects it.
 func TestGetProviderModelsUserProvider(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	url := fakeProvider(t).URL
 	for _, stmt := range []string{
 		`INSERT INTO providers (id, name, base_url, models)
@@ -57,7 +57,7 @@ func TestGetProviderModelsUserProvider(t *testing.T) {
 }
 
 func TestGetProviderModelsNotFound(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	rec := do(t, sqlDB, http.MethodGet, "/providers/nope/models", "")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)

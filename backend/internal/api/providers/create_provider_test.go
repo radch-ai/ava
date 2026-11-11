@@ -15,7 +15,7 @@ import (
 // A keyless create still probes: a no-auth endpoint (local
 // OpenAI-compatible server) saves; a dead URL saves nothing.
 func TestCreateProviderKeylessProbes(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	rec := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Ollama","baseUrl":"`+noAuthURL(t)+`"}`)
 	if rec.Code != http.StatusCreated {
@@ -36,7 +36,7 @@ func TestCreateProviderKeylessProbes(t *testing.T) {
 		t.Errorf("list missing entry %s (got %s)", wantEntry, body(rec))
 	}
 
-	sqlDB = testdb.Open(t)
+	sqlDB = testdb.Open(t, true)
 	rec = do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Dead","baseUrl":"http://127.0.0.1:1/v1"}`)
 	if rec.Code != http.StatusBadRequest {
@@ -56,14 +56,14 @@ func TestCreateProviderKeylessProbes(t *testing.T) {
 func TestCreateProviderProbe(t *testing.T) {
 	url := fakeProvider(t).URL
 
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	rec := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Fake","baseUrl":"`+url+`","apiKey":"k-1"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("ok-key status = %d, want 201 (body %s)", rec.Code, body(rec))
 	}
 
-	sqlDB = testdb.Open(t)
+	sqlDB = testdb.Open(t, true)
 	rec = do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Fake","baseUrl":"`+url+`","apiKey":"wrong"}`)
 	if rec.Code != http.StatusBadRequest {
@@ -90,7 +90,7 @@ func TestCreateProviderProbe(t *testing.T) {
 
 // An unreachable base URL fails the check the same way.
 func TestCreateProviderProbeUnreachable(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	rec := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Dead","baseUrl":"http://127.0.0.1:1/v1","apiKey":"k-1"}`)
 	if rec.Code != http.StatusBadRequest {
@@ -102,7 +102,7 @@ func TestCreateProviderProbeUnreachable(t *testing.T) {
 }
 
 func TestCreateProviderValidation(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	cases := []struct {
 		body string
 		want string

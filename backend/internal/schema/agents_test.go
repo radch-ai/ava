@@ -14,7 +14,7 @@ import (
 // The table is exactly these columns; the exact set is what
 // catches a JSON blob column being added.
 func TestAgentsColumnSet(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 
 	rows, err := sqlDB.Query(`PRAGMA table_info(agents)`)
 	if err != nil {
@@ -43,7 +43,7 @@ func TestAgentsColumnSet(t *testing.T) {
 }
 
 func TestCreatedAtStampedByDatabase(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	queries := db.New(sqlDB)
 	// CreateAgent omits created_at — the app's only write path.
 	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
@@ -68,7 +68,7 @@ func TestCreatedAtStampedByDatabase(t *testing.T) {
 // tools_enabled defaults to the empty JSON array — never NULL, the
 // bundle's [] shape.
 func TestToolsEnabledDefaultsToEmptyArray(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	queries := db.New(sqlDB)
 	// CreateAgent omits tools_enabled — the column default applies.
 	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{

@@ -10,7 +10,7 @@ import (
 )
 
 func TestPutSecretCreates(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	rec := do(t, sqlDB, http.MethodPut, "/vault/openai-key",
 		`{"kind":"secret","value":"sk-1"}`)
 	if rec.Code != http.StatusOK {
@@ -34,7 +34,7 @@ func TestPutSecretCreates(t *testing.T) {
 // Change means replace: a second PUT at the same name overwrites in
 // place — one entry, new value.
 func TestPutSecretReplaces(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	do(t, sqlDB, http.MethodPut, "/vault/openai-key",
 		`{"kind":"secret","value":"sk-old"}`)
 	rec := do(t, sqlDB, http.MethodPut, "/vault/openai-key",
@@ -73,7 +73,7 @@ func TestPutSecretValidation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			rec := do(t, testdb.Open(t), http.MethodPut, "/vault/n", tc.body)
+			rec := do(t, testdb.Open(t, true), http.MethodPut, "/vault/n", tc.body)
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body)
 			}

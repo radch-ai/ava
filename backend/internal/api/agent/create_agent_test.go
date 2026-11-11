@@ -27,7 +27,7 @@ func create(t *testing.T, queries *db.Queries, body string) (*httptest.ResponseR
 }
 
 func TestCreateAgent(t *testing.T) {
-	queries := db.New(testdb.Open(t))
+	queries := db.New(testdb.Open(t, true))
 	rec, err := create(t, queries, `{"name":"Research Bot","icon":"globe","soul":{"personality":"curious"}}`)
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +43,7 @@ func TestCreateAgent(t *testing.T) {
 }
 
 func TestCreateAgentConfigStoredAsColumns(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	queries := db.New(sqlDB)
 	if rec, err := create(t, queries,
 		`{"name":"Research Bot","icon":"globe","soul":{"personality":"curious","identity":"the lab researcher"},"userContext":"morning person","operatingInstructions":"cite sources","toolsContext":""}`,
@@ -67,7 +67,7 @@ func TestCreateAgentConfigStoredAsColumns(t *testing.T) {
 }
 
 func TestCreateAgentInvalidName(t *testing.T) {
-	queries := db.New(testdb.Open(t))
+	queries := db.New(testdb.Open(t, true))
 	for _, name := range []string{
 		"",      // empty
 		"A  B",  // double space
@@ -91,7 +91,7 @@ func TestCreateAgentInvalidName(t *testing.T) {
 }
 
 func TestCreateAgentDuplicateName(t *testing.T) {
-	queries := db.New(testdb.Open(t))
+	queries := db.New(testdb.Open(t, true))
 	if rec, err := create(t, queries, `{"name":"Research"}`); err != nil || rec.Code != http.StatusCreated {
 		t.Fatalf("first create: status = %d, want 201", rec.Code)
 	}
@@ -124,7 +124,7 @@ func TestCreateAgentDuplicateName(t *testing.T) {
 }
 
 func TestCreateAgentMalformedBody(t *testing.T) {
-	queries := db.New(testdb.Open(t))
+	queries := db.New(testdb.Open(t, true))
 	// Malformed JSON never reaches the mock's handler (its
 	// request.json() throws).
 	for _, body := range []string{"", "not json"} {
@@ -143,7 +143,7 @@ func TestCreateAgentMalformedBody(t *testing.T) {
 }
 
 func TestCreateAgentConfigOptional(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	queries := db.New(sqlDB)
 	// Config fields are optional; omitted texts insert as '' and
 	// user_context as NULL.
@@ -166,7 +166,7 @@ func TestCreateAgentConfigOptional(t *testing.T) {
 }
 
 func TestCreateAgentStoreFailure(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	queries := db.New(sqlDB)
 	// Break the store under the handler. Referencing tables drop first
 	// so the teardown stays valid under foreign_keys=ON.

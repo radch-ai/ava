@@ -14,7 +14,7 @@ import (
 // Keyless empty store: no groups — system models exist only once a
 // key fetches them.
 func TestGetModelsEmptyStore(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	rec := do(t, sqlDB, http.MethodGet, "/models", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -28,7 +28,7 @@ func TestGetModelsEmptyStore(t *testing.T) {
 // (custom wins the dedupe); providers with no models at all are
 // dropped from the groups.
 func TestGetModelsMergesLiveAndCustom(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	url := fakeProvider(t).URL
 	for _, stmt := range []string{
 		`INSERT INTO providers (id, name, base_url, models)
@@ -57,7 +57,7 @@ func TestGetModelsMergesLiveAndCustom(t *testing.T) {
 
 // Providers sharing a display name merge into one group.
 func TestGetModelsMergesGroupsByName(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	url := fakeProvider(t).URL
 	for _, stmt := range []string{
 		`INSERT INTO providers (id, name, base_url, models)
@@ -85,7 +85,7 @@ func TestGetModelsMergesGroupsByName(t *testing.T) {
 
 // The grouped catalog never leaks keys or base URLs.
 func TestGetModelsCarriesNoConfig(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	url := fakeProvider(t).URL
 	if _, err := sqlDB.Exec(
 		`INSERT INTO providers (id, name, base_url, models)

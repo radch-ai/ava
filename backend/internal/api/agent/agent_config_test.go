@@ -38,7 +38,7 @@ func serve(t *testing.T, pattern string, h api.Handler, method, path, body strin
 // configStore opens a fresh store holding one regular agent.
 func configStore(t *testing.T) *db.Queries {
 	t.Helper()
-	queries := db.New(testdb.Open(t))
+	queries := db.New(testdb.Open(t, true))
 	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
 		ID: "research", Name: "Research", Icon: "globe",
 		SoulPersonality: "curious", SoulIdentity: "verifies claims",
@@ -50,7 +50,7 @@ func configStore(t *testing.T) *db.Queries {
 }
 
 func TestGetAgentConfigSeededSuperagent(t *testing.T) {
-	queries := db.New(testdb.Open(t))
+	queries := db.New(testdb.Open(t, true))
 
 	rec, err := serve(t, "GET /agent/{id}/config", GetAgentConfig(queries),
 		http.MethodGet, "/agent/_superagent/config", "")
@@ -73,7 +73,7 @@ func TestGetAgentConfigSeededSuperagent(t *testing.T) {
 }
 
 func TestGetAgentConfigUnknownAgent(t *testing.T) {
-	queries := db.New(testdb.Open(t))
+	queries := db.New(testdb.Open(t, true))
 
 	rec, err := serve(t, "GET /agent/{id}/config", GetAgentConfig(queries),
 		http.MethodGet, "/agent/ghost/config", "")
@@ -151,7 +151,7 @@ func TestUpdateAgentConfigSoulReplacesWhole(t *testing.T) {
 }
 
 func TestUpdateAgentConfigSkipsSystemIdentity(t *testing.T) {
-	queries := db.New(testdb.Open(t))
+	queries := db.New(testdb.Open(t, true))
 
 	rec, err := serve(t, "PATCH /agent/{id}/config", UpdateAgentConfig(queries),
 		http.MethodPatch, "/agent/_superagent/config", `{
@@ -190,7 +190,7 @@ func TestUpdateAgentConfigEmptyPatchIsNoop(t *testing.T) {
 }
 
 func TestUpdateAgentConfigUnknownAgent(t *testing.T) {
-	queries := db.New(testdb.Open(t))
+	queries := db.New(testdb.Open(t, true))
 
 	rec, err := serve(t, "PATCH /agent/{id}/config", UpdateAgentConfig(queries),
 		http.MethodPatch, "/agent/ghost/config", `{"name":"X"}`)

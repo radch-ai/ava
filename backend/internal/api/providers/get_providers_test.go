@@ -79,7 +79,7 @@ func body(rec *httptest.ResponseRecorder) string {
 
 // The empty store lists nothing: providers are rows users create.
 func TestGetProvidersEmptyStore(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	rec := do(t, sqlDB, http.MethodGet, "/providers", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -92,7 +92,7 @@ func TestGetProvidersEmptyStore(t *testing.T) {
 // Rows list in creation order with their custom models; the stored
 // key never leaves.
 func TestGetProvidersListsRows(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	for _, stmt := range []string{
 		`INSERT INTO providers (id, name, base_url, models)
 		 VALUES ('p-1', 'OpenRouter', 'https://openrouter.ai/api/v1', '["or/m1"]')`,

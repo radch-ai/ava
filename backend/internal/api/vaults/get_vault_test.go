@@ -59,7 +59,7 @@ func seedEntry(t *testing.T, sqlDB *sql.DB, vaultName, name, kind, value string)
 }
 
 func TestGetListsMetadataOnly(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	seedEntry(t, sqlDB, vault.NameSecrets, "openai-key", "secret", "sk-live-1")
 	seedEntry(t, sqlDB, vault.NameSecrets, "anthropic-key", "secret", "sk-ant-2")
 
@@ -81,7 +81,7 @@ func TestGetListsMetadataOnly(t *testing.T) {
 }
 
 func TestGetEmpty(t *testing.T) {
-	rec := do(t, testdb.Open(t), http.MethodGet, "/vault", "")
+	rec := do(t, testdb.Open(t, true), http.MethodGet, "/vault", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body)
 	}
@@ -93,7 +93,7 @@ func TestGetEmpty(t *testing.T) {
 // The runtime vault has no HTTP surface: its entries never appear in
 // the secrets list.
 func TestGetHidesRuntimeVault(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	seedEntry(t, sqlDB, vault.NameRuntime, "provider:p-1", "provider", "k-1")
 	seedEntry(t, sqlDB, vault.NameSecrets, "openai-key", "secret", "sk-1")
 
@@ -108,7 +108,7 @@ func TestGetHidesRuntimeVault(t *testing.T) {
 
 // Stored meta is context, never secret: it lists back, value does not.
 func TestGetReturnsMeta(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	store := newTestStore(t, sqlDB)
 	if err := store.Put(t.Context(), vault.NameSecrets, "db-url", "secret",
 		[]byte("postgres://u:p@h/db"), []byte(`{"note":"staging"}`)); err != nil {

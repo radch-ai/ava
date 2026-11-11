@@ -37,7 +37,7 @@ func getAgents(t *testing.T, queries *db.Queries) (int, string, error) {
 }
 
 func TestGetAgentsEmpty(t *testing.T) {
-	queries := db.New(testdb.Open(t))
+	queries := db.New(testdb.Open(t, true))
 	// Only the seeded superagent exists and it is excluded; the list is
 	// an array, never null.
 	code, body, err := getAgents(t, queries)
@@ -47,7 +47,7 @@ func TestGetAgentsEmpty(t *testing.T) {
 }
 
 func TestGetAgentsContract(t *testing.T) {
-	queries := db.New(testdb.Open(t))
+	queries := db.New(testdb.Open(t, true))
 	// "research" sorts before "scribe", but scribe was created first:
 	// listing scribe first pins created_at ordering, not id ordering.
 	// Stamps are coarse, so the seeds sit 2ms apart.
@@ -62,7 +62,7 @@ func TestGetAgentsContract(t *testing.T) {
 }
 
 func TestGetAgentsStoreFailure(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	queries := db.New(sqlDB)
 	// Break the store under the handler — the endpoint's only failure
 	// mode. Referencing tables drop first so the teardown stays valid

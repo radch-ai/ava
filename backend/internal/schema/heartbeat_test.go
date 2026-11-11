@@ -10,7 +10,7 @@ import (
 )
 
 func TestSeedSuperagentHeartbeat(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	var model any
 	var enabled int64
 	var duration, content string
@@ -38,7 +38,7 @@ func TestSeedSuperagentHeartbeat(t *testing.T) {
 }
 
 func TestHeartbeatSingletonPerAgent(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 
 	// agent_id is the primary key: a second row for the same agent
 	// cannot exist — updates land on the one row, never a duplicate.
@@ -60,7 +60,7 @@ func TestHeartbeatSingletonPerAgent(t *testing.T) {
 }
 
 func TestAgentDeleteCascades(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 
 	if _, err := sqlDB.Exec(
 		`INSERT INTO agents (id, name, icon, soul_personality, soul_identity, operating_instructions, tools_context)

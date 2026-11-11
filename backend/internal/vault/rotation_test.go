@@ -12,6 +12,7 @@ import (
 
 	"github.com/tink-crypto/tink-go/v2/keyset"
 
+	"github.com/radch-ai/ava/backend/internal/testdb"
 	"github.com/radch-ai/ava/backend/internal/vault"
 )
 
@@ -40,7 +41,7 @@ func envelopes(t *testing.T, db *sql.DB) map[string]string {
 // Master rotation touches exactly one thing: the wrapped keyset. No
 // envelope changes; the new key boots, the old one no longer does.
 func TestRotateMasterRewrapsKeysetOnly(t *testing.T) {
-	db := openMemoryDB(t)
+	db := testdb.Open(t, true)
 	store := newStore(t, db, keyBytes(0xA1))
 	ctx := context.Background()
 	for _, e := range []struct{ vaultName, name string }{
@@ -100,7 +101,7 @@ func TestRotateMasterRewrapsKeysetOnly(t *testing.T) {
 }
 
 func TestRotateMasterWrongOldKey(t *testing.T) {
-	db := openMemoryDB(t)
+	db := testdb.Open(t, true)
 	newStore(t, db, keyBytes(0xA1))
 
 	wrongMaster, err := vault.NewMasterAEAD(keyBytes(0xC3))
@@ -120,7 +121,7 @@ func TestRotateMasterWrongOldKey(t *testing.T) {
 // Data-key rotation re-seals every entry under the new primary — every
 // envelope changes, every plaintext survives.
 func TestRotateKeysResealsEveryEntry(t *testing.T) {
-	db := openMemoryDB(t)
+	db := testdb.Open(t, true)
 	store := newStore(t, db, keyBytes(0xA1))
 	ctx := context.Background()
 	for _, e := range []struct{ vaultName, name, value string }{
@@ -187,7 +188,7 @@ func TestRotateKeysResealsEveryEntry(t *testing.T) {
 }
 
 func TestRotateKeysOnEmptyVault(t *testing.T) {
-	db := openMemoryDB(t)
+	db := testdb.Open(t, true)
 	master, err := vault.NewMasterAEAD(keyBytes(0xA1))
 	if err != nil {
 		t.Fatalf("master: %v", err)

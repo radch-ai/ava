@@ -9,7 +9,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +16,6 @@ import (
 	"github.com/radch-ai/ava/backend/internal/db"
 	"github.com/radch-ai/ava/backend/internal/testdb"
 	"github.com/radch-ai/ava/backend/internal/vault"
-	"github.com/radch-ai/ava/backend/sqlstore"
 )
 
 func keyBytes(b byte) []byte { return bytes.Repeat([]byte{b}, 32) }
@@ -35,33 +33,23 @@ func newStore(t *testing.T, db *sql.DB, key []byte) *vault.Store {
 	return store
 }
 
-func openMemoryDB(t *testing.T) *sql.DB {
+// seedBootDB mints the keyset under keyBytes(0xA1) with one sealed
+// entry, then closes — every test below reopens that database.
+func seedBootDB(t *testing.T) {
 	t.Helper()
-	return testdb.Open(t)
-}
-
-// seedFileDB creates a file-backed database whose keyset was minted under
-// keyBytes(0xA1) with one sealed entry, closed and ready to reopen.
-func seedFileDB(t *testing.T) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "vault.db")
-	db, err := sqlstore.OpenSQLite(path)
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	store := newStore(t, db, keyBytes(0xA1))
+	sqlDB := testdb.Open(t, false)
+	store := newStore(t, sqlDB, keyBytes(0xA1))
 	if err := store.Put(context.Background(), "runtime", "provider:p1", "secret", []byte("sk-live-1"), []byte(`{"k":"v"}`)); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	if err := db.Close(); err != nil {
+	if err := sqlDB.Close(); err != nil {
 		t.Fatalf("close sqlite: %v", err)
 	}
-	return path
 }
 
 func TestPutGetRoundTrip(t *testing.T) {
 	ctx := context.Background()
-	store := newStore(t, openMemoryDB(t), keyBytes(0xA1))
+	store := newStore(t, testdb.Open(t, true), keyBytes(0xA1))
 
 	plaintext, meta := []byte("sk-live-1234"), []byte(`{"source":"settings"}`)
 	if err := store.Put(ctx, "runtime", "provider:p1", "secret", plaintext, meta); err != nil {
@@ -81,15 +69,9 @@ func TestPutGetRoundTrip(t *testing.T) {
 }
 
 func TestReopenWithSameMasterKey(t *testing.T) {
-	path := seedFileDB(t)
+	seedBootDB(t)
 
-	db, err := sqlstore.OpenSQLite(path)
-	if err != nil {
-		t.Fatalf("reopen sqlite: %v", err)
-	}
-	defer func() { _ = db.Close() }()
-
-	store := newStore(t, db, keyBytes(0xA1)) // mint once, open many
+	store := newStore(t, testdb.Open(t, false), keyBytes(0xA1)) // mint once, open many
 	got, _, err := store.Get(context.Background(), "runtime", "provider:p1")
 	if err != nil {
 		t.Fatalf("get after reopen: %v", err)
@@ -100,35 +82,23 @@ func TestReopenWithSameMasterKey(t *testing.T) {
 }
 
 func TestWrongMasterKeyFailsBoot(t *testing.T) {
-	path := seedFileDB(t)
-
-	db, err := sqlstore.OpenSQLite(path)
-	if err != nil {
-		t.Fatalf("reopen sqlite: %v", err)
-	}
-	defer func() { _ = db.Close() }()
+	seedBootDB(t)
 
 	master, err := vault.NewMasterAEAD(keyBytes(0xB2))
 	if err != nil {
 		t.Fatalf("master aead: %v", err)
 	}
-	_, err = vault.NewStore(db, master)
-	if err == nil {
+	if _, err := vault.NewStore(testdb.Open(t, false), master); err == nil {
 		t.Fatal("boot with wrong master key accepted, want failure")
-	}
-	if !strings.Contains(err.Error(), "does not match the key this database was initialized with") {
+	} else if !strings.Contains(err.Error(), "does not match the key this database was initialized with") {
 		t.Fatalf("error = %v, want the mismatch message", err)
 	}
 }
 
 func TestKeysetTamperRejected(t *testing.T) {
-	path := seedFileDB(t)
+	seedBootDB(t)
 
-	sqlDB, err := sqlstore.OpenSQLite(path)
-	if err != nil {
-		t.Fatalf("reopen sqlite: %v", err)
-	}
-	defer func() { _ = sqlDB.Close() }()
+	sqlDB := testdb.Open(t, false)
 	// Tamper through the query layer's keyset write.
 	if err := db.New(sqlDB).UpdateVaultKeyset(context.Background(), "AAAA"); err != nil {
 		t.Fatalf("tamper keyset: %v", err)
@@ -145,7 +115,7 @@ func TestKeysetTamperRejected(t *testing.T) {
 
 func TestCopiedEnvelopeFailsClosed(t *testing.T) {
 	ctx := context.Background()
-	sqlDB := openMemoryDB(t)
+	sqlDB := testdb.Open(t, true)
 	store := newStore(t, sqlDB, keyBytes(0xA1))
 	if err := store.Put(ctx, "runtime", "provider:p1", "secret", []byte("sk-live-1"), nil); err != nil {
 		t.Fatalf("put: %v", err)
@@ -188,7 +158,7 @@ func TestCopiedEnvelopeFailsClosed(t *testing.T) {
 
 func TestReplaceSemantics(t *testing.T) {
 	ctx := context.Background()
-	store := newStore(t, openMemoryDB(t), keyBytes(0xA1))
+	store := newStore(t, testdb.Open(t, true), keyBytes(0xA1))
 
 	// Put upserts: second Put overwrites the first.
 	if err := store.Put(ctx, "secrets", "github", "secret", []byte("old"), []byte(`{"v":1}`)); err != nil {
@@ -217,7 +187,7 @@ func TestReplaceSemantics(t *testing.T) {
 
 func TestDeleteAndList(t *testing.T) {
 	ctx := context.Background()
-	db := openMemoryDB(t)
+	db := testdb.Open(t, true)
 	store := newStore(t, db, keyBytes(0xA1))
 	if err := store.Put(ctx, "secrets", "github", "secret", []byte("pw"), []byte(`{"u":"a"}`)); err != nil {
 		t.Fatalf("put: %v", err)

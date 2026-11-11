@@ -13,7 +13,7 @@ import (
 
 // A row is gone after delete, its sealed key entry with it.
 func TestDeleteProviderUserRow(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	created := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Mistral","baseUrl":"`+noAuthURL(t)+`","apiKey":"k-1"}`)
 	id := createdID(t, created)
@@ -40,7 +40,7 @@ func TestDeleteProviderUserRow(t *testing.T) {
 }
 
 func TestDeleteProviderNotFound(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	rec := do(t, sqlDB, http.MethodDelete, "/providers/nope", "")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
@@ -54,7 +54,7 @@ func TestDeleteProviderNotFound(t *testing.T) {
 // A stored model string survives its provider's delete — staleness
 // is caught at call time, not by a SET NULL sweep.
 func TestDeleteProviderLeavesStoredModelStrings(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	if _, err := sqlDB.Exec(
 		`INSERT INTO agents (id, name, icon, soul_personality, soul_identity, operating_instructions, tools_context)
 		 VALUES ('d1', 'Del', 'globe', '', '', '', '')`); err != nil {

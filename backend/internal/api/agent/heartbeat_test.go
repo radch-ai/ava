@@ -12,7 +12,7 @@ import (
 )
 
 func TestUpdateHeartbeatUnknownAgent(t *testing.T) {
-	queries := db.New(testdb.Open(t))
+	queries := db.New(testdb.Open(t, true))
 
 	rec, err := serve(t, "PATCH /agent/{id}/heartbeat", UpdateHeartbeat(queries),
 		http.MethodPatch, "/agent/ghost/heartbeat",
@@ -26,7 +26,7 @@ func TestUpdateHeartbeatUnknownAgent(t *testing.T) {
 }
 
 func TestUpdateHeartbeatUpsertsSingleRow(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	queries := db.New(sqlDB)
 	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
 		ID: "research", Name: "Research", Icon: "globe",
@@ -68,7 +68,7 @@ func TestUpdateHeartbeatUpsertsSingleRow(t *testing.T) {
 }
 
 func TestUpdateHeartbeatModelAutoStoresNULL(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	queries := db.New(sqlDB)
 	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
 		ID: "research", Name: "Research", Icon: "globe",

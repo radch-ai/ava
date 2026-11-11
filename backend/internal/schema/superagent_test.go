@@ -21,7 +21,7 @@ const (
 )
 
 func TestSeedSuperagent(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 
 	var name, icon, personality, identity, userContext, operating, toolsContext string
 	if err := sqlDB.QueryRow(
@@ -64,7 +64,7 @@ func TestSeedSuperagent(t *testing.T) {
 }
 
 func TestSystemAgentsCannotBeDeleted(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	queries := db.New(sqlDB)
 
 	// The trigger aborts deletes of "_"-prefixed ids — every code
@@ -86,7 +86,7 @@ func TestSystemAgentsCannotBeDeleted(t *testing.T) {
 }
 
 func TestSystemAgentIdentityCannotBeChanged(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	queries := db.New(sqlDB)
 
 	// The trigger aborts id/name/icon rewrites of "_"-prefixed rows —

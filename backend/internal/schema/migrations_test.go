@@ -11,7 +11,7 @@ import (
 )
 
 func TestMigrateCreatesVersionTable(t *testing.T) {
-	db := testdb.Open(t)
+	db := testdb.Open(t, true)
 
 	var n int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil {

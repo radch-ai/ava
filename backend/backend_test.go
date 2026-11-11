@@ -25,7 +25,7 @@ import (
 var testMasterKey = bytes.Repeat([]byte{0x42}, 32)
 
 func TestRoutes(t *testing.T) {
-	handler, err := backend.New(testdb.Open(t), zerolog.Nop(), testMasterKey)
+	handler, err := backend.New(testdb.Open(t, true), zerolog.Nop(), testMasterKey)
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestRoutes(t *testing.T) {
 // schema introspection) and must hold under foreign_keys=ON.
 func tamperedVault(t *testing.T, vaultName string) *sql.DB {
 	t.Helper()
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	master, err := vault.NewMasterAEAD(testMasterKey)
 	if err != nil {
 		t.Fatalf("master AEAD: %v", err)
@@ -118,7 +118,7 @@ func TestNewBootChecksMasterKeyOnly(t *testing.T) {
 		t.Errorf("tampered entry must not fail boot: %v", err)
 	}
 
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	if _, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey); err != nil {
 		t.Fatalf("first boot: %v", err)
 	}

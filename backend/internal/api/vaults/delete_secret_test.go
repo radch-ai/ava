@@ -10,7 +10,7 @@ import (
 )
 
 func TestDeleteSecret(t *testing.T) {
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	seedEntry(t, sqlDB, vault.NameSecrets, "openai-key", "secret", "sk-1")
 
 	rec := do(t, sqlDB, http.MethodDelete, "/vault/openai-key", "")
@@ -28,7 +28,7 @@ func TestDeleteSecret(t *testing.T) {
 }
 
 func TestDeleteSecretMissing(t *testing.T) {
-	rec := do(t, testdb.Open(t), http.MethodDelete, "/vault/nope", "")
+	rec := do(t, testdb.Open(t, true), http.MethodDelete, "/vault/nope", "")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404; body %s", rec.Code, rec.Body)
 	}

@@ -19,7 +19,7 @@ import (
 // scratch provider whose custom model ids jobs can reference.
 func cronStore(t *testing.T) *db.Queries {
 	t.Helper()
-	sqlDB := testdb.Open(t)
+	sqlDB := testdb.Open(t, true)
 	if _, err := sqlDB.Exec(
 		"INSERT INTO providers (id, name, base_url, models) " +
 			"VALUES ('p1', 'P1', 'https://p1.dev/v1', '[\"m1\",\"m2\"]')",
