@@ -65,6 +65,19 @@ func TestRoutes(t *testing.T) {
 	if code := do(http.MethodGet, "/agent/ghost/cron-jobs", ""); code != http.StatusNotFound {
 		t.Errorf("GET /agent/ghost/cron-jobs = %d, want 404", code)
 	}
+	// The read-only conversation surfaces.
+	if code := do(http.MethodGet, "/agent/_superagent/thread", ""); code != http.StatusOK {
+		t.Errorf("GET /agent/_superagent/thread = %d, want 200", code)
+	}
+	if code := do(http.MethodGet, "/agent/ghost/thread", ""); code != http.StatusNotFound {
+		t.Errorf("GET /agent/ghost/thread = %d, want 404", code)
+	}
+	if code := do(http.MethodGet, "/agent/_superagent/activity", ""); code != http.StatusOK {
+		t.Errorf("GET /agent/_superagent/activity = %d, want 200", code)
+	}
+	if code := do(http.MethodGet, "/agent/ghost/activity", ""); code != http.StatusNotFound {
+		t.Errorf("GET /agent/ghost/activity = %d, want 404", code)
+	}
 	if code := do(http.MethodDelete, "/agent/_superagent/cron-jobs/nope", ""); code != http.StatusNotFound {
 		t.Errorf("DELETE /agent/_superagent/cron-jobs/nope = %d, want 404", code)
 	}

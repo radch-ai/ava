@@ -62,6 +62,10 @@ func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte) (http.Handler, 
 	mux.Handle("DELETE /agent/{id}/cron-jobs/{jobId}",
 		api.Log(logger, agent.DeleteCronJob(queries)))
 
+	// Thread and activity.
+	mux.Handle("GET /agent/{id}/thread", api.Log(logger, agent.GetThread(queries)))
+	mux.Handle("GET /agent/{id}/activity", api.Log(logger, agent.GetAgentActivity(queries)))
+
 	// Providers.
 	mux.Handle("GET /providers", api.Log(logger, providers.GetProviders(queries, vaultStore)))
 	mux.Handle("GET /models", api.Log(logger, providers.GetModels(queries, vaultStore)))
