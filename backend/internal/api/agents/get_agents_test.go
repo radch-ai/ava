@@ -67,7 +67,7 @@ func TestGetAgentsStoreFailure(t *testing.T) {
 	// Break the store under the handler — the endpoint's only failure
 	// mode. Referencing tables drop first so the teardown stays valid
 	// under foreign_keys=ON.
-	for _, table := range []string{"heartbeat", "cron_jobs", "agents"} {
+	for _, table := range []string{"thread_messages", "agent_activity", "heartbeat", "cron_jobs", "agents"} {
 		if _, err := sqlDB.Exec(`DROP TABLE ` + table); err != nil {
 			t.Fatalf("drop %s: %v", table, err)
 		}
