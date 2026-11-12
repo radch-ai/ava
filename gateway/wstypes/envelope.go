@@ -9,15 +9,25 @@ package wstypes
 type EventType string
 
 const (
-	EventTypeConnected EventType = "connected"
+	EventTypeConnected  EventType = "connected"
+	EventTypeLaneStatus EventType = "lane_status"
 )
 
 // EnvelopeType tags client frames.
 type EnvelopeType string
 
 const (
-	EnvelopeTypePrompt EnvelopeType = "prompt"
+	EnvelopeTypePrompt    EnvelopeType = "prompt"
+	EnvelopeTypeStatus    EnvelopeType = "status"
+	EnvelopeTypeInterrupt EnvelopeType = "interrupt"
 )
+
+// Envelope is the head of every client frame.
+type Envelope struct {
+	Type    EnvelopeType `json:"type"`
+	AgentID string       `json:"agent_id"`
+	Data    any          `json:"data,omitempty"`
+}
 
 // Event is the envelope for all server-to-client events.
 type Event struct {

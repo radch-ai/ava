@@ -11,6 +11,7 @@
 		createAgentSocket,
 		getAgentActivityFeed,
 		getAgentThread,
+		type LaneStatus,
 		mergePastThread
 	} from '#lib/services/agent'
 	import { resolve } from '$app/paths'
@@ -49,6 +50,8 @@
 
 	// Lazily connected on first submit; one socket per conversation surface.
 	let socket: ReturnType<typeof createAgentSocket> | undefined
+	let socketLive = $state(false)
+	let laneStatus = $state<LaneStatus | null>(null)
 
 	onMount(() => {
 		const stored = localStorage.getItem(MODEL_KEY)
@@ -108,14 +111,24 @@
 
 	function handleComposerSubmit(_text: string) {
 		activeTab = 'conversation'
-		socket ??= createAgentSocket(handleSocketEvent)
+		socket ??= createAgentSocket(data.agent.id, handleSocketEvent)
 		socket.sendPrompt()
+		socket.requestStatus()
 	}
 
-	// Placeholder receiver: streamed agent events render here as they
-	// gain typed arms.
+	// Lane state mirrored from gateway events; streamed agent events
+	// land in the same switch once typed.
 	function handleSocketEvent(event: AgentSocketEvent) {
-		console.debug('agent socket event', event)
+		switch (event.type) {
+			case 'connected':
+				socketLive = true
+				break
+			case 'lane_status':
+				laneStatus = event.data
+				break
+			default:
+				console.debug('agent socket event', event)
+		}
 	}
 
 	onMount(() => () => socket?.close())
@@ -127,6 +140,12 @@
 
 	const ctaHref = $derived(
 		`${resolve('/(app)/agent/[agentId]', { agentId: SUPERAGENT_AGENT_ID })}?prompt=${encodeURIComponent(`Use the ${data.agent.name} agent to...`)}`
+	)
+
+	const laneStatusLabel = $derived(
+		laneStatus
+			? `lane ${laneStatus.active ? 'active' : 'idle'} · ${laneStatus.model} · queue ${laneStatus.queue_len}`
+			: ''
 	)
 </script>
 
@@ -160,6 +179,19 @@
 			</div>
 			<TextArea onsubmit={handleComposerSubmit} />
 		</div>
+
+		{#if socketLive}
+			<div
+				class="text-muted-foreground mx-auto mt-1 flex w-fit items-center gap-2 text-xs"
+			>
+				<span class="size-1.5 rounded-full bg-emerald-500"></span>
+				{#if laneStatus}
+					<span>{laneStatusLabel}</span>
+				{:else}
+					<span>connected</span>
+				{/if}
+			</div>
+		{/if}
 	{:else}
 		<div class="mx-auto max-w-[var(--content-max-width)]">
 			<Button

@@ -53,7 +53,8 @@ func TestPromptReceivedOverWS(t *testing.T) {
 	conn, ctx := dialGateway(t)
 
 	err := wsjson.Write(ctx, conn, map[string]string{
-		"type": "prompt",
+		"type":     "prompt",
+		"agent_id": "_superagent",
 	})
 	if err != nil {
 		t.Fatalf("writing prompt failed: %v", err)
@@ -69,5 +70,37 @@ func TestPromptReceivedOverWS(t *testing.T) {
 	}
 	if coderws.CloseStatus(rerr) != -1 {
 		t.Fatalf("connection closed after prompt: %v", rerr)
+	}
+}
+
+func TestStatusRepliesLaneStatus(t *testing.T) {
+	conn, ctx := dialGateway(t)
+
+	err := wsjson.Write(ctx, conn, map[string]string{
+		"type":     "status",
+		"agent_id": "_superagent",
+	})
+	if err != nil {
+		t.Fatalf("writing status request failed: %v", err)
+	}
+
+	var event map[string]any
+	if err := wsjson.Read(ctx, conn, &event); err != nil {
+		t.Fatalf("reading lane_status failed: %v", err)
+	}
+	if event["type"] != "lane_status" {
+		t.Fatalf("expected lane_status event, got %v", event["type"])
+	}
+	if event["agent_id"] != "_superagent" {
+		t.Fatalf("expected lane_status for _superagent, got %v", event["agent_id"])
+	}
+	data, ok := event["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("lane_status data is not a map: %+v", event["data"])
+	}
+	for _, key := range []string{"active", "model", "queue_len", "conn_count"} {
+		if _, exists := data[key]; !exists {
+			t.Errorf("lane_status data missing %s", key)
+		}
 	}
 }

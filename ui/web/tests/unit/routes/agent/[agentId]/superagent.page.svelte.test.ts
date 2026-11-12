@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { page } from 'vitest/browser'
+import { page, userEvent } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import type { AgentThread } from '#lib/services/agent'
+import type { AgentSocketEvent, AgentThread } from '#lib/services/agent'
 import { SUPERAGENT_AGENT } from '#lib/types/agent'
 import AgentPageTestWrapper from './AgentPageTestWrapper.svelte'
 
@@ -9,6 +9,22 @@ vi.mock('#lib/services/api', () => ({
 	api: {
 		get: vi.fn()
 	}
+}))
+
+const socketMock = {
+	sendPrompt: vi.fn(),
+	requestStatus: vi.fn(),
+	close: vi.fn()
+}
+let capturedOnEvent: ((event: AgentSocketEvent) => void) | undefined
+
+vi.mock('#lib/services/agent/ws', () => ({
+	createAgentSocket: vi.fn(
+		(_agentId: string, onEvent: (event: unknown) => void) => {
+			capturedOnEvent = onEvent as typeof capturedOnEvent
+			return socketMock
+		}
+	)
 }))
 
 import { type ApiResponsePromise, api } from '#lib/services/api'
@@ -454,6 +470,50 @@ describe('AgentPage (superagent branch)', () => {
 
 			await expect.element(page.getByText('Processed data')).toBeVisible()
 			await expect.element(page.getByText('Connection refused')).toBeVisible()
+		})
+	})
+
+	describe('composer submit over websocket', () => {
+		it('sends the prompt and a status request on submit', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'hello over ws{Enter}')
+
+			await vi.waitFor(() => {
+				expect(socketMock.sendPrompt).toHaveBeenCalledWith()
+				expect(socketMock.requestStatus).toHaveBeenCalledTimes(1)
+			})
+		})
+
+		it('renders connected state from the socket event', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'connect me{Enter}')
+
+			capturedOnEvent?.({ type: 'connected', data: { conn_id: 'conn-1' } })
+
+			await expect.element(page.getByText('connected')).toBeVisible()
+		})
+
+		it('renders lane status from the lane_status event', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'status please{Enter}')
+
+			capturedOnEvent?.({ type: 'connected', data: { conn_id: 'conn-1' } })
+			capturedOnEvent?.({
+				type: 'lane_status',
+				agent_id: '_superagent',
+				data: { active: true, model: 'auto', queue_len: 0, conn_count: 1 }
+			})
+
+			await expect
+				.element(page.getByText(/lane active · auto · queue 0/))
+				.toBeVisible()
 		})
 	})
 })

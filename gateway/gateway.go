@@ -3,7 +3,7 @@
 // package is the only importable surface.
 //
 // Build-out proceeds top-down; this surface accepts a WebSocket,
-// confirms the connection, and receives client messages.
+// confirms the connection, and distinguishes client message types.
 package gateway
 
 import (
@@ -73,18 +73,34 @@ func handleWS(logger zerolog.Logger) http.HandlerFunc {
 				return
 			}
 
-			// Basic wiring reaches here: the type tag is consumed and
-			// logged; per-kind handling lands with the protocol commit.
-			var envelope struct {
-				Type string `json:"type"`
-			}
-			if err := json.Unmarshal(raw, &envelope); err != nil {
+			// The envelope head picks the arm; the payload rides in Data.
+			var env wstypes.Envelope
+			if err := json.Unmarshal(raw, &env); err != nil {
 				logger.Warn().Err(err).Msg("unparseable message")
 				continue
 			}
-			logger.Info().
-				Str("type", envelope.Type).
-				Msg("message received over ws")
+
+			switch env.Type {
+			case wstypes.EnvelopeTypePrompt:
+				// Bare scaffold: the prompt arm completes with the
+				// boundary-crossing commit.
+			case wstypes.EnvelopeTypeStatus:
+				writeCtx, writeCancel := context.WithTimeout(ctx, 10*time.Second)
+				err := wsjson.Write(writeCtx, conn, wstypes.Event{
+					Type:    wstypes.EventTypeLaneStatus,
+					AgentID: env.AgentID,
+					Data:    wstypes.LaneStatus{ConnCount: 1},
+				})
+				writeCancel()
+				if err != nil {
+					logger.Warn().Err(err).Msg("failed to send lane_status event")
+					return
+				}
+			case wstypes.EnvelopeTypeInterrupt:
+				// Nothing runs behind the connection yet to interrupt.
+			default:
+				logger.Debug().Str("type", string(env.Type)).Msg("unknown message type")
+			}
 		}
 	}
 }
