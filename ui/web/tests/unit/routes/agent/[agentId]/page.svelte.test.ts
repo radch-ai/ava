@@ -14,7 +14,12 @@ vi.mock('#lib/services/agent', () => ({
 	updateAgentConfig: vi.fn(),
 	updateHeartbeat: vi.fn(),
 	updateCronJobs: vi.fn(),
-	createAgent: vi.fn()
+	createAgent: vi.fn(),
+	createAgentSocket: vi.fn(() => ({
+		sendPrompt: vi.fn(),
+		requestStatus: vi.fn(),
+		close: vi.fn()
+	}))
 }))
 
 vi.mock('$app/paths', () => ({

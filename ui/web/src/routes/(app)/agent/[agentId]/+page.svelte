@@ -7,6 +7,8 @@
 	import { defaultModel } from '#lib/models'
 	import {
 		type ActivityFeed,
+		type AgentSocketEvent,
+		createAgentSocket,
 		getAgentActivityFeed,
 		getAgentThread,
 		mergePastThread
@@ -44,6 +46,9 @@
 
 	const MODEL_KEY = `${APP_NAME.toLowerCase()}-chat-model`
 	let selectedModel = $state(defaultModel)
+
+	// Lazily connected on first submit; one socket per conversation surface.
+	let socket: ReturnType<typeof createAgentSocket> | undefined
 
 	onMount(() => {
 		const stored = localStorage.getItem(MODEL_KEY)
@@ -103,7 +108,17 @@
 
 	function handleComposerSubmit(_text: string) {
 		activeTab = 'conversation'
+		socket ??= createAgentSocket(handleSocketEvent)
+		socket.sendPrompt()
 	}
+
+	// Placeholder receiver: streamed agent events render here as they
+	// gain typed arms.
+	function handleSocketEvent(event: AgentSocketEvent) {
+		console.debug('agent socket event', event)
+	}
+
+	onMount(() => () => socket?.close())
 
 	function handleActivityLoadMore(feed: ActivityFeed) {
 		activityFeed = feed

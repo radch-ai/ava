@@ -45,8 +45,9 @@ sqlc-generate-for service:
     @case " {{ sqlc_services }} " in *" {{ service }} "*) just sqlc-generate ;; esac
 
 
-# Regenerate the UI wire types from backend/apitypes (tygo.yaml →
-# ui/web/src/lib/types/gen/, gitignored — regenerate, never edit).
+# Regenerate the UI wire types from the Go contracts
+# (backend/apitypes, gateway/wstypes → ui/web/src/lib/types/gen/,
+# gitignored — regenerate, never edit).
 typegen:
     @just require_tool tygo
     tygo generate

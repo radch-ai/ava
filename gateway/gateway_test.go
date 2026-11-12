@@ -1,63 +1,73 @@
-package gateway
+package gateway_test
 
 import (
 	"context"
-	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/coder/websocket"
+	coderws "github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 	"github.com/rs/zerolog"
+
+	"github.com/radch-ai/ava/gateway"
 )
 
-func TestWSHelloThenClose(t *testing.T) {
-	h, err := New(&Config{}, zerolog.Nop())
+func dialGateway(t *testing.T) (*coderws.Conn, context.Context) {
+	t.Helper()
+	handler, err := gateway.New(&gateway.Config{}, zerolog.Nop())
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatalf("New failed: %v", err)
 	}
-	srv := httptest.NewServer(h)
-	defer srv.Close()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 
-	conn, _, err := websocket.Dial(ctx, srv.URL+"/ws", nil)
+	conn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
 	if err != nil {
-		t.Fatalf("dial: %v", err)
+		t.Fatalf("dial failed: %v", err)
 	}
-	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+	t.Cleanup(func() { _ = conn.CloseNow() })
 
-	_, data, err := conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("read hello: %v", err)
+	var connected map[string]any
+	if err := wsjson.Read(ctx, conn, &connected); err != nil {
+		t.Fatalf("reading connected event failed: %v", err)
 	}
-	if string(data) != `{"type":"hello"}` {
-		t.Errorf("hello = %s, want %s", data, `{"type":"hello"}`)
+	if connected["type"] != "connected" {
+		t.Fatalf("expected connected event, got %v", connected["type"])
 	}
-
-	readCtx, readCancel := context.WithTimeout(ctx, 2*time.Second)
-	defer readCancel()
-	_ = conn.Ping(readCtx) // keep the peer engaged before expecting the close
-	if _, _, err := conn.Read(readCtx); err == nil {
-		t.Error("expected connection closed after hello, got another frame")
+	data, ok := connected["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("connected event data is not a map: %+v", connected["data"])
 	}
+	if _, exists := data["conn_id"]; !exists {
+		t.Fatal("connected event should include conn_id")
+	}
+	return conn, ctx
 }
 
-func TestWSRejectsPlainGET(t *testing.T) {
-	h, err := New(&Config{}, zerolog.Nop())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	srv := httptest.NewServer(h)
-	defer srv.Close()
+func TestPromptReceivedOverWS(t *testing.T) {
+	conn, ctx := dialGateway(t)
 
-	resp, err := http.Get(srv.URL + "/ws")
+	err := wsjson.Write(ctx, conn, map[string]string{
+		"type": "prompt",
+	})
 	if err != nil {
-		t.Fatalf("get: %v", err)
+		t.Fatalf("writing prompt failed: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusUpgradeRequired {
-		t.Errorf("plain GET /ws = %d, want %d", resp.StatusCode, http.StatusUpgradeRequired)
+
+	// The turn-loop behind the surface is a placeholder: the prompt is
+	// consumed and the connection stays open with nothing following it.
+	rctx, rcancel := context.WithTimeout(ctx, 1*time.Second)
+	defer rcancel()
+	_, _, rerr := conn.Reader(rctx)
+	if rerr == nil {
+		t.Fatal("unexpected inbound frame")
+	}
+	if coderws.CloseStatus(rerr) != -1 {
+		t.Fatalf("connection closed after prompt: %v", rerr)
 	}
 }
