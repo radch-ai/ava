@@ -109,10 +109,10 @@
 		activeTab = tab
 	}
 
-	function handleComposerSubmit(_text: string) {
+	function handleComposerSubmit(text: string) {
 		activeTab = 'conversation'
 		socket ??= createAgentSocket(data.agent.id, handleSocketEvent)
-		socket.sendPrompt()
+		socket.sendPrompt(text, selectedModel)
 		socket.requestStatus()
 	}
 

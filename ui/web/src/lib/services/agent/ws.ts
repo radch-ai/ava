@@ -15,7 +15,8 @@ import type {
 	ConnectedEvent,
 	Envelope,
 	Event,
-	LaneStatus
+	LaneStatus,
+	PromptMessage
 } from '#lib/types/gen/wstypes.gen'
 
 export type { LaneStatus }
@@ -26,10 +27,10 @@ export type AgentSocketEvent =
 	| (Event & { type: 'connected'; data: ConnectedEvent })
 	| (Event & { type: 'lane_status'; data: LaneStatus })
 
-/** Client wire frames: the envelope head, by type
+/** Client wire frames: the envelope head plus the per-kind payload
  * (gateway/wstypes → wstypes.gen). */
 export type ClientMessage =
-	| (Envelope & { type: 'prompt' })
+	| (Envelope & { type: 'prompt'; data: PromptMessage })
 	| (Envelope & { type: 'status' })
 	| (Envelope & { type: 'interrupt' })
 
@@ -101,11 +102,15 @@ export function createAgentSocket(
 	}
 
 	return {
-		sendPrompt() {
+		sendPrompt(content: string, model: string) {
 			if (!socket) {
 				connect()
 			}
-			send({ type: 'prompt', agent_id: agentId })
+			send({
+				type: 'prompt',
+				agent_id: agentId,
+				data: { content, model }
+			})
 		},
 
 		/** The gateway replies with a `lane_status` event. */

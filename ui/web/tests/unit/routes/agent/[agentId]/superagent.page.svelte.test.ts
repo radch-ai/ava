@@ -482,7 +482,10 @@ describe('AgentPage (superagent branch)', () => {
 			await userEvent.type(textarea, 'hello over ws{Enter}')
 
 			await vi.waitFor(() => {
-				expect(socketMock.sendPrompt).toHaveBeenCalledWith()
+				expect(socketMock.sendPrompt).toHaveBeenCalledWith(
+					'hello over ws',
+					expect.any(String)
+				)
 				expect(socketMock.requestStatus).toHaveBeenCalledTimes(1)
 			})
 		})

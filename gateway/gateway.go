@@ -2,8 +2,9 @@
 // Everything under gateway/internal is invisible outside this subtree; this
 // package is the only importable surface.
 //
-// Build-out proceeds top-down; this surface accepts a WebSocket,
-// confirms the connection, and distinguishes client message types.
+// Build-out proceeds top-down; this surface implements the client wire
+// contract — connected event, prompt receipt, lane_status reply — with
+// the agent turn-loop behind it still a placeholder.
 package gateway
 
 import (
@@ -82,8 +83,23 @@ func handleWS(logger zerolog.Logger) http.HandlerFunc {
 
 			switch env.Type {
 			case wstypes.EnvelopeTypePrompt:
-				// Bare scaffold: the prompt arm completes with the
-				// boundary-crossing commit.
+				payload, err := json.Marshal(env.Data)
+				if err != nil {
+					logger.Warn().Err(err).Msg("malformed prompt message")
+					continue
+				}
+				var msg wstypes.PromptMessage
+				if err := json.Unmarshal(payload, &msg); err != nil {
+					logger.Warn().Err(err).Msg("malformed prompt message")
+					continue
+				}
+				// Surface ends here for now: routing into the agent
+				// turn-loop lands with the handler restore gate.
+				logger.Info().
+					Str("agent_id", env.AgentID).
+					Str("model", msg.Model).
+					Int("content_len", len(msg.Content)).
+					Msg("prompt received over ws")
 			case wstypes.EnvelopeTypeStatus:
 				writeCtx, writeCancel := context.WithTimeout(ctx, 10*time.Second)
 				err := wsjson.Write(writeCtx, conn, wstypes.Event{

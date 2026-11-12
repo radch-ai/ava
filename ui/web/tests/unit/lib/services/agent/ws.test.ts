@@ -39,7 +39,10 @@ afterEach(() => {
 describe('agent socket', () => {
 	it('decodes connected frames into typed events', () => {
 		const events: unknown[] = []
-		createAgentSocket('_superagent', (event) => events.push(event)).sendPrompt()
+		createAgentSocket('_superagent', (event) => events.push(event)).sendPrompt(
+			'hi',
+			'auto'
+		)
 
 		lastSocket().onmessage?.({
 			data: JSON.stringify({ type: 'connected', data: { conn_id: 'c1' } })
@@ -88,7 +91,7 @@ describe('agent socket', () => {
 	it('queues client messages until the socket is open, then flushes', () => {
 		const socket = createAgentSocket('_superagent', () => {})
 
-		socket.sendPrompt()
+		socket.sendPrompt('queued prompt', 'auto')
 		socket.requestStatus()
 		expect(lastSocket().sent).toEqual([])
 
@@ -96,13 +99,17 @@ describe('agent socket', () => {
 		lastSocket().onopen?.()
 
 		expect(lastSocket().sent.map((frame) => JSON.parse(frame))).toEqual([
-			{ type: 'prompt', agent_id: '_superagent' },
+			{
+				type: 'prompt',
+				agent_id: '_superagent',
+				data: { content: 'queued prompt', model: 'auto' }
+			},
 			{ type: 'status', agent_id: '_superagent' }
 		])
 	})
 	it('close drops queued messages and closes the socket', () => {
 		const socket = createAgentSocket('_superagent', () => {})
-		socket.sendPrompt()
+		socket.sendPrompt('never sent', 'auto')
 
 		socket.close()
 		expect(lastSocket().readyState).toBe(3)

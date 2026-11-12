@@ -52,9 +52,13 @@ func dialGateway(t *testing.T) (*coderws.Conn, context.Context) {
 func TestPromptReceivedOverWS(t *testing.T) {
 	conn, ctx := dialGateway(t)
 
-	err := wsjson.Write(ctx, conn, map[string]string{
+	err := wsjson.Write(ctx, conn, map[string]any{
 		"type":     "prompt",
 		"agent_id": "_superagent",
+		"data": map[string]string{
+			"content": "hello",
+			"model":   "auto",
+		},
 	})
 	if err != nil {
 		t.Fatalf("writing prompt failed: %v", err)
