@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import type { AgentSocketEvent, AgentThread } from '#lib/services/agent'
+import type {
+	AgentSocketEvent,
+	AgentSocketState,
+	AgentThread
+} from '#lib/services/agent'
 import { SUPERAGENT_AGENT } from '#lib/types/agent'
 import AgentPageTestWrapper from './AgentPageTestWrapper.svelte'
 
@@ -17,11 +21,17 @@ const socketMock = {
 	close: vi.fn()
 }
 let capturedOnEvent: ((event: AgentSocketEvent) => void) | undefined
+let capturedOnState: ((state: AgentSocketState) => void) | undefined
 
 vi.mock('#lib/services/agent/ws', () => ({
 	createAgentSocket: vi.fn(
-		(_agentId: string, onEvent: (event: unknown) => void) => {
+		(
+			_agentId: string,
+			onEvent: (event: unknown) => void,
+			onState?: (state: unknown) => void
+		) => {
 			capturedOnEvent = onEvent as typeof capturedOnEvent
+			capturedOnState = onState as typeof capturedOnState
 			return socketMock
 		}
 	)
@@ -474,7 +484,7 @@ describe('AgentPage (superagent branch)', () => {
 	})
 
 	describe('composer submit over websocket', () => {
-		it('sends the prompt and a status request on submit', async () => {
+		it('sends the prompt on submit; the lane resync rides the live transition', async () => {
 			render(AgentPageTestWrapper, { data: createMockData() })
 
 			const textarea = page.getByPlaceholder('Enter your query!')
@@ -486,19 +496,47 @@ describe('AgentPage (superagent branch)', () => {
 					'hello over ws',
 					expect.any(String)
 				)
+			})
+			// Submit does not ask for lane status; going live does.
+			expect(socketMock.requestStatus).not.toHaveBeenCalled()
+			capturedOnState?.('live')
+			await vi.waitFor(() => {
 				expect(socketMock.requestStatus).toHaveBeenCalledTimes(1)
 			})
 		})
 
-		it('renders connected state from the socket event', async () => {
+		it('renders live state from the socket state callback', async () => {
 			render(AgentPageTestWrapper, { data: createMockData() })
 			const textarea = page.getByPlaceholder('Enter your query!')
 			await textarea.click()
 			await userEvent.type(textarea, 'connect me{Enter}')
 
-			capturedOnEvent?.({ type: 'connected', data: { conn_id: 'conn-1' } })
+			capturedOnState?.('live')
 
 			await expect.element(page.getByText('connected')).toBeVisible()
+		})
+
+		it('renders reconnecting state and drops the stale lane', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'status please{Enter}')
+
+			capturedOnState?.('live')
+			capturedOnEvent?.({
+				type: 'lane_status',
+				agent_id: '_superagent',
+				data: { active: true, model: 'auto', queue_len: 0, conn_count: 1 }
+			})
+			await expect
+				.element(page.getByText(/lane active · auto · queue 0/))
+				.toBeVisible()
+
+			capturedOnState?.('reconnecting')
+			await expect.element(page.getByText('reconnecting…')).toBeVisible()
+			await vi.waitFor(() => {
+				expect(page.getByText(/lane active/).elements()).toHaveLength(0)
+			})
 		})
 
 		it('renders lane status from the lane_status event', async () => {
@@ -507,7 +545,7 @@ describe('AgentPage (superagent branch)', () => {
 			await textarea.click()
 			await userEvent.type(textarea, 'status please{Enter}')
 
-			capturedOnEvent?.({ type: 'connected', data: { conn_id: 'conn-1' } })
+			capturedOnState?.('live')
 			capturedOnEvent?.({
 				type: 'lane_status',
 				agent_id: '_superagent',

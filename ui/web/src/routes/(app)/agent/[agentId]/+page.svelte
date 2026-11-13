@@ -7,7 +7,9 @@
 	import { defaultModel } from '#lib/models'
 	import {
 		type ActivityFeed,
+		type AgentSocket,
 		type AgentSocketEvent,
+		type AgentSocketState,
 		createAgentSocket,
 		getAgentActivityFeed,
 		getAgentThread,
@@ -48,9 +50,11 @@
 	const MODEL_KEY = `${APP_NAME.toLowerCase()}-chat-model`
 	let selectedModel = $state(defaultModel)
 
-	// Lazily connected on first submit; one socket per conversation surface.
-	let socket: ReturnType<typeof createAgentSocket> | undefined
-	let socketLive = $state(false)
+	// Lazily connected on first submit; one socket per conversation
+	// surface. Reconnects happen inside the socket; state below tracks
+	// what the strip renders.
+	let socket: AgentSocket | undefined
+	let socketState = $state<AgentSocketState | 'idle'>('idle')
 	let laneStatus = $state<LaneStatus | null>(null)
 
 	onMount(() => {
@@ -111,9 +115,24 @@
 
 	function handleComposerSubmit(text: string) {
 		activeTab = 'conversation'
-		socket ??= createAgentSocket(data.agent.id, handleSocketEvent)
+		socket ??= createAgentSocket(
+			data.agent.id,
+			handleSocketEvent,
+			handleSocketState
+		)
 		socket.sendPrompt(text, selectedModel)
-		socket.requestStatus()
+	}
+
+	// Connection state from the socket: live means the gateway greeted
+	// us — on every (re)connection the lane status is re-requested so
+	// a reconnect resyncs instead of trusting stale state.
+	function handleSocketState(state: AgentSocketState) {
+		socketState = state
+		if (state !== 'live') {
+			laneStatus = null
+			return
+		}
+		socket?.requestStatus()
 	}
 
 	// Lane state mirrored from gateway events; streamed agent events
@@ -121,7 +140,6 @@
 	function handleSocketEvent(event: AgentSocketEvent) {
 		switch (event.type) {
 			case 'connected':
-				socketLive = true
 				break
 			case 'lane_status':
 				laneStatus = event.data
@@ -180,15 +198,23 @@
 			<TextArea onsubmit={handleComposerSubmit} />
 		</div>
 
-		{#if socketLive}
+		{#if socketState !== 'idle'}
 			<div
 				class="text-muted-foreground mx-auto mt-1 flex w-fit items-center gap-2 text-xs"
 			>
-				<span class="size-1.5 rounded-full bg-emerald-500"></span>
-				{#if laneStatus}
-					<span>{laneStatusLabel}</span>
+				{#if socketState === 'live'}
+					<span class="size-1.5 rounded-full bg-emerald-500"></span>
+					{#if laneStatus}
+						<span>{laneStatusLabel}</span>
+					{:else}
+						<span>connected</span>
+					{/if}
+				{:else if socketState === 'reconnecting'}
+					<span class="size-1.5 rounded-full bg-amber-500"></span>
+					<span>reconnecting…</span>
 				{:else}
-					<span>connected</span>
+					<span class="size-1.5 rounded-full bg-amber-500"></span>
+					<span>connecting…</span>
 				{/if}
 			</div>
 		{/if}
