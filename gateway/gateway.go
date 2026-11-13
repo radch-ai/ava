@@ -141,7 +141,7 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 				err := wsjson.Write(writeCtx, conn, wstypes.Event{
 					Type:    wstypes.EventTypeLaneStatus,
 					AgentID: env.AgentID,
-					Data:    wstypes.LaneStatus{ConnCount: 1},
+					Data:    laneStatus(mgr.Get(env.AgentID)),
 				})
 				writeCancel()
 				if err != nil {
@@ -154,6 +154,25 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 				logger.Debug().Str("type", string(env.Type)).Msg("unknown message type")
 			}
 		}
+	}
+}
+
+// laneStatus maps a lane's status onto the wire type; a missing lane
+// reports an inactive, empty status.
+func laneStatus(ag *agent.UserAgent) wstypes.LaneStatus {
+	if ag == nil {
+		return wstypes.LaneStatus{}
+	}
+	s := ag.GetStatus()
+	active, _ := s["active"].(bool)
+	model, _ := s["model"].(string)
+	queueLen, _ := s["queue_len"].(int)
+	connCount, _ := s["conn_count"].(int)
+	return wstypes.LaneStatus{
+		Active:    active,
+		Model:     model,
+		QueueLen:  queueLen,
+		ConnCount: connCount,
 	}
 }
 

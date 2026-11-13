@@ -77,8 +77,7 @@ func TestPromptReceivedOverWS(t *testing.T) {
 		t.Fatalf("writing prompt failed: %v", err)
 	}
 
-	// The turn-loop behind the surface is a placeholder: the prompt is
-	// consumed and the connection stays open with nothing following it.
+	// The lane consumes the prompt; nothing follows it on the wire.
 	rctx, rcancel := context.WithTimeout(ctx, 1*time.Second)
 	defer rcancel()
 	_, _, rerr := conn.Reader(rctx)
@@ -119,6 +118,54 @@ func TestStatusRepliesLaneStatus(t *testing.T) {
 		if _, exists := data[key]; !exists {
 			t.Errorf("lane_status data missing %s", key)
 		}
+	}
+	if data["active"] != false {
+		t.Errorf("status for a lane-less agent should be inactive, got %v", data["active"])
+	}
+	if data["conn_count"] != float64(0) {
+		t.Errorf("status for a lane-less agent should have no connections, got %v", data["conn_count"])
+	}
+}
+
+func TestStatusReflectsLiveLane(t *testing.T) {
+	conn, ctx := dialGateway(t)
+
+	err := wsjson.Write(ctx, conn, map[string]any{
+		"type":     "prompt",
+		"agent_id": "_superagent",
+		"data": map[string]string{
+			"content": "hello",
+			"model":   "auto",
+		},
+	})
+	if err != nil {
+		t.Fatalf("writing prompt failed: %v", err)
+	}
+
+	err = wsjson.Write(ctx, conn, map[string]string{
+		"type":     "status",
+		"agent_id": "_superagent",
+	})
+	if err != nil {
+		t.Fatalf("writing status request failed: %v", err)
+	}
+
+	var event map[string]any
+	if err := wsjson.Read(ctx, conn, &event); err != nil {
+		t.Fatalf("reading lane_status failed: %v", err)
+	}
+	data, ok := event["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("lane_status data is not a map: %+v", event["data"])
+	}
+	if data["active"] != true {
+		t.Errorf("live lane should be active, got %v", data["active"])
+	}
+	if data["model"] != "auto" {
+		t.Errorf("live lane should report the submitted model, got %v", data["model"])
+	}
+	if data["conn_count"].(float64) < 1 {
+		t.Errorf("submitting connection should be counted, got %v", data["conn_count"])
 	}
 }
 
