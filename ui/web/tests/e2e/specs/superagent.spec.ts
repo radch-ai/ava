@@ -49,20 +49,26 @@ test.describe('ava agent', () => {
 		await expect(modelLabel).toBeVisible()
 	})
 
-	test('should persist selected model', async ({ page }) => {
+	test('resets the model selection to default on reload', async ({ page }) => {
 		await page.goto('/')
 
 		const modelSelector = page.getByRole('combobox').first()
-		if (await modelSelector.isVisible()) {
-			await modelSelector.click()
+		await expect(modelSelector).toHaveText(/default/i)
 
-			const options = page.getByRole('option')
-			if ((await options.count()) > 1) {
-				await options.nth(1).click()
+		await modelSelector.click()
+		const options = page.getByRole('option')
+		if ((await options.count()) > 1) {
+			// A catalog exists (mock mode or a seeded backend): pick
+			// a concrete model, then confirm the reset on reload.
+			const picked = await options.nth(1).textContent()
+			await options.nth(1).click()
+			await expect(modelSelector).toHaveText(picked ?? /.*/)
 
-				await page.reload()
-			}
+			await page.reload()
+			await expect(page.getByRole('combobox').first()).toHaveText(/default/i)
 		}
+		// Fresh backend, no providers: the default option is the only
+		// one — nothing to pick, the assertion above already pins it.
 	})
 
 	test('should navigate to ava from sidebar', async ({ page }) => {
