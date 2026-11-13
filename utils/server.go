@@ -39,6 +39,10 @@ func Serve(ctx context.Context, h http.Handler, addr string, logger zerolog.Logg
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       60 * time.Second,
+		// Request contexts derive from the serve context, so cancelling
+		// ctx (drain) unblocks long-lived handlers — WebSocket reads
+		// without deadlines would otherwise stall Shutdown.
+		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 
 	ln, err := net.Listen("tcp", addr)

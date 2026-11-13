@@ -21,18 +21,41 @@ import (
 	"github.com/radch-ai/ava/gateway/wstypes"
 )
 
+const (
+	// pingInterval is how often the gateway proves each connection is
+	// alive. 30s sits below common NAT/proxy idle timeouts so half-open
+	// TCP never goes unnoticed; browser clients answer pings in-band.
+	pingInterval = 30 * time.Second
+	// pongTimeout caps one ping: no pong in time means the peer is gone.
+	// Tests with shrunken intervals scale the wait down from this bound.
+	pongTimeout = 10 * time.Second
+)
+
 // Config is the gateway's runtime configuration. Fields arrive as the
 // wiring phases need them.
-type Config struct{}
+type Config struct {
+	// PingInterval overrides pingInterval. Zero keeps the default; the
+	// field exists for tests to shrink the wait.
+	PingInterval time.Duration
+}
 
 // New builds the gateway WebSocket handler. The gateway is a single
 // endpoint: the caller owns the path it is mounted on.
 func New(cfg *Config, logger zerolog.Logger) (http.Handler, error) {
-	return handleWS(logger), nil
+	interval := pingInterval
+	if cfg != nil && cfg.PingInterval > 0 {
+		interval = cfg.PingInterval
+	}
+	return handleWS(interval, logger), nil
 }
 
 // handleWS serves the gateway WebSocket endpoint.
-func handleWS(logger zerolog.Logger) http.HandlerFunc {
+//
+// Lifecycle for a self-hosted, single-user gateway: reads have no
+// deadline (quiet devices are the normal state); a ping ticker proves
+// liveness and reaps half-open peers; cancellation of the request
+// context (client gone or server draining) ends the handler.
+func handleWS(interval time.Duration, logger zerolog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
@@ -46,6 +69,8 @@ func handleWS(logger zerolog.Logger) http.HandlerFunc {
 
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
+
+		go keepalive(ctx, conn, interval, logger)
 
 		// The connected event carries the connection ID.
 		writeCtx, writeCancel := context.WithTimeout(ctx, 10*time.Second)
@@ -61,13 +86,20 @@ func handleWS(logger zerolog.Logger) http.HandlerFunc {
 
 		for {
 			var raw json.RawMessage
-			readCtx, readCancel := context.WithTimeout(ctx, 60*time.Second)
-			err := wsjson.Read(readCtx, conn, &raw)
-			readCancel()
+			err := wsjson.Read(ctx, conn, &raw)
 			if err != nil {
+				if ctx.Err() != nil {
+					// Context cancelled: client vanished or the server is
+					// draining. coder/websocket already tore the connection
+					// down (the peer sees EOF) — a graceful GoingAway sweep
+					// needs a connection registry, which arrives with the
+					// agent lanes.
+					logger.Info().Msg("closing for shutdown")
+					return
+				}
 				if websocket.CloseStatus(err) == websocket.StatusNormalClosure ||
 					websocket.CloseStatus(err) == websocket.StatusGoingAway {
-					logger.Info().Msg("client closed connection")
+					logger.Info().Msg("connection closed")
 				} else {
 					logger.Warn().Err(err).Msg("read error")
 				}
@@ -116,6 +148,35 @@ func handleWS(logger zerolog.Logger) http.HandlerFunc {
 				// Nothing runs behind the connection yet to interrupt.
 			default:
 				logger.Debug().Str("type", string(env.Type)).Msg("unknown message type")
+			}
+		}
+	}
+}
+
+// keepalive pings the peer on a ticker so half-open connections (sleep,
+// NAT drop) are reaped instead of lingering. A pong only reaches the
+// ping while the read loop is running — coder/websocket delivers
+// control frames through reads — so this only works together with it.
+func keepalive(ctx context.Context, conn *websocket.Conn, interval time.Duration, logger zerolog.Logger) {
+	pongWait := interval * 10
+	if pongWait > pongTimeout {
+		pongWait = pongTimeout
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			pingCtx, cancel := context.WithTimeout(ctx, pongWait)
+			err := conn.Ping(pingCtx)
+			cancel()
+			if err != nil {
+				logger.Info().Err(err).Msg("keepalive failed, closing")
+				_ = conn.Close(websocket.StatusGoingAway, "keepalive failed")
+				return
 			}
 		}
 	}
