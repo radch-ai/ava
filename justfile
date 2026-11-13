@@ -62,9 +62,18 @@ build service:
     go build -o bin/{{ service }} ./cmd/{{ service }}
 
 # Build a service, then run its binary from bin/. Dev runs use the in-memory
-# database unless AVA_DB is set.
+# database unless AVA_DB is set. The recipe shell forwards SIGTERM/SIGINT to
+# the binary and propagates its exit code (just does not relay signals).
 run service: (build service)
-    AVA_DB="${AVA_DB:-:memory:}" ./bin/{{ service }}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    AVA_DB="${AVA_DB:-:memory:}" ./bin/{{ service }} &
+    pid=$!
+    trap 'kill -TERM "$pid" 2>/dev/null' TERM INT
+    code=0
+    wait "$pid" || code=$?
+    wait "$pid" 2>/dev/null || true
+    exit "$code"
 
 ## --- test ---
 
