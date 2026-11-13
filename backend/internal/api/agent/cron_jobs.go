@@ -24,20 +24,20 @@ func jobFromRow(row db.CronJob) apitypes.CronJob {
 		Time:           row.Time,
 		Frequency:      apitypes.CronFrequency(row.Frequency),
 		CronExpression: stringPtrNil(row.CronExpression),
-		Model:          modelFromDB(row.Model),
+		Model:          entryFromDB(row.Model, row.ProviderID),
 		Prompt:         row.Prompt,
 	}
 }
 
 // rowFields applies the shared row rules to a wire job: the cron
-// expression is stored only for "custom" frequency, and model
-// ""/"auto" stores NULL.
-func rowFields(job apitypes.CronJob) (sql.NullString, sql.NullString) {
+// expression is stored only for "custom" frequency.
+func rowFields(job apitypes.CronJob) (sql.NullString, sql.NullString, sql.NullString) {
 	cronExpression := sql.NullString{}
 	if job.Frequency == apitypes.CronFrequencyCustom && job.CronExpression != nil {
 		cronExpression = sql.NullString{String: *job.CronExpression, Valid: true}
 	}
-	return cronExpression, modelToDB(job.Model)
+	model, providerID := entryToDB(job.Model)
+	return cronExpression, model, providerID
 }
 
 // GetCronJobs answers the lazy list: the agent's jobs, oldest first.
@@ -80,7 +80,7 @@ func CreateCronJob(queries *db.Queries) api.Handler {
 		}
 
 		jobID := uuid.NewString()
-		cronExpression, model := rowFields(req)
+		cronExpression, model, providerID := rowFields(req)
 		if err := queries.CreateCronJob(r.Context(), db.CreateCronJobParams{
 			ID:             jobID,
 			AgentID:        id,
@@ -88,6 +88,7 @@ func CreateCronJob(queries *db.Queries) api.Handler {
 			Frequency:      string(req.Frequency),
 			CronExpression: cronExpression,
 			Model:          model,
+			ProviderID:     providerID,
 			Prompt:         req.Prompt,
 		}); err != nil {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
@@ -125,12 +126,13 @@ func UpdateCronJob(queries *db.Queries) api.Handler {
 			return fmt.Errorf("get cron job %q for %q: %w", jobID, id, err)
 		}
 
-		cronExpression, model := rowFields(req)
+		cronExpression, model, providerID := rowFields(req)
 		if err := queries.UpdateCronJob(r.Context(), db.UpdateCronJobParams{
 			Time:           req.Time,
 			Frequency:      string(req.Frequency),
 			CronExpression: cronExpression,
 			Model:          model,
+			ProviderID:     providerID,
 			Prompt:         req.Prompt,
 			ID:             jobID,
 			AgentID:        id,

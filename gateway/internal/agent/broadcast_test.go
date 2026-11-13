@@ -39,7 +39,7 @@ func TestUserAgent_MultipleConnections(t *testing.T) {
 	defer closeConn(c3)
 
 	// First message creates agent and adds first connection
-	msg := agent.Message{Content: "test", ID: "msg-1", Model: "gpt-4o"}
+	msg := agent.Message{Content: "test", ID: "msg-1", Model: agent.ModelRef{ID: "gpt-4o"}}
 	ok := mgr.SubmitMsg(context.Background(), agentID, "conn-1", c1, msg)
 	require.True(t, ok)
 
@@ -48,12 +48,12 @@ func TestUserAgent_MultipleConnections(t *testing.T) {
 	require.Equal(t, 1, ag.ConnCount())
 
 	// Submit more messages with different connections (simulates multi-device)
-	msg2 := agent.Message{Content: "test2", ID: "msg-2", Model: "gpt-4o"}
+	msg2 := agent.Message{Content: "test2", ID: "msg-2", Model: agent.ModelRef{ID: "gpt-4o"}}
 	ok = mgr.SubmitMsg(context.Background(), agentID, "conn-2", c2, msg2)
 	require.True(t, ok)
 	assert.Equal(t, 2, ag.ConnCount())
 
-	msg3 := agent.Message{Content: "test3", ID: "msg-3", Model: "gpt-4o"}
+	msg3 := agent.Message{Content: "test3", ID: "msg-3", Model: agent.ModelRef{ID: "gpt-4o"}}
 	ok = mgr.SubmitMsg(context.Background(), agentID, "conn-3", c3, msg3)
 	require.True(t, ok)
 	assert.Equal(t, 3, ag.ConnCount())
@@ -77,7 +77,7 @@ func TestUserAgent_RemoveConnection(t *testing.T) {
 	defer closeConn(c2)
 
 	// Create agent and add connections via SubmitMsg
-	msg := agent.Message{Content: "test", ID: "msg-1", Model: "gpt-4o"}
+	msg := agent.Message{Content: "test", ID: "msg-1", Model: agent.ModelRef{ID: "gpt-4o"}}
 	mgr.SubmitMsg(context.Background(), agentID, "conn-1", c1, msg)
 	mgr.SubmitMsg(context.Background(), agentID, "conn-2", c2, msg)
 
@@ -107,7 +107,7 @@ func TestUserAgent_RemoveNonExistent(t *testing.T) {
 	c := connectWS(t, s.URL)
 	defer closeConn(c)
 
-	msg := agent.Message{Content: "test", ID: "msg-1", Model: "gpt-4o"}
+	msg := agent.Message{Content: "test", ID: "msg-1", Model: agent.ModelRef{ID: "gpt-4o"}}
 	mgr.SubmitMsg(context.Background(), agentID, "conn-1", c, msg)
 
 	ag := mgr.Get(agentID)
@@ -135,7 +135,7 @@ func TestUserAgent_ReplaceConnection(t *testing.T) {
 	c2 := connectWS(t, s2.URL)
 
 	// Create agent with first connection
-	msg := agent.Message{Content: "test", ID: "msg-1", Model: "gpt-4o"}
+	msg := agent.Message{Content: "test", ID: "msg-1", Model: agent.ModelRef{ID: "gpt-4o"}}
 	mgr.SubmitMsg(context.Background(), agentID, "conn-1", c1, msg)
 
 	ag := mgr.Get(agentID)
@@ -171,7 +171,7 @@ func TestUserAgent_StatusIncludesConnCount(t *testing.T) {
 	defer closeConn(c2)
 
 	// Create agent and add connections via SubmitMsg
-	msg := agent.Message{Content: "test", ID: "msg-1", Model: "gpt-4o"}
+	msg := agent.Message{Content: "test", ID: "msg-1", Model: agent.ModelRef{ID: "gpt-4o"}}
 	mgr.SubmitMsg(context.Background(), agentID, "conn-1", c1, msg)
 	mgr.SubmitMsg(context.Background(), agentID, "conn-2", c2, msg)
 
@@ -192,7 +192,7 @@ func TestUserAgent_ConcurrentConnectionOps(t *testing.T) {
 	agentID := "agent-concurrent"
 
 	// Create agent first
-	msg := agent.Message{Content: "test", ID: "msg-1", Model: "gpt-4o"}
+	msg := agent.Message{Content: "test", ID: "msg-1", Model: agent.ModelRef{ID: "gpt-4o"}}
 	mgr.SubmitMsg(context.Background(), agentID, "conn-init", nil, msg)
 
 	ag := mgr.Get(agentID)

@@ -51,38 +51,50 @@ func TestDeleteProviderNotFound(t *testing.T) {
 	}
 }
 
-// A stored model string survives its provider's delete — staleness
-// is caught at call time, not by a SET NULL sweep.
-func TestDeleteProviderLeavesStoredModelStrings(t *testing.T) {
+// Deleting a provider is a SET NULL sweep on ownership: rows pinned
+// to it lose their owner (default routing) while the id strings
+// stay verbatim.
+func TestDeleteProviderNullsModelOwner(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
 	if _, err := sqlDB.Exec(
 		`INSERT INTO agents (id, name, icon, soul_personality, soul_identity, operating_instructions, tools_context)
-		 VALUES ('d1', 'Del', 'globe', '', '', '', '')`); err != nil {
-		t.Fatalf("insert agent: %v", err)
-	}
-	if _, err := sqlDB.Exec(
-		`INSERT INTO cron_jobs (id, agent_id, time, frequency, model, prompt)
-		 VALUES ('j1', 'd1', '09:00', 'daily', 'mistral/m1', 'digest')`,
+		 VALUES ('d1', 'Del', 'globe', '', '', '', '')`,
 	); err != nil {
-		t.Fatalf("insert cron job: %v", err)
+		t.Fatalf("insert agent: %v", err)
 	}
 	created := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Mistral","baseUrl":"`+noAuthURL(t)+`"}`)
 	id := createdID(t, created)
-	if rec := do(t, sqlDB, http.MethodPatch, "/providers/"+id, `{"models":["mistral/m1"]}`); rec.Code != http.StatusOK {
-		t.Fatalf("seed models: %d", rec.Code)
+	if _, err := sqlDB.Exec(
+		`INSERT INTO cron_jobs (id, agent_id, time, frequency, model, provider_id, prompt)
+		 VALUES ('j1', 'd1', '09:00', 'daily', 'mistral/m1', '` + id + `', 'digest')`,
+	); err != nil {
+		t.Fatalf("insert cron job: %v", err)
+	}
+	if _, err := sqlDB.Exec(
+		`INSERT INTO heartbeat (agent_id, model, provider_id, enabled, duration, content)
+		 VALUES ('d1', 'mistral/m1', '` + id + `', 0, '1hr', 'beat')`,
+	); err != nil {
+		t.Fatalf("insert heartbeat: %v", err)
 	}
 
 	if rec := do(t, sqlDB, http.MethodDelete, "/providers/"+id, ""); rec.Code != http.StatusOK {
 		t.Fatalf("delete: %d", rec.Code)
 	}
-	var model any
-	if err := sqlDB.QueryRow(
-		`SELECT model FROM cron_jobs WHERE id = 'j1'`,
-	).Scan(&model); err != nil {
-		t.Fatalf("read cron job: %v", err)
-	}
-	if model != "mistral/m1" {
-		t.Errorf("cron job model after provider delete = %v, want mistral/m1 (stored verbatim)", model)
+	for _, row := range []struct{ query, what string }{
+		{`SELECT model, provider_id FROM cron_jobs WHERE id = 'j1'`, "cron job"},
+		{`SELECT model, provider_id FROM heartbeat WHERE agent_id = 'd1'`, "heartbeat"},
+	} {
+		var model any
+		var owner any
+		if err := sqlDB.QueryRow(row.query).Scan(&model, &owner); err != nil {
+			t.Fatalf("read %s: %v", row.what, err)
+		}
+		if model != "mistral/m1" {
+			t.Errorf("%s model after provider delete = %v, want mistral/m1 (stored verbatim)", row.what, model)
+		}
+		if owner != nil {
+			t.Errorf("%s owner after provider delete = %v, want NULL (default routing)", row.what, owner)
+		}
 	}
 }

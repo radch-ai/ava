@@ -55,7 +55,6 @@ describe('Providers & Models page', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		vi.mocked(providersService.getProviders).mockResolvedValue({
-			defaultModel: 'auto',
 			providers: []
 		})
 	})

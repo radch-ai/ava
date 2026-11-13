@@ -110,7 +110,7 @@ describe('AgentPage (superagent branch)', () => {
 			await expect.element(modelButton).toBeVisible()
 			await expect
 				.element(modelButton)
-				.toHaveTextContent(/auto|GPT|Claude|Gemini|Grok/i)
+				.toHaveTextContent(/Default|GPT|Claude|Gemini|Grok/i)
 		})
 
 		it('renders text area', async () => {
@@ -494,7 +494,7 @@ describe('AgentPage (superagent branch)', () => {
 			await vi.waitFor(() => {
 				expect(socketMock.sendPrompt).toHaveBeenCalledWith(
 					'hello over ws',
-					expect.any(String)
+					null
 				)
 			})
 			// Submit does not ask for lane status; going live does.
@@ -526,10 +526,10 @@ describe('AgentPage (superagent branch)', () => {
 			capturedOnEvent?.({
 				type: 'lane_status',
 				agent_id: '_superagent',
-				data: { active: true, model: 'auto', queue_len: 0, conn_count: 1 }
+				data: { active: true, model: null, queue_len: 0, conn_count: 1 }
 			})
 			await expect
-				.element(page.getByText(/lane active · auto · queue 0/))
+				.element(page.getByText(/lane active · Default · queue 0/))
 				.toBeVisible()
 
 			capturedOnState?.('reconnecting')
@@ -549,11 +549,11 @@ describe('AgentPage (superagent branch)', () => {
 			capturedOnEvent?.({
 				type: 'lane_status',
 				agent_id: '_superagent',
-				data: { active: true, model: 'auto', queue_len: 0, conn_count: 1 }
+				data: { active: true, model: null, queue_len: 0, conn_count: 1 }
 			})
 
 			await expect
-				.element(page.getByText(/lane active · auto · queue 0/))
+				.element(page.getByText(/lane active · Default · queue 0/))
 				.toBeVisible()
 		})
 	})

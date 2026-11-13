@@ -67,7 +67,7 @@ const SUPERAGENT_CONFIG = {
 /** Only the superagent is seeded a heartbeat (its 30m check). */
 const HEARTBEATS: Record<string, HeartbeatConfig> = {
 	[SUPERAGENT_AGENT_ID]: {
-		model: 'auto',
+		model: undefined,
 		enabled: true,
 		duration: '30m',
 		content:

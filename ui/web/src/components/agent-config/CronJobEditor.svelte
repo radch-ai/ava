@@ -5,7 +5,7 @@
 	import { Input } from '#components/ui/input'
 	import * as Select from '#components/ui/select'
 	import { Textarea } from '#components/ui/textarea'
-	import { defaultModel } from '#lib/models'
+	import type { ModelSelection } from '#lib/models'
 	import {
 		createCachedCronJob,
 		cronJobsFor,
@@ -58,7 +58,7 @@
 	let editTime = $state(DEFAULT_TIME)
 	let editFrequency = $state<Frequency>(DEFAULT_FREQUENCY)
 	let editCronExpression = $state('')
-	let editModel = $state(defaultModel)
+	let editSelection = $state<ModelSelection>(null)
 	let editPrompt = $state('')
 
 	// Reset form to defaults
@@ -66,7 +66,7 @@
 		editTime = DEFAULT_TIME
 		editFrequency = DEFAULT_FREQUENCY
 		editCronExpression = ''
-		editModel = defaultModel
+		editSelection = null
 		editPrompt = ''
 	}
 
@@ -84,7 +84,7 @@
 		editTime = job.time
 		editFrequency = job.frequency
 		editCronExpression = job.cronExpression ?? ''
-		editModel = job.model || defaultModel
+		editSelection = job.model ?? null
 		editPrompt = job.prompt
 	}
 
@@ -103,7 +103,7 @@
 			frequency: editFrequency,
 			cronExpression:
 				editFrequency === 'custom' ? editCronExpression.trim() : undefined,
-			model: editModel,
+			model: editSelection ?? undefined,
 			prompt: editPrompt.trim()
 		}
 	}
@@ -258,7 +258,7 @@
 				<label class="mb-2 block text-sm font-medium" for="cron-model">
 					Model
 				</label>
-				<ModelSelector bind:value={editModel} />
+				<ModelSelector bind:value={editSelection} />
 			</div>
 
 			{#if editFrequency === 'custom'}

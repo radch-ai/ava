@@ -9,13 +9,13 @@ SELECT * FROM cron_jobs WHERE id = ? AND agent_id = ?;
 
 -- name: CreateCronJob :exec
 -- Store one job verbatim; created_at is DB-stamped.
-INSERT INTO cron_jobs (id, agent_id, time, frequency, cron_expression, model, prompt)
-VALUES (?, ?, ?, ?, ?, ?, ?);
+INSERT INTO cron_jobs (id, agent_id, time, frequency, cron_expression, model, provider_id, prompt)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateCronJob :exec
 -- Full-row rewrite of the editable columns, scoped to the agent.
 UPDATE cron_jobs
-SET time = ?, frequency = ?, cron_expression = ?, model = ?, prompt = ?
+SET time = ?, frequency = ?, cron_expression = ?, model = ?, provider_id = ?, prompt = ?
 WHERE id = ? AND agent_id = ?;
 
 -- name: DeleteCronJob :execrows

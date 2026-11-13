@@ -23,8 +23,7 @@ func GetProviders(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 			return err
 		}
 		out := apitypes.GetProvidersResponse{
-			DefaultModel: DefaultModel,
-			Providers:    make([]apitypes.Provider, 0, len(rows)),
+			Providers: make([]apitypes.Provider, 0, len(rows)),
 		}
 		for _, row := range rows {
 			custom, err := decodeModels(row.Models)

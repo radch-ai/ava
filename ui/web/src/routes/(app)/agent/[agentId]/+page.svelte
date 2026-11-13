@@ -3,8 +3,8 @@
 	import { onMount } from 'svelte'
 	import ModelSelector from '#components/ModelSelector.svelte'
 	import { Button } from '#components/ui/button'
-	import { APP_NAME, SUPERAGENT_AGENT_ID, SUPERAGENT_NAME } from '#lib/config'
-	import { defaultModel } from '#lib/models'
+	import { SUPERAGENT_AGENT_ID, SUPERAGENT_NAME } from '#lib/config'
+	import type { ModelSelection } from '#lib/models'
 	import {
 		type ActivityFeed,
 		type AgentSocket,
@@ -47,8 +47,7 @@
 		}
 	})
 
-	const MODEL_KEY = `${APP_NAME.toLowerCase()}-chat-model`
-	let selectedModel = $state(defaultModel)
+	let selectedModel = $state<ModelSelection>(null)
 
 	// Lazily connected on first submit; one socket per conversation
 	// surface. Reconnects happen inside the socket; state below tracks
@@ -56,19 +55,6 @@
 	let socket: AgentSocket | undefined
 	let socketState = $state<AgentSocketState | 'idle'>('idle')
 	let laneStatus = $state<LaneStatus | null>(null)
-
-	onMount(() => {
-		const stored = localStorage.getItem(MODEL_KEY)
-		if (stored) {
-			selectedModel = stored
-		}
-	})
-
-	$effect(() => {
-		if (typeof window === 'undefined') return
-		void selectedModel
-		localStorage.setItem(MODEL_KEY, selectedModel)
-	})
 
 	async function loadMore() {
 		if (!thread?.nextCursor || isLoadingMore) return
@@ -162,7 +148,7 @@
 
 	const laneStatusLabel = $derived(
 		laneStatus
-			? `lane ${laneStatus.active ? 'active' : 'idle'} · ${laneStatus.model} · queue ${laneStatus.queue_len}`
+			? `lane ${laneStatus.active ? 'active' : 'idle'} · ${laneStatus.model || 'Default'} · queue ${laneStatus.queue_len}`
 			: ''
 	)
 </script>

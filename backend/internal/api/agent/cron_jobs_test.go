@@ -55,7 +55,7 @@ func TestCreateCronJobMintsID(t *testing.T) {
 	queries := cronStore(t)
 
 	custom := "*/5 * * * *"
-	body := `{"time":"09:00","frequency":"custom","cronExpression":"*/5 * * * *","model":"auto","prompt":"hi"}`
+	body := `{"time":"09:00","frequency":"custom","cronExpression":"*/5 * * * *","model":null,"prompt":"hi"}`
 	rec, err := serve(t, "POST /agent/{id}/cron-jobs", CreateCronJob(queries), http.MethodPost, "/agent/research/cron-jobs", body)
 	if err != nil {
 		t.Fatalf("serve: %v", err)
@@ -73,12 +73,12 @@ func TestCreateCronJobMintsID(t *testing.T) {
 	if job.CronExpression == nil || *job.CronExpression != custom {
 		t.Errorf("cronExpression = %v, want %q", job.CronExpression, custom)
 	}
-	if job.Model != "auto" {
-		t.Errorf("model = %q, want auto", job.Model)
+	if job.Model != nil {
+		t.Errorf("model = %v, want nil (default routing)", job.Model)
 	}
 
 	rec, err = serve(t, "POST /agent/{id}/cron-jobs", CreateCronJob(queries), http.MethodPost, "/agent/research/cron-jobs",
-		`{"time":"10:00","frequency":"daily","cronExpression":"ignored","model":"m1","prompt":"yo"}`)
+		`{"time":"10:00","frequency":"daily","cronExpression":"ignored","model":{"id":"m1","providerId":"p1"},"prompt":"yo"}`)
 	if err != nil {
 		t.Fatalf("serve: %v", err)
 	}
@@ -95,8 +95,8 @@ func TestCreateCronJobMintsID(t *testing.T) {
 	if daily.CronExpression != nil {
 		t.Errorf("daily cronExpression = %v, want none", daily.CronExpression)
 	}
-	if daily.Model != "m1" {
-		t.Errorf("model = %q, want m1", daily.Model)
+	if daily.Model == nil || daily.Model.ID != "m1" || daily.Model.ProviderID != "p1" {
+		t.Errorf("model = %v, want m1/p1 (concrete pair)", daily.Model)
 	}
 }
 
@@ -125,7 +125,7 @@ func TestUpdateCronJobFullRewrite(t *testing.T) {
 	queries := cronStore(t)
 
 	rec, err := serve(t, "POST /agent/{id}/cron-jobs", CreateCronJob(queries), http.MethodPost, "/agent/research/cron-jobs",
-		`{"time":"09:00","frequency":"custom","cronExpression":"0 9 * * *","model":"m1","prompt":"old"}`)
+		`{"time":"09:00","frequency":"custom","cronExpression":"0 9 * * *","model":{"id":"m1","providerId":"p1"},"prompt":"old"}`)
 	if err != nil || rec.Code != http.StatusCreated {
 		t.Fatalf("seed: %d %v", rec.Code, err)
 	}
@@ -134,9 +134,9 @@ func TestUpdateCronJobFullRewrite(t *testing.T) {
 		t.Fatalf("decode seed: %v", err)
 	}
 
-	// custom -> daily clears the expression; model auto -> NULL.
+	// custom -> daily clears the expression; nil model -> NULL/NULL.
 	rec, err = serve(t, "PATCH /agent/{id}/cron-jobs/{jobId}", UpdateCronJob(queries), http.MethodPatch, "/agent/research/cron-jobs/"+seeded.ID,
-		`{"time":"10:00","frequency":"daily","cronExpression":"0 9 * * *","model":"auto","prompt":"new"}`)
+		`{"time":"10:00","frequency":"daily","cronExpression":"0 9 * * *","model":null,"prompt":"new"}`)
 	if err != nil {
 		t.Fatalf("serve: %v", err)
 	}
@@ -150,16 +150,16 @@ func TestUpdateCronJobFullRewrite(t *testing.T) {
 	if job.CronExpression != nil {
 		t.Errorf("daily cronExpression = %v, want none", job.CronExpression)
 	}
-	if job.Model != "auto" {
-		t.Errorf("model = %q, want auto", job.Model)
+	if job.Model != nil {
+		t.Errorf("model = %v, want nil (default routing)", job.Model)
 	}
 	if job.Prompt != "new" || job.Time != "10:00" {
 		t.Errorf("job = %+v", job)
 	}
 
-	// daily -> custom stores the expression; concrete model roundtrips.
+	// daily -> custom stores the expression; concrete entry roundtrips.
 	rec, err = serve(t, "PATCH /agent/{id}/cron-jobs/{jobId}", UpdateCronJob(queries), http.MethodPatch, "/agent/research/cron-jobs/"+seeded.ID,
-		`{"time":"11:00","frequency":"custom","cronExpression":"15 3 * * *","model":"m2","prompt":"new"}`)
+		`{"time":"11:00","frequency":"custom","cronExpression":"15 3 * * *","model":{"id":"m2","providerId":"p1"},"prompt":"new"}`)
 	if err != nil {
 		t.Fatalf("serve: %v", err)
 	}
@@ -172,8 +172,8 @@ func TestUpdateCronJobFullRewrite(t *testing.T) {
 	if job.CronExpression == nil || *job.CronExpression != "15 3 * * *" {
 		t.Errorf("cronExpression = %v", job.CronExpression)
 	}
-	if job.Model != "m2" {
-		t.Errorf("model = %q, want m2", job.Model)
+	if job.Model == nil || job.Model.ID != "m2" || job.Model.ProviderID != "p1" {
+		t.Errorf("model = %v, want m2/p1 (concrete pair)", job.Model)
 	}
 }
 

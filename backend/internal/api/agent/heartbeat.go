@@ -31,12 +31,14 @@ func UpdateHeartbeat(queries *db.Queries) api.Handler {
 			return fmt.Errorf("get agent %q: %w", id, err)
 		}
 
+		model, providerID := entryToDB(req.Model)
 		params := db.UpdateHeartbeatParams{
-			AgentID:  id,
-			Model:    modelToDB(req.Model),
-			Enabled:  0,
-			Duration: string(req.Duration),
-			Content:  req.Content,
+			AgentID:    id,
+			Model:      model,
+			ProviderID: providerID,
+			Enabled:    0,
+			Duration:   string(req.Duration),
+			Content:    req.Content,
 		}
 		if req.Enabled {
 			params.Enabled = 1

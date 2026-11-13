@@ -29,7 +29,7 @@ function createDefaultSuperagentConfig(): AgentConfig &
 			enabled: false,
 			duration: '1hr',
 			content: '',
-			model: 'default'
+			model: undefined
 		}
 	}
 }
@@ -48,7 +48,7 @@ function createDefaultAgentConfig(): AgentConfig &
 			enabled: false,
 			duration: '1hr',
 			content: '',
-			model: 'default'
+			model: undefined
 		}
 	}
 }
@@ -672,7 +672,7 @@ describe('AgentConfigEditor', () => {
 					time: `${String(8 + (i % 12)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}`,
 					frequency: i % 3 === 0 ? 'daily' : i % 3 === 1 ? 'weekly' : 'custom',
 					cronExpression: i % 3 === 2 ? `0 ${i % 24} * * *` : undefined,
-					model: 'default',
+					model: undefined,
 					prompt: `Scheduled prompt number ${i} - This is a longer prompt to test how the layout handles content that might wrap to multiple lines and take up more vertical space.`
 				})
 			}
@@ -886,7 +886,7 @@ describe('AgentConfigEditor', () => {
 					id: 'test-job',
 					time: '09:00',
 					frequency: 'daily',
-					model: 'default',
+					model: undefined,
 					prompt: 'Test prompt'
 				}
 			])
@@ -904,7 +904,7 @@ describe('AgentConfigEditor', () => {
 					id: 'test-job',
 					time: '09:00',
 					frequency: 'daily',
-					model: 'default',
+					model: undefined,
 					prompt: 'Test prompt'
 				}
 			])

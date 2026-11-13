@@ -2,6 +2,7 @@ import { setupServer } from 'msw/node'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createSeedData } from '#lib/mocks/data'
 import { createHandlers } from '#lib/mocks/handlers'
+import type { ModelEntry } from '#lib/models'
 
 const server = setupServer(...createHandlers(createSeedData()))
 
@@ -143,7 +144,7 @@ describe('mock API handlers', () => {
 			soul: { personality: string; identity: string }
 			toolsEnabled: string[]
 			heartbeat: {
-				model: string
+				model?: ModelEntry | null
 				enabled: boolean
 				duration: string
 				content: string
@@ -156,10 +157,10 @@ describe('mock API handlers', () => {
 		expect(Array.isArray(detail.toolsEnabled)).toBe(true)
 		// The body is flat: heartbeat rides beside the config fields —
 		// a full config even without a saved row. Scribe has no row:
-		// disabled with empty fields and the default routing ('auto');
+		// disabled with empty fields and default routing (no model);
 		// only the superagent is seeded.
 		expect(detail.heartbeat).toEqual({
-			model: 'auto',
+			model: undefined,
 			enabled: false,
 			duration: '1hr',
 			content: ''
@@ -169,11 +170,16 @@ describe('mock API handlers', () => {
 		expect(superagentRes.status).toBe(200)
 		const superagentDetail = (await superagentRes.json()) as {
 			name: string
-			heartbeat: { model: string; enabled: boolean; duration: string }
+			heartbeat: {
+				model?: ModelEntry | null
+				enabled: boolean
+				duration: string
+			}
 			cronJobs?: unknown[]
 		}
 		expect(superagentDetail.name).toBe('Ava')
-		expect(superagentDetail.heartbeat.model).toBe('auto')
+		// Seeded enabled on default routing: no model set.
+		expect(superagentDetail.heartbeat.model).toBeUndefined()
 		expect(superagentDetail.heartbeat.enabled).toBe(true)
 		expect(superagentDetail.heartbeat.duration).toBe('30m')
 		// Cron jobs are fetched lazily from their own endpoint - the
@@ -217,9 +223,8 @@ describe('mock API handlers', () => {
 	it('saves heartbeat rows on their own endpoint, not the config patch', async () => {
 		const res = await fetch(`${BASE}/agent/scribe/heartbeat`, {
 			method: 'PATCH',
-			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({
-				model: 'auto',
+				model: null,
 				enabled: false,
 				duration: '2hr',
 				content: 'Rewritten check'
@@ -228,14 +233,14 @@ describe('mock API handlers', () => {
 		expect(res.status).toBe(200)
 		const detail = (await res.json()) as {
 			heartbeat: {
-				model: string
+				model: { id: string; providerId: string } | null
 				enabled: boolean
 				duration: string
 				content: string
 			}
 		}
 		expect(detail.heartbeat).toEqual({
-			model: 'auto',
+			model: null,
 			enabled: false,
 			duration: '2hr',
 			content: 'Rewritten check'
@@ -253,7 +258,7 @@ describe('mock API handlers', () => {
 			method: 'PATCH',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({
-				model: 'auto',
+				model: null,
 				enabled: false,
 				duration: '30m',
 				content: ''
@@ -277,7 +282,7 @@ describe('mock API handlers', () => {
 				time: '09:00',
 				frequency: 'custom',
 				cronExpression: '0 9 * * *',
-				model: 'auto',
+				model: null,
 				prompt: 'Morning digest'
 			})
 		})
@@ -298,7 +303,7 @@ describe('mock API handlers', () => {
 				body: JSON.stringify({
 					time: '10:30',
 					frequency: 'daily',
-					model: 'auto',
+					model: null,
 					prompt: 'Morning digest'
 				})
 			}
@@ -475,7 +480,6 @@ describe('mock API handlers', () => {
 	describe('provider catalog endpoints', () => {
 		it('answers the merged catalog: starters keyless, custom models only', async () => {
 			const body = (await (await fetch(`${BASE}/providers`)).json()) as {
-				defaultModel: string
 				providers: Array<{
 					id: string
 					name: string
@@ -484,7 +488,6 @@ describe('mock API handlers', () => {
 					models: string[]
 				}>
 			}
-			expect(body.defaultModel).toBe('auto')
 			expect(body.providers.map((p) => p.name)).toEqual([
 				'Anthropic',
 				'Gemini',
@@ -499,13 +502,18 @@ describe('mock API handlers', () => {
 				expect(provider.hasKey).toBe(false)
 			}
 
-			// The selector catalog groups system models by provider.
 			const models = (await (await fetch(`${BASE}/models`)).json()) as {
-				groups: Array<{ provider: string; models: string[] }>
+				groups: Array<{
+					providerName: string
+					models: Array<{ id: string; providerId: string }>
+				}>
 			}
 			expect(
-				models.groups.find((g) => g.provider === 'OpenAI')?.models
-			).toEqual(['openai/gpt-3.5-turbo', 'openai/gpt-4'])
+				models.groups.find((g) => g.providerName === 'OpenAI')?.models
+			).toEqual([
+				{ id: 'openai/gpt-3.5-turbo', providerId: 'openai' },
+				{ id: 'openai/gpt-4', providerId: 'openai' }
+			])
 
 			// The settings expand serves one starter's system list.
 			const openai = (

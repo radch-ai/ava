@@ -41,7 +41,7 @@ describe('agent socket', () => {
 		const events: unknown[] = []
 		createAgentSocket('_superagent', (event) => events.push(event)).sendPrompt(
 			'hi',
-			'auto'
+			null
 		)
 
 		lastSocket().onmessage?.({
@@ -61,7 +61,7 @@ describe('agent socket', () => {
 			data: JSON.stringify({
 				type: 'lane_status',
 				agent_id: '_superagent',
-				data: { active: true, model: 'auto', queue_len: 2, conn_count: 1 }
+				data: { active: true, model: 'gpt-4o', queue_len: 2, conn_count: 1 }
 			})
 		})
 
@@ -69,7 +69,7 @@ describe('agent socket', () => {
 			{
 				type: 'lane_status',
 				agent_id: '_superagent',
-				data: { active: true, model: 'auto', queue_len: 2, conn_count: 1 }
+				data: { active: true, model: 'gpt-4o', queue_len: 2, conn_count: 1 }
 			}
 		])
 	})
@@ -91,7 +91,7 @@ describe('agent socket', () => {
 	it('queues client messages until the socket is open, then flushes', () => {
 		const socket = createAgentSocket('_superagent', () => {})
 
-		socket.sendPrompt('queued prompt', 'auto')
+		socket.sendPrompt('queued prompt', null)
 		socket.requestStatus()
 		expect(lastSocket().sent).toEqual([])
 
@@ -102,14 +102,32 @@ describe('agent socket', () => {
 			{
 				type: 'prompt',
 				agent_id: '_superagent',
-				data: { content: 'queued prompt', model: 'auto' }
+				data: { content: 'queued prompt' }
 			},
 			{ type: 'status', agent_id: '_superagent' }
 		])
 	})
+	it('a concrete selection rides the frame as the model pair', () => {
+		const socket = createAgentSocket('_superagent', () => {})
+
+		socket.sendPrompt('hi', { id: 'openai/gpt-4o', providerId: 'p-1' })
+		lastSocket().readyState = FakeWebSocket.OPEN
+		lastSocket().onopen?.()
+
+		expect(lastSocket().sent.map((frame) => JSON.parse(frame))).toEqual([
+			{
+				type: 'prompt',
+				agent_id: '_superagent',
+				data: {
+					content: 'hi',
+					model: { id: 'openai/gpt-4o', provider_id: 'p-1' }
+				}
+			}
+		])
+	})
 	it('close drops queued messages and closes the socket', () => {
 		const socket = createAgentSocket('_superagent', () => {})
-		socket.sendPrompt('never sent', 'auto')
+		socket.sendPrompt('never sent', null)
 
 		socket.close()
 		expect(lastSocket().readyState).toBe(3)
@@ -124,7 +142,7 @@ describe('agent socket', () => {
 			'_superagent',
 			() => {},
 			(state) => states.push(state)
-		).sendPrompt('hi', 'auto')
+		).sendPrompt('hi', null)
 
 		lastSocket().onmessage?.({
 			data: JSON.stringify({ type: 'connected', data: { conn_id: 'c1' } })
@@ -142,7 +160,7 @@ describe('agent socket', () => {
 			() => {},
 			(state) => states.push(state)
 		)
-		socket.sendPrompt('hi', 'auto')
+		socket.sendPrompt('hi', null)
 		lastSocket().onmessage?.({
 			data: JSON.stringify({ type: 'connected', data: { conn_id: 'c1' } })
 		})
@@ -168,7 +186,7 @@ describe('agent socket', () => {
 		vi.useFakeTimers()
 		vi.spyOn(Math, 'random').mockReturnValue(0.5)
 		const socket = createAgentSocket('_superagent', () => {})
-		socket.sendPrompt('hi', 'auto')
+		socket.sendPrompt('hi', null)
 
 		// Six drops without a successful greeting in between.
 		for (let drop = 0; drop < 6; drop++) {
@@ -188,7 +206,7 @@ describe('agent socket', () => {
 	it('close stops the reconnect loop', () => {
 		vi.useFakeTimers()
 		const socket = createAgentSocket('_superagent', () => {})
-		socket.sendPrompt('hi', 'auto')
+		socket.sendPrompt('hi', null)
 		const before = sockets.length
 
 		lastSocket().close()
@@ -203,13 +221,13 @@ describe('agent socket', () => {
 		vi.useFakeTimers()
 		vi.spyOn(Math, 'random').mockReturnValue(0.5)
 		const socket = createAgentSocket('_superagent', () => {})
-		socket.sendPrompt('first', 'auto')
+		socket.sendPrompt('first', null)
 		lastSocket().readyState = FakeWebSocket.OPEN
 		lastSocket().onopen?.()
 		expect(lastSocket().sent).toHaveLength(1)
 
 		lastSocket().close()
-		socket.sendPrompt('queued while down', 'auto')
+		socket.sendPrompt('queued while down', null)
 
 		vi.advanceTimersByTime(1000)
 		lastSocket().readyState = FakeWebSocket.OPEN
@@ -219,7 +237,7 @@ describe('agent socket', () => {
 			{
 				type: 'prompt',
 				agent_id: '_superagent',
-				data: { content: 'queued while down', model: 'auto' }
+				data: { content: 'queued while down' }
 			}
 		])
 

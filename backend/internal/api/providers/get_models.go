@@ -4,6 +4,7 @@ package providers
 import (
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/backend/internal/api"
@@ -11,11 +12,8 @@ import (
 	"github.com/radch-ai/ava/backend/internal/vault"
 )
 
-// GetModels answers one group per stored provider (custom ∪ fetched
-// system ids, deduped with custom winning, sorted), rows in creation
-// order. Providers sharing a display name merge into one group;
-// providers with no models at all are dropped. No connection config
-// rides along.
+// GetModels answers the catalog: one group per stored provider
+// (rows in creation order), entries per ModelGroup's rule.
 func GetModels(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		rows, err := queries.ListProviders(r.Context())
@@ -25,7 +23,7 @@ func GetModels(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 		}
 
 		var names []string
-		grouped := map[string][]string{}
+		grouped := map[string][]apitypes.ModelEntry{}
 		for _, row := range rows {
 			custom, err := decodeModels(row.Models)
 			if err != nil {
@@ -33,42 +31,50 @@ func GetModels(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 				return err
 			}
 			system := systemModels(r.Context(), row.BaseUrl, providerKey(r.Context(), vaultStore, row.ID))
-			ids := mergeIDs(custom, system)
-			if len(ids) == 0 {
+			entries := mergeEntries(row.ID, custom, system)
+			if len(entries) == 0 {
 				continue
 			}
 			if existing, ok := grouped[row.Name]; ok {
-				grouped[row.Name] = mergeIDs(existing, ids)
+				existing = append(existing, entries...)
+				// Stable: equal ids from different rows keep row
+				// creation order and stay adjacent.
+				slices.SortStableFunc(existing, func(a, b apitypes.ModelEntry) int {
+					return strings.Compare(a.ID, b.ID)
+				})
+				grouped[row.Name] = existing
 			} else {
 				names = append(names, row.Name)
-				grouped[row.Name] = ids
+				grouped[row.Name] = entries
 			}
 		}
 
 		out := apitypes.GetModelsResponse{Groups: make([]apitypes.ModelGroup, 0, len(names))}
 		for _, name := range names {
 			out.Groups = append(out.Groups, apitypes.ModelGroup{
-				Provider: name,
-				Models:   grouped[name],
+				ProviderName: name,
+				Models:       grouped[name],
 			})
 		}
 		return api.WriteJSON(w, http.StatusOK, out)
 	}
 }
 
-// mergeIDs unions two id lists: earlier arguments win the dedupe,
-// result sorted.
-func mergeIDs(custom, system []string) []string {
+// mergeEntries tags one provider row's custom ∪ system ids with the
+// row's id: earlier arguments win the dedupe, result sorted by id.
+func mergeEntries(providerID string, custom, system []string) []apitypes.ModelEntry {
 	seen := make(map[string]bool, len(custom)+len(system))
-	ids := make([]string, 0, len(custom)+len(system))
+	entries := make([]apitypes.ModelEntry, 0, len(custom)+len(system))
 	for _, list := range [][]string{custom, system} {
 		for _, id := range list {
 			if !seen[id] {
 				seen[id] = true
-				ids = append(ids, id)
+				entries = append(entries, apitypes.ModelEntry{ID: id, ProviderID: providerID})
 			}
 		}
 	}
-	slices.Sort(ids)
-	return ids
+	slices.SortFunc(entries, func(a, b apitypes.ModelEntry) int {
+		return strings.Compare(a.ID, b.ID)
+	})
+	return entries
 }

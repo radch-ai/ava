@@ -118,28 +118,29 @@ func UpdateAgentConfig(queries *db.Queries) api.Handler {
 // defaultHeartbeat is the bundle's stand-in for agents with no
 // heartbeat row yet: disabled, default routing.
 var defaultHeartbeat = apitypes.HeartbeatConfig{
-	Model:    "auto",
+	Model:    nil,
 	Enabled:  false,
 	Duration: apitypes.HeartbeatDuration1hr,
 	Content:  "",
 }
 
-// modelFromDB reads a nullable model column: NULL is the wire's
-// "auto", concrete ids pass through verbatim.
-func modelFromDB(v sql.NullString) string {
-	if !v.Valid {
-		return "auto"
+// entryFromDB reads the model-pair columns: either NULL reads as nil
+// (default routing) — a deleted provider nulls the owner via FK.
+func entryFromDB(model, providerID sql.NullString) *apitypes.ModelEntry {
+	if !model.Valid || !providerID.Valid {
+		return nil
 	}
-	return v.String
+	return &apitypes.ModelEntry{ID: model.String, ProviderID: providerID.String}
 }
 
-// modelToDB writes a wire model: "auto" and "" mean "follow the
-// default routing", which is NULL in the column.
-func modelToDB(model string) sql.NullString {
-	if model == "" || model == "auto" {
-		return sql.NullString{}
+// entryToDB writes the pair: nil or partial entries store NULL/NULL
+// (default routing); a concrete selection stores both columns.
+func entryToDB(entry *apitypes.ModelEntry) (sql.NullString, sql.NullString) {
+	if entry == nil || entry.ID == "" || entry.ProviderID == "" {
+		return sql.NullString{}, sql.NullString{}
 	}
-	return sql.NullString{String: model, Valid: true}
+	return sql.NullString{String: entry.ID, Valid: true},
+		sql.NullString{String: entry.ProviderID, Valid: true}
 }
 
 // stringPtrNil reads a nullable text column into the bundle's pointer
@@ -173,7 +174,7 @@ func loadBundle(ctx context.Context, queries *db.Queries, id string) (apitypes.A
 	heartbeat := defaultHeartbeat
 	if hb, err := queries.GetHeartbeat(ctx, id); err == nil {
 		heartbeat = apitypes.HeartbeatConfig{
-			Model:    modelFromDB(hb.Model),
+			Model:    entryFromDB(hb.Model, hb.ProviderID),
 			Enabled:  hb.Enabled != 0,
 			Duration: apitypes.HeartbeatDuration(hb.Duration),
 			Content:  hb.Content,

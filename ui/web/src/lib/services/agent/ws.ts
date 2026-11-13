@@ -17,6 +17,7 @@
  * went away or the network did.
  */
 
+import type { ModelSelection } from '#lib/models'
 import type {
 	ConnectedEvent,
 	Envelope,
@@ -47,7 +48,7 @@ export type AgentSocketState = 'connecting' | 'live' | 'reconnecting'
 /** The handle a conversation surface owns: send frames, drop the
  * connection. Reconnects happen inside. */
 export interface AgentSocket {
-	sendPrompt(content: string, model: string): void
+	sendPrompt(content: string, selection: ModelSelection): void
 	/** The gateway replies with a `lane_status` event. */
 	requestStatus(): void
 	close(): void
@@ -161,16 +162,20 @@ export function createAgentSocket(
 	}
 
 	return {
-		sendPrompt(content: string, model: string) {
+		sendPrompt(content: string, selection: ModelSelection) {
 			ensureConnected()
 			send({
 				type: 'prompt',
 				agent_id: agentId,
-				data: { content, model }
+				data: {
+					content,
+					// ws frames use provider_id casing
+					model: selection
+						? { id: selection.id, provider_id: selection.providerId }
+						: undefined
+				}
 			})
 		},
-
-		/** The gateway replies with a `lane_status` event. */
 		requestStatus() {
 			ensureConnected()
 			send({ type: 'status', agent_id: agentId })

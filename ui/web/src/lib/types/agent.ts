@@ -228,11 +228,15 @@ export function createDefaultSoulConfig(): SoulConfig {
 
 /**
  * Create the disabled heartbeat default: empty fields until a row is
- * saved (the superagent is seeded enabled). model 'auto' follows the
- * default routing — the backend stores it as NULL.
+ * saved (the superagent is seeded enabled).
  */
 export function createDefaultHeartbeatConfig(): HeartbeatConfig {
-	return { model: 'auto', enabled: false, duration: '1hr', content: '' }
+	return {
+		model: undefined,
+		enabled: false,
+		duration: '1hr',
+		content: ''
+	}
 }
 
 /**

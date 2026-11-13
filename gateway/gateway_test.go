@@ -83,9 +83,9 @@ func TestPromptReceivedOverWS(t *testing.T) {
 	err := wsjson.Write(ctx, conn, map[string]any{
 		"type":     "prompt",
 		"agent_id": "_superagent",
-		"data": map[string]string{
+		"data": map[string]any{
 			"content": "hello",
-			"model":   "auto",
+			"model":   map[string]string{"id": "gpt-4o", "provider_id": "p-1"},
 		},
 	})
 	if err != nil {
@@ -148,9 +148,9 @@ func TestStatusReflectsLiveLane(t *testing.T) {
 	err := wsjson.Write(ctx, conn, map[string]any{
 		"type":     "prompt",
 		"agent_id": "_superagent",
-		"data": map[string]string{
+		"data": map[string]any{
 			"content": "hello",
-			"model":   "auto",
+			"model":   map[string]string{"id": "gpt-4o", "provider_id": "p-1"},
 		},
 	})
 	if err != nil {
@@ -176,7 +176,7 @@ func TestStatusReflectsLiveLane(t *testing.T) {
 	if data["active"] != true {
 		t.Errorf("live lane should be active, got %v", data["active"])
 	}
-	if data["model"] != "auto" {
+	if data["model"] != "gpt-4o" {
 		t.Errorf("live lane should report the submitted model, got %v", data["model"])
 	}
 	if data["conn_count"].(float64) < 1 {
@@ -198,9 +198,9 @@ func TestDisconnectDropsFromLane(t *testing.T) {
 	prompt := map[string]any{
 		"type":     "prompt",
 		"agent_id": "_superagent",
-		"data": map[string]string{
+		"data": map[string]any{
 			"content": "hello",
-			"model":   "auto",
+			"model":   map[string]string{"id": "gpt-4o", "provider_id": "p-1"},
 		},
 	}
 	for _, conn := range []*coderws.Conn{conn1, conn2} {

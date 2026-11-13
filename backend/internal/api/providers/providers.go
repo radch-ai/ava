@@ -19,10 +19,6 @@ import (
 	"github.com/radch-ai/ava/backend/internal/vault"
 )
 
-// DefaultModel is the routing fallback heartbeats and cron jobs
-// land on when their model is unset or was dropped.
-const DefaultModel = "auto"
-
 // newUUID returns a random v4 uuid string.
 func newUUID() (string, error) {
 	var b [16]byte

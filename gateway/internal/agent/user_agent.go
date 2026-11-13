@@ -17,16 +17,24 @@ const (
 	defaultIdleTimeout = 15 * time.Minute
 )
 
+// ModelRef is the model a lane runs on: the absolute model id plus
+// the provider row that supplies the connection. Zero value follows
+// the default routing.
+type ModelRef struct {
+	ID         string
+	ProviderID string
+}
+
 // Message represents a message submitted to an agent.
 type Message struct {
 	ID      string
 	Content string
-	Model   string // Model to use (e.g., "auto", "gpt-4o")
+	Model   ModelRef
 }
 
 type UserAgentOptions struct {
 	AgentID     string
-	Model       string       // Model to use, required (e.g., "auto", "gpt-4o")
+	Model       ModelRef
 	MsgCh       chan Message // passed from UserAgentManager
 	IdleTimeout time.Duration
 	OnExit      func()
@@ -46,8 +54,7 @@ type UserAgent struct {
 	onExit      func()
 	logger      zerolog.Logger
 
-	// Current model (updated via updateModel)
-	model string
+	model ModelRef
 }
 
 // newUserAgent creates a lane agent and starts its message loop.
@@ -96,12 +103,11 @@ func (a *UserAgent) addConn(connID string, conn *websocket.Conn) {
 	a.conns.Add(connID, conn)
 }
 
-// UpdateModel updates the model to use for the next query.
-// Called when a device sends a message with a model specified.
-func (a *UserAgent) updateModel(model string) {
+// updateModel sets the model for the next query.
+func (a *UserAgent) updateModel(ref ModelRef) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.model = model
+	a.model = ref
 }
 
 // RemoveConn removes a connection from the broadcaster.
@@ -172,7 +178,7 @@ func (a *UserAgent) GetStatus() map[string]interface{} {
 		"agent_id":   a.agentID,
 		"queue_len":  len(a.MsgCh),
 		"active":     a.ctx.Err() == nil,
-		"model":      a.model,
+		"model":      a.model.ID,
 		"conn_count": a.conns.Count(),
 	}
 }

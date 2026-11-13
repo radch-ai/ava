@@ -141,15 +141,20 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 				}
 				// Route into the lane: first submit creates it, every
 				// submit adds this connection and queues the message.
+				ref := agent.ModelRef{}
+				if msg.Model != nil {
+					ref = agent.ModelRef{ID: msg.Model.ID, ProviderID: msg.Model.ProviderID}
+				}
 				logger.Info().
 					Str("agent_id", env.AgentID).
-					Str("model", msg.Model).
+					Str("model", ref.ID).
+					Str("provider_id", ref.ProviderID).
 					Int("content_len", len(msg.Content)).
 					Msg("prompt received over ws")
 				mgr.SubmitMsg(ctx, env.AgentID, connID, conn, agent.Message{
 					ID:      uuid.New().String(),
 					Content: msg.Content,
-					Model:   msg.Model,
+					Model:   ref,
 				})
 			case wstypes.EnvelopeTypeStatus:
 				writeCtx, writeCancel := context.WithTimeout(ctx, 10*time.Second)

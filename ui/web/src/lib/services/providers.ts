@@ -16,7 +16,8 @@ import type {
 } from '#lib/types/provider'
 import { api } from './api'
 
-/** The whole catalog in one response: defaultModel + providers. */
+/** The whole catalog in one response: providers with their custom
+ * models. */
 export async function getProviders(): Promise<GetProvidersResponse> {
 	return api.get('providers').json<GetProvidersResponse>()
 }

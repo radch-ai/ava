@@ -1,18 +1,13 @@
-/**
- * Model catalog — the selector-facing module.
- *
- * `defaultModel` is the reserved default-routing id ('auto', the
- * seeded catalog row); it exists before any fetch and is what
- * selectors fall back to. The catalog itself is user-saved via the
- * API: `modelsStore` loads it from /api/providers and the providers
- * page edits it. Group entries are plain model ids.
- */
+/** Model catalog — the selector-facing module. */
 
-export interface ModelGroup {
-	provider: string
-	models: string[]
-}
+import type {
+	GetModelsResponse,
+	ModelEntry,
+	ModelGroup
+} from '#lib/types/gen/apitypes.gen'
 
-export const defaultModel = 'auto'
+/** Selected model pointer; null = follow the default routing. */
+export type ModelSelection = ModelEntry | null
 
 export { modelsStore } from './models.svelte'
+export type { GetModelsResponse, ModelEntry, ModelGroup }
