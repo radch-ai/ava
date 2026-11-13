@@ -2,6 +2,16 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../setup/fixtures'
 
+/** Create an agent via the UI and land on its page (real backends seed no scratch agents). */
+async function createAgentViaUi(page: Page, name: string) {
+	await page.goto('/agent/new')
+	await page.getByLabel(/name/i).fill(name)
+	await page.getByRole('button', { name: /create|submit/i }).click()
+	const agentId = name.toLowerCase().replace(/ +/g, '-')
+	await expect(page).toHaveURL(new RegExp(`/agent/${agentId}$`))
+	return agentId
+}
+
 test.describe('navigation', () => {
 	test.describe('unsaved changes protection', () => {
 		test('should warn on navigation with unsaved changes', async ({ page }) => {
@@ -93,7 +103,7 @@ test.describe('navigation', () => {
 		test('should warn on a real outside mouse click (backdrop) with a dirty edit sheet and discard closes', async ({
 			page
 		}) => {
-			await page.goto('/agent/research')
+			const agentId = await createAgentViaUi(page, `Backdrop ${Date.now()}`)
 			await page
 				.getByRole('button', { name: 'Open agent configuration' })
 				.click()
@@ -114,7 +124,7 @@ test.describe('navigation', () => {
 
 			// Discard closes the sheet without navigating anywhere.
 			await expect(page.getByPlaceholder(/enter agent name/i)).toHaveCount(0)
-			await expect(page).toHaveURL(/\/agent\/research$/)
+			await expect(page).toHaveURL(new RegExp(`/agent/${agentId}$`))
 		})
 	})
 

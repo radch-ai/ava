@@ -117,11 +117,13 @@ test.describe('agent creation validation', () => {
 	})
 
 	test('should trim whitespace from name', async ({ page }) => {
-		await page.getByLabel(/name/i).fill('  Trimmed Agent  ')
+		const name = `  Trimmed Agent ${Date.now()}  `
+		await page.getByLabel(/name/i).fill(name)
 		await page.getByRole('button', { name: 'Create Agent' }).click()
 
 		// Should navigate to the trimmed, derived id
-		await expect(page).toHaveURL(/\/agent\/trimmed-agent$/)
+		const slug = name.trim().toLowerCase().replace(/ +/g, '-')
+		await expect(page).toHaveURL(new RegExp(`/agent/${slug}$`))
 	})
 
 	test('should reject names with mixed symbols', async ({ page }) => {
