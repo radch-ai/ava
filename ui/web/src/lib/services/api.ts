@@ -25,16 +25,13 @@ import { authStore } from '#lib/auth'
 /** What every `api.*` request method returns: a chainable ky response promise. */
 export type ApiResponsePromise = ResponsePromise
 
-const rawBackendApiUrl = import.meta.env.VITE_BACKEND_API_URL
-const BACKEND_API_URL = rawBackendApiUrl.endsWith('/api')
-	? rawBackendApiUrl
-	: `${rawBackendApiUrl.replace(/\/$/, '')}/api`
-
 /**
  * Configured ky instance for API requests
  */
 export const api = ky.create({
-	prefixUrl: BACKEND_API_URL,
+	// Same-origin /api: proxied by the vite dev/preview servers; prod serves
+	// UI and API from the single binary.
+	prefixUrl: '/api',
 
 	// 30 second timeout - prevents hung requests
 	timeout: 30000,

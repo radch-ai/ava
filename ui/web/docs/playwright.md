@@ -4,9 +4,9 @@
 
 ## Testing Conventions
 
-- E2E is integration testing: the specs run against the **real backend** (`VITE_BACKEND_API_URL`) and a real browser. They never use mocks.
+- E2E is integration testing: the specs run against the **real backend** through the preview server's `/api` proxy (`BACKEND_ORIGIN`) and a real browser. They never use mocks.
 - Unit-level correctness against the mock API belongs in Vitest — see `docs/vitest.md`.
-- To author or debug a spec without a backend, run `VITE_BACKEND_API_URL=http://127.0.0.1:4173/api VITE_USE_MOCKS=true bun run test:e2e`: the build bakes the backend URL, so pointing it at the preview origin makes the app self-served by the mock middleware, and the shared fixtures exchange the seeded token for a session cookie so specs enter the app directly. CI always runs against the real backend.
+- To author or debug a spec without a backend, run `VITE_USE_MOCKS=true bun run test:e2e`: the mock middleware answers `/api` on the preview server itself, and the shared fixtures exchange the seeded token for a session cookie so specs enter the app directly.
 
 ## Coverage Model
 
@@ -35,7 +35,7 @@
 ## Shared Test Infrastructure
 
 - `tests/e2e/setup/fixtures.ts` re-exports the base Playwright test so specs share a single import point.
-- `playwright.config.ts` runs the built preview app in a locally launched Chromium and points the frontend at the backend URL used during E2E runs.
+- `playwright.config.ts` runs the built preview app in a locally launched Chromium; the preview server proxies `/api` to the backend (`BACKEND_ORIGIN`).
 
 ## What This Does Not Try To Replace
 

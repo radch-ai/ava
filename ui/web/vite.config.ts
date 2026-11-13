@@ -1,24 +1,15 @@
-import 'dotenv/config'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
+import type { ReadableStream as WebReadableStream } from 'node:stream/web'
 import adapter from '@sveltejs/adapter-static'
 import { sveltekit } from '@sveltejs/kit/vite'
 import tailwindcss from '@tailwindcss/vite'
 import { playwright } from '@vitest/browser-playwright'
 import { getResponse } from 'msw'
-import type { Plugin } from 'vite'
+import { loadEnv, type Plugin } from 'vite'
 import { defineConfig } from 'vitest/config'
 import { createSeedData } from './src/lib/mocks/data.ts'
 import { createHandlers } from './src/lib/mocks/handlers.ts'
-
-const allowedHosts = new Set<string>()
-const e2eAppBaseUrl = process.env.E2E_APP_BASE_URL || 'http://127.0.0.1:4173'
-
-try {
-	allowedHosts.add(new URL(e2eAppBaseUrl).hostname)
-} catch {
-	// Ignore invalid URLs here; Playwright config validation will surface the real issue.
-}
 
 type ConnectNext = (err?: unknown) => void
 
@@ -70,9 +61,7 @@ function mockApiMiddleware() {
 			res.setHeader(name, value)
 		})
 		if (response.body) {
-			Readable.fromWeb(
-				response.body as import('node:stream/web').ReadableStream
-			).pipe(res)
+			Readable.fromWeb(response.body as WebReadableStream).pipe(res)
 		} else {
 			res.end()
 		}
@@ -96,57 +85,64 @@ function avaApiMocks(): Plugin {
 	}
 }
 
-const useMocks = process.env.VITE_USE_MOCKS === 'true'
+export default defineConfig(({ mode }) => {
+	const env = loadEnv(mode, process.cwd(), ['BACKEND_', 'VITE_'])
 
-export default defineConfig({
-	plugins: [
-		tailwindcss(),
-		sveltekit({
-			adapter: adapter({
-				fallback: '200.html'
+	// Where the dev/preview servers proxy /api to (the client stays same-origin).
+	const backendOrigin = env.BACKEND_ORIGIN || 'http://localhost:8080'
+	const apiProxy = { '/api': { target: backendOrigin, changeOrigin: true } }
+	const useMocks = env.VITE_USE_MOCKS === 'true'
+
+	return {
+		plugins: [
+			tailwindcss(),
+			sveltekit({
+				adapter: adapter({
+					fallback: '200.html'
+				}),
+				compilerOptions: {
+					runes: ({ filename }) =>
+						filename.includes('node_modules') ? undefined : true
+				}
 			}),
-			compilerOptions: {
-				runes: ({ filename }) =>
-					filename.includes('node_modules') ? undefined : true
-			}
-		}),
-		...(useMocks ? [avaApiMocks()] : [])
-	],
-	preview: {
-		host: '0.0.0.0',
-		port: 4173,
-		allowedHosts: [...allowedHosts]
-	},
-	test: {
-		env: {
-			VITE_BACKEND_API_URL:
-				process.env.VITE_BACKEND_API_URL ?? 'http://localhost:8080'
+			...(useMocks ? [avaApiMocks()] : [])
+		],
+		server: {
+			proxy: apiProxy
 		},
-		expect: { requireAssertions: true },
-		projects: [
-			{
-				extends: './vite.config.ts',
-				test: {
-					name: 'client',
-					browser: {
-						enabled: true,
-						viewport: { width: 1280, height: 720 },
-						provider: playwright(),
-						instances: [{ browser: 'chromium', headless: true }]
-					},
-					include: ['tests/unit/**/*.svelte.{test,spec}.{js,ts}']
-				}
-			},
+		preview: {
+			host: '0.0.0.0',
+			port: 4173,
+			proxy: apiProxy
+		},
+		test: {
+			expect: { requireAssertions: true },
+			projects: [
+				{
+					extends: './vite.config.ts',
+					test: {
+						name: 'client',
+						browser: {
+							enabled: true,
+							viewport: { width: 1280, height: 720 },
+							provider: playwright(),
+							instances: [{ browser: 'chromium', headless: true }]
+						},
+						include: ['tests/unit/**/*.svelte.{test,spec}.{js,ts}']
+					}
+				},
 
-			{
-				extends: './vite.config.ts',
-				test: {
-					name: 'server',
-					environment: 'node',
-					include: ['tests/unit/**/*.{test,spec}.{js,ts}'],
-					exclude: ['tests/unit/**/*.svelte.{test,spec}.{js,ts}']
+				{
+					extends: './vite.config.ts',
+					test: {
+						name: 'server',
+						environment: 'node',
+						setupFiles: ['tests/setup/fetch-base.ts'],
+						include: ['tests/unit/**/*.{test,spec}.{js,ts}'],
+						exclude: ['tests/unit/**/*.svelte.{test,spec}.{js,ts}']
+					}
 				}
-			}
-		]
+			]
+		}
 	}
 })

@@ -20,8 +20,6 @@ vi.mock('#lib/auth', () => ({
 
 const { handleSessionExpired } = vi.mocked(authStore)
 
-vi.stubEnv('VITE_BACKEND_API_URL', 'http://localhost:8080')
-
 const server = setupServer(
 	http.get('*/api/forbidden', () =>
 		HttpResponse.json({ message: 'Session expired' }, { status: 401 })

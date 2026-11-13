@@ -1,13 +1,8 @@
-import 'dotenv/config'
 import { defineConfig } from '@playwright/test'
-
-const backendApiUrl =
-	process.env.VITE_BACKEND_API_URL || 'http://127.0.0.1:8080'
-const baseUrl = process.env.E2E_APP_BASE_URL || 'http://127.0.0.1:4173'
 
 export default defineConfig({
 	webServer: {
-		command: `VITE_BACKEND_API_URL=${backendApiUrl} bun run build && VITE_BACKEND_API_URL=${backendApiUrl} bun run preview`,
+		command: 'bun run build && bun run preview',
 		port: 4173,
 		timeout: 180_000,
 		reuseExistingServer: true
@@ -17,6 +12,6 @@ export default defineConfig({
 	reporter: 'list',
 	workers: 1,
 	use: {
-		baseURL: baseUrl
+		baseURL: 'http://127.0.0.1:4173'
 	}
 })

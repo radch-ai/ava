@@ -12,7 +12,7 @@
 import { test as base } from '@playwright/test'
 
 const useMocks = process.env.VITE_USE_MOCKS === 'true'
-const appBaseUrl = process.env.E2E_APP_BASE_URL || 'http://127.0.0.1:4173'
+const appBaseUrl = 'http://127.0.0.1:4173'
 
 export const test = base.extend<{
 	/** Exchanged once per test; `context.request` shares the cookie jar. */

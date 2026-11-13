@@ -4,7 +4,7 @@
 
 ## ava-webui
 
-**ava-webui** — SvelteKit web app in SPA mode (`adapter-static`), Tailwind CSS 4, shadcn-svelte/bits-ui components. Talks to the platform API via a ky client (`src/lib/services/api.ts`) pointed at `VITE_BACKEND_API_URL`.
+**ava-webui** — SvelteKit web app in SPA mode (`adapter-static`), Tailwind CSS 4, shadcn-svelte/bits-ui components. Talks to the platform API via a ky client (`src/lib/services/api.ts`) at same-origin `/api` — the vite dev/preview servers proxy it to `BACKEND_ORIGIN` (see `.env.example`); production serves UI and API from the single ava binary.
 
 ### Commands
 
@@ -21,7 +21,7 @@ Run from `ui/web/` with [bun](https://bun.sh):
 
 ### UI verification
 
-After changing anything user-facing (routes, components, styles, interactions), verify in a real browser before reporting done: run `bun run dev`, open the changed surface, and confirm the behavior visually. Without a backend: `VITE_USE_MOCKS=true VITE_BACKEND_API_URL=http://localhost:5173 bun run dev` serves the deterministic mock API from the dev server itself (log in with the token `ava-mock-token`) — otherwise point `VITE_BACKEND_API_URL` at a running backend. Use Paseo's browser tools (browser_new_tab / browser_snapshot / browser_click / browser_screenshot) to drive and inspect the page — they are already available. Unit and component tests are not a substitute for this check.
+After changing anything user-facing (routes, components, styles, interactions), verify in a real browser before reporting done: run `bun run dev`, open the changed surface, and confirm the behavior visually. Without a backend: `VITE_USE_MOCKS=true bun run dev` serves the deterministic mock API from the dev server itself (log in with the token `ava-mock-token`) — otherwise run the backend (`just run ava` from the repo root) and the dev server proxies `/api` to `BACKEND_ORIGIN`. Use Paseo's browser tools (browser_new_tab / browser_snapshot / browser_click / browser_screenshot) to drive and inspect the page — they are already available. Unit and component tests are not a substitute for this check.
 
 ## Svelte MCP
 
