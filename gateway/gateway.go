@@ -2,9 +2,8 @@
 // Everything under gateway/internal is invisible outside this subtree; this
 // package is the only importable surface.
 //
-// Build-out proceeds top-down; this surface implements the client wire
-// contract — connected event, prompt receipt, lane_status reply — with
-// the agent turn-loop behind it still a placeholder.
+// It implements the client wire contract: connected event, prompt
+// routing into agent lanes, lane_status reply.
 package gateway
 
 import (
@@ -18,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 
+	"github.com/radch-ai/ava/gateway/internal/agent"
 	"github.com/radch-ai/ava/gateway/wstypes"
 )
 
@@ -31,8 +31,7 @@ const (
 	pongTimeout = 10 * time.Second
 )
 
-// Config is the gateway's runtime configuration. Fields arrive as the
-// wiring phases need them.
+// Config is the gateway's runtime configuration.
 type Config struct {
 	// PingInterval overrides pingInterval. Zero keeps the default; the
 	// field exists for tests to shrink the wait.
@@ -46,7 +45,8 @@ func New(cfg *Config, logger zerolog.Logger) (http.Handler, error) {
 	if cfg != nil && cfg.PingInterval > 0 {
 		interval = cfg.PingInterval
 	}
-	return handleWS(interval, logger), nil
+	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
+	return handleWS(interval, logger, mgr), nil
 }
 
 // handleWS serves the gateway WebSocket endpoint.
@@ -55,7 +55,7 @@ func New(cfg *Config, logger zerolog.Logger) (http.Handler, error) {
 // deadline (quiet devices are the normal state); a ping ticker proves
 // liveness and reaps half-open peers; cancellation of the request
 // context (client gone or server draining) ends the handler.
-func handleWS(interval time.Duration, logger zerolog.Logger) http.HandlerFunc {
+func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgentManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
@@ -91,9 +91,8 @@ func handleWS(interval time.Duration, logger zerolog.Logger) http.HandlerFunc {
 				if ctx.Err() != nil {
 					// Context cancelled: client vanished or the server is
 					// draining. coder/websocket already tore the connection
-					// down (the peer sees EOF) — a graceful GoingAway sweep
-					// needs a connection registry, which arrives with the
-					// agent lanes.
+					// down (the peer sees EOF); cancelling this context also
+					// ends any agent lane bound to it.
 					logger.Info().Msg("closing for shutdown")
 					return
 				}
@@ -125,13 +124,18 @@ func handleWS(interval time.Duration, logger zerolog.Logger) http.HandlerFunc {
 					logger.Warn().Err(err).Msg("malformed prompt message")
 					continue
 				}
-				// Surface ends here for now: routing into the agent
-				// turn-loop lands with the handler restore gate.
+				// Route into the lane: first submit creates it, every
+				// submit adds this connection and queues the message.
 				logger.Info().
 					Str("agent_id", env.AgentID).
 					Str("model", msg.Model).
 					Int("content_len", len(msg.Content)).
 					Msg("prompt received over ws")
+				mgr.SubmitMsg(ctx, env.AgentID, connID, conn, agent.Message{
+					ID:      uuid.New().String(),
+					Content: msg.Content,
+					Model:   msg.Model,
+				})
 			case wstypes.EnvelopeTypeStatus:
 				writeCtx, writeCancel := context.WithTimeout(ctx, 10*time.Second)
 				err := wsjson.Write(writeCtx, conn, wstypes.Event{
@@ -145,7 +149,7 @@ func handleWS(interval time.Duration, logger zerolog.Logger) http.HandlerFunc {
 					return
 				}
 			case wstypes.EnvelopeTypeInterrupt:
-				// Nothing runs behind the connection yet to interrupt.
+				// No interruptible work runs on the lanes.
 			default:
 				logger.Debug().Str("type", string(env.Type)).Msg("unknown message type")
 			}
