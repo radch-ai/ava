@@ -62,7 +62,7 @@ func CreateProvider(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 		// runtime-vault entry.
 		if req.APIKey != "" {
 			if err := vaultStore.Put(r.Context(), vault.NameRuntime,
-				providerEntryName(id), kindProvider, []byte(req.APIKey), nil); err != nil {
+				ProviderEntryName(id), kindProvider, []byte(req.APIKey), nil); err != nil {
 				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 				return fmt.Errorf("seal key for provider %q: %w", id, err)
 			}

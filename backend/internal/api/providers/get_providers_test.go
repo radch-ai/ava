@@ -67,7 +67,7 @@ func newTestStore(t *testing.T, sqlDB *sql.DB) *vault.Store {
 func seedKey(t *testing.T, sqlDB *sql.DB, id, key string) {
 	t.Helper()
 	if err := newTestStore(t, sqlDB).Put(context.Background(),
-		vault.NameRuntime, providerEntryName(id), kindProvider, []byte(key), nil); err != nil {
+		vault.NameRuntime, ProviderEntryName(id), kindProvider, []byte(key), nil); err != nil {
 		t.Fatalf("seed key for %s: %v", id, err)
 	}
 }

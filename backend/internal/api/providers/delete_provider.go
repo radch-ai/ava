@@ -30,7 +30,7 @@ func DeleteProvider(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 		// The key entry goes first: a failed row delete then leaves a
 		// keyless provider (re-enterable), never a stale sealed key.
 		if err := vaultStore.Delete(r.Context(), vault.NameRuntime,
-			providerEntryName(id)); err != nil && !errors.Is(err, vault.ErrNotFound) {
+			ProviderEntryName(id)); err != nil && !errors.Is(err, vault.ErrNotFound) {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return fmt.Errorf("delete key entry for provider %q: %w", id, err)
 		}

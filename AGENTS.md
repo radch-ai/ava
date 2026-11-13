@@ -16,6 +16,8 @@ Single module `github.com/radch-ai/ava`. The justfile is the only way to build a
 
 **SQL tests** — `backend/internal/schema` tests cover SQL-level invariants only: seed guarantees and DB-enforced rules (e.g. `superagent_test.go`: seed row + delete trigger), named by concern, not by migration number. All other DB behavior is verified through `internal/api` endpoint tests — never re-pinned in schema.
 
+**Cross-pkg** — the gateway consumes backend through `package backend`'s exported functions and types (e.g. `ResolveModel`), never `backend/internal/*` — internal stays backend-private.
+
 ## Layout
 
 ```

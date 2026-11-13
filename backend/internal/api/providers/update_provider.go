@@ -107,12 +107,12 @@ func UpdateProvider(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 		if req.APIKey != nil {
 			if *req.APIKey == "" {
 				if err := vaultStore.Delete(r.Context(), vault.NameRuntime,
-					providerEntryName(id)); err != nil && !errors.Is(err, vault.ErrNotFound) {
+					ProviderEntryName(id)); err != nil && !errors.Is(err, vault.ErrNotFound) {
 					_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 					return fmt.Errorf("remove key for provider %q: %w", id, err)
 				}
 			} else if err := vaultStore.Put(r.Context(), vault.NameRuntime,
-				providerEntryName(id), kindProvider, []byte(*req.APIKey), nil); err != nil {
+				ProviderEntryName(id), kindProvider, []byte(*req.APIKey), nil); err != nil {
 				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 				return fmt.Errorf("seal key for provider %q: %w", id, err)
 			}

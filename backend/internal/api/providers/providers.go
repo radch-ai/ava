@@ -47,7 +47,7 @@ func buildProvider(ctx context.Context, queries *db.Queries, vaultStore *vault.S
 	if err != nil {
 		return apitypes.Provider{}, fmt.Errorf("decode models for provider %q: %w", id, err)
 	}
-	hasKey, err := vaultStore.Has(ctx, vault.NameRuntime, providerEntryName(id))
+	hasKey, err := vaultStore.Has(ctx, vault.NameRuntime, ProviderEntryName(id))
 	if err != nil {
 		return apitypes.Provider{}, fmt.Errorf("read key state for provider %q: %w", id, err)
 	}
@@ -60,16 +60,16 @@ func buildProvider(ctx context.Context, queries *db.Queries, vaultStore *vault.S
 	}, nil
 }
 
-// providerEntryName is the runtime-vault name of a provider's key
+// ProviderEntryName is the runtime-vault name of a provider's key
 // entry; kindProvider is its kind.
-func providerEntryName(id string) string { return "provider:" + id }
+func ProviderEntryName(id string) string { return "provider:" + id }
 
 const kindProvider = "provider"
 
 // providerKey reads the provider's stored key; "" when none is stored
 // or the entry does not open — fail-closed at this read.
 func providerKey(ctx context.Context, vaultStore *vault.Store, id string) string {
-	plaintext, _, err := vaultStore.Get(ctx, vault.NameRuntime, providerEntryName(id))
+	plaintext, _, err := vaultStore.Get(ctx, vault.NameRuntime, ProviderEntryName(id))
 	if err != nil {
 		return ""
 	}
