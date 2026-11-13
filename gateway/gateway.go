@@ -70,6 +70,18 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
 
+		// The first prompt fixes which lane this connection belongs to;
+		// leaving removes the connection from it.
+		var joinedAgent string
+		defer func() {
+			if joinedAgent == "" {
+				return
+			}
+			if ag := mgr.Get(joinedAgent); ag != nil {
+				ag.RemoveConn(connID)
+			}
+		}()
+
 		go keepalive(ctx, conn, interval, logger)
 
 		// The connected event carries the connection ID.
@@ -123,6 +135,9 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 				if err := json.Unmarshal(payload, &msg); err != nil {
 					logger.Warn().Err(err).Msg("malformed prompt message")
 					continue
+				}
+				if joinedAgent == "" {
+					joinedAgent = env.AgentID
 				}
 				// Route into the lane: first submit creates it, every
 				// submit adds this connection and queues the message.

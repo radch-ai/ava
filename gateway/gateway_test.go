@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -33,13 +34,27 @@ func dialConfig(t *testing.T, cfg *gateway.Config) (*coderws.Conn, context.Conte
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
+	return dialHandler(t, handler)
+}
+
+// dialHandler serves handler over HTTP and dials it once, consuming the
+// connected event.
+func dialHandler(t *testing.T, handler http.Handler) (*coderws.Conn, context.Context) {
+	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
+	return dialServer(t, server.URL)
+}
+
+// dialServer dials a running gateway server and consumes the connected
+// event.
+func dialServer(t *testing.T, url string) (*coderws.Conn, context.Context) {
+	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
 
-	conn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	conn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(url, "http"), nil)
 	if err != nil {
 		t.Fatalf("dial failed: %v", err)
 	}
@@ -167,6 +182,55 @@ func TestStatusReflectsLiveLane(t *testing.T) {
 	if data["conn_count"].(float64) < 1 {
 		t.Errorf("submitting connection should be counted, got %v", data["conn_count"])
 	}
+}
+
+func TestDisconnectDropsFromLane(t *testing.T) {
+	handler, err := gateway.New(&gateway.Config{}, zerolog.Nop())
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	conn1, ctx := dialServer(t, server.URL)
+	conn2, _ := dialServer(t, server.URL)
+
+	prompt := map[string]any{
+		"type":     "prompt",
+		"agent_id": "_superagent",
+		"data": map[string]string{
+			"content": "hello",
+			"model":   "auto",
+		},
+	}
+	for _, conn := range []*coderws.Conn{conn1, conn2} {
+		if err := wsjson.Write(ctx, conn, prompt); err != nil {
+			t.Fatalf("writing prompt failed: %v", err)
+		}
+	}
+
+	// conn2 leaves; its lane membership must leave with it.
+	_ = conn2.CloseNow()
+
+	// The handler notices the closed peer asynchronously, so poll the
+	// lane until it stops counting conn2.
+	for range 20 {
+		if err := wsjson.Write(ctx, conn1, map[string]string{
+			"type":     "status",
+			"agent_id": "_superagent",
+		}); err != nil {
+			t.Fatalf("writing status request failed: %v", err)
+		}
+		var event map[string]any
+		if err := wsjson.Read(ctx, conn1, &event); err != nil {
+			t.Fatalf("reading lane_status failed: %v", err)
+		}
+		if event["data"].(map[string]any)["conn_count"].(float64) == 1 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("disconnected connection was never removed from the lane")
 }
 
 // TestIdleConnectionSurvivesKeepalive proves the pre-keepalive failure
