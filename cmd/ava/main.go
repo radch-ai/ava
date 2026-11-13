@@ -160,10 +160,11 @@ func serve(logger zerolog.Logger) {
 	}
 
 	// Component mounts: the API under /api, prefix stripped on the way
-	// in; gateway at /ws; /healthz comes from utils.Serve.
+	// in; gateway at /ws behind the same session guard (the upgrade
+	// carries the cookie); /healthz comes from utils.Serve.
 	root := http.NewServeMux()
 	root.Handle("/api/", http.StripPrefix("/api", apiHandler))
-	root.Handle("GET /ws", wsHandler)
+	root.Handle("GET /ws", authMiddleware.Guard(wsHandler))
 
 	if err := utils.Serve(ctx, root, cfg.Addr, logger); err != nil {
 		logger.Fatal().Err(err).Msg("Server failed")

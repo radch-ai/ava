@@ -34,6 +34,13 @@ func NewMiddleware(token string, sessions Sessions) (*Middleware, error) {
 	return &Middleware{token: token, sessions: sessions}, nil
 }
 
+// Guard admits a request only with a session cookie that verifies —
+// for wrapping non-API handlers (the gateway WebSocket) with the same
+// session check the API gets, without the auth routes.
+func (m *Middleware) Guard(h http.Handler) http.Handler {
+	return guard(m.sessions, h)
+}
+
 // Authenticate wraps an API handler with this layer; both sides are
 // mount-relative.
 func (m *Middleware) Authenticate(apiHandler http.Handler) http.Handler {
