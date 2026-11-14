@@ -248,11 +248,12 @@ func (a *UserAgent) startTurn() context.Context {
 	return a.queryCtx
 }
 
-// enabledTools keeps the registered tools the config enables. The
-// registry lists the candidates; the enabled list decides, and an
-// empty one attaches nothing — fresh agents never surprise with
-// tool calls.
-func (a *UserAgent) enabledTools(ctx context.Context, enabled *[]string) []tool.BaseTool {
+// enabledTools keeps the registered tools the config enables, each
+// wrapped for capture. The registry lists the candidates; the
+// enabled list decides, and an empty one attaches nothing — fresh
+// agents never surprise with tool calls. emitCtx is the turn's
+// cancel-proof context the wrappers report on.
+func (a *UserAgent) enabledTools(ctx context.Context, emitCtx context.Context, enabled *[]string) []tool.BaseTool {
 	if enabled == nil || len(*enabled) == 0 || a.toolSource == nil {
 		return nil
 	}
@@ -268,7 +269,9 @@ func (a *UserAgent) enabledTools(ctx context.Context, enabled *[]string) []tool.
 			continue
 		}
 		if _, ok := want[info.Name]; ok {
-			kept = append(kept, t)
+			if runnable, isInvokable := t.(tool.InvokableTool); isInvokable {
+				kept = append(kept, &capturingTool{inner: runnable, name: info.Name, lane: a, emitCtx: emitCtx})
+			}
 		}
 	}
 	return kept
@@ -348,7 +351,7 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 				Msg("fetch agent config; turn proceeds without persona")
 		} else {
 			instruction = BuildSystemPrompt(cfg)
-			turnTools = a.enabledTools(queryCtx, cfg.ToolsEnabled)
+			turnTools = a.enabledTools(queryCtx, emitCtx, cfg.ToolsEnabled)
 		}
 	}
 	einoAgent, err := buildEinoAgent(queryCtx, a.agentID, instruction, chatModel, turnTools)

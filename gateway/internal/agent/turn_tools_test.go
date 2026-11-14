@@ -290,11 +290,15 @@ func TestToolFailureErrorsTurn(t *testing.T) {
 	ev := readUntilError(t, c)
 	require.Equal(t, wstypes.EventTypeError, ev.Type)
 
-	// A tool failure fails the whole turn: the drain-written user
-	// row stands, no assistant row joins it.
+	// A tool failure fails the whole turn: the drain-written user row
+	// stands with the failed invocation's tool row — its error kept
+	// in the envelope — and no assistant row joins them.
 	calls := sink.recorded()
-	require.Len(t, calls, 1)
+	require.Len(t, calls, 2)
 	require.Equal(t,
 		[]apitypes.ThreadMessageDraft{{Role: apitypes.ThreadRoleUser, Content: "search for otters"}},
 		calls[0])
+	require.Equal(t, apitypes.ThreadRoleTool, calls[1][0].Role)
+	require.JSONEq(t, `{"name":"echo_tool","args":{"query":"plush otters"},
+		"result":"","error":"search backend down"}`, calls[1][0].Content)
 }

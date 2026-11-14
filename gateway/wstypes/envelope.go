@@ -13,6 +13,8 @@ const (
 	EventTypeLaneStatus   EventType = "lane_status"
 	EventTypeMessage      EventType = "message"
 	EventTypeMessageChunk EventType = "message_chunk"
+	EventTypeToolCall     EventType = "tool_call"
+	EventTypeToolResult   EventType = "tool_result"
 	EventTypeError        EventType = "error"
 )
 

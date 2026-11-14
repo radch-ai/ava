@@ -34,14 +34,16 @@ func fakeOpenAI(t *testing.T, reply string) *httptest.Server {
 	return sseOpenAI(t, reply)
 }
 
-// readUntilMessage drains chunk and lane_status events until the
-// final message event; it returns the envelope and its payload.
+// readUntilMessage drains mid-turn events — chunks, statuses, tool
+// activity — until the final message event; it returns the envelope
+// and its payload.
 func readUntilMessage(t *testing.T, c *websocket.Conn) (wstypes.Event, wstypes.MessageEvent) {
 	t.Helper()
 	for {
 		ev := readEvent(t, c)
 		switch ev.Type {
-		case wstypes.EventTypeMessageChunk, wstypes.EventTypeLaneStatus:
+		case wstypes.EventTypeMessageChunk, wstypes.EventTypeLaneStatus,
+			wstypes.EventTypeToolCall, wstypes.EventTypeToolResult:
 			continue
 		case wstypes.EventTypeMessage:
 			return ev, eventPayload[wstypes.MessageEvent](t, ev)
@@ -51,14 +53,14 @@ func readUntilMessage(t *testing.T, c *websocket.Conn) (wstypes.Event, wstypes.M
 	}
 }
 
-// readUntilError drains the turn's lane_status bracket until the
-// error event; it returns the envelope.
+// readUntilError drains statuses and tool activity until the error
+// event; it returns the envelope.
 func readUntilError(t *testing.T, c *websocket.Conn) wstypes.Event {
 	t.Helper()
 	for {
 		ev := readEvent(t, c)
 		switch ev.Type {
-		case wstypes.EventTypeLaneStatus:
+		case wstypes.EventTypeLaneStatus, wstypes.EventTypeToolCall, wstypes.EventTypeToolResult:
 			continue
 		case wstypes.EventTypeError:
 			return ev

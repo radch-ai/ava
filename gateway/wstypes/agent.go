@@ -33,6 +33,24 @@ type MessageChunkEvent struct {
 	Delta string `json:"delta"`
 }
 
+// ToolCallEvent is the payload of a tool_call event: the model
+// invoked a tool. ID is the model's tool-call id; the matching
+// tool_result carries the same one.
+type ToolCallEvent struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Args string `json:"args"`
+}
+
+// ToolResultEvent is the payload of a tool_result event: one
+// invocation completed. Error is set when the tool failed; result
+// then carries whatever the tool managed to say.
+type ToolResultEvent struct {
+	ID     string  `json:"id"`
+	Result string  `json:"result"`
+	Error  *string `json:"error,omitempty"`
+}
+
 // MessageEvent is the payload of a message event: the assistant's
 // completed answer to a turn.
 type MessageEvent struct {
