@@ -61,11 +61,14 @@ const (
 )
 
 // agentLane holds the channel coordination and agent reference.
-// sync.Once ensures the lane and agent are initialized exactly once.
+// sync.Once ensures the lane and agent are initialized exactly once;
+// exitMu serializes the exit (closing done) against a submit's final
+// check-and-send so the two can never interleave.
 type agentLane struct {
 	once    sync.Once
+	exitMu  sync.Mutex
 	msgCh   chan Message   // message channel
-	done    chan struct{}  // closed when agent exits
+	done    chan struct{}  // closed when the agent exits
 	agentWg sync.WaitGroup // waits for agent to be initialized
 	agent   *UserAgent
 }
@@ -100,6 +103,8 @@ func (m *UserAgentManager) SubmitMsg(ctx context.Context, agentID, connID string
 				ToolSource:     m.toolSource,
 				Logger:         m.logger,
 				OnExit: func() {
+					lane.exitMu.Lock()
+					defer lane.exitMu.Unlock()
 					close(lane.done)
 					m.lanes.Delete(key)
 				},
@@ -111,9 +116,8 @@ func (m *UserAgentManager) SubmitMsg(ctx context.Context, agentID, connID string
 	// All callers block here until lane.agent is initialized.
 	lane.agentWg.Wait()
 
-	// A lane whose agent already exited — the instant between
-	// OnExit closing done and the map delete — must not swallow the
-	// message into a channel nobody will drain.
+	// A lane whose agent already exited is rejected up front: the
+	// broadcaster must not see conns for a dead lane.
 	select {
 	case <-lane.done:
 		m.logger.Warn().Str("agent_id", agentID).Msg("submit dropped: lane exited")
@@ -121,16 +125,25 @@ func (m *UserAgentManager) SubmitMsg(ctx context.Context, agentID, connID string
 	default:
 	}
 
-	// Add connection to agent's broadcaster and update model
+	// Add connection to agent's broadcaster and update model.
 	lane.agent.addConn(connID, conn)
 	lane.agent.updateModel(msg.Model)
 
-	// Send the message (also checks if agent exited)
+	// The exit lock closes the drop window for good: without it a
+	// select with both arms ready picks randomly, so a submit could
+	// land a message in a lane whose loop already decided to leave —
+	// success reported, prompt never run. Under the lock there is no
+	// middle state: either the send beats the close (the loop's
+	// emptiness check sees the message) or done is closed and the
+	// submit reports the drop.
+	lane.exitMu.Lock()
 	select {
 	case <-lane.done:
+		lane.exitMu.Unlock()
 		m.logger.Warn().Str("agent_id", agentID).Msg("submit dropped: lane exited")
 		return false
 	case lane.msgCh <- msg:
+		lane.exitMu.Unlock()
 		return true
 	}
 }
