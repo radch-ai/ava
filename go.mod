@@ -5,6 +5,7 @@ go 1.25.11
 require (
 	github.com/cloudwego/eino v0.9.23
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
+	github.com/cloudwego/eino-ext/components/tool/duckduckgo v0.0.0-20261109121412-fa3cb9b7ad6a
 	github.com/coder/websocket v1.8.15
 	github.com/golang-migrate/migrate/v4 v4.20.1
 	github.com/google/uuid v1.6.0

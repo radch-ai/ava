@@ -7,6 +7,8 @@ import (
 	openaicmp "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/components/tool"
+	"github.com/cloudwego/eino/compose"
 
 	"github.com/radch-ai/ava/backend"
 )
@@ -32,18 +34,27 @@ func createChatModel(ctx context.Context, cfg backend.ResolvedModel) (model.Tool
 
 // buildEinoAgent wraps a chat model in the agent runtime. The
 // instruction carries the agent's persona as the system prompt; an
-// empty one runs the submitted content alone.
-func buildEinoAgent(ctx context.Context, agentID, instruction string, chatModel model.ToolCallingChatModel) (*adk.ChatModelAgent, error) {
+// empty one runs the submitted content alone. Non-empty tools arm
+// the ReAct loop; an empty list rides the plain answer path.
+func buildEinoAgent(ctx context.Context, agentID, instruction string, chatModel model.ToolCallingChatModel, tools []tool.BaseTool) (*adk.ChatModelAgent, error) {
 	if agentID == "" {
 		return nil, errors.New("agentID cannot be empty")
 	}
 	if chatModel == nil {
 		return nil, errors.New("chatModel cannot be nil")
 	}
+	if tools == nil {
+		tools = []tool.BaseTool{}
+	}
 	return adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        agentID,
 		Instruction: instruction,
 		Model:       chatModel,
+		ToolsConfig: adk.ToolsConfig{
+			ToolsNodeConfig: compose.ToolsNodeConfig{
+				Tools: tools,
+			},
+		},
 	})
 }
 

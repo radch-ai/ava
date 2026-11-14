@@ -6,6 +6,8 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/rs/zerolog"
+
+	"github.com/radch-ai/ava/gateway/internal/agent/tools"
 )
 
 // UserAgentManagerOptions configures a new UserAgentManager.
@@ -19,6 +21,9 @@ type UserAgentManagerOptions struct {
 	// GetAgentConfig reads an agent's config for each lane's
 	// prompts; bound by the gateway at boot.
 	GetAgentConfig AgentConfigSource
+	// ToolSource lists the registered tools every lane filters its
+	// enabled list against; nil binds the global registry.
+	ToolSource ToolSource
 }
 
 // UserAgentManager manages agent lanes with thread-safe access.
@@ -29,6 +34,7 @@ type UserAgentManager struct {
 	resolveModel   ModelResolver
 	persistTurn    TurnSink
 	getAgentConfig AgentConfigSource
+	toolSource     ToolSource
 }
 
 // NewUserAgentManager creates a new UserAgentManager.
@@ -40,6 +46,12 @@ func NewUserAgentManager(logger zerolog.Logger, opts *UserAgentManagerOptions) *
 		m.resolveModel = opts.ResolveModel
 		m.persistTurn = opts.PersistTurn
 		m.getAgentConfig = opts.GetAgentConfig
+		m.toolSource = opts.ToolSource
+	}
+	// The registry is gateway-internal, not a boot-bound backend
+	// fn; the default keeps production lanes tool-capable.
+	if m.toolSource == nil {
+		m.toolSource = tools.GetGlobalTools
 	}
 	return m
 }
@@ -85,6 +97,7 @@ func (m *UserAgentManager) SubmitMsg(ctx context.Context, agentID, connID string
 				ResolveModel:   m.resolveModel,
 				PersistTurn:    m.persistTurn,
 				GetAgentConfig: m.getAgentConfig,
+				ToolSource:     m.toolSource,
 				Logger:         m.logger,
 				OnExit: func() {
 					close(lane.done)

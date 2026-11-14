@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	"github.com/coder/websocket"
 	"github.com/rs/zerolog"
@@ -48,6 +49,10 @@ type TurnSink = func(ctx context.Context, agentID string, msgs []apitypes.Thread
 // adapter.
 type AgentConfigSource = func(ctx context.Context, agentID string) (*apitypes.AgentConfig, error)
 
+// ToolSource lists the tools a turn may attach — the registry the
+// config's enabled list filters.
+type ToolSource = func() []tool.BaseTool
+
 type UserAgentOptions struct {
 	AgentID     string
 	Model       *apitypes.ModelEntry
@@ -63,7 +68,11 @@ type UserAgentOptions struct {
 	// GetAgentConfig reads the agent's config for each turn's
 	// prompt; bound by the gateway at boot.
 	GetAgentConfig AgentConfigSource
-	Logger         zerolog.Logger
+	// ToolSource lists the registered tools every turn filters its
+	// enabled list against; the manager defaults it to the global
+	// registry.
+	ToolSource ToolSource
+	Logger     zerolog.Logger
 }
 
 type UserAgent struct {
@@ -86,6 +95,7 @@ type UserAgent struct {
 	resolveModel   ModelResolver
 	persistTurn    TurnSink
 	getAgentConfig AgentConfigSource
+	toolSource     ToolSource
 
 	model *apitypes.ModelEntry
 }
@@ -117,6 +127,7 @@ func newUserAgent(ctx context.Context, opts UserAgentOptions) *UserAgent {
 		resolveModel:   opts.ResolveModel,
 		persistTurn:    opts.PersistTurn,
 		getAgentConfig: opts.GetAgentConfig,
+		toolSource:     opts.ToolSource,
 
 		onExit: opts.OnExit,
 	}
@@ -232,6 +243,32 @@ func (a *UserAgent) startTurn() context.Context {
 	return a.queryCtx
 }
 
+// enabledTools keeps the registered tools the config enables. The
+// registry lists the candidates; the enabled list decides, and an
+// empty one attaches nothing — fresh agents never surprise with
+// tool calls.
+func (a *UserAgent) enabledTools(ctx context.Context, enabled *[]string) []tool.BaseTool {
+	if enabled == nil || len(*enabled) == 0 || a.toolSource == nil {
+		return nil
+	}
+	registered := a.toolSource()
+	want := make(map[string]struct{}, len(*enabled))
+	for _, name := range *enabled {
+		want[name] = struct{}{}
+	}
+	var kept []tool.BaseTool
+	for _, t := range registered {
+		info, err := t.Info(ctx)
+		if err != nil {
+			continue
+		}
+		if _, ok := want[info.Name]; ok {
+			kept = append(kept, t)
+		}
+	}
+	return kept
+}
+
 // processTurn runs one turn: resolve the batch's model selection,
 // query the model, and broadcast the assembled answer — or the
 // failure — to the lane's connections.
@@ -295,8 +332,10 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 	// The persona is fetched per turn: config edits apply to the next
 	// prompt without lane churn. A missing config or a failed read
 	// fails open — a persona-less answer beats none, unlike the
-	// resolver, where no model means no answer at all.
+	// resolver, where no model means no answer at all. The same
+	// fetch decides the turn's tools: no config means no tools.
 	instruction := ""
+	var turnTools []tool.BaseTool
 	if a.getAgentConfig != nil {
 		cfg, err := a.getAgentConfig(queryCtx, a.agentID)
 		if err != nil {
@@ -304,9 +343,10 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 				Msg("fetch agent config; turn proceeds without persona")
 		} else {
 			instruction = BuildSystemPrompt(cfg)
+			turnTools = a.enabledTools(queryCtx, cfg.ToolsEnabled)
 		}
 	}
-	einoAgent, err := buildEinoAgent(queryCtx, a.agentID, instruction, chatModel)
+	einoAgent, err := buildEinoAgent(queryCtx, a.agentID, instruction, chatModel, turnTools)
 	if err != nil {
 		a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("build agent")
 		a.emitError(emitCtx, err.Error())
@@ -330,7 +370,13 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 		if event.Output == nil || event.Output.MessageOutput == nil {
 			continue
 		}
+		// Tool rounds surface as Role=Tool outputs on the same
+		// stream; only assistant rounds are the answer. Tool
+		// activity has no wire or thread surface yet.
 		out := event.Output.MessageOutput
+		if out.Role != schema.Assistant {
+			continue
+		}
 		if out.MessageStream != nil {
 			if err := a.streamAnswer(emitCtx, out.MessageStream, msgID, &answer); err != nil {
 				a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("model stream")
