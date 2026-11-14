@@ -11,6 +11,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,24 +27,27 @@ import (
 	"github.com/radch-ai/ava/gateway/wstypes"
 )
 
-// fakeOpenAI answers every request with one completed chat
-// completion carrying the given reply.
+// fakeOpenAI streams one assembled reply as a single-delta SSE turn.
 func fakeOpenAI(t *testing.T, reply string) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id":      "chatcmpl-test",
-			"object":  "chat.completion",
-			"created": 0,
-			"model":   "test-model",
-			"choices": []any{map[string]any{
-				"index":         0,
-				"message":       map[string]any{"role": "assistant", "content": reply},
-				"finish_reason": "stop",
-			}},
-		})
-	}))
+	return sseOpenAI(t, reply)
+}
+
+// readUntilMessage drains chunk events until the final message event;
+// it returns the envelope and its payload.
+func readUntilMessage(t *testing.T, c *websocket.Conn) (wstypes.Event, wstypes.MessageEvent) {
+	t.Helper()
+	for {
+		ev := readEvent(t, c)
+		switch ev.Type {
+		case wstypes.EventTypeMessageChunk:
+			continue
+		case wstypes.EventTypeMessage:
+			return ev, eventPayload[wstypes.MessageEvent](t, ev)
+		default:
+			t.Fatalf("unexpected event %v", ev.Type)
+		}
+	}
 }
 
 // wsPair dials a mock server and returns the client and server ends
@@ -101,6 +105,68 @@ func fixedResolver(url string) func(context.Context, *apitypes.ModelEntry) (back
 	}
 }
 
+// sseChunk renders one chat.completion.chunk SSE frame.
+func sseChunk(delta string) string {
+	payload := map[string]any{
+		"id": "chatcmpl-test", "object": "chat.completion.chunk", "created": 0,
+		"model": "test-model",
+		"choices": []any{map[string]any{
+			"index": 0, "finish_reason": nil,
+			"delta": map[string]any{"role": "assistant", "content": delta},
+		}},
+	}
+	raw, _ := json.Marshal(payload)
+	return "data: " + string(raw) + "\n\n"
+}
+
+// sseOpenAI streams the given deltas as SSE chunks, then [DONE].
+func sseOpenAI(t *testing.T, deltas ...string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		for _, d := range deltas {
+			_, _ = w.Write([]byte(sseChunk(d)))
+			flusher.Flush()
+		}
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+}
+
+func TestTurnStreamsChunks(t *testing.T) {
+	llm := sseOpenAI(t, "hello ", "streamed ", "world")
+	defer llm.Close()
+
+	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+		&agent.UserAgentManagerOptions{ResolveModel: fixedResolver(llm.URL)})
+
+	c, sc := wsPair(t)
+
+	ok := mgr.SubmitMsg(context.Background(), "agent-stream", "conn-1", sc,
+		agent.Message{ID: "msg-1", Content: "hi"})
+	require.True(t, ok)
+
+	var deltas strings.Builder
+	sawFinal := false
+	for !sawFinal {
+		ev := readEvent(t, c)
+		switch ev.Type {
+		case wstypes.EventTypeMessageChunk:
+			p := eventPayload[wstypes.MessageChunkEvent](t, ev)
+			require.Equal(t, "msg-1", p.ID)
+			deltas.WriteString(p.Delta)
+		case wstypes.EventTypeMessage:
+			p := eventPayload[wstypes.MessageEvent](t, ev)
+			require.Equal(t, "msg-1", p.ID)
+			require.Equal(t, "hello streamed world", p.Content)
+			require.Equal(t, "hello streamed world", deltas.String())
+			sawFinal = true
+		default:
+			t.Fatalf("unexpected event %v", ev.Type)
+		}
+	}
+}
+
 func TestTurnBroadcastsAnswer(t *testing.T) {
 	llm := fakeOpenAI(t, "hello from the model")
 	defer llm.Close()
@@ -114,10 +180,9 @@ func TestTurnBroadcastsAnswer(t *testing.T) {
 		agent.Message{ID: "msg-1", Content: "hi"})
 	require.True(t, ok)
 
-	ev := readEvent(t, c)
-	require.Equal(t, wstypes.EventTypeMessage, ev.Type)
+	ev, p := readUntilMessage(t, c)
 	require.Equal(t, "agent-turn", ev.AgentID)
-	p := eventPayload[wstypes.MessageEvent](t, ev)
+
 	require.Equal(t, "msg-1", p.ID)
 	require.Equal(t, "hello from the model", p.Content)
 }
@@ -151,9 +216,7 @@ func TestTurnResolverErrorEmitsErrorAndKeepsLane(t *testing.T) {
 	ok = mgr.SubmitMsg(context.Background(), "agent-rerr", "conn-1", sc,
 		agent.Message{ID: "msg-2", Content: "again"})
 	require.True(t, ok)
-	ev = readEvent(t, c)
-	require.Equal(t, wstypes.EventTypeMessage, ev.Type)
-	p2 := eventPayload[wstypes.MessageEvent](t, ev)
+	_, p2 := readUntilMessage(t, c)
 	require.Equal(t, "recovered", p2.Content)
 }
 
@@ -173,15 +236,11 @@ func TestTurnInterruptCancelsQuery(t *testing.T) {
 			}
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id": "chatcmpl-test", "object": "chat.completion", "created": 0,
-			"model": "test-model",
-			"choices": []any{map[string]any{
-				"index": 0, "finish_reason": "stop",
-				"message": map[string]any{"role": "assistant", "content": "after interrupt"},
-			}},
-		})
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		_, _ = w.Write([]byte(sseChunk("after interrupt")))
+		flusher.Flush()
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer llm.Close()
 	defer close(release) // LIFO: runs before llm.Close()
@@ -213,9 +272,7 @@ func TestTurnInterruptCancelsQuery(t *testing.T) {
 	ok = mgr.SubmitMsg(context.Background(), "agent-int", "conn-1", sc,
 		agent.Message{ID: "msg-2", Content: "again"})
 	require.True(t, ok)
-	ev = readEvent(t, c)
-	require.Equal(t, wstypes.EventTypeMessage, ev.Type)
-	p := eventPayload[wstypes.MessageEvent](t, ev)
+	_, p := readUntilMessage(t, c)
 	require.Equal(t, "after interrupt", p.Content)
 }
 
@@ -236,7 +293,7 @@ func TestLaneOutlivesSubmittingContext(t *testing.T) {
 
 	// The turn still runs: the lane owns its lifetime, not the
 	// submitting connection.
-	ev := readEvent(t, c)
-	require.Equal(t, wstypes.EventTypeMessage, ev.Type)
+	_, _ = readUntilMessage(t, c)
+
 	require.NotNil(t, mgr.Get("agent-outlive"))
 }

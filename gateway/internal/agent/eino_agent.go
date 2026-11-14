@@ -45,13 +45,14 @@ func buildEinoAgent(ctx context.Context, agentID string, chatModel model.ToolCal
 	})
 }
 
-// buildEinoRunner creates a turn's runner. Streaming is off: a turn
-// emits its assembled answer once.
+// buildEinoRunner creates a turn's runner with streaming on: the
+// answer arrives as a message stream the lane relays chunk by chunk.
 func buildEinoRunner(ctx context.Context, agent *adk.ChatModelAgent) (*adk.Runner, error) {
 	if agent == nil {
 		return nil, errors.New("agent cannot be nil")
 	}
 	return adk.NewRunner(ctx, adk.RunnerConfig{
-		Agent: agent,
+		Agent:           agent,
+		EnableStreaming: true,
 	}), nil
 }

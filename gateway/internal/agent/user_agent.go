@@ -2,10 +2,13 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"io"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/cloudwego/eino/schema"
 	"github.com/coder/websocket"
 	"github.com/rs/zerolog"
 
@@ -277,9 +280,20 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 			a.emitError(emitCtx, event.Err.Error())
 			return
 		}
-		if event.Output != nil && event.Output.MessageOutput != nil &&
-			event.Output.MessageOutput.Message != nil {
-			answer.WriteString(event.Output.MessageOutput.Message.Content)
+		if event.Output == nil || event.Output.MessageOutput == nil {
+			continue
+		}
+		out := event.Output.MessageOutput
+		if out.MessageStream != nil {
+			if err := a.streamAnswer(emitCtx, out.MessageStream, msgID, &answer); err != nil {
+				a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("model stream")
+				a.emitError(emitCtx, err.Error())
+				return
+			}
+			continue
+		}
+		if out.Message != nil {
+			answer.WriteString(out.Message.Content)
 		}
 	}
 	_ = a.conns.WriteJSON(emitCtx, wstypes.Event{
@@ -287,6 +301,30 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 		AgentID: a.agentID,
 		Data:    wstypes.MessageEvent{ID: msgID, Content: answer.String()},
 	})
+}
+
+// streamAnswer relays one streamed answer piece by piece and
+// accumulates the text for the final message event.
+func (a *UserAgent) streamAnswer(ctx context.Context, stream *schema.StreamReader[*schema.Message], msgID string, answer *strings.Builder) error {
+	defer stream.Close()
+	for {
+		chunk, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if chunk == nil || chunk.Content == "" {
+			continue
+		}
+		answer.WriteString(chunk.Content)
+		_ = a.conns.WriteJSON(ctx, wstypes.Event{
+			Type:    wstypes.EventTypeMessageChunk,
+			AgentID: a.agentID,
+			Data:    wstypes.MessageChunkEvent{ID: msgID, Delta: chunk.Content},
+		})
+	}
 }
 
 // emitError reports a failed turn to the lane's connections.
