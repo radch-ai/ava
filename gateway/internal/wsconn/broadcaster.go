@@ -23,11 +23,22 @@ type Broadcaster struct {
 	logger       zerolog.Logger
 }
 
-// NewBroadcaster creates a new broadcaster with no connections.
+// NewBroadcaster creates a broadcaster with no connections and the
+// default write timeout.
 func NewBroadcaster(logger zerolog.Logger) *Broadcaster {
+	return NewBroadcasterWithTimeout(logger, DefaultWriteTimeout)
+}
+
+// NewBroadcasterWithTimeout creates a broadcaster whose per-conn
+// writes are bounded by the given deadline; non-positive falls back
+// to the default.
+func NewBroadcasterWithTimeout(logger zerolog.Logger, writeTimeout time.Duration) *Broadcaster {
+	if writeTimeout <= 0 {
+		writeTimeout = DefaultWriteTimeout
+	}
 	return &Broadcaster{
 		conns:        make(map[string]*websocket.Conn),
-		writeTimeout: DefaultWriteTimeout,
+		writeTimeout: writeTimeout,
 		logger:       logger,
 	}
 }
@@ -69,9 +80,12 @@ func (b *Broadcaster) Count() int {
 	return len(b.conns)
 }
 
-// WriteJSON writes v as JSON to all connections.
-// Removes any connections that fail to write.
-// Returns the number of successful writes and any error that affected all connections.
+// WriteJSON writes v as JSON to all connections, each write running
+// concurrently under its own deadline — a stalled peer is dropped
+// when its deadline passes, never waited on by the others. The map
+// lock stays held for the whole fan-out so an Add cannot interleave
+// its first event between peers' writes. Removes any connections
+// that fail to write.
 func (b *Broadcaster) WriteJSON(ctx context.Context, v interface{}) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -80,21 +94,28 @@ func (b *Broadcaster) WriteJSON(ctx context.Context, v interface{}) error {
 		return nil // No connections, nothing to do
 	}
 
-	var failedConns []string
-
+	var failedMu sync.Mutex
+	var failed []string
+	var wg sync.WaitGroup
 	for connID, conn := range b.conns {
-		writeCtx, cancel := context.WithTimeout(ctx, b.writeTimeout)
-		err := wsjson.Write(writeCtx, conn, v)
-		cancel()
-
-		if err != nil {
-			b.logger.Debug().Err(err).Str("conn_id", connID).Msg("failed to write to connection, removing")
-			failedConns = append(failedConns, connID)
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			writeCtx, cancel := context.WithTimeout(ctx, b.writeTimeout)
+			defer cancel()
+			if err := wsjson.Write(writeCtx, conn, v); err != nil {
+				b.logger.Debug().Err(err).Str("conn_id", connID).
+					Msg("failed to write to connection, removing")
+				failedMu.Lock()
+				failed = append(failed, connID)
+				failedMu.Unlock()
+			}
+		}()
 	}
+	wg.Wait()
 
-	// Remove failed connections
-	for _, connID := range failedConns {
+	// Remove failed connections.
+	for _, connID := range failed {
 		delete(b.conns, connID)
 	}
 

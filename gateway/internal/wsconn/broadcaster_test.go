@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -197,6 +198,59 @@ func TestBroadcaster_WriteJSON_NoConnections(t *testing.T) {
 	// Write with no connections should succeed
 	err := b.WriteJSON(context.Background(), map[string]string{"type": "test"})
 	require.NoError(t, err)
+}
+
+// stallServer accepts a websocket and never reads it — its client's
+// writes block once the socket buffers fill.
+func stallServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer closeConn(c)
+		<-r.Context().Done()
+	}))
+	t.Cleanup(s.Close)
+	return s
+}
+
+// A peer that never reads must not hold the lane's events hostage:
+// the write is bounded by the per-conn deadline, the stalled peer is
+// dropped, and the healthy peer keeps receiving.
+func TestBroadcasterStalledConnDoesNotBlockHealthyPeer(t *testing.T) {
+	b := wsconn.NewBroadcasterWithTimeout(zerolog.Nop(), 2*time.Second)
+
+	cStalled := connectWS(t, stallServer(t).URL)
+	defer closeConn(cStalled)
+
+	healthy := newMockWSserver(t)
+	defer healthy.Close()
+	cHealthy := connectWS(t, healthy.URL)
+	defer closeConn(cHealthy)
+
+	b.Add("stalled", cStalled)
+	b.Add("healthy", cHealthy)
+
+	// A few megabytes overflow the stalled peer's unread socket
+	// buffers, so its write cannot finish — it can only end at its
+	// deadline.
+	jumbo := map[string]string{"type": "test", "data": strings.Repeat("x", 8<<20)}
+
+	start := time.Now()
+	err := b.WriteJSON(context.Background(), jumbo)
+	elapsed := time.Since(start)
+	require.NoError(t, err)
+	require.Less(t, elapsed, 4*time.Second,
+		"a stalled peer must bound the write by its deadline, not its unread buffer")
+
+	// The stalled peer is gone; the healthy one stays.
+	assert.ElementsMatch(t, []string{"healthy"}, b.ConnIDs())
+
+	// And the survivor keeps receiving.
+	require.NoError(t, b.WriteJSON(context.Background(), map[string]string{"type": "after"}))
+	assert.Equal(t, 1, b.Count())
 }
 
 func TestBroadcaster_ConcurrentAddRemove(t *testing.T) {
