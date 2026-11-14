@@ -8,6 +8,8 @@ import (
 	"github.com/coder/websocket"
 	"github.com/rs/zerolog"
 
+	"github.com/radch-ai/ava/backend"
+	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/gateway/internal/wsconn"
 )
 
@@ -17,28 +19,29 @@ const (
 	defaultIdleTimeout = 15 * time.Minute
 )
 
-// ModelRef is the model a lane runs on: the absolute model id plus
-// the provider row that supplies the connection. Zero value follows
-// the default routing.
-type ModelRef struct {
-	ID         string
-	ProviderID string
-}
-
-// Message represents a message submitted to an agent.
+// Message represents a message submitted to an agent. A nil Model
+// follows the default routing.
 type Message struct {
 	ID      string
 	Content string
-	Model   ModelRef
+	Model   *apitypes.ModelEntry
 }
+
+// ModelResolver maps a selection to a callable endpoint. An alias of
+// the backend.ResolveModel signature, so the bound function needs no
+// adapter.
+type ModelResolver = func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error)
 
 type UserAgentOptions struct {
 	AgentID     string
-	Model       ModelRef
+	Model       *apitypes.ModelEntry
 	MsgCh       chan Message // passed from UserAgentManager
 	IdleTimeout time.Duration
 	OnExit      func()
-	Logger      zerolog.Logger
+	// ResolveModel maps a selection to a callable endpoint for
+	// every lane; bound by the gateway at boot.
+	ResolveModel ModelResolver
+	Logger       zerolog.Logger
 }
 
 type UserAgent struct {
@@ -54,7 +57,9 @@ type UserAgent struct {
 	onExit      func()
 	logger      zerolog.Logger
 
-	model ModelRef
+	resolveModel ModelResolver
+
+	model *apitypes.ModelEntry
 }
 
 // newUserAgent creates a lane agent and starts its message loop.
@@ -76,11 +81,12 @@ func newUserAgent(ctx context.Context, opts UserAgentOptions) *UserAgent {
 		ctx:     ctx,
 		agentID: opts.AgentID,
 
-		conns:       wsconn.NewBroadcaster(opts.Logger),
-		model:       opts.Model,
-		MsgCh:       opts.MsgCh,
-		idleTimeout: opts.IdleTimeout,
-		logger:      opts.Logger,
+		conns:        wsconn.NewBroadcaster(opts.Logger),
+		model:        opts.Model,
+		MsgCh:        opts.MsgCh,
+		idleTimeout:  opts.IdleTimeout,
+		logger:       opts.Logger,
+		resolveModel: opts.ResolveModel,
 
 		onExit: opts.OnExit,
 	}
@@ -103,11 +109,12 @@ func (a *UserAgent) addConn(connID string, conn *websocket.Conn) {
 	a.conns.Add(connID, conn)
 }
 
-// updateModel sets the model for the next query.
-func (a *UserAgent) updateModel(ref ModelRef) {
+// updateModel sets the model for the next query; nil follows the
+// default routing.
+func (a *UserAgent) updateModel(entry *apitypes.ModelEntry) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.model = ref
+	a.model = entry
 }
 
 // RemoveConn removes a connection from the broadcaster.
@@ -174,11 +181,16 @@ func (a *UserAgent) GetStatus() map[string]interface{} {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	modelID := ""
+	if a.model != nil {
+		modelID = a.model.ID
+	}
+
 	return map[string]interface{}{
 		"agent_id":   a.agentID,
 		"queue_len":  len(a.MsgCh),
 		"active":     a.ctx.Err() == nil,
-		"model":      a.model.ID,
+		"model":      modelID,
 		"conn_count": a.conns.Count(),
 	}
 }

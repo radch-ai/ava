@@ -10,20 +10,28 @@ import (
 
 // UserAgentManagerOptions configures a new UserAgentManager.
 type UserAgentManagerOptions struct {
+	// ResolveModel maps a selection to a callable endpoint for
+	// every lane; bound by the gateway at boot.
+	ResolveModel ModelResolver
 }
 
 // UserAgentManager manages agent lanes with thread-safe access.
 // Uses sync.Map for lock-free reads.
 type UserAgentManager struct {
-	lanes  sync.Map // map[agentID]*agentLane
-	logger zerolog.Logger
+	lanes        sync.Map // map[agentID]*agentLane
+	logger       zerolog.Logger
+	resolveModel ModelResolver
 }
 
 // NewUserAgentManager creates a new UserAgentManager.
 func NewUserAgentManager(logger zerolog.Logger, opts *UserAgentManagerOptions) *UserAgentManager {
-	return &UserAgentManager{
+	m := &UserAgentManager{
 		logger: logger,
 	}
+	if opts != nil {
+		m.resolveModel = opts.ResolveModel
+	}
+	return m
 }
 
 const (
@@ -58,11 +66,14 @@ func (m *UserAgentManager) SubmitMsg(ctx context.Context, agentID, connID string
 		lane.done = make(chan struct{})
 
 		lane.agentWg.Go(func() {
-			lane.agent = newUserAgent(ctx, UserAgentOptions{
-				AgentID: agentID,
-				Model:   msg.Model,
-				MsgCh:   lane.msgCh,
-				Logger:  m.logger,
+			// The lane outlives the submitting connection: its
+			// lifetime is the idle timeout, not any one peer.
+			lane.agent = newUserAgent(context.WithoutCancel(ctx), UserAgentOptions{
+				AgentID:      agentID,
+				Model:        msg.Model,
+				MsgCh:        lane.msgCh,
+				ResolveModel: m.resolveModel,
+				Logger:       m.logger,
 				OnExit: func() {
 					close(lane.done)
 					m.lanes.Delete(key)

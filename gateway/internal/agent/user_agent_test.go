@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/gateway/internal/agent"
 )
 
@@ -22,7 +23,7 @@ func TestUserAgent_SubmitMsg_Success(t *testing.T) {
 	ok := mgr.SubmitMsg(context.Background(), agentID, "conn-1", nil, agent.Message{
 		Content: "test message",
 		ID:      "msg-1",
-		Model:   agent.ModelRef{ID: "gpt-4o"},
+		Model:   &apitypes.ModelEntry{ID: "gpt-4o"},
 	})
 	require.True(t, ok)
 
@@ -41,7 +42,7 @@ func TestUserAgent_ConcurrentSubmit(t *testing.T) {
 	ok := mgr.SubmitMsg(context.Background(), agentID, "conn-1", nil, agent.Message{
 		Content: "initial",
 		ID:      "msg-0",
-		Model:   agent.ModelRef{ID: "gpt-4o"},
+		Model:   &apitypes.ModelEntry{ID: "gpt-4o"},
 	})
 	require.True(t, ok)
 
@@ -58,7 +59,7 @@ func TestUserAgent_ConcurrentSubmit(t *testing.T) {
 				mgr.SubmitMsg(context.Background(), agentID, "conn-concurrent", nil, agent.Message{
 					Content: "concurrent message",
 					ID:      "msg-concurrent",
-					Model:   agent.ModelRef{ID: "gpt-4o"},
+					Model:   &apitypes.ModelEntry{ID: "gpt-4o"},
 				})
 			}
 		}(i)
@@ -78,7 +79,7 @@ func TestUserAgent_IdleTimeout_TriggersExit(t *testing.T) {
 	ok := mgr.SubmitMsg(context.Background(), agentID, "conn-1", nil, agent.Message{
 		Content: "test",
 		ID:      "msg-1",
-		Model:   agent.ModelRef{ID: "gpt-4o"},
+		Model:   &apitypes.ModelEntry{ID: "gpt-4o"},
 	})
 	require.True(t, ok)
 
@@ -96,7 +97,7 @@ func TestUserAgent_GetStatus(t *testing.T) {
 	ok := mgr.SubmitMsg(context.Background(), agentID, "conn-1", nil, agent.Message{
 		Content: "test",
 		ID:      "msg-1",
-		Model:   agent.ModelRef{ID: "gpt-4o"},
+		Model:   &apitypes.ModelEntry{ID: "gpt-4o"},
 	})
 	require.True(t, ok)
 

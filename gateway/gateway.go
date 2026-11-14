@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 
+	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/gateway/internal/agent"
 	"github.com/radch-ai/ava/gateway/wstypes"
 )
@@ -141,20 +142,23 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 				}
 				// Route into the lane: first submit creates it, every
 				// submit adds this connection and queues the message.
-				ref := agent.ModelRef{}
+				// A nil model follows the default routing.
+				var entry *apitypes.ModelEntry
+				modelID, providerID := "", ""
 				if msg.Model != nil {
-					ref = agent.ModelRef{ID: msg.Model.ID, ProviderID: msg.Model.ProviderID}
+					entry = &apitypes.ModelEntry{ID: msg.Model.ID, ProviderID: msg.Model.ProviderID}
+					modelID, providerID = entry.ID, entry.ProviderID
 				}
 				logger.Info().
 					Str("agent_id", env.AgentID).
-					Str("model", ref.ID).
-					Str("provider_id", ref.ProviderID).
+					Str("model", modelID).
+					Str("provider_id", providerID).
 					Int("content_len", len(msg.Content)).
 					Msg("prompt received over ws")
 				mgr.SubmitMsg(ctx, env.AgentID, connID, conn, agent.Message{
 					ID:      uuid.New().String(),
 					Content: msg.Content,
-					Model:   ref,
+					Model:   entry,
 				})
 			case wstypes.EnvelopeTypeStatus:
 				writeCtx, writeCancel := context.WithTimeout(ctx, 10*time.Second)
