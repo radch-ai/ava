@@ -52,9 +52,10 @@ type Config struct {
 	GetAgentConfig agent.AgentConfigSource
 }
 
-// New builds the gateway WebSocket handler. The gateway is a single
-// endpoint: the caller owns the path it is mounted on.
-func New(cfg *Config, logger zerolog.Logger) (http.Handler, error) {
+// New builds the gateway. The gateway is a single WebSocket endpoint:
+// the caller owns the path it is mounted on, and Drain is the
+// shutdown half — call it after the HTTP server has drained.
+func New(cfg *Config, logger zerolog.Logger) (*Gateway, error) {
 	interval := pingInterval
 	resolve := agent.ModelResolver(nil)
 	var persist agent.TurnSink
@@ -72,7 +73,29 @@ func New(cfg *Config, logger zerolog.Logger) (http.Handler, error) {
 		PersistTurn:    persist,
 		GetAgentConfig: getConfig,
 	})
-	return handleWS(interval, logger, mgr), nil
+	return &Gateway{
+		handler: handleWS(interval, logger, mgr),
+		mgr:     mgr,
+	}, nil
+}
+
+// Gateway is the mounted WebSocket endpoint plus its drain half.
+type Gateway struct {
+	handler http.Handler
+	mgr     *agent.UserAgentManager
+}
+
+// ServeHTTP serves the gateway WebSocket endpoint.
+func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	g.handler.ServeHTTP(w, r)
+}
+
+// Drain interrupts every lane's running turn and waits, bounded by
+// the timeout, for the interrupted turns to settle into their
+// threads. Call it after the HTTP server has closed its
+// connections.
+func (g *Gateway) Drain(timeout time.Duration) {
+	g.mgr.Drain(timeout)
 }
 
 // handleWS serves the gateway WebSocket endpoint.
@@ -110,6 +133,17 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 
 		go keepalive(ctx, conn, interval, logger)
 
+		// Shutdown watcher: cancelling the request context is the
+		// server draining. Close politely with GoingAway — the frame
+		// must go out before anything lets a cancelled context touch
+		// the connection, because coder/websocket aborts the
+		// connection outright in that case. The close also unblocks
+		// the read loop below.
+		go func() {
+			<-ctx.Done()
+			_ = conn.Close(websocket.StatusGoingAway, "server shutting down")
+		}()
+
 		// The connected event carries the connection ID.
 		writeCtx, writeCancel := context.WithTimeout(ctx, 10*time.Second)
 		err = wsjson.Write(writeCtx, conn, wstypes.Event{
@@ -122,15 +156,19 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 			return
 		}
 
+		// Reads run on a cancel-proof context: coder/websocket aborts
+		// the whole connection when a read's context cancels, which
+		// would race the shutdown watcher's polite GoingAway close.
+		// The watcher's close — or the peer's own disconnect — is
+		// what unblocks reads.
+		readCtx := context.WithoutCancel(ctx)
 		for {
 			var raw json.RawMessage
-			err := wsjson.Read(ctx, conn, &raw)
+			err := wsjson.Read(readCtx, conn, &raw)
 			if err != nil {
 				if ctx.Err() != nil {
-					// Context cancelled: client vanished or the server is
-					// draining. coder/websocket already tore the connection
-					// down (the peer sees EOF); cancelling this context also
-					// ends any agent lane bound to it.
+					// Server drain: the shutdown watcher already
+					// said goodbye with GoingAway.
 					logger.Info().Msg("closing for shutdown")
 					return
 				}

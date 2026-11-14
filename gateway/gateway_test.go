@@ -316,6 +316,38 @@ func TestStatusJoinsLaneAndReplaysPrefix(t *testing.T) {
 	}
 }
 
+// Server shutdown closes live connections with a GoingAway frame —
+// the polite goodbye that tells clients not to reconnect instantly.
+// The request context is cancelled mid-connection, exactly what a
+// draining server does to its long-lived handlers.
+func TestShutdownClosesConnectionsGoingAway(t *testing.T) {
+	gw, err := gateway.New(&gateway.Config{}, zerolog.Nop())
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithCancel(r.Context())
+		time.AfterFunc(50*time.Millisecond, cancel)
+		gw.ServeHTTP(w, r.WithContext(ctx))
+	})
+	server := httptest.NewServer(wrapped)
+	defer server.Close()
+
+	conn, ctx := dialServer(t, server.URL)
+
+	// The handler's read loop unblocks on the cancelled context and
+	// closes with GoingAway; the client sees the close frame.
+	var event map[string]any
+	err = wsjson.Read(ctx, conn, &event)
+	if err == nil {
+		t.Fatal("expected a close, got an event")
+	}
+	if got := coderws.CloseStatus(err); got != coderws.StatusGoingAway {
+		t.Fatalf("expected GoingAway close, got status %v (%v)", got, err)
+	}
+}
+
 func TestStatusReflectsLiveLane(t *testing.T) {
 	conn, ctx := dialGateway(t)
 

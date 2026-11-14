@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/rs/zerolog"
@@ -170,4 +171,39 @@ func (m *UserAgentManager) Get(agentID string) *UserAgent {
 		return val.(*agentLane).agent
 	}
 	return nil
+}
+
+// Drain ends the manager's live work: every running turn is
+// interrupted — a partial answer settles into the thread per the
+// interrupt rules — and the call waits, bounded by timeout, for the
+// turns to finish persisting. Connections are gone by the time a
+// server drains (its context ended them); persistence is the
+// durable path, and a reconnecting UI refetches into it.
+func (m *UserAgentManager) Drain(timeout time.Duration) {
+	m.lanes.Range(func(_, val any) bool {
+		if ag := val.(*agentLane).agent; ag != nil {
+			ag.Interrupt()
+		}
+		return true
+	})
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if !m.anyWorking() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// anyWorking reports whether any lane still runs a turn.
+func (m *UserAgentManager) anyWorking() bool {
+	working := false
+	m.lanes.Range(func(_, val any) bool {
+		if ag := val.(*agentLane).agent; ag != nil && ag.LaneStatus().Working {
+			working = true
+			return false
+		}
+		return true
+	})
+	return working
 }
