@@ -122,6 +122,39 @@ func (b *Broadcaster) WriteJSON(ctx context.Context, v interface{}) error {
 	return nil
 }
 
+// AddWithBacklog adds a connection and first delivers the backlog
+// the callback builds — both under the map lock, so the backlog is
+// ordered before anything a concurrent WriteJSON emits afterwards.
+// The callback runs with the lock held; build the backlog from lane
+// state under the lane's own mutex there. A failed backlog write
+// drops the join.
+func (b *Broadcaster) AddWithBacklog(connID string, conn *websocket.Conn, backlog func() []any) {
+	if conn == nil {
+		return
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for _, v := range backlog() {
+		writeCtx, cancel := context.WithTimeout(context.Background(), b.writeTimeout)
+		err := wsjson.Write(writeCtx, conn, v)
+		cancel()
+		if err != nil {
+			b.logger.Debug().Err(err).Str("conn_id", connID).Msg("backlog write failed, dropping join")
+			return
+		}
+	}
+
+	// Close old connection if replacing.
+	if old, exists := b.conns[connID]; exists && old != conn {
+		_ = old.Close(websocket.StatusNormalClosure, "replaced by new connection")
+	}
+
+	b.conns[connID] = conn
+	b.logger.Debug().Str("conn_id", connID).Int("total", len(b.conns)).Msg("connection added to broadcaster")
+}
+
 // HasConnections returns true if there are any active connections.
 func (b *Broadcaster) HasConnections() bool {
 	b.mu.RLock()

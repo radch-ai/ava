@@ -186,6 +186,12 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 					Model:   entry,
 				})
 			case wstypes.EnvelopeTypeStatus:
+				// Reply first, then join: a status request doubles
+				// as the lane join, so a page (re)opened mid-turn
+				// receives the streamed prefix and everything after
+				// it, instead of a frozen working indicator. Joining
+				// a lane-less agent is a no-op — the reply above
+				// already reports it idle.
 				writeCtx, writeCancel := context.WithTimeout(ctx, 10*time.Second)
 				err := wsjson.Write(writeCtx, conn, wstypes.Event{
 					Type:    wstypes.EventTypeLaneStatus,
@@ -197,6 +203,8 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 					logger.Warn().Err(err).Msg("failed to send lane_status event")
 					return
 				}
+				joinedAgent = env.AgentID
+				mgr.Join(env.AgentID, connID, conn)
 			case wstypes.EnvelopeTypeInterrupt:
 				if ag := mgr.Get(env.AgentID); ag != nil {
 					ag.Interrupt()

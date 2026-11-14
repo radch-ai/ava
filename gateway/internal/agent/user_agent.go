@@ -91,6 +91,12 @@ type UserAgent struct {
 	// working reports a turn in flight; guarded by mu.
 	working bool
 
+	// turnMsgID and turnPrefix track the live turn's streamed text —
+	// the prefix a mid-turn join replays as one chunk. Guarded by
+	// mu; cleared at turn end before the closing event.
+	turnMsgID  string
+	turnPrefix strings.Builder
+
 	idleTimeout time.Duration
 	onExit      func()
 	logger      zerolog.Logger
@@ -145,12 +151,29 @@ func newUserAgent(ctx context.Context, opts UserAgentOptions) *UserAgent {
 	return a
 }
 
-// AddConn adds a connection to the broadcaster.
-// Called when a device sends a message to this agent.
+// addConn adds a connection to the broadcaster, which guards its own
+// map — no lane state is touched.
 func (a *UserAgent) addConn(connID string, conn *websocket.Conn) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
 	a.conns.Add(connID, conn)
+}
+
+// Join attaches a connection mid-life: while a turn streams, the
+// joiner first receives the turn's accumulated text as one chunk,
+// ordered before the chunks still to come — a page reopened
+// mid-turn picks up the live tail instead of freezing.
+func (a *UserAgent) Join(connID string, conn *websocket.Conn) {
+	a.conns.AddWithBacklog(connID, conn, func() []any {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if !a.working || a.turnPrefix.Len() == 0 {
+			return nil
+		}
+		return []any{wstypes.Event{
+			Type:    wstypes.EventTypeMessageChunk,
+			AgentID: a.agentID,
+			Data:    wstypes.MessageChunkEvent{ID: a.turnMsgID, Delta: a.turnPrefix.String()},
+		}}
+	})
 }
 
 // Interrupt cancels the running turn, if any.
@@ -170,12 +193,9 @@ func (a *UserAgent) updateModel(entry *apitypes.ModelEntry) {
 	a.model = entry
 }
 
-// RemoveConn removes a connection from the broadcaster.
-// Called when a device disconnects.
+// RemoveConn removes a connection from the broadcaster; the
+// broadcaster guards its own map.
 func (a *UserAgent) RemoveConn(connID string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
 	a.conns.Remove(connID)
 }
 
@@ -310,6 +330,10 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 	resolveModel := a.resolveModel
 	a.mu.Unlock()
 
+	// The turn's replay state starts with the batch: joins during
+	// this turn replay whatever streams from here on.
+	a.beginTurn(msgID)
+
 	// The user's words persist before anything can fail: every
 	// failure mode below keeps the prompt in the thread, and a crash
 	// before the answer lands leaves an orphan user row — a failed
@@ -437,7 +461,9 @@ func (a *UserAgent) finishInterrupted(emitCtx context.Context, msgID string, ans
 
 // settleTurn persists the assistant row, then broadcasts the final
 // message event — the persist-before-emit ordering is what keeps the
-// UI's settle refetch from racing the write.
+// UI's settle refetch from racing the write. The replay prefix
+// retires first so a join racing the settle never replays a
+// finished turn.
 func (a *UserAgent) settleTurn(emitCtx context.Context, msgID, content string) {
 	if a.persistTurn != nil {
 		if err := a.persistTurn(emitCtx, a.agentID,
@@ -445,6 +471,7 @@ func (a *UserAgent) settleTurn(emitCtx context.Context, msgID, content string) {
 			a.logger.Warn().Err(err).Str("agent_id", a.agentID).Msg("persist assistant message")
 		}
 	}
+	a.clearTurnPrefix()
 	_ = a.conns.WriteJSON(emitCtx, wstypes.Event{
 		Type:    wstypes.EventTypeMessage,
 		AgentID: a.agentID,
@@ -452,8 +479,26 @@ func (a *UserAgent) settleTurn(emitCtx context.Context, msgID, content string) {
 	})
 }
 
+// beginTurn resets the replay state for a new turn; joins during the
+// turn replay whatever streams from here on.
+func (a *UserAgent) beginTurn(msgID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.turnMsgID = msgID
+	a.turnPrefix.Reset()
+}
+
+// clearTurnPrefix retires the replay state at turn end, before the
+// closing event goes out.
+func (a *UserAgent) clearTurnPrefix() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.turnPrefix.Reset()
+}
+
 // streamAnswer relays one streamed answer piece by piece and
-// accumulates the text for the final message event.
+// accumulates the text for the final message event; each piece also
+// extends the replay prefix mid-turn joins receive.
 func (a *UserAgent) streamAnswer(ctx context.Context, stream *schema.StreamReader[*schema.Message], msgID string, answer *strings.Builder) error {
 	defer stream.Close()
 	for {
@@ -468,6 +513,9 @@ func (a *UserAgent) streamAnswer(ctx context.Context, stream *schema.StreamReade
 			continue
 		}
 		answer.WriteString(chunk.Content)
+		a.mu.Lock()
+		a.turnPrefix.WriteString(chunk.Content)
+		a.mu.Unlock()
 		_ = a.conns.WriteJSON(ctx, wstypes.Event{
 			Type:    wstypes.EventTypeMessageChunk,
 			AgentID: a.agentID,
@@ -476,8 +524,11 @@ func (a *UserAgent) streamAnswer(ctx context.Context, stream *schema.StreamReade
 	}
 }
 
-// emitError reports a failed turn to the lane's connections.
+// emitError reports a failed turn to the lane's connections. The
+// replay prefix retires first: nothing replays after the turn is
+// over.
 func (a *UserAgent) emitError(ctx context.Context, message string) {
+	a.clearTurnPrefix()
 	_ = a.conns.WriteJSON(ctx, wstypes.Event{
 		Type:    wstypes.EventTypeError,
 		AgentID: a.agentID,

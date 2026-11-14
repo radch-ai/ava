@@ -148,6 +148,20 @@ func (m *UserAgentManager) SubmitMsg(ctx context.Context, agentID, connID string
 	}
 }
 
+// Join attaches a connection to an existing lane so it receives the
+// lane's events — including a replay of the live turn's streamed
+// prefix. A lane that doesn't exist stays nonexistent: the status
+// reply already reports an idle lane.
+func (m *UserAgentManager) Join(agentID, connID string, conn *websocket.Conn) {
+	val, ok := m.lanes.Load(agentID)
+	if !ok {
+		return
+	}
+	lane := val.(*agentLane)
+	lane.agentWg.Wait()
+	lane.agent.Join(connID, conn)
+}
+
 // Get returns the agent for agentID or nil if not found.
 func (m *UserAgentManager) Get(agentID string) *UserAgent {
 	key := agentID

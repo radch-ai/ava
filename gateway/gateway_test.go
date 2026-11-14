@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -194,6 +195,124 @@ func TestStatusRepliesLaneStatus(t *testing.T) {
 	}
 	if data["conn_count"] != float64(0) {
 		t.Errorf("status for a lane-less agent should have no connections, got %v", data["conn_count"])
+	}
+}
+
+// sseFrame renders one chat.completion.chunk SSE payload.
+func sseFrame(delta string) string {
+	payload := map[string]any{
+		"id": "chatcmpl-test", "object": "chat.completion.chunk", "created": 0,
+		"model": "test-model",
+		"choices": []any{map[string]any{
+			"index": 0, "finish_reason": nil,
+			"delta": map[string]any{"role": "assistant", "content": delta},
+		}},
+	}
+	raw, _ := json.Marshal(payload)
+	return string(raw)
+}
+
+// A status request doubles as the lane join: a page reopened mid-turn
+// must receive the streamed prefix and everything after it, not a
+// frozen working indicator.
+func TestStatusJoinsLaneAndReplaysPrefix(t *testing.T) {
+	release := make(chan struct{})
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		_, _ = w.Write([]byte("data: " + sseFrame("par ") + "\n\n"))
+		flusher.Flush()
+		<-release
+		_, _ = w.Write([]byte("data: " + sseFrame("tial") + "\n\n"))
+		flusher.Flush()
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer llm.Close()
+
+	handler, err := gateway.New(&gateway.Config{
+		ResolveModel: func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
+			return backend.ResolvedModel{BaseURL: llm.URL, APIKey: "sk-test", Model: "test-model"}, nil
+		},
+	}, zerolog.Nop())
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	conn1, ctx1 := dialServer(t, server.URL)
+	conn2, ctx2 := dialServer(t, server.URL)
+
+	// conn-1 starts the turn and watches the first chunk land.
+	err = wsjson.Write(ctx1, conn1, map[string]any{
+		"type":     "prompt",
+		"agent_id": "_superagent",
+		"data": map[string]any{
+			"content": "hello",
+			"model":   map[string]string{"id": "gpt-4o", "provider_id": "p-1"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("writing prompt failed: %v", err)
+	}
+	for {
+		var event map[string]any
+		if err := wsjson.Read(ctx1, conn1, &event); err != nil {
+			t.Fatalf("reading first chunk failed: %v", err)
+		}
+		if event["type"] == "message_chunk" {
+			break
+		}
+	}
+
+	// conn-2 arrives mid-turn, asks for status, and is joined into
+	// the lane: the reply reports the turn, then the replayed prefix
+	// and the streamed remainder follow.
+	err = wsjson.Write(ctx2, conn2, map[string]string{
+		"type":     "status",
+		"agent_id": "_superagent",
+	})
+	if err != nil {
+		t.Fatalf("writing status request failed: %v", err)
+	}
+
+	read := func() map[string]any {
+		var event map[string]any
+		if err := wsjson.Read(ctx2, conn2, &event); err != nil {
+			t.Fatalf("reading joined event failed: %v", err)
+		}
+		return event
+	}
+
+	reply := read()
+	if reply["type"] != "lane_status" {
+		t.Fatalf("expected lane_status reply, got %v", reply["type"])
+	}
+
+	close(release)
+
+	chunk := read()
+	if chunk["type"] != "message_chunk" {
+		t.Fatalf("expected replayed chunk, got %v", chunk["type"])
+	}
+	chunkData, _ := chunk["data"].(map[string]any)
+	if chunkData["delta"] != "par " {
+		t.Fatalf("expected replayed prefix %q, got %v", "par ", chunkData["delta"])
+	}
+
+	for {
+		event := read()
+		if event["type"] == "message_chunk" {
+			continue
+		}
+		if event["type"] != "message" {
+			t.Fatalf("expected final message, got %v", event["type"])
+		}
+		data, _ := event["data"].(map[string]any)
+		if data["content"] != "par tial" {
+			t.Fatalf("expected settled answer %q, got %v", "par tial", data["content"])
+		}
+		break
 	}
 }
 
