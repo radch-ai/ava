@@ -15,7 +15,7 @@
 
 	interface ThreadItem {
 		id: string
-		role: 'user' | 'assistant' | 'error'
+		role: 'user' | 'assistant' | 'tool' | 'error'
 		content: string
 		pending?: boolean
 	}

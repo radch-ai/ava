@@ -8,6 +8,7 @@ package backend_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"testing"
 
 	"github.com/radch-ai/ava/backend"
@@ -65,6 +66,51 @@ func TestAppendThreadMessagesMintsOrderedRows(t *testing.T) {
 	}
 	if answer.ID == "" || prompt.ID == "" || answer.ID == prompt.ID {
 		t.Errorf("minted ids = %q/%q, want distinct non-empty", prompt.ID, answer.ID)
+	}
+}
+
+func TestAppendThreadMessagesToolDraftRoundTrip(t *testing.T) {
+	sqlDB := resolverDB(t)
+	seedThreadAgent(t, sqlDB, "a2")
+
+	// One turn's rows: prompt, a tool invocation, the answer — the
+	// envelope verbatim as content.
+	envelope, err := json.Marshal(apitypes.ToolEnvelope{
+		Name:   "web_search",
+		Args:   json.RawMessage(`{"query":"ava superagent"}`),
+		Result: json.RawMessage(`{"hits":2}`),
+	})
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	err = backend.AppendThreadMessages(context.Background(), "a2", []apitypes.ThreadMessageDraft{
+		{Role: apitypes.ThreadRoleUser, Content: "search for ava"},
+		{Role: apitypes.ThreadRoleTool, Content: string(envelope)},
+		{Role: apitypes.ThreadRoleAssistant, Content: "found 2 hits"},
+	})
+	if err != nil {
+		t.Fatalf("AppendThreadMessages: %v", err)
+	}
+
+	// Newest first, so the timeline reads user → tool → assistant
+	// with timestamps strictly falling down the page.
+	rows := readThread(t, sqlDB, "a2")
+	if len(rows) != 3 {
+		t.Fatalf("thread rows = %d, want 3", len(rows))
+	}
+	want := []struct{ role, content string }{
+		{"assistant", "found 2 hits"},
+		{"tool", string(envelope)},
+		{"user", "search for ava"},
+	}
+	for i, w := range want {
+		if rows[i].Role != w.role || rows[i].Content != w.content {
+			t.Errorf("rows[%d] = %s/%q, want %s/%q", i, rows[i].Role, rows[i].Content, w.role, w.content)
+		}
+		if i > 0 && rows[i].CreatedAt >= rows[i-1].CreatedAt {
+			t.Errorf("rows[%d].CreatedAt = %d, want strictly below rows[%d] = %d",
+				i, rows[i].CreatedAt, i-1, rows[i-1].CreatedAt)
+		}
 	}
 }
 

@@ -13,8 +13,8 @@ import (
 func TestThreadMessageRoleCheck(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
 
-	// Both wire roles store; anything else fails the CHECK.
-	for _, role := range []string{"user", "assistant"} {
+	// All three wire roles store; anything else fails the CHECK.
+	for _, role := range []string{"user", "assistant", "tool"} {
 		if _, err := sqlDB.Exec(
 			`INSERT INTO thread_messages (id, agent_id, role, content)
 			 VALUES (?, '_superagent', ?, 'ok')`,
