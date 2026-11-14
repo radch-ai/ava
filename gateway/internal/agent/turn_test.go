@@ -34,17 +34,34 @@ func fakeOpenAI(t *testing.T, reply string) *httptest.Server {
 	return sseOpenAI(t, reply)
 }
 
-// readUntilMessage drains chunk events until the final message event;
-// it returns the envelope and its payload.
+// readUntilMessage drains chunk and lane_status events until the
+// final message event; it returns the envelope and its payload.
 func readUntilMessage(t *testing.T, c *websocket.Conn) (wstypes.Event, wstypes.MessageEvent) {
 	t.Helper()
 	for {
 		ev := readEvent(t, c)
 		switch ev.Type {
-		case wstypes.EventTypeMessageChunk:
+		case wstypes.EventTypeMessageChunk, wstypes.EventTypeLaneStatus:
 			continue
 		case wstypes.EventTypeMessage:
 			return ev, eventPayload[wstypes.MessageEvent](t, ev)
+		default:
+			t.Fatalf("unexpected event %v", ev.Type)
+		}
+	}
+}
+
+// readUntilError drains the turn's lane_status bracket until the
+// error event; it returns the envelope.
+func readUntilError(t *testing.T, c *websocket.Conn) wstypes.Event {
+	t.Helper()
+	for {
+		ev := readEvent(t, c)
+		switch ev.Type {
+		case wstypes.EventTypeLaneStatus:
+			continue
+		case wstypes.EventTypeError:
+			return ev
 		default:
 			t.Fatalf("unexpected event %v", ev.Type)
 		}
@@ -152,6 +169,8 @@ func TestTurnStreamsChunks(t *testing.T) {
 	for !sawFinal {
 		ev := readEvent(t, c)
 		switch ev.Type {
+		case wstypes.EventTypeLaneStatus:
+			continue
 		case wstypes.EventTypeMessageChunk:
 			p := eventPayload[wstypes.MessageChunkEvent](t, ev)
 			require.Equal(t, "msg-1", p.ID)
@@ -208,7 +227,7 @@ func TestTurnResolverErrorEmitsErrorAndKeepsLane(t *testing.T) {
 		agent.Message{ID: "msg-1", Content: "hi"})
 	require.True(t, ok)
 
-	ev := readEvent(t, c)
+	ev := readUntilError(t, c)
 	require.Equal(t, wstypes.EventTypeError, ev.Type)
 	p := eventPayload[wstypes.ErrorEvent](t, ev)
 	require.Contains(t, p.Message, "no rows")
@@ -266,7 +285,7 @@ func TestTurnInterruptCancelsQuery(t *testing.T) {
 	ag.Interrupt()
 
 	// The interrupted turn reports its cancellation...
-	ev := readEvent(t, c)
+	ev := readUntilError(t, c)
 	require.Equal(t, wstypes.EventTypeError, ev.Type)
 
 	// ...and the lane is free to run the next turn.
@@ -469,7 +488,7 @@ func TestTurnErrorPersistsUserOnly(t *testing.T) {
 		agent.Message{ID: "msg-1", Content: "hello"})
 	require.True(t, ok)
 
-	ev := readEvent(t, c)
+	ev := readUntilError(t, c)
 	require.Equal(t, wstypes.EventTypeError, ev.Type)
 
 	calls := sink.recorded()
@@ -500,6 +519,15 @@ func TestTurnSinkFailureDoesNotFailTurn(t *testing.T) {
 	require.Equal(t, "still answers", p.Content)
 
 	// A sick sink stays a server-side log line, never a wire error.
-	_, arrived := readEventMaybe(t, c, 200*time.Millisecond)
-	require.False(t, arrived, "sink failure must not emit a wire error")
+	// The turn's closing lane_status may still land; only an error
+	// fails the pin.
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for {
+		ev, arrived := readEventMaybe(t, c, time.Until(deadline))
+		if !arrived {
+			break
+		}
+		require.NotEqual(t, wstypes.EventTypeError, ev.Type,
+			"sink failure must not emit a wire error")
+	}
 }

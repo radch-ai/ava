@@ -179,10 +179,9 @@ func TestUserAgent_StatusIncludesConnCount(t *testing.T) {
 	ag := mgr.Get(agentID)
 	require.NotNil(t, ag)
 
-	status := ag.GetStatus()
-	assert.Equal(t, "agent-status", status["agent_id"])
-	assert.Equal(t, 2, status["conn_count"])
-	assert.Equal(t, true, status["active"])
+	status := ag.LaneStatus()
+	assert.Equal(t, 2, status.ConnCount)
+	assert.Equal(t, true, status.Active)
 }
 
 // TestUserAgent_ConcurrentConnectionOps tests thread safety of connection operations

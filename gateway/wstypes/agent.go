@@ -15,9 +15,11 @@ type PromptMessage struct {
 }
 
 // LaneStatus is the payload of a lane_status event. Model is the
-// active lane's model id — display only.
+// active lane's model id — display only. Working reports a turn in
+// flight; the composer's stop control tracks it.
 type LaneStatus struct {
 	Active    bool   `json:"active"`
+	Working   bool   `json:"working"`
 	Model     string `json:"model"`
 	QueueLen  int    `json:"queue_len"`
 	ConnCount int    `json:"conn_count"`

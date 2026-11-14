@@ -95,10 +95,16 @@ func TestPromptWithoutResolverEmitsError(t *testing.T) {
 	}
 
 	// The lane runs the turn; with no model resolver bound, the turn
-	// fails and the failure reaches the wire.
+	// fails and the failure reaches the wire. The turn is bracketed
+	// by lane_status events; read past them to the outcome.
 	var event map[string]any
-	if err := wsjson.Read(ctx, conn, &event); err != nil {
-		t.Fatalf("reading turn outcome failed: %v", err)
+	for {
+		if err := wsjson.Read(ctx, conn, &event); err != nil {
+			t.Fatalf("reading turn outcome failed: %v", err)
+		}
+		if event["type"] != "lane_status" {
+			break
+		}
 	}
 	if event["type"] != "error" {
 		t.Fatalf("expected error event, got %v", event["type"])
@@ -132,10 +138,16 @@ func TestPromptResolverErrorReachesWire(t *testing.T) {
 	}
 
 	// A resolver failure — provider missing from the store — reaches
-	// the submitting connection verbatim.
+	// the submitting connection verbatim, past the turn's lane_status
+	// bracket.
 	var event map[string]any
-	if err := wsjson.Read(ctx, conn, &event); err != nil {
-		t.Fatalf("reading turn outcome failed: %v", err)
+	for {
+		if err := wsjson.Read(ctx, conn, &event); err != nil {
+			t.Fatalf("reading turn outcome failed: %v", err)
+		}
+		if event["type"] != "lane_status" {
+			break
+		}
 	}
 	if event["type"] != "error" {
 		t.Fatalf("expected error event, got %v", event["type"])
@@ -172,7 +184,7 @@ func TestStatusRepliesLaneStatus(t *testing.T) {
 	if !ok {
 		t.Fatalf("lane_status data is not a map: %+v", event["data"])
 	}
-	for _, key := range []string{"active", "model", "queue_len", "conn_count"} {
+	for _, key := range []string{"active", "working", "model", "queue_len", "conn_count"} {
 		if _, exists := data[key]; !exists {
 			t.Errorf("lane_status data missing %s", key)
 		}

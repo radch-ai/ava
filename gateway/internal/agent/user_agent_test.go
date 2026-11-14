@@ -104,8 +104,7 @@ func TestUserAgent_GetStatus(t *testing.T) {
 	ag := mgr.Get(agentID)
 	require.NotNil(t, ag)
 
-	status := ag.GetStatus()
-	assert.Equal(t, "agent-status-test", status["agent_id"])
-	assert.Equal(t, true, status["active"])
-	assert.Equal(t, "gpt-4o", status["model"])
+	status := ag.LaneStatus()
+	assert.Equal(t, true, status.Active)
+	assert.Equal(t, "gpt-4o", status.Model)
 }

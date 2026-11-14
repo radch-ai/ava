@@ -61,7 +61,13 @@ describe('agent socket', () => {
 			data: JSON.stringify({
 				type: 'lane_status',
 				agent_id: '_superagent',
-				data: { active: true, model: 'gpt-4o', queue_len: 2, conn_count: 1 }
+				data: {
+					active: true,
+					working: true,
+					model: 'gpt-4o',
+					queue_len: 2,
+					conn_count: 1
+				}
 			})
 		})
 
@@ -69,7 +75,13 @@ describe('agent socket', () => {
 			{
 				type: 'lane_status',
 				agent_id: '_superagent',
-				data: { active: true, model: 'gpt-4o', queue_len: 2, conn_count: 1 }
+				data: {
+					active: true,
+					working: true,
+					model: 'gpt-4o',
+					queue_len: 2,
+					conn_count: 1
+				}
 			}
 		])
 	})
@@ -192,6 +204,18 @@ describe('agent socket', () => {
 					model: { id: 'openai/gpt-4o', provider_id: 'p-1' }
 				}
 			}
+		])
+	})
+
+	it('sendInterrupt rides the wire as an interrupt envelope', () => {
+		const socket = createAgentSocket('_superagent', () => {})
+
+		socket.sendInterrupt()
+		lastSocket().readyState = FakeWebSocket.OPEN
+		lastSocket().onopen?.()
+
+		expect(lastSocket().sent.map((frame) => JSON.parse(frame))).toEqual([
+			{ type: 'interrupt', agent_id: '_superagent' }
 		])
 	})
 	it('close drops queued messages and closes the socket', () => {

@@ -18,6 +18,7 @@ vi.mock('#lib/services/api', () => ({
 const socketMock = {
 	sendPrompt: vi.fn(),
 	requestStatus: vi.fn(),
+	sendInterrupt: vi.fn(),
 	close: vi.fn()
 }
 let capturedOnEvent: ((event: AgentSocketEvent) => void) | undefined
@@ -526,7 +527,13 @@ describe('AgentPage (superagent branch)', () => {
 			capturedOnEvent?.({
 				type: 'lane_status',
 				agent_id: '_superagent',
-				data: { active: true, model: null, queue_len: 0, conn_count: 1 }
+				data: {
+					active: true,
+					working: false,
+					model: null,
+					queue_len: 0,
+					conn_count: 1
+				}
 			})
 			await expect
 				.element(page.getByText(/lane active · Default · queue 0/))
@@ -549,7 +556,13 @@ describe('AgentPage (superagent branch)', () => {
 			capturedOnEvent?.({
 				type: 'lane_status',
 				agent_id: '_superagent',
-				data: { active: true, model: null, queue_len: 0, conn_count: 1 }
+				data: {
+					active: true,
+					working: false,
+					model: null,
+					queue_len: 0,
+					conn_count: 1
+				}
 			})
 
 			await expect
@@ -681,6 +694,72 @@ describe('AgentPage (superagent branch)', () => {
 				expect(scrollTo).toHaveBeenCalled()
 			})
 			scrollTo.mockRestore()
+		})
+
+		it('renders the stop control while the lane works and sends interrupt on click', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'long turn{Enter}')
+
+			capturedOnEvent?.({
+				type: 'lane_status',
+				agent_id: '_superagent',
+				data: {
+					active: true,
+					working: true,
+					model: null,
+					queue_len: 0,
+					conn_count: 1
+				}
+			})
+
+			const stop = page.getByRole('button', { name: 'Stop' })
+			await expect.element(stop).toBeVisible()
+			await stop.click()
+			await vi.waitFor(() => {
+				expect(socketMock.sendInterrupt).toHaveBeenCalledTimes(1)
+			})
+		})
+
+		it('returns the send button when working clears', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'long turn{Enter}')
+
+			capturedOnEvent?.({
+				type: 'lane_status',
+				agent_id: '_superagent',
+				data: {
+					active: true,
+					working: true,
+					model: null,
+					queue_len: 0,
+					conn_count: 1
+				}
+			})
+			await expect
+				.element(page.getByRole('button', { name: 'Stop' }))
+				.toBeVisible()
+
+			capturedOnEvent?.({
+				type: 'lane_status',
+				agent_id: '_superagent',
+				data: {
+					active: true,
+					working: false,
+					model: null,
+					queue_len: 0,
+					conn_count: 1
+				}
+			})
+			await expect
+				.element(page.getByRole('button', { name: 'Stop' }))
+				.not.toBeInTheDocument()
+			await expect
+				.element(page.getByPlaceholder('Enter your query!'))
+				.toBeVisible()
 		})
 	})
 })

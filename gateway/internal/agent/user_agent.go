@@ -88,6 +88,9 @@ type UserAgent struct {
 	queryCtx    context.Context
 	queryCancel context.CancelFunc
 
+	// working reports a turn in flight; guarded by mu.
+	working bool
+
 	idleTimeout time.Duration
 	onExit      func()
 	logger      zerolog.Logger
@@ -192,7 +195,9 @@ func (a *UserAgent) loop() {
 			// queue is empty between turns.
 			messages := a.drainMessages(msg)
 			queryCtx := a.startTurn()
+			a.setWorking(true)
 			a.processTurn(queryCtx, messages)
+			a.setWorking(false)
 			// Reset after the turn so a long query never races the
 			// idle timer.
 			idleTimer.Reset(a.idleTimeout)
@@ -438,20 +443,40 @@ func (a *UserAgent) emitError(ctx context.Context, message string) {
 	})
 }
 
-func (a *UserAgent) GetStatus() map[string]interface{} {
+// LaneStatus snapshots the lane onto the wire type; a missing lane
+// reports an idle, empty status.
+func (a *UserAgent) LaneStatus() wstypes.LaneStatus {
+	if a == nil {
+		return wstypes.LaneStatus{}
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
 	modelID := ""
 	if a.model != nil {
 		modelID = a.model.ID
 	}
-
-	return map[string]interface{}{
-		"agent_id":   a.agentID,
-		"queue_len":  len(a.MsgCh),
-		"active":     a.ctx.Err() == nil,
-		"model":      modelID,
-		"conn_count": a.conns.Count(),
+	return wstypes.LaneStatus{
+		Active:    a.ctx.Err() == nil,
+		Working:   a.working,
+		Model:     modelID,
+		QueueLen:  len(a.MsgCh),
+		ConnCount: a.conns.Count(),
 	}
+}
+
+// setWorking flips the turn-running flag and, on change, tells the
+// lane's connections.
+func (a *UserAgent) setWorking(working bool) {
+	a.mu.Lock()
+	if a.working == working {
+		a.mu.Unlock()
+		return
+	}
+	a.working = working
+	a.mu.Unlock()
+	_ = a.conns.WriteJSON(a.ctx, wstypes.Event{
+		Type:    wstypes.EventTypeLaneStatus,
+		AgentID: a.agentID,
+		Data:    a.LaneStatus(),
+	})
 }

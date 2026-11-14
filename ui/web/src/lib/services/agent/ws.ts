@@ -57,6 +57,8 @@ export interface AgentSocket {
 	sendPrompt(content: string, selection: ModelSelection): void
 	/** The gateway replies with a `lane_status` event. */
 	requestStatus(): void
+	/** Cancels the running turn; the lane broadcasts its end. */
+	sendInterrupt(): void
 	close(): void
 }
 
@@ -203,6 +205,10 @@ export function createAgentSocket(
 		requestStatus() {
 			ensureConnected()
 			send({ type: 'status', agent_id: agentId })
+		},
+		sendInterrupt() {
+			ensureConnected()
+			send({ type: 'interrupt', agent_id: agentId })
 		},
 
 		close() {

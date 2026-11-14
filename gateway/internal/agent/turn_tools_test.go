@@ -287,7 +287,7 @@ func TestToolFailureErrorsTurn(t *testing.T) {
 		agent.Message{ID: "msg-1", Content: "search for otters"})
 	require.True(t, ok)
 
-	ev := readEvent(t, c)
+	ev := readUntilError(t, c)
 	require.Equal(t, wstypes.EventTypeError, ev.Type)
 
 	// A tool failure fails the whole turn: the drain-written user

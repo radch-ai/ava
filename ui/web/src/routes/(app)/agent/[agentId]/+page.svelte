@@ -112,6 +112,10 @@
 		socket.sendPrompt(text, selectedModel)
 	}
 
+	function handleInterrupt() {
+		socket?.sendInterrupt()
+	}
+
 	// Connection state from the socket: live means the gateway greeted
 	// us — on every (re)connection the lane status is re-requested so
 	// a reconnect resyncs instead of trusting stale state.
@@ -205,7 +209,11 @@
 					class="!bg-overlay-dark/70 hover:!bg-overlay-light hover:!ring-ring hover:!ring-1"
 				/>
 			</div>
-			<TextArea onsubmit={handleComposerSubmit} />
+			<TextArea
+				onsubmit={handleComposerSubmit}
+				working={laneStatus?.working ?? false}
+				oninterrupt={handleInterrupt}
+			/>
 		</div>
 
 		{#if socketState !== 'idle'}
