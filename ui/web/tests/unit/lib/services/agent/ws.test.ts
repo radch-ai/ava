@@ -74,6 +74,75 @@ describe('agent socket', () => {
 		])
 	})
 
+	it('decodes message_chunk frames with their payload as data', () => {
+		const events: unknown[] = []
+		createAgentSocket('_superagent', (event) =>
+			events.push(event)
+		).requestStatus()
+
+		lastSocket().onmessage?.({
+			data: JSON.stringify({
+				type: 'message_chunk',
+				agent_id: '_superagent',
+				data: { id: 'msg-1', delta: 'hel' }
+			})
+		})
+
+		expect(events).toEqual([
+			{
+				type: 'message_chunk',
+				agent_id: '_superagent',
+				data: { id: 'msg-1', delta: 'hel' }
+			}
+		])
+	})
+
+	it('decodes message frames with their payload as data', () => {
+		const events: unknown[] = []
+		createAgentSocket('_superagent', (event) =>
+			events.push(event)
+		).requestStatus()
+
+		lastSocket().onmessage?.({
+			data: JSON.stringify({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'msg-1', content: 'hello' }
+			})
+		})
+
+		expect(events).toEqual([
+			{
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'msg-1', content: 'hello' }
+			}
+		])
+	})
+
+	it('decodes error frames with their payload as data', () => {
+		const events: unknown[] = []
+		createAgentSocket('_superagent', (event) =>
+			events.push(event)
+		).requestStatus()
+
+		lastSocket().onmessage?.({
+			data: JSON.stringify({
+				type: 'error',
+				agent_id: '_superagent',
+				data: { message: 'read default model: no rows' }
+			})
+		})
+
+		expect(events).toEqual([
+			{
+				type: 'error',
+				agent_id: '_superagent',
+				data: { message: 'read default model: no rows' }
+			}
+		])
+	})
+
 	it('drops frames whose type has no event arm', () => {
 		const events: unknown[] = []
 		createAgentSocket('_superagent', (event) =>

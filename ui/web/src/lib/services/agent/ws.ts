@@ -21,8 +21,11 @@ import type { ModelSelection } from '#lib/models'
 import type {
 	ConnectedEvent,
 	Envelope,
+	ErrorEvent,
 	Event,
 	LaneStatus,
+	MessageChunkEvent,
+	MessageEvent,
 	PromptMessage
 } from '#lib/types/gen/wstypes.gen'
 
@@ -33,6 +36,9 @@ export type { LaneStatus }
 export type AgentSocketEvent =
 	| (Event & { type: 'connected'; data: ConnectedEvent })
 	| (Event & { type: 'lane_status'; data: LaneStatus })
+	| (Event & { type: 'message_chunk'; data: MessageChunkEvent })
+	| (Event & { type: 'message'; data: MessageEvent })
+	| (Event & { type: 'error'; data: ErrorEvent })
 
 /** Client wire frames: the envelope head plus the per-kind payload
  * (gateway/wstypes → wstypes.gen). */
@@ -78,6 +84,24 @@ function decodeEvent(frame: unknown): AgentSocketEvent | undefined {
 				type: 'lane_status',
 				agent_id: typed.agent_id as string,
 				data: typed.data as LaneStatus
+			}
+		case 'message_chunk':
+			return {
+				type: 'message_chunk',
+				agent_id: typed.agent_id as string,
+				data: typed.data as MessageChunkEvent
+			}
+		case 'message':
+			return {
+				type: 'message',
+				agent_id: typed.agent_id as string,
+				data: typed.data as MessageEvent
+			}
+		case 'error':
+			return {
+				type: 'error',
+				agent_id: typed.agent_id as string,
+				data: typed.data as ErrorEvent
 			}
 		default:
 			console.debug('agent socket: untyped event', frame)
