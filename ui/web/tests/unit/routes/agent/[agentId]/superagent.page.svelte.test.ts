@@ -650,6 +650,63 @@ describe('AgentPage (superagent branch)', () => {
 			})
 		})
 
+		it('reconciles a tool turn: live tool line swaps for the persisted row', async () => {
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => ({
+					items: [
+						{
+							id: 'stored-a',
+							role: 'assistant',
+							content: 'found 2 hits',
+							createdAt: '2026-01-01T00:00:02.000Z'
+						},
+						{
+							id: 'stored-t',
+							role: 'tool',
+							content:
+								'{"name":"web_search","args":{"query":"otters"},"result":"\\"2 hits\\""}',
+							createdAt: '2026-01-01T00:00:01.000Z'
+						},
+						{
+							id: 'stored-u',
+							role: 'user',
+							content: 'search otters',
+							createdAt: '2026-01-01T00:00:00.000Z'
+						}
+					],
+					nextCursor: null
+				})
+			} as ApiResponsePromise)
+
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'search otters{Enter}')
+
+			// The turn runs a tool before answering.
+			capturedOnEvent?.({
+				type: 'tool_call',
+				agent_id: '_superagent',
+				data: { id: 'call-1', name: 'web_search', args: '{"query":"otters"}' }
+			})
+			capturedOnEvent?.({
+				type: 'tool_result',
+				agent_id: '_superagent',
+				data: { id: 'call-1', result: '"2 hits"' }
+			})
+			capturedOnEvent?.({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'msg-1', content: 'found 2 hits' }
+			})
+
+			// The settle refetch carries the persisted tool row; the
+			// live tool line is gone — the name appears exactly once.
+			await vi.waitFor(() => {
+				expect(page.getByText(/web_search/).elements()).toHaveLength(1)
+			})
+		})
+
 		it('renders a failed turn as an inline error message', async () => {
 			render(AgentPageTestWrapper, { data: createMockData() })
 			const textarea = page.getByPlaceholder('Enter your query!')

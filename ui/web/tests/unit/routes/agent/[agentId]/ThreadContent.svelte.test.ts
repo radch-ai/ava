@@ -5,8 +5,13 @@ import ThreadContent from '#routes/agent/[agentId]/ThreadContent.svelte'
 
 interface ThreadItem {
 	id: string
-	role: 'user' | 'assistant'
+	role: 'user' | 'assistant' | 'tool' | 'error'
 	content: string
+	pending?: boolean
+	name?: string
+	args?: string
+	result?: string
+	error?: string | null
 }
 
 const mockMessages: ThreadItem[] = [
@@ -61,40 +66,30 @@ describe('ThreadContent', () => {
 	})
 
 	describe('Assistant messages', () => {
+		// Assistant text renders as markdown, so styling pins target the
+		// message container, not the paragraph the text resolves to.
 		it('renders assistant message with left alignment', async () => {
 			render(ThreadContent, { threadItems: [mockMessages[1]] })
 
-			const message = page.getByText('Hi there!')
-			const element = await message.element()
+			const element = await page.getByText('Hi there!').element()
 
-			expect(element.className).toContain('mr-auto')
+			expect(element.closest('div')?.className).toContain('mr-auto')
 		})
 
-		it('applies assistant-specific rounded styling', async () => {
+		it('applies assistant-specific foreground styling', async () => {
 			render(ThreadContent, { threadItems: [mockMessages[1]] })
 
-			const message = page.getByText('Hi there!')
-			const element = await message.element()
+			const element = await page.getByText('Hi there!').element()
 
-			expect(element.className).toContain('mr-auto')
+			expect(element.closest('div')?.className).toContain('text-foreground/90')
 		})
 
-		it('applies assistant-specific background styling', async () => {
+		it('applies spacing to assistant messages', async () => {
 			render(ThreadContent, { threadItems: [mockMessages[1]] })
 
-			const message = page.getByText('Hi there!')
-			const element = await message.element()
+			const element = await page.getByText('Hi there!').element()
 
-			expect(element.className).toContain('text-foreground/90')
-		})
-
-		it('applies border styling to assistant messages', async () => {
-			render(ThreadContent, { threadItems: [mockMessages[1]] })
-
-			const message = page.getByText('Hi there!')
-			const element = await message.element()
-
-			expect(element.className).toContain('mb-4')
+			expect(element.closest('div')?.className).toContain('mb-4')
 		})
 
 		it('renders multiple assistant messages', async () => {
@@ -189,9 +184,11 @@ describe('ThreadContent', () => {
 				]
 			})
 
-			const message = await page.getByText('hel', { exact: true }).element()
+			const element = await page.getByText('hel', { exact: true }).element()
 
-			expect(message.querySelector('.animate-pulse')).not.toBeNull()
+			expect(
+				element.closest('div')?.querySelector('.animate-pulse')
+			).not.toBeNull()
 		})
 
 		it('renders a settled assistant message without the caret', async () => {
@@ -201,9 +198,9 @@ describe('ThreadContent', () => {
 				]
 			})
 
-			const message = await page.getByText('hello').element()
+			const element = await page.getByText('hello').element()
 
-			expect(message.querySelector('.animate-pulse')).toBeNull()
+			expect(element.closest('div')?.querySelector('.animate-pulse')).toBeNull()
 		})
 	})
 
@@ -229,13 +226,16 @@ describe('ThreadContent', () => {
 			expect(element.className).toContain('max-w-[75%]')
 		})
 
-		it('handles multi-line messages', async () => {
-			const multilineContent = 'Line 1\nLine 2\nLine 3'
+		it('renders multi-line messages line by line', async () => {
 			render(ThreadContent, {
-				threadItems: [{ id: '1', role: 'assistant', content: multilineContent }]
+				threadItems: [
+					{ id: '1', role: 'assistant', content: 'Line 1\nLine 2\nLine 3' }
+				]
 			})
 
-			await expect.element(page.getByText(multilineContent)).toBeVisible()
+			await expect.element(page.getByText('Line 1')).toBeVisible()
+			await expect.element(page.getByText('Line 2')).toBeVisible()
+			await expect.element(page.getByText('Line 3')).toBeVisible()
 		})
 
 		it('handles very long words without breaking layout', async () => {
@@ -307,16 +307,18 @@ describe('ThreadContent', () => {
 				.toBeVisible()
 		})
 
-		it('renders markdown-like syntax as plain text', async () => {
+		it('renders markdown emphasis as real elements', async () => {
 			render(ThreadContent, {
 				threadItems: [
 					{ id: '1', role: 'assistant', content: '**bold** _italic_ `code`' }
 				]
 			})
 
-			await expect
-				.element(page.getByText('**bold** _italic_ `code`'))
-				.toBeVisible()
+			await expect.element(page.getByText('bold')).toBeVisible()
+			const bold = await page.getByText('bold').element()
+			expect(bold.tagName).toBe('STRONG')
+			const code = await page.getByText('code').element()
+			expect(code.tagName).toBe('CODE')
 		})
 	})
 
@@ -331,6 +333,111 @@ describe('ThreadContent', () => {
 			expect(() => {
 				render(ThreadContent, { threadItems: [] })
 			}).not.toThrow()
+		})
+	})
+
+	describe('Assistant markdown', () => {
+		it('renders a markdown heading as a real heading element', async () => {
+			render(ThreadContent, {
+				threadItems: [
+					{ id: '1', role: 'assistant', content: '## Section title' }
+				]
+			})
+
+			await expect
+				.element(page.getByRole('heading', { name: 'Section title' }))
+				.toBeVisible()
+		})
+
+		it('renders a fenced code block as preformatted code', async () => {
+			render(ThreadContent, {
+				threadItems: [
+					{
+						id: '1',
+						role: 'assistant',
+						content: '```go\nfmt.Println("hi")\n```'
+					}
+				]
+			})
+
+			await expect.element(page.getByText('fmt.Println("hi")')).toBeVisible()
+			const element = await page.getByText('fmt.Println("hi")').element()
+			expect(element.closest('pre')).not.toBeNull()
+		})
+
+		it('does not survive a script tag in model output', async () => {
+			render(ThreadContent, {
+				threadItems: [
+					{
+						id: '1',
+						role: 'assistant',
+						content: 'ok <script>window.pwned=1</script>'
+					}
+				]
+			})
+
+			await expect.element(page.getByText('ok')).toBeVisible()
+			const container = (await page.getByText('ok').element()).closest('div')
+			expect(container?.querySelectorAll('script')).toHaveLength(0)
+		})
+	})
+
+	describe('Tool entries', () => {
+		it('renders a persisted tool row as a single dimmed line that expands', async () => {
+			render(ThreadContent, {
+				threadItems: [
+					{
+						id: 't1',
+						role: 'tool',
+						content:
+							'{"name":"web_search","args":{"query":"otters"},"result":"\\"2 hits\\""}'
+					}
+				]
+			})
+
+			await expect.element(page.getByText(/web_search/)).toBeVisible()
+			// Collapsed: the full result stays out of the accessibility tree.
+			expect(page.getByText('2 hits').elements()).toHaveLength(0)
+
+			await page.getByRole('button').click()
+			await expect.element(page.getByText('Args')).toBeVisible()
+			await expect.element(page.getByText(/2 hits/)).toBeVisible()
+		})
+
+		it('renders a live pending tool entry with its pulse dot', async () => {
+			render(ThreadContent, {
+				threadItems: [
+					{
+						id: 'call-1',
+						role: 'tool',
+						content: 'web_search',
+						name: 'web_search',
+						args: '{"query":"otters"}',
+						pending: true
+					}
+				]
+			})
+
+			await expect.element(page.getByText(/web_search/)).toBeVisible()
+			const line = await page.getByRole('button').element()
+			expect(line.querySelector('.animate-pulse')).not.toBeNull()
+		})
+
+		it('tints a failed tool result', async () => {
+			render(ThreadContent, {
+				threadItems: [
+					{
+						id: 't2',
+						role: 'tool',
+						content:
+							'{"name":"web_search","args":{},"result":"","error":"search backend down"}'
+					}
+				]
+			})
+
+			await page.getByRole('button').click()
+			const result = await page.getByText('search backend down').element()
+			expect(result.className).toContain('text-destructive')
 		})
 	})
 })

@@ -72,6 +72,54 @@ describe('live turns', () => {
 		expect(live.messages[1].content).toBe('read default model: no rows')
 	})
 
+	it('a tool call creates a pending tool entry the result completes', () => {
+		const live = createLiveTurns()
+		live.applyEvent({
+			type: 'tool_call',
+			agent_id: '_superagent',
+			data: { id: 'call-1', name: 'web_search', args: '{"query":"otters"}' }
+		})
+
+		expect(live.messages).toHaveLength(1)
+		expect(live.messages[0]).toMatchObject({
+			id: 'call-1',
+			role: 'tool',
+			name: 'web_search',
+			args: '{"query":"otters"}',
+			pending: true
+		})
+
+		live.applyEvent({
+			type: 'tool_result',
+			agent_id: '_superagent',
+			data: { id: 'call-1', result: '"2 hits"' }
+		})
+
+		expect(live.messages[0]).toMatchObject({
+			pending: false,
+			result: '"2 hits"',
+			error: null
+		})
+	})
+
+	it('a tool error rides the completed entry', () => {
+		const live = createLiveTurns()
+		live.applyEvent({
+			type: 'tool_call',
+			agent_id: '_superagent',
+			data: { id: 'call-9', name: 'web_search', args: '{}' }
+		})
+		live.applyEvent({
+			type: 'tool_result',
+			agent_id: '_superagent',
+			data: { id: 'call-9', result: '', error: 'search backend down' }
+		})
+
+		expect(live.messages[0]).toMatchObject({
+			pending: false,
+			error: 'search backend down'
+		})
+	})
 	it('ignores events that are not part of a turn', () => {
 		const live = createLiveTurns()
 		live.applyEvent({
@@ -121,6 +169,21 @@ describe('live turn settlement', () => {
 			content: 'partial',
 			pending: true
 		})
+	})
+
+	it('settle drops the turn’s tool entries — their ids never match the thread rows', () => {
+		const live = createLiveTurns()
+		live.echoUser('search')
+		live.applyEvent({
+			type: 'tool_call',
+			agent_id: '_superagent',
+			data: { id: 'call-1', name: 'web_search', args: '{}' }
+		})
+		live.applyEvent(message('msg-1', 'found it'))
+
+		live.settleTurn('msg-1', ['search'])
+
+		expect(live.messages).toHaveLength(0)
 	})
 
 	it('settle keeps error bubbles — they are live-only', () => {

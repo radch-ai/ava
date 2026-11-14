@@ -132,6 +132,52 @@ describe('agent socket', () => {
 		])
 	})
 
+	it('decodes tool_call frames with their payload as data', () => {
+		const events: unknown[] = []
+		createAgentSocket('_superagent', (event) =>
+			events.push(event)
+		).requestStatus()
+
+		lastSocket().onmessage?.({
+			data: JSON.stringify({
+				type: 'tool_call',
+				agent_id: '_superagent',
+				data: { id: 'call-1', name: 'web_search', args: '{"query":"otters"}' }
+			})
+		})
+
+		expect(events).toEqual([
+			{
+				type: 'tool_call',
+				agent_id: '_superagent',
+				data: { id: 'call-1', name: 'web_search', args: '{"query":"otters"}' }
+			}
+		])
+	})
+
+	it('decodes tool_result frames with their payload as data', () => {
+		const events: unknown[] = []
+		createAgentSocket('_superagent', (event) =>
+			events.push(event)
+		).requestStatus()
+
+		lastSocket().onmessage?.({
+			data: JSON.stringify({
+				type: 'tool_result',
+				agent_id: '_superagent',
+				data: { id: 'call-1', result: '"2 hits"', error: 'boom' }
+			})
+		})
+
+		expect(events).toEqual([
+			{
+				type: 'tool_result',
+				agent_id: '_superagent',
+				data: { id: 'call-1', result: '"2 hits"', error: 'boom' }
+			}
+		])
+	})
+
 	it('decodes error frames with their payload as data', () => {
 		const events: unknown[] = []
 		createAgentSocket('_superagent', (event) =>

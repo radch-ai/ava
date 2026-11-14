@@ -26,7 +26,9 @@ import type {
 	LaneStatus,
 	MessageChunkEvent,
 	MessageEvent,
-	PromptMessage
+	PromptMessage,
+	ToolCallEvent,
+	ToolResultEvent
 } from '#lib/types/gen/wstypes.gen'
 
 export type { LaneStatus }
@@ -37,6 +39,8 @@ export type AgentSocketEvent =
 	| (Event & { type: 'connected'; data: ConnectedEvent })
 	| (Event & { type: 'lane_status'; data: LaneStatus })
 	| (Event & { type: 'message_chunk'; data: MessageChunkEvent })
+	| (Event & { type: 'tool_call'; data: ToolCallEvent })
+	| (Event & { type: 'tool_result'; data: ToolResultEvent })
 	| (Event & { type: 'message'; data: MessageEvent })
 	| (Event & { type: 'error'; data: ErrorEvent })
 
@@ -92,6 +96,18 @@ function decodeEvent(frame: unknown): AgentSocketEvent | undefined {
 				type: 'message_chunk',
 				agent_id: typed.agent_id as string,
 				data: typed.data as MessageChunkEvent
+			}
+		case 'tool_call':
+			return {
+				type: 'tool_call',
+				agent_id: typed.agent_id as string,
+				data: typed.data as ToolCallEvent
+			}
+		case 'tool_result':
+			return {
+				type: 'tool_result',
+				agent_id: typed.agent_id as string,
+				data: typed.data as ToolResultEvent
 			}
 		case 'message':
 			return {
