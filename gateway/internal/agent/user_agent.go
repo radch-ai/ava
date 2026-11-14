@@ -278,8 +278,9 @@ func (a *UserAgent) enabledTools(ctx context.Context, emitCtx context.Context, e
 }
 
 // processTurn runs one turn: resolve the batch's model selection,
-// query the model, and broadcast the assembled answer — or the
-// failure — to the lane's connections.
+// query the model, and settle the answer — assembled or, when the
+// user stops it, whatever streamed so far — to the lane's
+// connections.
 func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 	if len(messages) == 0 {
 		return
@@ -371,6 +372,10 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 	iterator := runner.Query(queryCtx, input.String())
 	for event, ok := iterator.Next(); ok; event, ok = iterator.Next() {
 		if event.Err != nil {
+			if turnStopped(queryCtx, event.Err) {
+				a.finishInterrupted(emitCtx, msgID, &answer)
+				return
+			}
 			a.logger.Error().Err(event.Err).Str("agent_id", a.agentID).Msg("model query")
 			a.emitError(emitCtx, event.Err.Error())
 			return
@@ -378,15 +383,19 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 		if event.Output == nil || event.Output.MessageOutput == nil {
 			continue
 		}
-		// Tool rounds surface as Role=Tool outputs on the same
-		// stream; only assistant rounds are the answer. Tool
-		// activity has no wire or thread surface yet.
+		// Tool rounds surface as Role=Tool outputs here and are
+		// skipped; wire events and thread rows for them come from the
+		// tool wrappers, not this loop.
 		out := event.Output.MessageOutput
 		if out.Role != schema.Assistant {
 			continue
 		}
 		if out.MessageStream != nil {
 			if err := a.streamAnswer(emitCtx, out.MessageStream, msgID, &answer); err != nil {
+				if turnStopped(queryCtx, err) {
+					a.finishInterrupted(emitCtx, msgID, &answer)
+					return
+				}
 				a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("model stream")
 				a.emitError(emitCtx, err.Error())
 				return
@@ -397,19 +406,49 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 			answer.WriteString(out.Message.Content)
 		}
 	}
-	// The answer persists before the wire event: the UI's settle
-	// refetch cannot outrun the write. Success only — a failed turn
+	// The answer settles: persist first so the UI's refetch cannot
+	// outrun the write, then broadcast. Success only — a failed turn
 	// leaves the drain-written user row standing alone.
+	a.settleTurn(emitCtx, msgID, answer.String())
+}
+
+// stoppedTurnMessage is the wire text for a turn the user stopped
+// before it said anything.
+const stoppedTurnMessage = "turn stopped"
+
+// turnStopped separates a user stop from a real failure: the turn's
+// context has exactly one cancel source (Interrupt), so a canceled
+// context plus a context.Canceled error means the turn was stopped,
+// not broken.
+func turnStopped(queryCtx context.Context, err error) bool {
+	return queryCtx.Err() != nil && errors.Is(err, context.Canceled)
+}
+
+// finishInterrupted ends a user-stopped turn: whatever streamed
+// settles like a completed answer — history keeps it — and an empty
+// stop reports a human message instead of a raw cancellation error.
+func (a *UserAgent) finishInterrupted(emitCtx context.Context, msgID string, answer *strings.Builder) {
+	if answer.Len() > 0 {
+		a.settleTurn(emitCtx, msgID, answer.String())
+		return
+	}
+	a.emitError(emitCtx, stoppedTurnMessage)
+}
+
+// settleTurn persists the assistant row, then broadcasts the final
+// message event — the persist-before-emit ordering is what keeps the
+// UI's settle refetch from racing the write.
+func (a *UserAgent) settleTurn(emitCtx context.Context, msgID, content string) {
 	if a.persistTurn != nil {
 		if err := a.persistTurn(emitCtx, a.agentID,
-			[]apitypes.ThreadMessageDraft{{Role: apitypes.ThreadRoleAssistant, Content: answer.String()}}); err != nil {
+			[]apitypes.ThreadMessageDraft{{Role: apitypes.ThreadRoleAssistant, Content: content}}); err != nil {
 			a.logger.Warn().Err(err).Str("agent_id", a.agentID).Msg("persist assistant message")
 		}
 	}
 	_ = a.conns.WriteJSON(emitCtx, wstypes.Event{
 		Type:    wstypes.EventTypeMessage,
 		AgentID: a.agentID,
-		Data:    wstypes.MessageEvent{ID: msgID, Content: answer.String()},
+		Data:    wstypes.MessageEvent{ID: msgID, Content: content},
 	})
 }
 

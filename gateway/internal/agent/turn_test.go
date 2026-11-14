@@ -298,6 +298,130 @@ func TestTurnInterruptCancelsQuery(t *testing.T) {
 	require.Equal(t, "after interrupt", p.Content)
 }
 
+func TestInterruptMidStreamSettlesPartial(t *testing.T) {
+	flushed := make(chan struct{})
+	release := make(chan struct{})
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		_, _ = w.Write([]byte(sseChunk("partial ")))
+		flusher.Flush()
+		_, _ = w.Write([]byte(sseChunk("answer")))
+		flusher.Flush()
+		close(flushed)
+		// Hold the stream open: the user stops mid-answer.
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer llm.Close()
+	defer close(release)
+
+	sink := &recordingSink{}
+	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+		&agent.UserAgentManagerOptions{
+			ResolveModel: fixedResolver(llm.URL),
+			PersistTurn:  sink.persist,
+		})
+
+	c, sc := wsPair(t)
+
+	ok := mgr.SubmitMsg(context.Background(), "agent-stop", "conn-1", sc,
+		agent.Message{ID: "msg-1", Content: "hi"})
+	require.True(t, ok)
+
+	// Wait until the streamed partial reached this client — a stop
+	// only preserves what the user has actually seen.
+	var got strings.Builder
+	for got.String() != "partial answer" {
+		ev := readEvent(t, c)
+		switch ev.Type {
+		case wstypes.EventTypeLaneStatus:
+			continue
+		case wstypes.EventTypeMessageChunk:
+			p := eventPayload[wstypes.MessageChunkEvent](t, ev)
+			require.Equal(t, "msg-1", p.ID)
+			got.WriteString(p.Delta)
+		default:
+			t.Fatalf("unexpected event %v", ev.Type)
+		}
+	}
+
+	ag := mgr.Get("agent-stop")
+	require.NotNil(t, ag)
+	ag.Interrupt()
+
+	// A deliberate stop keeps what was said: the partial settles as
+	// the final message — no error event.
+	_, p := readUntilMessage(t, c)
+	require.Equal(t, "msg-1", p.ID)
+	require.Equal(t, "partial answer", p.Content)
+
+	// The turn bracket closes and nothing else follows.
+	last := readEvent(t, c)
+	require.Equal(t, wstypes.EventTypeLaneStatus, last.Type)
+	ended := eventPayload[wstypes.LaneStatus](t, last)
+	require.False(t, ended.Working)
+	if ev, ok := readEventMaybe(t, c, 250*time.Millisecond); ok {
+		t.Fatalf("unexpected event after stop: %v", ev.Type)
+	}
+
+	calls := sink.recorded()
+	require.Len(t, calls, 2)
+	require.Equal(t,
+		[]apitypes.ThreadMessageDraft{{Role: apitypes.ThreadRoleAssistant, Content: "partial answer"}},
+		calls[1])
+}
+
+func TestInterruptEmptyAnswerReportsStopped(t *testing.T) {
+	arrived := make(chan struct{})
+	release := make(chan struct{})
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(arrived)
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer llm.Close()
+	defer close(release)
+
+	sink := &recordingSink{}
+	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+		&agent.UserAgentManagerOptions{
+			ResolveModel: fixedResolver(llm.URL),
+			PersistTurn:  sink.persist,
+		})
+
+	c, sc := wsPair(t)
+
+	ok := mgr.SubmitMsg(context.Background(), "agent-stop2", "conn-1", sc,
+		agent.Message{ID: "msg-1", Content: "hi"})
+	require.True(t, ok)
+
+	select {
+	case <-arrived:
+	case <-time.After(5 * time.Second):
+		t.Fatal("query never reached the model")
+	}
+
+	ag := mgr.Get("agent-stop2")
+	require.NotNil(t, ag)
+	ag.Interrupt()
+
+	// Nothing was said, so the stop reports as a human message, not a
+	// raw cancellation error.
+	ev := readUntilError(t, c)
+	p := eventPayload[wstypes.ErrorEvent](t, ev)
+	require.Equal(t, "turn stopped", p.Message)
+
+	// The user row stands alone — no assistant draft for an empty stop.
+	calls := sink.recorded()
+	require.Len(t, calls, 1)
+	require.Equal(t, apitypes.ThreadRoleUser, calls[0][0].Role)
+}
+
 func TestLaneOutlivesSubmittingContext(t *testing.T) {
 	llm := fakeOpenAI(t, "survivor")
 	defer llm.Close()
