@@ -16,6 +16,14 @@ type ThreadMessage struct {
 	CreatedAt string     `json:"createdAt"`
 }
 
+// ThreadMessageDraft is a message queued for the thread. The sink
+// mints the id and timestamp when it lands — they are storage
+// concerns, not part of the draft.
+type ThreadMessageDraft struct {
+	Role    ThreadRole `json:"role"`
+	Content string     `json:"content"`
+}
+
 // ThreadPage is one newest-first page of the thread. NextCursor names
 // the page's oldest item and is null on the last page.
 type ThreadPage struct {

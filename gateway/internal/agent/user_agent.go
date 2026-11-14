@@ -37,6 +37,11 @@ type Message struct {
 // adapter.
 type ModelResolver = func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error)
 
+// TurnSink appends a turn's messages to the agent's thread. An alias
+// of the backend.AppendThreadMessages signature, so the bound
+// function needs no adapter.
+type TurnSink = func(ctx context.Context, agentID string, msgs []apitypes.ThreadMessageDraft) error
+
 type UserAgentOptions struct {
 	AgentID     string
 	Model       *apitypes.ModelEntry
@@ -46,7 +51,10 @@ type UserAgentOptions struct {
 	// ResolveModel maps a selection to a callable endpoint for
 	// every lane; bound by the gateway at boot.
 	ResolveModel ModelResolver
-	Logger       zerolog.Logger
+	// PersistTurn appends the turn's messages to the thread; bound
+	// by the gateway at boot.
+	PersistTurn TurnSink
+	Logger      zerolog.Logger
 }
 
 type UserAgent struct {
@@ -67,6 +75,7 @@ type UserAgent struct {
 	logger      zerolog.Logger
 
 	resolveModel ModelResolver
+	persistTurn  TurnSink
 
 	model *apitypes.ModelEntry
 }
@@ -96,6 +105,7 @@ func newUserAgent(ctx context.Context, opts UserAgentOptions) *UserAgent {
 		idleTimeout:  opts.IdleTimeout,
 		logger:       opts.Logger,
 		resolveModel: opts.ResolveModel,
+		persistTurn:  opts.PersistTurn,
 
 		onExit: opts.OnExit,
 	}
@@ -242,6 +252,18 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 	a.mu.Lock()
 	resolveModel := a.resolveModel
 	a.mu.Unlock()
+
+	// The user's words persist before anything can fail: every
+	// failure mode below keeps the prompt in the thread, and a crash
+	// before the answer lands leaves an orphan user row — a failed
+	// turn reads the same either way.
+	if a.persistTurn != nil {
+		if err := a.persistTurn(emitCtx, a.agentID,
+			[]apitypes.ThreadMessageDraft{{Role: apitypes.ThreadRoleUser, Content: input.String()}}); err != nil {
+			a.logger.Warn().Err(err).Str("agent_id", a.agentID).Msg("persist user message")
+		}
+	}
+
 	if resolveModel == nil {
 		a.logger.Error().Str("agent_id", a.agentID).Msg("lane has no model resolver")
 		a.emitError(emitCtx, "no model resolver configured")
@@ -294,6 +316,15 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 		}
 		if out.Message != nil {
 			answer.WriteString(out.Message.Content)
+		}
+	}
+	// The answer persists before the wire event: the UI's settle
+	// refetch cannot outrun the write. Success only — a failed turn
+	// leaves the drain-written user row standing alone.
+	if a.persistTurn != nil {
+		if err := a.persistTurn(emitCtx, a.agentID,
+			[]apitypes.ThreadMessageDraft{{Role: apitypes.ThreadRoleAssistant, Content: answer.String()}}); err != nil {
+			a.logger.Warn().Err(err).Str("agent_id", a.agentID).Msg("persist assistant message")
 		}
 	}
 	_ = a.conns.WriteJSON(emitCtx, wstypes.Event{

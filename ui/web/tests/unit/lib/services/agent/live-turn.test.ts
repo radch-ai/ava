@@ -87,3 +87,51 @@ describe('live turns', () => {
 		expect(live.messages).toHaveLength(0)
 	})
 })
+
+describe('live turn settlement', () => {
+	it('settle drops the settled assistant and its echoed prompt', () => {
+		const live = createLiveTurns()
+		live.echoUser('hi')
+		live.applyEvent(chunk('msg-1', 'ans'))
+		live.settleTurn('msg-1', ['hi'])
+
+		expect(live.messages).toHaveLength(0)
+	})
+
+	it('settle drops its entries but keeps echoes the thread does not carry yet', () => {
+		const live = createLiveTurns()
+		live.echoUser('settled prompt')
+		live.applyEvent(chunk('msg-1', 'ans'))
+		live.applyEvent(message('msg-1', 'ans settled'))
+		live.echoUser('still running')
+		live.applyEvent(chunk('msg-2', 'partial'))
+
+		live.settleTurn('msg-1', ['settled prompt'])
+
+		// The settled turn lives in the stored thread now; the running
+		// turn — echo and partial answer — stays live.
+		expect(live.messages).toHaveLength(2)
+		expect(live.messages[0]).toMatchObject({
+			role: 'user',
+			content: 'still running'
+		})
+		expect(live.messages[1]).toMatchObject({
+			role: 'assistant',
+			id: 'msg-2',
+			content: 'partial',
+			pending: true
+		})
+	})
+
+	it('settle keeps error bubbles — they are live-only', () => {
+		const live = createLiveTurns()
+		live.echoUser('hi')
+		live.applyEvent(errorEvent('read default model: no rows'))
+		live.applyEvent(message('msg-1', 'answer'))
+
+		live.settleTurn('msg-1', ['hi'])
+
+		expect(live.messages).toHaveLength(1)
+		expect(live.messages[0].role).toBe('error')
+	})
+})

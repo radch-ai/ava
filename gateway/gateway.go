@@ -42,6 +42,10 @@ type Config struct {
 	// to backend.ResolveModel by the binary at boot. Zero keeps the
 	// lanes unresolved: turns fail closed.
 	ResolveModel agent.ModelResolver
+	// PersistTurn appends a turn's messages to the agent's thread —
+	// bound to backend.AppendThreadMessages by the binary at boot.
+	// Zero keeps turns ephemeral.
+	PersistTurn agent.TurnSink
 }
 
 // New builds the gateway WebSocket handler. The gateway is a single
@@ -49,14 +53,17 @@ type Config struct {
 func New(cfg *Config, logger zerolog.Logger) (http.Handler, error) {
 	interval := pingInterval
 	resolve := agent.ModelResolver(nil)
+	var persist agent.TurnSink
 	if cfg != nil {
 		if cfg.PingInterval > 0 {
 			interval = cfg.PingInterval
 		}
 		resolve = cfg.ResolveModel
+		persist = cfg.PersistTurn
 	}
 	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{
 		ResolveModel: resolve,
+		PersistTurn:  persist,
 	})
 	return handleWS(interval, logger, mgr), nil
 }

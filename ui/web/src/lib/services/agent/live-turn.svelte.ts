@@ -69,11 +69,24 @@ export function createLiveTurns() {
 				break
 		}
 	}
+
+	/** Settles a finished turn: its rows are in the stored thread now,
+	 * so the live copies go — the settled assistant entry and every
+	 * echoed prompt the refetched page carries. Echoes the page does
+	 * not carry yet belong to turns still running; they stay. Error
+	 * bubbles are live-only and survive. */
+	function settleTurn(id: string, persistedPrompts: string[]) {
+		const persisted = new Set(persistedPrompts)
+		messages = messages.filter(
+			(m) => m.id !== id && !(m.role === 'user' && persisted.has(m.content))
+		)
+	}
 	return {
 		get messages() {
 			return messages
 		},
 		echoUser,
-		applyEvent
+		applyEvent,
+		settleTurn
 	}
 }

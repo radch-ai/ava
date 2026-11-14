@@ -13,6 +13,9 @@ type UserAgentManagerOptions struct {
 	// ResolveModel maps a selection to a callable endpoint for
 	// every lane; bound by the gateway at boot.
 	ResolveModel ModelResolver
+	// PersistTurn appends turn messages to the thread for every
+	// lane; bound by the gateway at boot.
+	PersistTurn TurnSink
 }
 
 // UserAgentManager manages agent lanes with thread-safe access.
@@ -21,6 +24,7 @@ type UserAgentManager struct {
 	lanes        sync.Map // map[agentID]*agentLane
 	logger       zerolog.Logger
 	resolveModel ModelResolver
+	persistTurn  TurnSink
 }
 
 // NewUserAgentManager creates a new UserAgentManager.
@@ -30,6 +34,7 @@ func NewUserAgentManager(logger zerolog.Logger, opts *UserAgentManagerOptions) *
 	}
 	if opts != nil {
 		m.resolveModel = opts.ResolveModel
+		m.persistTurn = opts.PersistTurn
 	}
 	return m
 }
@@ -73,6 +78,7 @@ func (m *UserAgentManager) SubmitMsg(ctx context.Context, agentID, connID string
 				Model:        msg.Model,
 				MsgCh:        lane.msgCh,
 				ResolveModel: m.resolveModel,
+				PersistTurn:  m.persistTurn,
 				Logger:       m.logger,
 				OnExit: func() {
 					close(lane.done)
@@ -86,6 +92,16 @@ func (m *UserAgentManager) SubmitMsg(ctx context.Context, agentID, connID string
 	// All callers block here until lane.agent is initialized.
 	lane.agentWg.Wait()
 
+	// A lane whose agent already exited — the instant between
+	// OnExit closing done and the map delete — must not swallow the
+	// message into a channel nobody will drain.
+	select {
+	case <-lane.done:
+		m.logger.Warn().Str("agent_id", agentID).Msg("submit dropped: lane exited")
+		return false
+	default:
+	}
+
 	// Add connection to agent's broadcaster and update model
 	lane.agent.addConn(connID, conn)
 	lane.agent.updateModel(msg.Model)
@@ -93,6 +109,7 @@ func (m *UserAgentManager) SubmitMsg(ctx context.Context, agentID, connID string
 	// Send the message (also checks if agent exited)
 	select {
 	case <-lane.done:
+		m.logger.Warn().Str("agent_id", agentID).Msg("submit dropped: lane exited")
 		return false
 	case lane.msgCh <- msg:
 		return true

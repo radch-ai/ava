@@ -125,11 +125,36 @@
 	}
 
 	// Turn events fold into the live conversation tail; lane state
-	// mirrors into the strip.
+	// mirrors into the strip. A settled turn is in the stored thread
+	// now — the sink wrote before the settle event — so its refetch
+	// replaces the first page (keeping any loaded older ones) and the
+	// live copies it covers are dropped.
 	function handleSocketEvent(event: AgentSocketEvent) {
 		liveTurns.applyEvent(event)
 		if (event.type === 'lane_status') {
 			laneStatus = event.data
+		}
+		if (event.type === 'message') {
+			void reconcileTurn(event.data.id)
+		}
+	}
+
+	async function reconcileTurn(id: string) {
+		try {
+			const fresh = await getAgentThread(data.agent.id, 20)
+			const loaded = thread?.items ?? []
+			const freshIds = new Set(fresh.items.map((m) => m.id))
+			thread = {
+				items: [...fresh.items, ...loaded.filter((m) => !freshIds.has(m.id))],
+				nextCursor: fresh.nextCursor
+			}
+			liveTurns.settleTurn(
+				id,
+				fresh.items.filter((m) => m.role === 'user').map((m) => m.content)
+			)
+		} catch {
+			// Refetch failed: the live tail stays the truth until the
+			// next settle retries.
 		}
 	}
 

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -296,4 +297,209 @@ func TestLaneOutlivesSubmittingContext(t *testing.T) {
 	_, _ = readUntilMessage(t, c)
 
 	require.NotNil(t, mgr.Get("agent-outlive"))
+}
+
+// readEventMaybe reads one event, or reports false when the wait
+// elapsed first — the "nothing arrived" probe.
+func readEventMaybe(t *testing.T, c *websocket.Conn, wait time.Duration) (wstypes.Event, bool) {
+	t.Helper()
+	if wait <= 0 {
+		return wstypes.Event{}, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	var ev wstypes.Event
+	if err := wsjson.Read(ctx, c, &ev); err != nil {
+		return wstypes.Event{}, false
+	}
+	return ev, true
+}
+
+// recordingSink captures PersistTurn calls. With a handshake armed it
+// parks the assistant write so tests can pin the write-then-emit
+// ordering; fail makes every write fail like a sick database.
+type recordingSink struct {
+	mu          sync.Mutex
+	calls       [][]apitypes.ThreadMessageDraft
+	fail        error
+	parked      bool
+	blocked     chan struct{} // closed when the assistant write starts
+	release     chan struct{} // closed by unblock to let the write finish
+	releaseOnce sync.Once
+}
+
+func (s *recordingSink) persist(ctx context.Context, agentID string, msgs []apitypes.ThreadMessageDraft) error {
+	s.mu.Lock()
+	s.calls = append(s.calls, msgs)
+	fail := s.fail
+	// Park only the first assistant draft; later turns' drafts flow
+	// through.
+	park := s.blocked != nil && msgs[0].Role == apitypes.ThreadRoleAssistant && !s.parked
+	if park {
+		s.parked = true
+	}
+	s.mu.Unlock()
+
+	if park {
+		close(s.blocked)
+		<-s.release
+	}
+	return fail
+}
+
+// unblock lets a parked write finish; safe whether or not the write
+// ever parked, and safe to call twice.
+func (s *recordingSink) unblock() {
+	if s.release == nil {
+		return
+	}
+	s.releaseOnce.Do(func() { close(s.release) })
+}
+
+func (s *recordingSink) recorded() [][]apitypes.ThreadMessageDraft {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([][]apitypes.ThreadMessageDraft, len(s.calls))
+	copy(out, s.calls)
+	return out
+}
+
+func TestTurnPersistsUserThenAssistantDrafts(t *testing.T) {
+	llm := fakeOpenAI(t, "persisted answer")
+	defer llm.Close()
+
+	sink := &recordingSink{}
+	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+		&agent.UserAgentManagerOptions{
+			ResolveModel: fixedResolver(llm.URL),
+			PersistTurn:  sink.persist,
+		})
+
+	c, sc := wsPair(t)
+
+	ok := mgr.SubmitMsg(context.Background(), "agent-persist", "conn-1", sc,
+		agent.Message{ID: "msg-1", Content: "hello"})
+	require.True(t, ok)
+	// The second prompt queues behind the first and drains as one
+	// batch: one user row, exactly what the model saw.
+	ok = mgr.SubmitMsg(context.Background(), "agent-persist", "conn-1", sc,
+		agent.Message{ID: "msg-2", Content: "again"})
+	require.True(t, ok)
+
+	_, p := readUntilMessage(t, c)
+	require.Equal(t, "msg-1", p.ID)
+	require.Equal(t, "persisted answer", p.Content)
+
+	calls := sink.recorded()
+	require.Len(t, calls, 2)
+	require.Equal(t,
+		[]apitypes.ThreadMessageDraft{{Role: apitypes.ThreadRoleUser, Content: "hello\nagain"}},
+		calls[0])
+	require.Equal(t,
+		[]apitypes.ThreadMessageDraft{{Role: apitypes.ThreadRoleAssistant, Content: "persisted answer"}},
+		calls[1])
+}
+
+func TestTurnPersistsAssistantBeforeFinalEvent(t *testing.T) {
+	llm := fakeOpenAI(t, "ordered")
+	defer llm.Close()
+
+	sink := &recordingSink{blocked: make(chan struct{}), release: make(chan struct{})}
+	defer sink.unblock() // a write parked past the body drains at teardown
+	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+		&agent.UserAgentManagerOptions{
+			ResolveModel: fixedResolver(llm.URL),
+			PersistTurn:  sink.persist,
+		})
+
+	c, sc := wsPair(t)
+
+	ok := mgr.SubmitMsg(context.Background(), "agent-order", "conn-1", sc,
+		agent.Message{ID: "msg-1", Content: "hi"})
+	require.True(t, ok)
+
+	select {
+	case <-sink.blocked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("assistant draft never reached the sink")
+	}
+
+	// A passive second connection joins the broadcaster; its only
+	// possible delivery while the write is parked is the final
+	// message, so it doubles as the ordering probe. (A short-timeout
+	// read closes a coder/websocket conn — the probe conn is
+	// disposable on purpose; the submitting conn is never touched.)
+	_, probe := wsPair(t)
+	ok = mgr.SubmitMsg(context.Background(), "agent-order", "conn-2", probe,
+		agent.Message{ID: "msg-2", Content: "queued"})
+	require.True(t, ok)
+
+	deadline := time.Now().Add(150 * time.Millisecond)
+	for {
+		ev, arrived := readEventMaybe(t, probe, time.Until(deadline))
+		if !arrived {
+			break
+		}
+		require.NotEqual(t, wstypes.EventTypeMessage, ev.Type,
+			"final message outran the assistant write")
+	}
+
+	sink.unblock()
+	_, p := readUntilMessage(t, c)
+	require.Equal(t, "ordered", p.Content)
+}
+
+func TestTurnErrorPersistsUserOnly(t *testing.T) {
+	llm := fakeOpenAI(t, "never reached")
+	defer llm.Close()
+
+	sink := &recordingSink{}
+	resolver := func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
+		return backend.ResolvedModel{}, errors.New("read provider p-1: no rows")
+	}
+	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+		&agent.UserAgentManagerOptions{
+			ResolveModel: resolver,
+			PersistTurn:  sink.persist,
+		})
+
+	c, sc := wsPair(t)
+
+	ok := mgr.SubmitMsg(context.Background(), "agent-errrow", "conn-1", sc,
+		agent.Message{ID: "msg-1", Content: "hello"})
+	require.True(t, ok)
+
+	ev := readEvent(t, c)
+	require.Equal(t, wstypes.EventTypeError, ev.Type)
+
+	calls := sink.recorded()
+	require.Len(t, calls, 1)
+	require.Equal(t,
+		[]apitypes.ThreadMessageDraft{{Role: apitypes.ThreadRoleUser, Content: "hello"}},
+		calls[0])
+}
+
+func TestTurnSinkFailureDoesNotFailTurn(t *testing.T) {
+	llm := fakeOpenAI(t, "still answers")
+	defer llm.Close()
+
+	sink := &recordingSink{fail: errors.New("db down")}
+	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+		&agent.UserAgentManagerOptions{
+			ResolveModel: fixedResolver(llm.URL),
+			PersistTurn:  sink.persist,
+		})
+
+	c, sc := wsPair(t)
+
+	ok := mgr.SubmitMsg(context.Background(), "agent-sinkfail", "conn-1", sc,
+		agent.Message{ID: "msg-1", Content: "hi"})
+	require.True(t, ok)
+
+	_, p := readUntilMessage(t, c)
+	require.Equal(t, "still answers", p.Content)
+
+	// A sick sink stays a server-side log line, never a wire error.
+	_, arrived := readEventMaybe(t, c, 200*time.Millisecond)
+	require.False(t, arrived, "sink failure must not emit a wire error")
 }

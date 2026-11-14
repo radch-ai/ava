@@ -585,6 +585,58 @@ describe('AgentPage (superagent branch)', () => {
 			await expect.element(page.getByText('hello streamed world')).toBeVisible()
 		})
 
+		it('reconciles the stored thread when a turn settles', async () => {
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => ({
+					items: [
+						{
+							id: 'stored-a',
+							role: 'assistant',
+							content: 'stored answer',
+							createdAt: '2026-01-01T00:00:01.000Z'
+						},
+						{
+							id: 'stored-u',
+							role: 'user',
+							content: 'recon me',
+							createdAt: '2026-01-01T00:00:00.000Z'
+						}
+					],
+					nextCursor: null
+				})
+			} as ApiResponsePromise)
+
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'recon me{Enter}')
+			await expect.element(page.getByText('recon me')).toBeVisible()
+
+			capturedOnEvent?.({
+				type: 'message_chunk',
+				agent_id: '_superagent',
+				data: { id: 'msg-1', delta: 'stored ' }
+			})
+			capturedOnEvent?.({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'msg-1', content: 'stored answer' }
+			})
+
+			// The settle refetch pulls the persisted turn.
+			await vi.waitFor(() => {
+				expect(vi.mocked(api.get)).toHaveBeenCalledWith(
+					expect.stringContaining('agent/_superagent/thread')
+				)
+			})
+			// The stored page renders the turn; the live copies are
+			// gone — nothing appears twice.
+			await vi.waitFor(() => {
+				expect(page.getByText('recon me').elements()).toHaveLength(1)
+				expect(page.getByText('stored answer').elements()).toHaveLength(1)
+			})
+		})
+
 		it('renders a failed turn as an inline error message', async () => {
 			render(AgentPageTestWrapper, { data: createMockData() })
 			const textarea = page.getByPlaceholder('Enter your query!')

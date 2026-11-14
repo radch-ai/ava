@@ -16,6 +16,11 @@ WHERE agent_id = ?
 ORDER BY created_at DESC, id DESC
 LIMIT ?;
 
+-- name: InsertThreadMessage :exec
+-- One turn message; the caller mints the id and the ms timestamp.
+INSERT INTO thread_messages (id, agent_id, role, content, created_at)
+VALUES (?, ?, ?, ?, ?);
+
 -- name: GetThreadMessage :one
 -- Cursor validation: the id must name one of this agent's messages.
 SELECT id, created_at
