@@ -42,6 +42,12 @@ type ModelResolver = func(ctx context.Context, entry *apitypes.ModelEntry) (back
 // function needs no adapter.
 type TurnSink = func(ctx context.Context, agentID string, msgs []apitypes.ThreadMessageDraft) error
 
+// AgentConfigSource reads an agent's editable config — the prompt
+// texts and tool list a turn needs. An alias of the
+// backend.GetAgentConfig signature, so the bound function needs no
+// adapter.
+type AgentConfigSource = func(ctx context.Context, agentID string) (*apitypes.AgentConfig, error)
+
 type UserAgentOptions struct {
 	AgentID     string
 	Model       *apitypes.ModelEntry
@@ -54,7 +60,10 @@ type UserAgentOptions struct {
 	// PersistTurn appends the turn's messages to the thread; bound
 	// by the gateway at boot.
 	PersistTurn TurnSink
-	Logger      zerolog.Logger
+	// GetAgentConfig reads the agent's config for each turn's
+	// prompt; bound by the gateway at boot.
+	GetAgentConfig AgentConfigSource
+	Logger         zerolog.Logger
 }
 
 type UserAgent struct {
@@ -74,8 +83,9 @@ type UserAgent struct {
 	onExit      func()
 	logger      zerolog.Logger
 
-	resolveModel ModelResolver
-	persistTurn  TurnSink
+	resolveModel   ModelResolver
+	persistTurn    TurnSink
+	getAgentConfig AgentConfigSource
 
 	model *apitypes.ModelEntry
 }
@@ -99,13 +109,14 @@ func newUserAgent(ctx context.Context, opts UserAgentOptions) *UserAgent {
 		ctx:     ctx,
 		agentID: opts.AgentID,
 
-		conns:        wsconn.NewBroadcaster(opts.Logger),
-		model:        opts.Model,
-		MsgCh:        opts.MsgCh,
-		idleTimeout:  opts.IdleTimeout,
-		logger:       opts.Logger,
-		resolveModel: opts.ResolveModel,
-		persistTurn:  opts.PersistTurn,
+		conns:          wsconn.NewBroadcaster(opts.Logger),
+		model:          opts.Model,
+		MsgCh:          opts.MsgCh,
+		idleTimeout:    opts.IdleTimeout,
+		logger:         opts.Logger,
+		resolveModel:   opts.ResolveModel,
+		persistTurn:    opts.PersistTurn,
+		getAgentConfig: opts.GetAgentConfig,
 
 		onExit: opts.OnExit,
 	}
@@ -281,7 +292,21 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 		a.emitError(emitCtx, err.Error())
 		return
 	}
-	einoAgent, err := buildEinoAgent(queryCtx, a.agentID, chatModel)
+	// The persona is fetched per turn: config edits apply to the next
+	// prompt without lane churn. A missing config or a failed read
+	// fails open — a persona-less answer beats none, unlike the
+	// resolver, where no model means no answer at all.
+	instruction := ""
+	if a.getAgentConfig != nil {
+		cfg, err := a.getAgentConfig(queryCtx, a.agentID)
+		if err != nil {
+			a.logger.Warn().Err(err).Str("agent_id", a.agentID).
+				Msg("fetch agent config; turn proceeds without persona")
+		} else {
+			instruction = BuildSystemPrompt(cfg)
+		}
+	}
+	einoAgent, err := buildEinoAgent(queryCtx, a.agentID, instruction, chatModel)
 	if err != nil {
 		a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("build agent")
 		a.emitError(emitCtx, err.Error())

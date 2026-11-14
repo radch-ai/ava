@@ -16,15 +16,19 @@ type UserAgentManagerOptions struct {
 	// PersistTurn appends turn messages to the thread for every
 	// lane; bound by the gateway at boot.
 	PersistTurn TurnSink
+	// GetAgentConfig reads an agent's config for each lane's
+	// prompts; bound by the gateway at boot.
+	GetAgentConfig AgentConfigSource
 }
 
 // UserAgentManager manages agent lanes with thread-safe access.
 // Uses sync.Map for lock-free reads.
 type UserAgentManager struct {
-	lanes        sync.Map // map[agentID]*agentLane
-	logger       zerolog.Logger
-	resolveModel ModelResolver
-	persistTurn  TurnSink
+	lanes          sync.Map // map[agentID]*agentLane
+	logger         zerolog.Logger
+	resolveModel   ModelResolver
+	persistTurn    TurnSink
+	getAgentConfig AgentConfigSource
 }
 
 // NewUserAgentManager creates a new UserAgentManager.
@@ -35,6 +39,7 @@ func NewUserAgentManager(logger zerolog.Logger, opts *UserAgentManagerOptions) *
 	if opts != nil {
 		m.resolveModel = opts.ResolveModel
 		m.persistTurn = opts.PersistTurn
+		m.getAgentConfig = opts.GetAgentConfig
 	}
 	return m
 }
@@ -74,12 +79,13 @@ func (m *UserAgentManager) SubmitMsg(ctx context.Context, agentID, connID string
 			// The lane outlives the submitting connection: its
 			// lifetime is the idle timeout, not any one peer.
 			lane.agent = newUserAgent(context.WithoutCancel(ctx), UserAgentOptions{
-				AgentID:      agentID,
-				Model:        msg.Model,
-				MsgCh:        lane.msgCh,
-				ResolveModel: m.resolveModel,
-				PersistTurn:  m.persistTurn,
-				Logger:       m.logger,
+				AgentID:        agentID,
+				Model:          msg.Model,
+				MsgCh:          lane.msgCh,
+				ResolveModel:   m.resolveModel,
+				PersistTurn:    m.persistTurn,
+				GetAgentConfig: m.getAgentConfig,
+				Logger:         m.logger,
 				OnExit: func() {
 					close(lane.done)
 					m.lanes.Delete(key)

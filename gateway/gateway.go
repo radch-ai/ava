@@ -46,6 +46,10 @@ type Config struct {
 	// bound to backend.AppendThreadMessages by the binary at boot.
 	// Zero keeps turns ephemeral.
 	PersistTurn agent.TurnSink
+	// GetAgentConfig reads an agent's config for each turn's prompt —
+	// bound to backend.GetAgentConfig by the binary at boot. Zero
+	// keeps turns persona-less.
+	GetAgentConfig agent.AgentConfigSource
 }
 
 // New builds the gateway WebSocket handler. The gateway is a single
@@ -54,16 +58,19 @@ func New(cfg *Config, logger zerolog.Logger) (http.Handler, error) {
 	interval := pingInterval
 	resolve := agent.ModelResolver(nil)
 	var persist agent.TurnSink
+	var getConfig agent.AgentConfigSource
 	if cfg != nil {
 		if cfg.PingInterval > 0 {
 			interval = cfg.PingInterval
 		}
 		resolve = cfg.ResolveModel
 		persist = cfg.PersistTurn
+		getConfig = cfg.GetAgentConfig
 	}
 	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{
-		ResolveModel: resolve,
-		PersistTurn:  persist,
+		ResolveModel:   resolve,
+		PersistTurn:    persist,
+		GetAgentConfig: getConfig,
 	})
 	return handleWS(interval, logger, mgr), nil
 }

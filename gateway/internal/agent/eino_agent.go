@@ -31,8 +31,9 @@ func createChatModel(ctx context.Context, cfg backend.ResolvedModel) (model.Tool
 }
 
 // buildEinoAgent wraps a chat model in the agent runtime. The
-// instruction is empty: a turn runs the submitted content alone.
-func buildEinoAgent(ctx context.Context, agentID string, chatModel model.ToolCallingChatModel) (*adk.ChatModelAgent, error) {
+// instruction carries the agent's persona as the system prompt; an
+// empty one runs the submitted content alone.
+func buildEinoAgent(ctx context.Context, agentID, instruction string, chatModel model.ToolCallingChatModel) (*adk.ChatModelAgent, error) {
 	if agentID == "" {
 		return nil, errors.New("agentID cannot be empty")
 	}
@@ -40,8 +41,9 @@ func buildEinoAgent(ctx context.Context, agentID string, chatModel model.ToolCal
 		return nil, errors.New("chatModel cannot be nil")
 	}
 	return adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
-		Name:  agentID,
-		Model: chatModel,
+		Name:        agentID,
+		Instruction: instruction,
+		Model:       chatModel,
 	})
 }
 
