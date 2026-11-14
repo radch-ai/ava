@@ -77,7 +77,7 @@ func dialServer(t *testing.T, url string) (*coderws.Conn, context.Context) {
 	return conn, ctx
 }
 
-func TestPromptReceivedOverWS(t *testing.T) {
+func TestPromptWithoutResolverEmitsError(t *testing.T) {
 	conn, ctx := dialGateway(t)
 
 	err := wsjson.Write(ctx, conn, map[string]any{
@@ -92,15 +92,22 @@ func TestPromptReceivedOverWS(t *testing.T) {
 		t.Fatalf("writing prompt failed: %v", err)
 	}
 
-	// The lane consumes the prompt; nothing follows it on the wire.
-	rctx, rcancel := context.WithTimeout(ctx, 1*time.Second)
-	defer rcancel()
-	_, _, rerr := conn.Reader(rctx)
-	if rerr == nil {
-		t.Fatal("unexpected inbound frame")
+	// The lane runs the turn; with no model resolver bound, the turn
+	// fails and the failure reaches the wire.
+	var event map[string]any
+	if err := wsjson.Read(ctx, conn, &event); err != nil {
+		t.Fatalf("reading turn outcome failed: %v", err)
 	}
-	if coderws.CloseStatus(rerr) != -1 {
-		t.Fatalf("connection closed after prompt: %v", rerr)
+	if event["type"] != "error" {
+		t.Fatalf("expected error event, got %v", event["type"])
+	}
+	data, ok := event["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("error event data is not a map: %+v", event["data"])
+	}
+	msg, _ := data["message"].(string)
+	if msg == "" {
+		t.Fatal("error event should carry a message")
 	}
 }
 

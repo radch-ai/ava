@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/radch-ai/ava/backend"
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/gateway/internal/wsconn"
+	"github.com/radch-ai/ava/gateway/wstypes"
 )
 
 const (
@@ -52,6 +54,10 @@ type UserAgent struct {
 	mu    sync.Mutex
 
 	conns *wsconn.Broadcaster // Broadcasts to all connected devices
+
+	// The running turn's cancellable context; Interrupt cancels it.
+	queryCtx    context.Context
+	queryCancel context.CancelFunc
 
 	idleTimeout time.Duration
 	onExit      func()
@@ -109,6 +115,15 @@ func (a *UserAgent) addConn(connID string, conn *websocket.Conn) {
 	a.conns.Add(connID, conn)
 }
 
+// Interrupt cancels the running turn, if any.
+func (a *UserAgent) Interrupt() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.queryCancel != nil {
+		a.queryCancel()
+	}
+}
+
 // updateModel sets the model for the next query; nil follows the
 // default routing.
 func (a *UserAgent) updateModel(entry *apitypes.ModelEntry) {
@@ -140,7 +155,11 @@ func (a *UserAgent) loop() {
 		case msg := <-a.MsgCh:
 			// Coalesce the batch behind the first message so the
 			// queue is empty between turns.
-			a.drainMessages(msg)
+			messages := a.drainMessages(msg)
+			queryCtx := a.startTurn()
+			a.processTurn(queryCtx, messages)
+			// Reset after the turn so a long query never races the
+			// idle timer.
 			idleTimer.Reset(a.idleTimeout)
 
 		case <-idleTimer.C:
@@ -175,6 +194,108 @@ func (a *UserAgent) drainMessages(first Message) []Message {
 			return messages
 		}
 	}
+}
+
+// startTurn opens the turn's cancellable context, ending any turn
+// that is still running.
+func (a *UserAgent) startTurn() context.Context {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.queryCancel != nil {
+		a.queryCancel()
+	}
+	a.queryCtx, a.queryCancel = context.WithCancel(a.ctx)
+	return a.queryCtx
+}
+
+// processTurn runs one turn: resolve the batch's model selection,
+// query the model, and broadcast the assembled answer — or the
+// failure — to the lane's connections.
+func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
+	if len(messages) == 0 {
+		return
+	}
+	// Events outlive the turn's context: an interrupted turn still
+	// reports why it ended.
+	emitCtx := context.WithoutCancel(queryCtx)
+
+	var input strings.Builder
+	var msgID string
+	var entry *apitypes.ModelEntry
+	for i, m := range messages {
+		if i > 0 {
+			input.WriteString("\n")
+		}
+		input.WriteString(m.Content)
+		if msgID == "" && m.ID != "" {
+			msgID = m.ID
+		}
+		// The last message carrying a model wins.
+		if m.Model != nil {
+			entry = m.Model
+		}
+	}
+
+	a.mu.Lock()
+	resolveModel := a.resolveModel
+	a.mu.Unlock()
+	if resolveModel == nil {
+		a.logger.Error().Str("agent_id", a.agentID).Msg("lane has no model resolver")
+		a.emitError(emitCtx, "no model resolver configured")
+		return
+	}
+	cfg, err := resolveModel(queryCtx, entry)
+	if err != nil {
+		a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("resolve model")
+		a.emitError(emitCtx, err.Error())
+		return
+	}
+	chatModel, err := createChatModel(queryCtx, cfg)
+	if err != nil {
+		a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("build chat model")
+		a.emitError(emitCtx, err.Error())
+		return
+	}
+	einoAgent, err := buildEinoAgent(queryCtx, a.agentID, chatModel)
+	if err != nil {
+		a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("build agent")
+		a.emitError(emitCtx, err.Error())
+		return
+	}
+	runner, err := buildEinoRunner(queryCtx, einoAgent)
+	if err != nil {
+		a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("build runner")
+		a.emitError(emitCtx, err.Error())
+		return
+	}
+
+	var answer strings.Builder
+	iterator := runner.Query(queryCtx, input.String())
+	for event, ok := iterator.Next(); ok; event, ok = iterator.Next() {
+		if event.Err != nil {
+			a.logger.Error().Err(event.Err).Str("agent_id", a.agentID).Msg("model query")
+			a.emitError(emitCtx, event.Err.Error())
+			return
+		}
+		if event.Output != nil && event.Output.MessageOutput != nil &&
+			event.Output.MessageOutput.Message != nil {
+			answer.WriteString(event.Output.MessageOutput.Message.Content)
+		}
+	}
+	_ = a.conns.WriteJSON(emitCtx, wstypes.Event{
+		Type:    wstypes.EventTypeMessage,
+		AgentID: a.agentID,
+		Data:    wstypes.MessageEvent{ID: msgID, Content: answer.String()},
+	})
+}
+
+// emitError reports a failed turn to the lane's connections.
+func (a *UserAgent) emitError(ctx context.Context, message string) {
+	_ = a.conns.WriteJSON(ctx, wstypes.Event{
+		Type:    wstypes.EventTypeError,
+		AgentID: a.agentID,
+		Data:    wstypes.ErrorEvent{Message: message},
+	})
 }
 
 func (a *UserAgent) GetStatus() map[string]interface{} {

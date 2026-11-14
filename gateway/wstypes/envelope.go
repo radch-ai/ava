@@ -11,6 +11,8 @@ type EventType string
 const (
 	EventTypeConnected  EventType = "connected"
 	EventTypeLaneStatus EventType = "lane_status"
+	EventTypeMessage    EventType = "message"
+	EventTypeError      EventType = "error"
 )
 
 // EnvelopeType tags client frames.

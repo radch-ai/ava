@@ -22,3 +22,15 @@ type LaneStatus struct {
 	QueueLen  int    `json:"queue_len"`
 	ConnCount int    `json:"conn_count"`
 }
+
+// MessageEvent is the payload of a message event: the assistant's
+// completed answer to a turn.
+type MessageEvent struct {
+	ID      string `json:"id"`
+	Content string `json:"content"`
+}
+
+// ErrorEvent is the payload of an error event: why a turn failed.
+type ErrorEvent struct {
+	Message string `json:"message"`
+}
