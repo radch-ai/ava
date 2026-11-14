@@ -1,13 +1,14 @@
 package backend_test
 
-// Resolver pins: an explicit pair resolves to the provider's
-// endpoint, and a nil entry or a missing key fails closed. The tests
-// call the package function directly — the same shape the gateway
-// uses.
+// Resolver pins: an explicit pair — or a set default — resolves to
+// the provider's endpoint; a missing default, unknown provider, or
+// missing key fails closed. The tests call the package function
+// directly — the same shape the gateway uses.
 
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/rs/zerolog"
@@ -76,10 +77,46 @@ func TestResolveModelEndpoint(t *testing.T) {
 	}
 }
 
-func TestResolveModelNilEntryFails(t *testing.T) {
+func TestResolveModelNilWithoutDefaultFails(t *testing.T) {
 	resolverDB(t)
-	if got, err := backend.ResolveModel(context.Background(), nil); err == nil || got != (backend.ResolvedModel{}) {
-		t.Fatalf("ResolveModel nil entry = (%+v, %v), want zero value and an error", got, err)
+	got, err := backend.ResolveModel(context.Background(), nil)
+	if err == nil || got != (backend.ResolvedModel{}) {
+		t.Fatalf("ResolveModel nil entry, no default = (%+v, %v), want zero value and an error", got, err)
+	}
+	if !strings.Contains(err.Error(), "default model") {
+		t.Fatalf("ResolveModel nil entry, no default: error = %q, want it to name the default model", err)
+	}
+}
+
+func TestResolveModelNilFollowsDefault(t *testing.T) {
+	sqlDB := resolverDB(t)
+	seedProvider(t, sqlDB, "prov-1", "https://api.example.com/v1")
+	seedProviderKey(t, sqlDB, "prov-1", "sk-test")
+	if _, err := sqlDB.ExecContext(context.Background(),
+		`INSERT INTO default_model (id, model, provider_id) VALUES (1, 'glm-4.7', 'prov-1')`,
+	); err != nil {
+		t.Fatalf("seed default model: %v", err)
+	}
+
+	got, err := backend.ResolveModel(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ResolveModel nil entry with default: %v", err)
+	}
+	want := backend.ResolvedModel{
+		BaseURL: "https://api.example.com/v1",
+		APIKey:  "sk-test",
+		Model:   "glm-4.7",
+	}
+	if got != want {
+		t.Errorf("ResolveModel nil entry = %+v, want %+v (the default pair)", got, want)
+	}
+}
+
+func TestResolveModelUnknownProviderFails(t *testing.T) {
+	resolverDB(t)
+	entry := &apitypes.ModelEntry{ID: "glm-4.7", ProviderID: "missing-prov"}
+	if got, err := backend.ResolveModel(context.Background(), entry); err == nil || got != (backend.ResolvedModel{}) {
+		t.Fatalf("ResolveModel unknown provider = (%+v, %v), want zero value and an error", got, err)
 	}
 }
 

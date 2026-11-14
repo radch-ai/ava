@@ -33,13 +33,18 @@ func bindResolver(queries *db.Queries, vaultStore *vault.Store) {
 }
 
 // ResolveModel maps a model selection to its endpoint — the function
-// the gateway calls directly on this package. A nil entry asks for
-// default routing and fails until a default exists. The pair is
-// trusted as given: stored model lists are custom ids only — fetched
-// system models are never stored — so membership is not checked.
+// the gateway calls directly on this package. A nil entry follows
+// the global default (the default_model row); none set fails
+// closed. The pair is trusted as given: stored model lists are
+// custom ids only — fetched system models are never stored — so
+// membership is not checked.
 func ResolveModel(ctx context.Context, entry *apitypes.ModelEntry) (ResolvedModel, error) {
 	if entry == nil {
-		return ResolvedModel{}, fmt.Errorf("no default model configured")
+		def, err := resolveQueries.GetDefaultModel(ctx)
+		if err != nil {
+			return ResolvedModel{}, fmt.Errorf("read default model: %w", err)
+		}
+		entry = &apitypes.ModelEntry{ProviderID: def.ProviderID, ID: def.Model}
 	}
 	row, err := resolveQueries.GetProvider(ctx, entry.ProviderID)
 	if err != nil {
