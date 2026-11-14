@@ -80,8 +80,11 @@
 	// A growing live tail pins the view to the newest message while the
 	// reader stays near the bottom; scrolling up keeps the position.
 	$effect(() => {
-		const liveCount = liveItems?.length ?? 0
-		if (liveCount === 0) return
+		const live = liveItems ?? []
+		// Length alone misses chunks that grow an existing bubble, so
+		// the tail's total text is part of the dependency.
+		void live.reduce((sum, message) => sum + message.content.length, 0)
+		if (live.length === 0) return
 		void tick().then(() => {
 			const el = scrollRegionElement
 			if (!el) return

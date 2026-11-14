@@ -601,5 +601,34 @@ describe('AgentPage (superagent branch)', () => {
 				.element(page.getByText('read default model: no rows in result set'))
 				.toBeVisible()
 		})
+
+		it('keeps following the stream as chunks grow the answer', async () => {
+			const scrollTo = vi.spyOn(HTMLElement.prototype, 'scrollTo')
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'follow me{Enter}')
+
+			capturedOnEvent?.({
+				type: 'message_chunk',
+				agent_id: '_superagent',
+				data: { id: 'msg-1', delta: 'first' }
+			})
+			await expect.element(page.getByText('first')).toBeVisible()
+
+			// A chunk that grows the existing bubble must scroll again —
+			// the follow cannot depend on the message count alone.
+			scrollTo.mockClear()
+			capturedOnEvent?.({
+				type: 'message_chunk',
+				agent_id: '_superagent',
+				data: { id: 'msg-1', delta: ' second' }
+			})
+			await expect.element(page.getByText('first second')).toBeVisible()
+			await vi.waitFor(() => {
+				expect(scrollTo).toHaveBeenCalled()
+			})
+			scrollTo.mockRestore()
+		})
 	})
 })
