@@ -23,6 +23,14 @@ type LaneStatus struct {
 	ConnCount int    `json:"conn_count"`
 }
 
+// MessageChunkEvent is the payload of a message_chunk event: one
+// streamed piece of the answer in flight. The final message event
+// with the same ID is the authoritative record.
+type MessageChunkEvent struct {
+	ID    string `json:"id"`
+	Delta string `json:"delta"`
+}
+
 // MessageEvent is the payload of a message event: the assistant's
 // completed answer to a turn.
 type MessageEvent struct {

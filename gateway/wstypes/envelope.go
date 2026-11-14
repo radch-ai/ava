@@ -9,10 +9,11 @@ package wstypes
 type EventType string
 
 const (
-	EventTypeConnected  EventType = "connected"
-	EventTypeLaneStatus EventType = "lane_status"
-	EventTypeMessage    EventType = "message"
-	EventTypeError      EventType = "error"
+	EventTypeConnected    EventType = "connected"
+	EventTypeLaneStatus   EventType = "lane_status"
+	EventTypeMessage      EventType = "message"
+	EventTypeMessageChunk EventType = "message_chunk"
+	EventTypeError        EventType = "error"
 )
 
 // EnvelopeType tags client frames.
