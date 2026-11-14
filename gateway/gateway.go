@@ -3,7 +3,8 @@
 // package is the only importable surface.
 //
 // It implements the client wire contract: connected event, prompt
-// routing into agent lanes, lane_status reply.
+// routing into agent lanes, turn message and error events,
+// lane_status reply, interrupt.
 package gateway
 
 import (
@@ -37,16 +38,26 @@ type Config struct {
 	// PingInterval overrides pingInterval. Zero keeps the default; the
 	// field exists for tests to shrink the wait.
 	PingInterval time.Duration
+	// ResolveModel maps a selection to a callable endpoint — bound
+	// to backend.ResolveModel by the binary at boot. Zero keeps the
+	// lanes unresolved: turns fail closed.
+	ResolveModel agent.ModelResolver
 }
 
 // New builds the gateway WebSocket handler. The gateway is a single
 // endpoint: the caller owns the path it is mounted on.
 func New(cfg *Config, logger zerolog.Logger) (http.Handler, error) {
 	interval := pingInterval
-	if cfg != nil && cfg.PingInterval > 0 {
-		interval = cfg.PingInterval
+	resolve := agent.ModelResolver(nil)
+	if cfg != nil {
+		if cfg.PingInterval > 0 {
+			interval = cfg.PingInterval
+		}
+		resolve = cfg.ResolveModel
 	}
-	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
+	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{
+		ResolveModel: resolve,
+	})
 	return handleWS(interval, logger, mgr), nil
 }
 
@@ -173,7 +184,9 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 					return
 				}
 			case wstypes.EnvelopeTypeInterrupt:
-				// No interruptible work runs on the lanes.
+				if ag := mgr.Get(env.AgentID); ag != nil {
+					ag.Interrupt()
+				}
 			default:
 				logger.Debug().Str("type", string(env.Type)).Msg("unknown message type")
 			}

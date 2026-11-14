@@ -18,6 +18,8 @@ import (
 	"github.com/coder/websocket/wsjson"
 	"github.com/rs/zerolog"
 
+	"github.com/radch-ai/ava/backend"
+	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/gateway"
 )
 
@@ -108,6 +110,40 @@ func TestPromptWithoutResolverEmitsError(t *testing.T) {
 	msg, _ := data["message"].(string)
 	if msg == "" {
 		t.Fatal("error event should carry a message")
+	}
+}
+
+func TestPromptResolverErrorReachesWire(t *testing.T) {
+	resolve := func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
+		return backend.ResolvedModel{}, errors.New("read provider p-1: no rows in result set")
+	}
+	conn, ctx := dialConfig(t, &gateway.Config{ResolveModel: resolve})
+
+	err := wsjson.Write(ctx, conn, map[string]any{
+		"type":     "prompt",
+		"agent_id": "_superagent",
+		"data": map[string]any{
+			"content": "hello",
+			"model":   map[string]string{"id": "gpt-4o", "provider_id": "p-1"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("writing prompt failed: %v", err)
+	}
+
+	// A resolver failure — provider missing from the store — reaches
+	// the submitting connection verbatim.
+	var event map[string]any
+	if err := wsjson.Read(ctx, conn, &event); err != nil {
+		t.Fatalf("reading turn outcome failed: %v", err)
+	}
+	if event["type"] != "error" {
+		t.Fatalf("expected error event, got %v", event["type"])
+	}
+	data, _ := event["data"].(map[string]any)
+	msg, _ := data["message"].(string)
+	if !strings.Contains(msg, "read provider p-1") {
+		t.Fatalf("error event should carry the resolver failure, got %q", msg)
 	}
 }
 

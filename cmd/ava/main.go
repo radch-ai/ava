@@ -154,7 +154,7 @@ func serve(logger zerolog.Logger) {
 	}
 	apiHandler := authMiddleware.Authenticate(apiRouter)
 
-	wsHandler, err := gateway.New(&gateway.Config{}, logger)
+	wsHandler, err := gateway.New(&gateway.Config{ResolveModel: backend.ResolveModel}, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Failed to create gateway handler")
 	}
