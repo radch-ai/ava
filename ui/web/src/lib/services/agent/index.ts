@@ -1,5 +1,6 @@
 export * from './activity'
 export * from './agents'
 export * from './config'
+export * from './live-turn.svelte'
 export * from './thread'
 export * from './ws'

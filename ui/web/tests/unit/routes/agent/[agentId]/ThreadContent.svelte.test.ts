@@ -168,6 +168,45 @@ describe('ThreadContent', () => {
 		})
 	})
 
+	describe('Live turn rendering', () => {
+		it('renders an error message with destructive styling', async () => {
+			render(ThreadContent, {
+				threadItems: [
+					{ id: 'e1', role: 'error', content: 'read default model: no rows' }
+				]
+			})
+
+			const message = page.getByText('read default model: no rows')
+			const element = await message.element()
+
+			expect(element.className).toContain('text-destructive')
+		})
+
+		it('renders a pending assistant message with the pulse caret', async () => {
+			render(ThreadContent, {
+				threadItems: [
+					{ id: 'a1', role: 'assistant', content: 'hel', pending: true }
+				]
+			})
+
+			const message = await page.getByText('hel', { exact: true }).element()
+
+			expect(message.querySelector('.animate-pulse')).not.toBeNull()
+		})
+
+		it('renders a settled assistant message without the caret', async () => {
+			render(ThreadContent, {
+				threadItems: [
+					{ id: 'a1', role: 'assistant', content: 'hello', pending: false }
+				]
+			})
+
+			const message = await page.getByText('hello').element()
+
+			expect(message.querySelector('.animate-pulse')).toBeNull()
+		})
+	})
+
 	describe('Long message handling', () => {
 		it('renders very long message content', async () => {
 			const longContent = 'A'.repeat(1000)

@@ -5,22 +5,26 @@ import type { ActivityFeed, AgentActivityItem } from '#lib/services/agent'
 import type { AgentIdentity } from '#lib/types/agent'
 import AgentPageTestWrapper from './AgentPageTestWrapper.svelte'
 
-vi.mock('#lib/services/agent', () => ({
-	getAgentActivityFeed: vi.fn(),
-	mergePastFeed: vi.fn(),
-	getAgentThread: vi.fn(),
-	mergePastThread: vi.fn(),
-	getAgentConfig: vi.fn(),
-	updateAgentConfig: vi.fn(),
-	updateHeartbeat: vi.fn(),
-	updateCronJobs: vi.fn(),
-	createAgent: vi.fn(),
-	createAgentSocket: vi.fn(() => ({
-		sendPrompt: vi.fn(),
-		requestStatus: vi.fn(),
-		close: vi.fn()
-	}))
-}))
+vi.mock('#lib/services/agent', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('#lib/services/agent')>()
+	return {
+		...actual,
+		getAgentActivityFeed: vi.fn(),
+		mergePastFeed: vi.fn(),
+		getAgentThread: vi.fn(),
+		mergePastThread: vi.fn(),
+		getAgentConfig: vi.fn(),
+		updateAgentConfig: vi.fn(),
+		updateHeartbeat: vi.fn(),
+		updateCronJobs: vi.fn(),
+		createAgent: vi.fn(),
+		createAgentSocket: vi.fn(() => ({
+			sendPrompt: vi.fn(),
+			requestStatus: vi.fn(),
+			close: vi.fn()
+		}))
+	}
+})
 
 vi.mock('$app/paths', () => ({
 	resolve: vi.fn((path: string, params?: Record<string, string>) => {

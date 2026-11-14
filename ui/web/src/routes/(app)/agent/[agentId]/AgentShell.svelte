@@ -15,8 +15,9 @@
 
 	interface ThreadItem {
 		id: string
-		role: 'user' | 'assistant'
+		role: 'user' | 'assistant' | 'error'
 		content: string
+		pending?: boolean
 	}
 
 	interface Props {
@@ -24,6 +25,8 @@
 		activeTab?: 'conversation' | 'activity'
 		onTabChange?: (tab: 'conversation' | 'activity') => void
 		threadItems?: ThreadItem[]
+		/** Live tail: turn messages assembled from gateway events. */
+		liveItems?: ThreadItem[]
 		threadError?: string | null
 		isLoadingThread?: boolean
 		threadNextCursor?: string | null
@@ -42,6 +45,7 @@
 		activeTab,
 		onTabChange,
 		threadItems,
+		liveItems,
 		threadError,
 		isLoadingThread,
 		threadNextCursor,
@@ -59,6 +63,11 @@
 	const isConversation = $derived(
 		agentId === SUPERAGENT_AGENT_ID && activeTab === 'conversation'
 	)
+	const conversationItems = $derived([
+		...(threadItems ?? []),
+		...(liveItems ?? [])
+	])
+
 	const error = $derived(isConversation ? threadError : activityError)
 	const isLoading = $derived(
 		isConversation ? isLoadingThread : isLoadingActivity
@@ -67,6 +76,19 @@
 	let isLoadingMore = $state(false)
 	let loadMoreError = $state<string | null>(null)
 	let scrollRegionElement: HTMLDivElement | undefined = $state()
+
+	// A growing live tail pins the view to the newest message while the
+	// reader stays near the bottom; scrolling up keeps the position.
+	$effect(() => {
+		const liveCount = liveItems?.length ?? 0
+		if (liveCount === 0) return
+		void tick().then(() => {
+			const el = scrollRegionElement
+			if (!el) return
+			const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+			if (nearBottom) el.scrollTo({ top: el.scrollHeight })
+		})
+	})
 
 	async function handleLoadMore() {
 		if (isConversation) {
@@ -157,12 +179,12 @@
 				<!-- Content -->
 				<div class="flex flex-col gap-4">
 					{#if isConversation}
-						{#if !threadItems?.length}
+						{#if conversationItems.length === 0}
 							<p class="text-muted-foreground text-center">
 								No messages yet. Start a conversation!
 							</p>
 						{:else}
-							<ThreadContent {threadItems} />
+							<ThreadContent threadItems={conversationItems} />
 						{/if}
 					{:else}
 						{#if !activityFeed?.items?.length}

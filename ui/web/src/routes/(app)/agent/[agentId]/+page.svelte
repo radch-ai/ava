@@ -11,6 +11,7 @@
 		type AgentSocketEvent,
 		type AgentSocketState,
 		createAgentSocket,
+		createLiveTurns,
 		getAgentActivityFeed,
 		getAgentThread,
 		type LaneStatus,
@@ -55,6 +56,7 @@
 	let socket: AgentSocket | undefined
 	let socketState = $state<AgentSocketState | 'idle'>('idle')
 	let laneStatus = $state<LaneStatus | null>(null)
+	const liveTurns = createLiveTurns()
 
 	async function loadMore() {
 		if (!thread?.nextCursor || isLoadingMore) return
@@ -101,6 +103,7 @@
 
 	function handleComposerSubmit(text: string) {
 		activeTab = 'conversation'
+		liveTurns.echoUser(text)
 		socket ??= createAgentSocket(
 			data.agent.id,
 			handleSocketEvent,
@@ -121,17 +124,12 @@
 		socket?.requestStatus()
 	}
 
-	// Lane state mirrored from gateway events; streamed agent events
-	// land in the same switch once typed.
+	// Turn events fold into the live conversation tail; lane state
+	// mirrors into the strip.
 	function handleSocketEvent(event: AgentSocketEvent) {
-		switch (event.type) {
-			case 'connected':
-				break
-			case 'lane_status':
-				laneStatus = event.data
-				break
-			default:
-				console.debug('agent socket event', event)
+		liveTurns.applyEvent(event)
+		if (event.type === 'lane_status') {
+			laneStatus = event.data
 		}
 	}
 
@@ -158,6 +156,7 @@
 	{activeTab}
 	onTabChange={isSuperagent ? selectTab : undefined}
 	threadItems={thread?.items}
+	liveItems={liveTurns.messages}
 	{threadError}
 	threadNextCursor={thread?.nextCursor}
 	threadIsLoadingMore={isLoadingMore}

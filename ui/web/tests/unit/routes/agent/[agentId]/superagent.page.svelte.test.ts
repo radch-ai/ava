@@ -556,5 +556,50 @@ describe('AgentPage (superagent branch)', () => {
 				.element(page.getByText(/lane active · Default · queue 0/))
 				.toBeVisible()
 		})
+
+		it('echoes the prompt and streams the answer into the tail', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'stream me{Enter}')
+
+			await expect.element(page.getByText('stream me')).toBeVisible()
+
+			capturedOnEvent?.({
+				type: 'message_chunk',
+				agent_id: '_superagent',
+				data: { id: 'msg-1', delta: 'hello ' }
+			})
+			capturedOnEvent?.({
+				type: 'message_chunk',
+				agent_id: '_superagent',
+				data: { id: 'msg-1', delta: 'streamed' }
+			})
+			await expect.element(page.getByText('hello streamed')).toBeVisible()
+
+			capturedOnEvent?.({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'msg-1', content: 'hello streamed world' }
+			})
+			await expect.element(page.getByText('hello streamed world')).toBeVisible()
+		})
+
+		it('renders a failed turn as an inline error message', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'fail me{Enter}')
+
+			capturedOnEvent?.({
+				type: 'error',
+				agent_id: '_superagent',
+				data: { message: 'read default model: no rows in result set' }
+			})
+
+			await expect
+				.element(page.getByText('read default model: no rows in result set'))
+				.toBeVisible()
+		})
 	})
 })
