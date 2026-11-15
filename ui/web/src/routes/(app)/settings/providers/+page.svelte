@@ -85,7 +85,9 @@
 								{/each}
 							</div>
 						{:else}
-							<p class="text-muted-foreground text-xs">No models yet</p>
+							<p class="text-muted-foreground text-xs">
+								No custom models — system models still selectable.
+							</p>
 						{/if}
 					</div>
 					<Button

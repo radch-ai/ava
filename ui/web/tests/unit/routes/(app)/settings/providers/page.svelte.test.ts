@@ -75,6 +75,13 @@ describe('Providers & Models page', () => {
 		// The stored key never leaves the API; the row says whether one is set.
 		await expect.element(page.getByText('Key set')).toBeVisible()
 		await expect.element(page.getByText('No key')).toBeVisible()
+		// Empty custom list is not a broken provider — system models
+		// still serve the selector.
+		await expect
+			.element(
+				page.getByText('No custom models — system models still selectable.')
+			)
+			.toBeVisible()
 		await expect
 			.element(page.getByText('openai/gpt-4o', { exact: true }))
 			.toBeVisible()
@@ -93,6 +100,12 @@ describe('Providers & Models page', () => {
 				page.getByText('Save the provider first, then add custom models.')
 			)
 			.toBeVisible()
+		// System models need a saved provider to fetch — no stuck
+		// "Loading…" in add mode.
+		await expect
+			.element(page.getByText('Listed once the provider is saved.'))
+			.toBeVisible()
+		await expect.element(page.getByText('Loading…')).not.toBeInTheDocument()
 
 		await page.getByRole('button', { name: 'Cancel' }).click()
 		await expect

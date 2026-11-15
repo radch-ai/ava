@@ -144,7 +144,11 @@
 				>fetched from the provider</span
 			>
 		</div>
-		{#if systemModelsError}
+		{#if !provider}
+			<p class="text-muted-foreground text-sm">
+				Listed once the provider is saved.
+			</p>
+		{:else if systemModelsError}
 			<p class="text-destructive text-sm">{systemModelsError}</p>
 		{:else if systemModels === null}
 			<p class="text-muted-foreground text-sm">Loading…</p>
