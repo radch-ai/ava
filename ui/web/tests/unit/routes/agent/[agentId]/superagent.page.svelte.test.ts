@@ -49,7 +49,10 @@ function createThread(
 			id: item.id,
 			role: item.role,
 			content: item.content,
-			createdAt: new Date(Date.now() - index * 60_000).toISOString()
+			// The wire order: the first item is the oldest.
+			createdAt: new Date(
+				Date.now() - (items.length - 1 - index) * 60_000
+			).toISOString()
 		})),
 		nextCursor: opts.nextCursor ?? null
 	}
@@ -199,9 +202,9 @@ describe('AgentPage (superagent branch)', () => {
 		it('shows load more button above thread list when nextCursor exists', async () => {
 			const threadPage = createThread(
 				[
-					{ id: '3', role: 'user', content: 'Latest message' },
+					{ id: '1', role: 'user', content: 'Oldest message' },
 					{ id: '2', role: 'assistant', content: 'Middle message' },
-					{ id: '1', role: 'user', content: 'Oldest message' }
+					{ id: '3', role: 'user', content: 'Latest message' }
 				],
 				{ nextCursor: 'cursor-abc' }
 			)
@@ -331,20 +334,28 @@ describe('AgentPage (superagent branch)', () => {
 				{ nextCursor: 'cursor-abc' }
 			)
 
-			render(AgentPageTestWrapper, {
+			const { container } = render(AgentPageTestWrapper, {
 				data: createMockData({ thread: threadPage })
 			})
 
 			await expect.element(page.getByText('Newer message')).toBeVisible()
-			await expect.element(page.getByText('Newest reply')).toBeVisible()
 
 			const loadMoreButton = page.getByRole('button', { name: /load more/i })
 			await loadMoreButton.click()
 
 			await expect.element(page.getByText('Oldest message')).toBeVisible()
-			await expect.element(page.getByText('Old reply')).toBeVisible()
-			await expect.element(page.getByText('Newer message')).toBeVisible()
-			await expect.element(page.getByText('Newest reply')).toBeVisible()
+			// The merged thread still reads oldest→newest, top to bottom.
+			await vi.waitFor(() => {
+				const texts = Array.from(
+					container.querySelectorAll('div.flex.flex-col.gap-4 > *')
+				).map((el) => (el.textContent ?? '').trim())
+				expect(texts).toEqual([
+					'Oldest message',
+					'Old reply',
+					'Newer message',
+					'Newest reply'
+				])
+			})
 		})
 	})
 
@@ -603,23 +614,25 @@ describe('AgentPage (superagent branch)', () => {
 				json: async () => ({
 					items: [
 						{
-							id: 'stored-a',
-							role: 'assistant',
-							content: 'stored answer',
-							createdAt: '2026-01-01T00:00:01.000Z'
-						},
-						{
 							id: 'stored-u',
 							role: 'user',
 							content: 'recon me',
 							createdAt: '2026-01-01T00:00:00.000Z'
+						},
+						{
+							id: 'stored-a',
+							role: 'assistant',
+							content: 'stored answer',
+							createdAt: '2026-01-01T00:00:01.000Z'
 						}
 					],
 					nextCursor: null
 				})
 			} as ApiResponsePromise)
 
-			render(AgentPageTestWrapper, { data: createMockData() })
+			const { container } = render(AgentPageTestWrapper, {
+				data: createMockData()
+			})
 			const textarea = page.getByPlaceholder('Enter your query!')
 			await textarea.click()
 			await userEvent.type(textarea, 'recon me{Enter}')
@@ -643,10 +656,20 @@ describe('AgentPage (superagent branch)', () => {
 				)
 			})
 			// The stored page renders the turn; the live copies are
-			// gone — nothing appears twice.
+			// gone — nothing appears twice — and the settled turn sits at
+			// the bottom, still oldest→newest.
 			await vi.waitFor(() => {
 				expect(page.getByText('recon me').elements()).toHaveLength(1)
 				expect(page.getByText('stored answer').elements()).toHaveLength(1)
+			})
+			await vi.waitFor(() => {
+				const texts = Array.from(
+					container.querySelectorAll('div.flex.flex-col.gap-4 > *')
+				).map((el) => (el.textContent ?? '').trim())
+				expect(texts.indexOf('recon me')).toBeGreaterThanOrEqual(0)
+				expect(texts.indexOf('stored answer')).toBeGreaterThan(
+					texts.indexOf('recon me')
+				)
 			})
 		})
 
@@ -655,10 +678,10 @@ describe('AgentPage (superagent branch)', () => {
 				json: async () => ({
 					items: [
 						{
-							id: 'stored-a',
-							role: 'assistant',
-							content: 'found 2 hits',
-							createdAt: '2026-01-01T00:00:02.000Z'
+							id: 'stored-u',
+							role: 'user',
+							content: 'search otters',
+							createdAt: '2026-01-01T00:00:00.000Z'
 						},
 						{
 							id: 'stored-t',
@@ -668,10 +691,10 @@ describe('AgentPage (superagent branch)', () => {
 							createdAt: '2026-01-01T00:00:01.000Z'
 						},
 						{
-							id: 'stored-u',
-							role: 'user',
-							content: 'search otters',
-							createdAt: '2026-01-01T00:00:00.000Z'
+							id: 'stored-a',
+							role: 'assistant',
+							content: 'found 2 hits',
+							createdAt: '2026-01-01T00:00:02.000Z'
 						}
 					],
 					nextCursor: null

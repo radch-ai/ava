@@ -97,7 +97,7 @@ describe('agent/thread service', () => {
 	})
 
 	describe('mergePastThread', () => {
-		it('prepends an older page above the current one (newest-first list)', () => {
+		it('prepends an older page above the current one (oldest→newest pages)', () => {
 			const current = createThread({
 				items: [createThreadMessage({ id: 'msg-2' })],
 				nextCursor: 'msg-2'

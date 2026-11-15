@@ -1,6 +1,9 @@
 // The thread endpoint: GET /agent/{id}/thread — the agent's
-// conversation, paged newest-first. The cursor names the previous
-// page's oldest message; the next page is strictly older.
+// conversation in display order. The fetch reads newest-first (the
+// cursor walk pages up from the bottom) but each page is answered
+// oldest→newest so a consumer renders items top-down as received.
+// The cursor names the answered page's oldest message; the next
+// page is strictly older.
 package agent
 
 import (
@@ -8,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -79,6 +83,8 @@ func GetThread(queries *db.Queries) api.Handler {
 				last := rows[len(rows)-1].ID
 				next = &last
 			}
+			// rows arrive newest→oldest; the page reads oldest→newest.
+			slices.Reverse(rows)
 			for _, row := range rows {
 				items = append(items, threadMessage(row.ID, row.Role, row.Content, row.CreatedAt))
 			}
@@ -106,6 +112,8 @@ func GetThread(queries *db.Queries) api.Handler {
 				last := rows[len(rows)-1].ID
 				next = &last
 			}
+			// rows arrive newest→oldest; the page reads oldest→newest.
+			slices.Reverse(rows)
 			for _, row := range rows {
 				items = append(items, threadMessage(row.ID, row.Role, row.Content, row.CreatedAt))
 			}

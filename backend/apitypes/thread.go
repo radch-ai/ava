@@ -39,8 +39,10 @@ type ThreadMessageDraft struct {
 	Content string     `json:"content"`
 }
 
-// ThreadPage is one newest-first page of the thread. NextCursor names
-// the page's oldest item and is null on the last page.
+// ThreadPage is one page of the thread, its items ordered
+// oldest→newest — the display order. NextCursor names the page's
+// oldest item and is null on the last page; the page it names is
+// strictly older.
 type ThreadPage struct {
 	Items      []ThreadMessage `json:"items"`
 	NextCursor *string         `json:"nextCursor"`

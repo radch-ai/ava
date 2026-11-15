@@ -179,13 +179,17 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 					{ status: 400 }
 				)
 			}
-			return HttpResponse.json(
-				paginate(
-					thread,
-					Math.max(1, Number(url.searchParams.get('limit')) || 20),
-					cursor
-				)
+			const page = paginate(
+				thread,
+				Math.max(1, Number(url.searchParams.get('limit')) || 20),
+				cursor
 			)
+			// The store pages newest-first like the SQL; the wire answers
+			// oldest→newest.
+			return HttpResponse.json({
+				items: [...page.items].reverse(),
+				nextCursor: page.nextCursor
+			})
 		}),
 
 		http.get('*/api/agent/:id/activity', ({ request, params }) => {

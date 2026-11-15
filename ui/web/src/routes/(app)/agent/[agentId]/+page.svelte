@@ -128,8 +128,11 @@
 	// Turn events fold into the live conversation tail; lane state
 	// mirrors into the strip. A settled turn is in the stored thread
 	// now — the sink wrote before the settle event — so its refetch
-	// replaces the first page (keeping any loaded older ones) and the
-	// live copies it covers are dropped.
+	// replaces the newest window (keeping any loaded older pages) and
+	// the live copies it covers are dropped. Pages arrive oldest→
+	// newest; anything already loaded that the fresh window does not
+	// carry is strictly older, so the settled turn lands at the
+	// bottom.
 	function handleSocketEvent(event: AgentSocketEvent) {
 		liveTurns.applyEvent(event)
 		if (event.type === 'lane_status') {
@@ -146,7 +149,7 @@
 			const loaded = thread?.items ?? []
 			const freshIds = new Set(fresh.items.map((m) => m.id))
 			thread = {
-				items: [...fresh.items, ...loaded.filter((m) => !freshIds.has(m.id))],
+				items: [...loaded.filter((m) => !freshIds.has(m.id)), ...fresh.items],
 				nextCursor: fresh.nextCursor
 			}
 			liveTurns.settleTurn(

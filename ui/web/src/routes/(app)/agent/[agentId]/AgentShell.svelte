@@ -93,6 +93,8 @@
 		})
 	})
 
+	// Load-more prepends older rows above the viewport; the browser's
+	// native scroll anchoring keeps the reader's position.
 	async function handleLoadMore() {
 		if (isConversation) {
 			onThreadLoadMore?.()

@@ -36,24 +36,26 @@ describe('mock API handlers', () => {
 		}
 	})
 
-	it('pages the superagent thread newest-first until the cursor is exhausted', async () => {
+	it('pages the superagent thread oldest-first per page until the cursor is exhausted', async () => {
 		const first = (await (
 			await fetch(`${BASE}/agent/_superagent/thread?limit=10`)
 		).json()) as {
 			items: { id: string }[]
 			nextCursor: string | null
 		}
+		// Pages walk newest chunk → oldest chunk; within a page the
+		// items read oldest→newest — the display order.
 		expect(first.items.map((message) => message.id)).toEqual([
-			'msg-24',
-			'msg-23',
-			'msg-22',
-			'msg-21',
-			'msg-20',
-			'msg-19',
-			'msg-18',
-			'msg-17',
+			'msg-15',
 			'msg-16',
-			'msg-15'
+			'msg-17',
+			'msg-18',
+			'msg-19',
+			'msg-20',
+			'msg-21',
+			'msg-22',
+			'msg-23',
+			'msg-24'
 		])
 		expect(first.nextCursor).toBe('msg-15')
 
@@ -64,16 +66,16 @@ describe('mock API handlers', () => {
 			nextCursor: string | null
 		}
 		expect(second.items.map((message) => message.id)).toEqual([
-			'msg-14',
-			'msg-13',
-			'msg-12',
-			'msg-11',
-			'msg-10',
-			'msg-9',
-			'msg-8',
-			'msg-7',
+			'msg-5',
 			'msg-6',
-			'msg-5'
+			'msg-7',
+			'msg-8',
+			'msg-9',
+			'msg-10',
+			'msg-11',
+			'msg-12',
+			'msg-13',
+			'msg-14'
 		])
 		expect(second.nextCursor).toBe('msg-5')
 
@@ -84,10 +86,10 @@ describe('mock API handlers', () => {
 			nextCursor: string | null
 		}
 		expect(third.items.map((message) => message.id)).toEqual([
-			'msg-4',
-			'msg-3',
+			'msg-1',
 			'msg-2',
-			'msg-1'
+			'msg-3',
+			'msg-4'
 		])
 		expect(third.nextCursor).toBeNull()
 	})

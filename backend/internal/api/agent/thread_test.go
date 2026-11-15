@@ -1,8 +1,8 @@
 package agent
 
-// Thread endpoint tests over the real store: page order, the cursor
-// walk, limit rules, and the error contract. Route mounting is pinned
-// in backend's tests.
+// Thread endpoint tests over the real store: page order (oldest→
+// newest within a page), the cursor walk, limit rules, and the
+// error contract. Route mounting is pinned in backend's tests.
 
 import (
 	"database/sql"
@@ -91,7 +91,7 @@ func TestGetThreadUnknownAgent(t *testing.T) {
 	}
 }
 
-func TestGetThreadNewestFirst(t *testing.T) {
+func TestGetThreadPageOrder(t *testing.T) {
 	sqlDB, queries := threadStore(t)
 	seedMessages(t, sqlDB, "research", "m1", "m2", "m3")
 
@@ -102,13 +102,13 @@ func TestGetThreadNewestFirst(t *testing.T) {
 	if len(page.Items) != 3 {
 		t.Fatalf("items = %d, want 3", len(page.Items))
 	}
-	for i, want := range []string{"m3", "m2", "m1"} {
+	for i, want := range []string{"m1", "m2", "m3"} {
 		if page.Items[i].ID != want {
-			t.Errorf("items[%d] = %s, want %s (newest first)", i, page.Items[i].ID, want)
+			t.Errorf("items[%d] = %s, want %s (oldest first)", i, page.Items[i].ID, want)
 		}
 	}
-	// 1_700_000_000_000 ms = 2023-11-14T22:13:20.000Z.
-	if got := page.Items[2].CreatedAt; got != "2023-11-14T22:13:20.000Z" {
+	// pageBase ms = 2023-11-14T22:13:20.000Z; m1 carries it.
+	if got := page.Items[0].CreatedAt; got != "2023-11-14T22:13:20.000Z" {
 		t.Errorf("createdAt = %s, want the ms epoch as ISO", got)
 	}
 	if page.NextCursor != nil {
@@ -121,8 +121,8 @@ func TestGetThreadCursorWalk(t *testing.T) {
 	seedMessages(t, sqlDB, "research", "m1", "m2", "m3", "m4", "m5")
 
 	wantPages := [][]string{
-		{"m5", "m4"},
-		{"m3", "m2"},
+		{"m4", "m5"},
+		{"m2", "m3"},
 		{"m1"},
 	}
 	cursor := ""
