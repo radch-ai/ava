@@ -1,9 +1,9 @@
 /**
  * Gateway WebSocket client
  *
- * One connection per agent conversation, created lazily on first send and
- * owned by the surface that created it — later conversation modes hold
- * their own socket the same way.
+ * One connection per agent conversation, connected eagerly on
+ * creation and owned by the surface that created it — later
+ * conversation modes hold their own socket the same way.
  *
  * The gateway speaks one tagged envelope; this module decodes frames
  * into typed events and types outgoing messages so invalid ones do
@@ -202,6 +202,11 @@ export function createAgentSocket(
 			connect()
 		}
 	}
+
+	// Connect eagerly: a freshly mounted page needs the connection
+	// up for its lane-status join — connecting on first send would be
+	// too late.
+	ensureConnected()
 
 	return {
 		sendPrompt(content: string, selection: ModelSelection) {

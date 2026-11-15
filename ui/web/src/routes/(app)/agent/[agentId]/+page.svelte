@@ -50,9 +50,11 @@
 
 	let selectedModel = $state<ModelSelection>(null)
 
-	// Lazily connected on first submit; one socket per conversation
-	// surface. Reconnects happen inside the socket; state below tracks
-	// what the strip renders.
+	// One socket per conversation surface, opened eagerly on mount: a
+	// page (re)loaded mid-turn asks for lane status on connect, which
+	// joins the lane and replays the streamed prefix — a lazy,
+	// first-submit socket would miss that window. Reconnects happen
+	// inside the socket; state below tracks what the strip renders.
 	let socket: AgentSocket | undefined
 	let socketState = $state<AgentSocketState | 'idle'>('idle')
 	let laneStatus = $state<LaneStatus | null>(null)
@@ -104,12 +106,7 @@
 	function handleComposerSubmit(text: string) {
 		activeTab = 'conversation'
 		liveTurns.echoUser(text)
-		socket ??= createAgentSocket(
-			data.agent.id,
-			handleSocketEvent,
-			handleSocketState
-		)
-		socket.sendPrompt(text, selectedModel)
+		socket?.sendPrompt(text, selectedModel)
 	}
 
 	function handleInterrupt() {
@@ -162,7 +159,14 @@
 		}
 	}
 
-	onMount(() => () => socket?.close())
+	onMount(() => {
+		socket = createAgentSocket(
+			data.agent.id,
+			handleSocketEvent,
+			handleSocketState
+		)
+		return () => socket?.close()
+	})
 
 	function handleActivityLoadMore(feed: ActivityFeed) {
 		activityFeed = feed
