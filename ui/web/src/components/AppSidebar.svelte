@@ -109,36 +109,38 @@
 			</Sidebar.Menu>
 		</Sidebar.Group>
 		<Sidebar.Separator />
-		<Sidebar.Group>
+		<Sidebar.Group class="min-h-0 flex-1">
 			<Sidebar.GroupLabel>Specialized Agents</Sidebar.GroupLabel>
-			<Sidebar.GroupContent>
-				<Sidebar.Menu>
-					{#each agents as agent (agent.id)}
-						<Sidebar.MenuItem>
-							<Sidebar.MenuButton
-								isActive={page.route.id === '/(app)/agent/[agentId]' &&
-									page.params.agentId === agent.id}
-							>
-								{#snippet child({ props })}
-									<a
-										href={resolve('/(app)/agent/[agentId]', {
-											agentId: agent.id
-										})}
-										{...props}
-									>
-										<AgentIcon
-											name={agent.icon}
-											size={18}
-											class="group-data-[collapsible=icon]:size-5"
-										/>
-										<span class="group-data-[collapsible=icon]:hidden"
-											>{agent.name}</span
+			<Sidebar.GroupContent class="flex min-h-0 flex-1 flex-col">
+				<Sidebar.Menu class="max-h-5/6 min-h-0 flex-1">
+					<div class="min-h-0 overflow-y-auto">
+						{#each agents as agent (agent.id)}
+							<Sidebar.MenuItem>
+								<Sidebar.MenuButton
+									isActive={page.route.id === '/(app)/agent/[agentId]' &&
+										page.params.agentId === agent.id}
+								>
+									{#snippet child({ props })}
+										<a
+											href={resolve('/(app)/agent/[agentId]', {
+												agentId: agent.id
+											})}
+											{...props}
 										>
-									</a>
-								{/snippet}
-							</Sidebar.MenuButton>
-						</Sidebar.MenuItem>
-					{/each}
+											<AgentIcon
+												name={agent.icon}
+												size={18}
+												class="group-data-[collapsible=icon]:size-5"
+											/>
+											<span class="group-data-[collapsible=icon]:hidden"
+												>{agent.name}</span
+											>
+										</a>
+									{/snippet}
+								</Sidebar.MenuButton>
+							</Sidebar.MenuItem>
+						{/each}
+					</div>
 					<!-- New Agent Button -->
 					<Sidebar.MenuItem class="mt-2">
 						<Button
