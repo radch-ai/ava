@@ -1,6 +1,7 @@
 <script lang="ts">
 	import ModelSelector from '#components/ModelSelector.svelte'
 	import { Textarea } from '#components/ui/textarea'
+	import type { ModelSelection } from '#lib/models'
 	import type { HeartbeatConfig } from '#lib/types/agent'
 	import { FIELD_CONFIGS } from '#lib/types/agent'
 
@@ -11,6 +12,12 @@
 	}
 
 	let { heartbeat = $bindable() }: Props = $props()
+
+	// The selector speaks null; the config field is optional.
+	let heartbeatSelection = $derived<ModelSelection>(heartbeat.model ?? null)
+	function setHeartbeatModel(selection: ModelSelection) {
+		heartbeat.model = selection ?? undefined
+	}
 </script>
 
 <div class="space-y-4">
@@ -32,7 +39,7 @@
 		<label for="heartbeat-model" class="mb-2 block text-sm font-medium"
 			>Model</label
 		>
-		<ModelSelector bind:value={heartbeat.model} />
+		<ModelSelector value={heartbeatSelection} onChange={setHeartbeatModel} />
 	</div>
 	<div>
 		<label for="heartbeat-duration" class="mb-2 block text-sm font-medium"

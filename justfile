@@ -45,8 +45,9 @@ sqlc-generate-for service:
     @case " {{ sqlc_services }} " in *" {{ service }} "*) just sqlc-generate ;; esac
 
 
-# Regenerate the UI wire types from backend/apitypes (tygo.yaml →
-# ui/web/src/lib/types/gen/, gitignored — regenerate, never edit).
+# Regenerate the UI wire types from the Go contracts
+# (backend/apitypes, gateway/wstypes → ui/web/src/lib/types/gen/,
+# gitignored — regenerate, never edit).
 typegen:
     @just require_tool tygo
     tygo generate
@@ -61,9 +62,18 @@ build service:
     go build -o bin/{{ service }} ./cmd/{{ service }}
 
 # Build a service, then run its binary from bin/. Dev runs use the in-memory
-# database unless AVA_DB is set.
+# database unless AVA_DB is set. The recipe shell forwards SIGTERM/SIGINT to
+# the binary and propagates its exit code (just does not relay signals).
 run service: (build service)
-    AVA_DB="${AVA_DB:-:memory:}" ./bin/{{ service }}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    AVA_DB="${AVA_DB:-:memory:}" ./bin/{{ service }} &
+    pid=$!
+    trap 'kill -TERM "$pid" 2>/dev/null' TERM INT
+    code=0
+    wait "$pid" || code=$?
+    wait "$pid" 2>/dev/null || true
+    exit "$code"
 
 ## --- test ---
 

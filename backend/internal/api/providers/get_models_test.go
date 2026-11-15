@@ -1,7 +1,6 @@
 package providers
 
-// GET /api/models: the selector-facing grouped catalog — custom ∪
-// system per provider, merged by display name, no connection config.
+// GET /api/models: the selector-facing grouped catalog.
 
 import (
 	"net/http"
@@ -47,9 +46,12 @@ func TestGetModelsMergesLiveAndCustom(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	// Live ids sorted; custom "live-a" wins the dedupe, "custom-1"
-	// joins; the rejected row contributes nothing.
-	want := `{"groups":[{"provider":"Fake","models":["custom-1","live-a","live-z"]}]}` + "\n"
+	// Custom "live-a" wins the dedupe; the rejected row contributes
+	// nothing.
+	want := `{"groups":[{"providerName":"Fake","models":[` +
+		`{"id":"custom-1","providerId":"u-1"},` +
+		`{"id":"live-a","providerId":"u-1"},` +
+		`{"id":"live-z","providerId":"u-1"}]}]}` + "\n"
 	if got := rec.Body.String(); got != want {
 		t.Errorf("body = %s\nwant %s", got, want)
 	}
@@ -63,7 +65,7 @@ func TestGetModelsMergesGroupsByName(t *testing.T) {
 		`INSERT INTO providers (id, name, base_url, models)
 		 VALUES ('u-1', 'OpenAI', '` + url + `', '[]')`,
 		`INSERT INTO providers (id, name, base_url, models)
-		 VALUES ('u-2', 'OpenAI', '` + url + `', '["custom-1"]')`,
+		 VALUES ('u-2', 'OpenAI', '` + url + `', '["custom-1","live-z"]')`,
 	} {
 		if _, err := sqlDB.Exec(stmt); err != nil {
 			t.Fatalf("seed provider: %v", err)
@@ -76,8 +78,13 @@ func TestGetModelsMergesGroupsByName(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	// Both connections' ids in one group, deduped and sorted.
-	want := `{"groups":[{"provider":"OpenAI","models":["custom-1","live-a","live-z"]}]}` + "\n"
+	// "live-a"/"live-z" on both rows: two entries each.
+	want := `{"groups":[{"providerName":"OpenAI","models":[` +
+		`{"id":"custom-1","providerId":"u-2"},` +
+		`{"id":"live-a","providerId":"u-1"},` +
+		`{"id":"live-a","providerId":"u-2"},` +
+		`{"id":"live-z","providerId":"u-1"},` +
+		`{"id":"live-z","providerId":"u-2"}]}]}` + "\n"
 	if got := rec.Body.String(); got != want {
 		t.Errorf("body = %s\nwant %s", got, want)
 	}

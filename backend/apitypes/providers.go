@@ -12,21 +12,28 @@ type Provider struct {
 	Models  []string `json:"models"`
 }
 
-// GetProvidersResponse is GET /api/providers' body: the reserved
-// default-routing id plus every provider with its models.
+// GetProvidersResponse is GET /api/providers' body: every stored
+// provider with its custom models.
 type GetProvidersResponse struct {
-	// DefaultModel is the reserved 'auto' id — heartbeats and cron
-	// jobs with no model set route on it.
-	DefaultModel string     `json:"defaultModel"`
-	Providers    []Provider `json:"providers"`
+	Providers []Provider `json:"providers"`
 }
 
-// ModelGroup is one provider's merged entry in GET /api/models:
-// display name plus custom ∪ system ids, deduped and sorted. The
-// selector catalog carries no connection config.
+// ModelEntry is the selection shape everywhere a model is chosen:
+// the absolute model id plus the provider row that owns it. nil
+// means default routing.
+type ModelEntry struct {
+	ID         string `json:"id"`
+	ProviderID string `json:"providerId"`
+}
+
+// ModelGroup is one display group in GET /api/models: entries from
+// custom ∪ system ids, deduped per provider row with custom winning,
+// sorted by id. Providers sharing a display name merge into one
+// group; the merge is display-only — entries keep their own
+// providerId.
 type ModelGroup struct {
-	Provider string   `json:"provider"`
-	Models   []string `json:"models"`
+	ProviderName string       `json:"providerName"`
+	Models       []ModelEntry `json:"models"`
 }
 
 // GetModelsResponse is GET /api/models' body: the selector-facing

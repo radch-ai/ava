@@ -22,7 +22,7 @@ const job: CronJob = {
 	id: '1',
 	time: '07:00',
 	frequency: 'daily',
-	model: 'auto',
+	model: undefined,
 	prompt: 'Daily summary'
 }
 

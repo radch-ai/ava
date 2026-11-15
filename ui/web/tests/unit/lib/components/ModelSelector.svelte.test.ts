@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
 import ModelSelector from '#components/ModelSelector.svelte'
-import { type ModelGroup, modelsStore } from '#lib/models'
+import {
+	type ModelEntry,
+	type ModelGroup,
+	type ModelSelection,
+	modelsStore
+} from '#lib/models'
 import { getModels } from '#lib/services/providers'
 import type { GetModelsResponse } from '#lib/types/provider'
 
@@ -10,15 +15,21 @@ vi.mock('#lib/services/providers', () => ({
 	getModels: vi.fn(async () => ({ groups: [] }))
 }))
 
+const openai = (id: string): ModelEntry => ({ id, providerId: 'p-openai' })
+const anthropic = (id: string): ModelEntry => ({
+	id,
+	providerId: 'p-anthropic'
+})
+
 describe('ModelSelector', () => {
 	const testModelGroups: ModelGroup[] = [
 		{
-			provider: 'OpenAI',
-			models: ['gpt-4', 'gpt-3.5-turbo']
+			providerName: 'OpenAI',
+			models: [openai('gpt-4'), openai('gpt-3.5-turbo')]
 		},
 		{
-			provider: 'Anthropic',
-			models: ['claude-3-sonnet']
+			providerName: 'Anthropic',
+			models: [anthropic('claude-3-sonnet')]
 		}
 	]
 
@@ -34,16 +45,16 @@ describe('ModelSelector', () => {
 			await expect.element(button).toBeVisible()
 		})
 
-		it('shows default model (auto) when no value is provided', async () => {
+		it('shows Default when no value is provided', async () => {
 			render(ModelSelector, { modelGroups: testModelGroups })
 
 			const button = page.getByRole('combobox')
-			await expect.element(button).toHaveTextContent('auto')
+			await expect.element(button).toHaveTextContent('Default')
 		})
 
 		it('shows current selected model name when value is set', async () => {
 			render(ModelSelector, {
-				value: 'gpt-4',
+				value: openai('gpt-4'),
 				modelGroups: testModelGroups
 			})
 
@@ -51,14 +62,33 @@ describe('ModelSelector', () => {
 			await expect.element(button).toHaveTextContent('gpt-4')
 		})
 
-		it('shows "Select model" for unknown model id', async () => {
+		it('shows "Select model" for a selection outside the catalog', async () => {
 			render(ModelSelector, {
-				value: 'unknown-model',
+				value: { id: 'unknown-model', providerId: 'p-gone' },
 				modelGroups: testModelGroups
 			})
 
 			const button = page.getByRole('combobox')
 			await expect.element(button).toHaveTextContent('Select model')
+		})
+
+		it('renders same-id entries with plain, identical labels', async () => {
+			// Two provider rows share the group name and a model id:
+			// the entries look alike but stay distinct — each carries
+			// its own providerId as its selection key.
+			const merged: ModelGroup[] = [
+				{
+					providerName: 'OpenAI',
+					models: [openai('gpt-4'), { id: 'gpt-4', providerId: 'p-proxy' }]
+				}
+			]
+			render(ModelSelector, {
+				value: { id: 'gpt-4', providerId: 'p-proxy' },
+				modelGroups: merged
+			})
+
+			const button = page.getByRole('combobox')
+			await expect.element(button).toHaveTextContent('gpt-4')
 		})
 
 		it('applies custom class to trigger', async () => {
@@ -104,7 +134,7 @@ describe('ModelSelector', () => {
 			await expect.element(page.getByText('Anthropic')).toBeVisible()
 		})
 
-		it('shows default model option when showDefault is true', async () => {
+		it('shows the default option when showDefault is true', async () => {
 			render(ModelSelector, {
 				modelGroups: testModelGroups,
 				showDefault: true
@@ -113,15 +143,15 @@ describe('ModelSelector', () => {
 			const button = page.getByRole('combobox')
 			await button.click()
 
-			const autoOption = page.getByRole('option', { name: 'auto' })
-			await expect.element(autoOption).toBeVisible()
+			const defaultOption = page.getByRole('option', { name: 'Default' })
+			await expect.element(defaultOption).toBeVisible()
 		})
 
-		it('hides default model option when showDefault is false', async () => {
+		it('hides the default option when showDefault is false', async () => {
 			render(ModelSelector, {
 				modelGroups: testModelGroups,
 				showDefault: false,
-				value: 'gpt-4'
+				value: openai('gpt-4')
 			})
 
 			const button = page.getByRole('combobox')
@@ -133,13 +163,17 @@ describe('ModelSelector', () => {
 
 			const options = await page.getByRole('option').all()
 			const optionTexts = options.map((el) => el.element().textContent)
-			expect(optionTexts.some((text) => text?.includes('auto'))).toBe(false)
+			expect(optionTexts.some((text) => text?.includes('Default'))).toBe(false)
 		})
 	})
 
 	describe('selection behavior', () => {
-		it('selects model on click and updates display', async () => {
-			render(ModelSelector, { modelGroups: testModelGroups })
+		it('selects model on click, updating display and callback', async () => {
+			const onChange = vi.fn<(selection: ModelSelection) => void>()
+			render(ModelSelector, {
+				modelGroups: testModelGroups,
+				onChange
+			})
 
 			const button = page.getByRole('combobox')
 			await button.click()
@@ -148,6 +182,23 @@ describe('ModelSelector', () => {
 			await gpt4Option.click()
 
 			await expect.element(button).toHaveTextContent('gpt-4')
+			expect(onChange).toHaveBeenCalledWith(openai('gpt-4'))
+		})
+
+		it('selecting Default reports null', async () => {
+			const onChange = vi.fn<(selection: ModelSelection) => void>()
+			render(ModelSelector, {
+				modelGroups: testModelGroups,
+				value: openai('gpt-4'),
+				onChange
+			})
+
+			const button = page.getByRole('combobox')
+			await button.click()
+			await page.getByRole('option', { name: 'Default' }).click()
+
+			await expect.element(button).toHaveTextContent('Default')
+			expect(onChange).toHaveBeenCalledWith(null)
 		})
 
 		it('closes dropdown after selection', async () => {
@@ -210,8 +261,8 @@ describe('ModelSelector catalog refresh', () => {
 		return {
 			groups: [
 				{
-					provider: 'OpenAI',
-					models
+					providerName: 'OpenAI',
+					models: models.map((id) => ({ id, providerId: 'p-openai' }))
 				}
 			]
 		}
@@ -245,7 +296,7 @@ describe('ModelSelector catalog refresh', () => {
 
 	it('hides the refresh control when the caller supplies groups', async () => {
 		render(ModelSelector, {
-			modelGroups: [{ provider: 'OpenAI', models: ['gpt-4'] }]
+			modelGroups: [{ providerName: 'OpenAI', models: [openai('gpt-4')] }]
 		})
 
 		await page.getByRole('combobox').click()

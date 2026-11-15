@@ -405,32 +405,37 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 		// (the sentinel key 'bad-key' fails it deterministically).
 		http.get('*/api/providers', () =>
 			HttpResponse.json({
-				defaultModel: 'auto',
 				providers: store.providers.map(providerView)
 			})
 		),
 
-		// The selector catalog: grouped models only, no config.
+		// Merged catalog: starters' system lists plus custom ids.
 		http.get('*/api/models', () => {
 			const names: string[] = []
-			const grouped = new Map<string, string[]>()
+			const grouped: Record<
+				string,
+				Array<{ id: string; providerId: string }>
+			> = {}
 			for (const row of store.providers) {
-				const ids = [
-					...new Set([...row.models, ...systemModelsFor(row)])
-				].sort()
+				const ids = [...new Set([...row.models, ...systemModelsFor(row)])]
 				if (ids.length === 0) continue
-				const existing = grouped.get(row.name)
+				const entries = ids
+					.map((id) => ({ id, providerId: row.id }))
+					.sort((a, b) => a.id.localeCompare(b.id))
+				const existing = grouped[row.name]
 				if (existing) {
-					grouped.set(row.name, [...new Set([...existing, ...ids])].sort())
+					grouped[row.name] = [...existing, ...entries].sort((a, b) =>
+						a.id.localeCompare(b.id)
+					)
 				} else {
 					names.push(row.name)
-					grouped.set(row.name, ids)
+					grouped[row.name] = entries
 				}
 			}
 			return HttpResponse.json({
 				groups: names.map((name) => ({
-					provider: name,
-					models: grouped.get(name)
+					providerName: name,
+					models: grouped[name]
 				}))
 			})
 		}),
@@ -565,6 +570,16 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				)
 			}
 			store.providers.splice(index, 1)
+			// The DB's ON DELETE SET NULL: rows pinned to the deleted
+			// provider fall back to default routing (no model).
+			for (const heartbeat of store.heartbeats.values()) {
+				if (heartbeat.model?.providerId === id) heartbeat.model = undefined
+			}
+			for (const jobs of store.cronJobs.values()) {
+				for (const job of jobs) {
+					if (job.model?.providerId === id) job.model = undefined
+				}
+			}
 			return HttpResponse.json({ message: 'Provider deleted' })
 		})
 	]

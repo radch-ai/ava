@@ -17,6 +17,6 @@ type CronJob struct {
 	// is "custom".
 	Frequency      CronFrequency `json:"frequency"`
 	CronExpression *string       `json:"cronExpression,omitempty"`
-	Model          string        `json:"model"`
+	Model          *ModelEntry   `json:"model"`
 	Prompt         string        `json:"prompt"`
 }

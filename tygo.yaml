@@ -1,8 +1,12 @@
-# tygo config: generate TS types from the Go wire contract
-# (backend/apitypes) into the webui. Output is gitignored and
-# regenerated via `just typegen` — never edited.
+# tygo config: generate TS types from the Go wire contracts
+# (backend/apitypes, gateway/wstypes) into the webui. Output is
+# gitignored and regenerated via `just typegen` — never edited.
 packages:
   - path: github.com/radch-ai/ava/backend/apitypes
     output_path: ./ui/web/src/lib/types/gen/apitypes.gen.ts
+    indent: "\t"
+    enum_style: "union"
+  - path: github.com/radch-ai/ava/gateway/wstypes
+    output_path: ./ui/web/src/lib/types/gen/wstypes.gen.ts
     indent: "\t"
     enum_style: "union"

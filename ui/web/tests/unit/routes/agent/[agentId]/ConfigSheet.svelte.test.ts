@@ -20,7 +20,7 @@ function createDefaultSuperagentConfig(): AgentConfigWithIdentity {
 			enabled: false,
 			duration: '1hr',
 			content: '',
-			model: 'default'
+			model: undefined
 		}
 	}
 }
@@ -39,7 +39,7 @@ function createDefaultAgentConfig(): AgentConfigWithIdentity {
 			enabled: false,
 			duration: '1hr',
 			content: '',
-			model: 'default'
+			model: undefined
 		}
 	}
 }
@@ -342,7 +342,7 @@ describe('ConfigSheet', () => {
 				enabled: true,
 				duration: '1hr',
 				content: '',
-				model: 'default'
+				model: undefined
 			}
 		}
 		mockUpdateHeartbeat.mockResolvedValue(saved)
@@ -363,7 +363,7 @@ describe('ConfigSheet', () => {
 				enabled: true,
 				duration: '1hr',
 				content: '',
-				model: 'default'
+				model: undefined
 			})
 		})
 		// Structural entities never ride the config patch

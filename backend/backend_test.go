@@ -56,7 +56,7 @@ func TestRoutes(t *testing.T) {
 		t.Errorf("PATCH /agent/_superagent/config = %d, want 200", code)
 	}
 	if code := do(http.MethodPatch, "/agent/_superagent/heartbeat",
-		`{"model":"auto","enabled":true,"duration":"30m","content":"x"}`); code != http.StatusOK {
+		`{"model":null,"enabled":true,"duration":"30m","content":"x"}`); code != http.StatusOK {
 		t.Errorf("PATCH /agent/_superagent/heartbeat = %d, want 200", code)
 	}
 	if code := do(http.MethodGet, "/agent/_superagent/cron-jobs", ""); code != http.StatusOK {

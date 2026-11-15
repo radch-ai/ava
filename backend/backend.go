@@ -45,6 +45,9 @@ func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte) (http.Handler, 
 		return nil, nil, err
 	}
 	queries := db.New(sqlDB)
+	bindResolver(queries, vaultStore)
+	bindPersist(queries)
+	bindAgentConfig(queries)
 	mux := http.NewServeMux()
 
 	// Agents.

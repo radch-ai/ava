@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -154,18 +155,28 @@ func serve(logger zerolog.Logger) {
 	}
 	apiHandler := authMiddleware.Authenticate(apiRouter)
 
-	wsHandler, err := gateway.New(&gateway.Config{}, logger)
+	gw, err := gateway.New(&gateway.Config{
+		ResolveModel:   backend.ResolveModel,
+		PersistTurn:    backend.AppendThreadMessages,
+		GetAgentConfig: backend.GetAgentConfig,
+	}, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Failed to create gateway handler")
 	}
 
 	// Component mounts: the API under /api, prefix stripped on the way
-	// in; gateway at /ws; /healthz comes from utils.Serve.
+	// in; gateway at /ws behind the same session guard (the upgrade
+	// carries the cookie); /healthz comes from utils.Serve.
 	root := http.NewServeMux()
 	root.Handle("/api/", http.StripPrefix("/api", apiHandler))
-	root.Handle("GET /ws", wsHandler)
+	root.Handle("GET /ws", authMiddleware.Guard(gw))
 
 	if err := utils.Serve(ctx, root, cfg.Addr, logger); err != nil {
 		logger.Fatal().Err(err).Msg("Server failed")
 	}
+
+	// The server closed its connections; give running turns a
+	// bounded moment to settle their partial answers into the
+	// thread before the process exits.
+	gw.Drain(10 * time.Second)
 }

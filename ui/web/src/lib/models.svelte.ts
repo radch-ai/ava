@@ -1,8 +1,7 @@
 /**
- * Model-catalog store — the selector-facing shape of GET
- * /api/models. Selectors render the reserved default ('auto') plus
- * these groups; the providers page edits the catalog and calls
- * refresh().
+ * Model-catalog store — selectors render the reserved default
+ * option plus these groups; the providers page edits the catalog
+ * and calls refresh().
  */
 
 import { getModels } from '#lib/services/providers'

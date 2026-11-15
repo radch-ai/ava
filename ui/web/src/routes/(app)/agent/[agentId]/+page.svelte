@@ -3,12 +3,18 @@
 	import { onMount } from 'svelte'
 	import ModelSelector from '#components/ModelSelector.svelte'
 	import { Button } from '#components/ui/button'
-	import { APP_NAME, SUPERAGENT_AGENT_ID, SUPERAGENT_NAME } from '#lib/config'
-	import { defaultModel } from '#lib/models'
+	import { SUPERAGENT_AGENT_ID, SUPERAGENT_NAME } from '#lib/config'
+	import type { ModelSelection } from '#lib/models'
 	import {
 		type ActivityFeed,
+		type AgentSocket,
+		type AgentSocketEvent,
+		type AgentSocketState,
+		createAgentSocket,
+		createLiveTurns,
 		getAgentActivityFeed,
 		getAgentThread,
+		type LaneStatus,
 		mergePastThread
 	} from '#lib/services/agent'
 	import { resolve } from '$app/paths'
@@ -42,21 +48,17 @@
 		}
 	})
 
-	const MODEL_KEY = `${APP_NAME.toLowerCase()}-chat-model`
-	let selectedModel = $state(defaultModel)
+	let selectedModel = $state<ModelSelection>(null)
 
-	onMount(() => {
-		const stored = localStorage.getItem(MODEL_KEY)
-		if (stored) {
-			selectedModel = stored
-		}
-	})
-
-	$effect(() => {
-		if (typeof window === 'undefined') return
-		void selectedModel
-		localStorage.setItem(MODEL_KEY, selectedModel)
-	})
+	// One socket per conversation surface, opened eagerly on mount: a
+	// page (re)loaded mid-turn asks for lane status on connect, which
+	// joins the lane and replays the streamed prefix — a lazy,
+	// first-submit socket would miss that window. Reconnects happen
+	// inside the socket; state below tracks what the strip renders.
+	let socket: AgentSocket | undefined
+	let socketState = $state<AgentSocketState | 'idle'>('idle')
+	let laneStatus = $state<LaneStatus | null>(null)
+	const liveTurns = createLiveTurns()
 
 	async function loadMore() {
 		if (!thread?.nextCursor || isLoadingMore) return
@@ -101,9 +103,70 @@
 		activeTab = tab
 	}
 
-	function handleComposerSubmit(_text: string) {
+	function handleComposerSubmit(text: string) {
 		activeTab = 'conversation'
+		liveTurns.echoUser(text)
+		socket?.sendPrompt(text, selectedModel)
 	}
+
+	function handleInterrupt() {
+		socket?.sendInterrupt()
+	}
+
+	// Connection state from the socket: live means the gateway greeted
+	// us — on every (re)connection the lane status is re-requested so
+	// a reconnect resyncs instead of trusting stale state.
+	function handleSocketState(state: AgentSocketState) {
+		socketState = state
+		if (state !== 'live') {
+			laneStatus = null
+			return
+		}
+		socket?.requestStatus()
+	}
+
+	// Turn events fold into the live conversation tail; lane state
+	// mirrors into the strip. A settled turn is in the stored thread
+	// now — the sink wrote before the settle event — so its refetch
+	// replaces the first page (keeping any loaded older ones) and the
+	// live copies it covers are dropped.
+	function handleSocketEvent(event: AgentSocketEvent) {
+		liveTurns.applyEvent(event)
+		if (event.type === 'lane_status') {
+			laneStatus = event.data
+		}
+		if (event.type === 'message') {
+			void reconcileTurn(event.data.id)
+		}
+	}
+
+	async function reconcileTurn(id: string) {
+		try {
+			const fresh = await getAgentThread(data.agent.id, 20)
+			const loaded = thread?.items ?? []
+			const freshIds = new Set(fresh.items.map((m) => m.id))
+			thread = {
+				items: [...fresh.items, ...loaded.filter((m) => !freshIds.has(m.id))],
+				nextCursor: fresh.nextCursor
+			}
+			liveTurns.settleTurn(
+				id,
+				fresh.items.filter((m) => m.role === 'user').map((m) => m.content)
+			)
+		} catch {
+			// Refetch failed: the live tail stays the truth until the
+			// next settle retries.
+		}
+	}
+
+	onMount(() => {
+		socket = createAgentSocket(
+			data.agent.id,
+			handleSocketEvent,
+			handleSocketState
+		)
+		return () => socket?.close()
+	})
 
 	function handleActivityLoadMore(feed: ActivityFeed) {
 		activityFeed = feed
@@ -113,6 +176,12 @@
 	const ctaHref = $derived(
 		`${resolve('/(app)/agent/[agentId]', { agentId: SUPERAGENT_AGENT_ID })}?prompt=${encodeURIComponent(`Use the ${data.agent.name} agent to...`)}`
 	)
+
+	const laneStatusLabel = $derived(
+		laneStatus
+			? `lane ${laneStatus.active ? 'active' : 'idle'} · ${laneStatus.model || 'Default'} · queue ${laneStatus.queue_len}`
+			: ''
+	)
 </script>
 
 <AgentShell
@@ -120,6 +189,7 @@
 	{activeTab}
 	onTabChange={isSuperagent ? selectTab : undefined}
 	threadItems={thread?.items}
+	liveItems={liveTurns.messages}
 	{threadError}
 	threadNextCursor={thread?.nextCursor}
 	threadIsLoadingMore={isLoadingMore}
@@ -143,8 +213,33 @@
 					class="!bg-overlay-dark/70 hover:!bg-overlay-light hover:!ring-ring hover:!ring-1"
 				/>
 			</div>
-			<TextArea onsubmit={handleComposerSubmit} />
+			<TextArea
+				onsubmit={handleComposerSubmit}
+				working={laneStatus?.working ?? false}
+				oninterrupt={handleInterrupt}
+			/>
 		</div>
+
+		{#if socketState !== 'idle'}
+			<div
+				class="text-muted-foreground mx-auto mt-1 flex w-fit items-center gap-2 text-xs"
+			>
+				{#if socketState === 'live'}
+					<span class="size-1.5 rounded-full bg-emerald-500"></span>
+					{#if laneStatus}
+						<span>{laneStatusLabel}</span>
+					{:else}
+						<span>connected</span>
+					{/if}
+				{:else if socketState === 'reconnecting'}
+					<span class="size-1.5 rounded-full bg-amber-500"></span>
+					<span>reconnecting…</span>
+				{:else}
+					<span class="size-1.5 rounded-full bg-amber-500"></span>
+					<span>connecting…</span>
+				{/if}
+			</div>
+		{/if}
 	{:else}
 		<div class="mx-auto max-w-[var(--content-max-width)]">
 			<Button

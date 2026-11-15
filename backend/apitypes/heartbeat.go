@@ -9,10 +9,10 @@ const (
 	HeartbeatDuration2hr HeartbeatDuration = "2hr"
 )
 
-// HeartbeatConfig is the heartbeat configuration (stored in a
-// separate heartbeat table).
+// HeartbeatConfig is the heartbeat configuration, stored in a
+// separate heartbeat table.
 type HeartbeatConfig struct {
-	Model    string            `json:"model"`
+	Model    *ModelEntry       `json:"model"`
 	Enabled  bool              `json:"enabled"`
 	Duration HeartbeatDuration `json:"duration"`
 	Content  string            `json:"content"`

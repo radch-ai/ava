@@ -23,8 +23,7 @@ func GetProviders(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 			return err
 		}
 		out := apitypes.GetProvidersResponse{
-			DefaultModel: DefaultModel,
-			Providers:    make([]apitypes.Provider, 0, len(rows)),
+			Providers: make([]apitypes.Provider, 0, len(rows)),
 		}
 		for _, row := range rows {
 			custom, err := decodeModels(row.Models)
@@ -32,7 +31,7 @@ func GetProviders(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 				return err
 			}
-			hasKey, err := vaultStore.Has(r.Context(), vault.NameRuntime, providerEntryName(row.ID))
+			hasKey, err := vaultStore.Has(r.Context(), vault.NameRuntime, ProviderEntryName(row.ID))
 			if err != nil {
 				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 				return fmt.Errorf("read key state for provider %q: %w", row.ID, err)

@@ -1,9 +1,17 @@
 <script lang="ts">
-	import { ArrowUp, Plus } from '@lucide/svelte'
+	import { ArrowUp, CircleStop, Plus } from '@lucide/svelte'
 	import { Button } from '#components/ui/button'
 	import { Textarea } from '#components/ui/textarea'
 
-	let { onsubmit }: { onsubmit?: (text: string) => void } = $props()
+	let {
+		onsubmit,
+		oninterrupt,
+		working = false
+	}: {
+		onsubmit?: (text: string) => void
+		oninterrupt?: () => void
+		working?: boolean
+	} = $props()
 
 	let input = $state('')
 	let isSendButtonDisabled = $derived(input.trim() === '')
@@ -20,6 +28,11 @@
 			onsubmit?.(input.trim())
 			input = ''
 		}
+	}
+
+	function handleStop(e: MouseEvent) {
+		e.preventDefault()
+		oninterrupt?.()
 	}
 
 	function handleAttach() {
@@ -45,12 +58,26 @@
 		class="max-h-[200px] min-h-[40px] flex-1 resize-none !border-0 !bg-transparent px-2 py-[10px] !text-lg !leading-5 focus-visible:!border-transparent focus-visible:!ring-0"
 		rows={1}
 	/>
-	<Button
-		size="icon"
-		class="mb-[2.5px] size-9 shrink-0 cursor-pointer rounded-full"
-		disabled={isSendButtonDisabled}
-		onclick={handleSubmit}
-	>
-		<ArrowUp class="size-5" />
-	</Button>
+	{#if working}
+		<Button
+			size="icon"
+			variant="ghost"
+			aria-label="Stop"
+			class="mb-[2.5px] size-9 shrink-0 cursor-pointer rounded-full"
+			onclick={handleStop}
+		>
+			<CircleStop
+				class="[&_circle]:fill-destructive [&_circle]:stroke-destructive [&_rect]:fill-primary-foreground [&_rect]:stroke-primary-foreground size-9"
+			/>
+		</Button>
+	{:else}
+		<Button
+			size="icon"
+			class="mb-[2.5px] size-9 shrink-0 cursor-pointer rounded-full"
+			disabled={isSendButtonDisabled}
+			onclick={handleSubmit}
+		>
+			<ArrowUp class="size-5" />
+		</Button>
+	{/if}
 </div>

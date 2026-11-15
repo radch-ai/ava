@@ -88,13 +88,17 @@ function avaApiMocks(): Plugin {
 export default defineConfig(({ mode }) => {
 	const env = loadEnv(mode, process.cwd(), ['AVA_', 'VITE_'])
 
-	// Where the dev/preview servers proxy /api to (the client stays
-	// same-origin): derived from the ava binary's listen address — the same
-	// AVA_ADDR `just run ava` reads. An empty host (= all interfaces)
-	// connects via localhost; the fallback mirrors the binary's default.
+	// Where the dev/preview servers proxy /api and /ws to (the client
+	// stays same-origin): derived from the ava binary's listen address —
+	// the same AVA_ADDR `just run ava` reads. An empty host (= all
+	// interfaces) connects via localhost; the fallback mirrors the
+	// binary's default.
 	const avaAddr = env.AVA_ADDR || ':8080'
 	const backendOrigin = `http://${avaAddr.startsWith(':') ? `localhost${avaAddr}` : avaAddr}`
-	const apiProxy = { '/api': { target: backendOrigin, changeOrigin: true } }
+	const backendProxy = {
+		'/api': { target: backendOrigin, changeOrigin: true },
+		'/ws': { target: backendOrigin, ws: true }
+	}
 	const useMocks = env.VITE_USE_MOCKS === 'true'
 
 	return {
@@ -112,12 +116,12 @@ export default defineConfig(({ mode }) => {
 			...(useMocks ? [avaApiMocks()] : [])
 		],
 		server: {
-			proxy: apiProxy
+			proxy: backendProxy
 		},
 		preview: {
 			host: '0.0.0.0',
 			port: 4173,
-			proxy: apiProxy
+			proxy: backendProxy
 		},
 		test: {
 			expect: { requireAssertions: true },

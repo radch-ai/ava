@@ -63,7 +63,7 @@ func TestGetAgentConfigSeededSuperagent(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		`"id":"_superagent"`, `"name":"Ava"`, `"icon":"message-square"`,
-		`"heartbeat":{"model":"auto","enabled":true,"duration":"30m","content":"Check agent heartbeats and flag anything stalled. If nothing needs attention, reply NO_REPLY."}`,
+		`"heartbeat":{"model":null,"enabled":true,"duration":"30m","content":"Check agent heartbeats and flag anything stalled. If nothing needs attention, reply NO_REPLY."}`,
 		`"toolsEnabled":[]`, `"userContext":`,
 	} {
 		if !strings.Contains(body, want) {

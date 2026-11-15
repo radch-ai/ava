@@ -1,7 +1,7 @@
 package agent
 
 // UpdateHeartbeat handler tests: upsert singletons and the model
-// column's NULL-is-auto rule, read back raw.
+// entry column rule (see entryToDB), read back raw.
 
 import (
 	"net/http"
@@ -16,7 +16,7 @@ func TestUpdateHeartbeatUnknownAgent(t *testing.T) {
 
 	rec, err := serve(t, "PATCH /agent/{id}/heartbeat", UpdateHeartbeat(queries),
 		http.MethodPatch, "/agent/ghost/heartbeat",
-		`{"model":"auto","enabled":false,"duration":"1hr","content":""}`)
+		`{"model":null,"enabled":false,"duration":"1hr","content":""}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,9 +34,9 @@ func TestUpdateHeartbeatUpsertsSingleRow(t *testing.T) {
 		t.Fatalf("seed agent: %v", err)
 	}
 
-	patch := `{"model":"auto","enabled":true,"duration":"30m","content":"first"}`
+	patch := `{"model":null,"enabled":true,"duration":"30m","content":"first"}`
 	for _, body := range []string{patch,
-		`{"model":"auto","enabled":false,"duration":"1hr","content":"second"}`} {
+		`{"model":null,"enabled":false,"duration":"1hr","content":"second"}`} {
 		rec, err := serve(t, "PATCH /agent/{id}/heartbeat", UpdateHeartbeat(queries),
 			http.MethodPatch, "/agent/research/heartbeat", body)
 		if err != nil {
@@ -67,7 +67,7 @@ func TestUpdateHeartbeatUpsertsSingleRow(t *testing.T) {
 	}
 }
 
-func TestUpdateHeartbeatModelAutoStoresNULL(t *testing.T) {
+func TestUpdateHeartbeatModelPair(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
 	queries := db.New(sqlDB)
 	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
@@ -75,13 +75,14 @@ func TestUpdateHeartbeatModelAutoStoresNULL(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed agent: %v", err)
 	}
+	if _, err := sqlDB.Exec(
+		`INSERT INTO providers (id, name, base_url) VALUES ('p-1', 'P1', 'https://p1.dev/v1')`,
+	); err != nil {
+		t.Fatalf("seed provider: %v", err)
+	}
 
-	// "auto" and "" both mean "follow the default routing": the
-	// column stays NULL, the bundle reads back "auto".
-	for _, body := range []string{
-		`{"model":"auto","enabled":false,"duration":"1hr","content":""}`,
-		`{"model":"","enabled":false,"duration":"1hr","content":""}`,
-	} {
+	patchBody := func(t *testing.T, body string) {
+		t.Helper()
 		rec, err := serve(t, "PATCH /agent/{id}/heartbeat", UpdateHeartbeat(queries),
 			http.MethodPatch, "/agent/research/heartbeat", body)
 		if err != nil {
@@ -90,14 +91,33 @@ func TestUpdateHeartbeatModelAutoStoresNULL(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200 (%s)", rec.Code, body)
 		}
-		var model any
+	}
+	model := func(t *testing.T) (any, any) {
+		t.Helper()
+		var model, provider any
 		if err := sqlDB.QueryRow(
-			`SELECT model FROM heartbeat WHERE agent_id = 'research'`,
-		).Scan(&model); err != nil {
+			`SELECT model, provider_id FROM heartbeat WHERE agent_id = 'research'`,
+		).Scan(&model, &provider); err != nil {
 			t.Fatal(err)
 		}
-		if model != nil {
-			t.Errorf("model = %v, want NULL (%s)", model, body)
-		}
+		return model, provider
+	}
+
+	patchBody(t, `{"model":null,"enabled":false,"duration":"1hr","content":""}`)
+	if m, p := model(t); m != nil || p != nil {
+		t.Errorf("model = %v, provider = %v, want NULL/NULL (null model)", m, p)
+	}
+	patchBody(t, `{"model":{"id":"m1"},"enabled":false,"duration":"1hr","content":""}`)
+	if m, p := model(t); m != nil || p != nil {
+		t.Errorf("model = %v, provider = %v, want NULL/NULL (partial entry)", m, p)
+	}
+	patchBody(t, `{"model":{"id":"m1","providerId":"p-1"},"enabled":false,"duration":"1hr","content":""}`)
+	if m, p := model(t); m != "m1" || p != "p-1" {
+		t.Errorf("model = %v, provider = %v, want m1/p-1 (concrete pair)", m, p)
+	}
+
+	patchBody(t, `{"model":null,"enabled":false,"duration":"1hr","content":""}`)
+	if m, p := model(t); m != nil || p != nil {
+		t.Errorf("model = %v, provider = %v, want NULL/NULL (cleared)", m, p)
 	}
 }

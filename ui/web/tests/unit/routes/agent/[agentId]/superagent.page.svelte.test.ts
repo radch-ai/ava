@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { page } from 'vitest/browser'
+import { page, userEvent } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
-import type { AgentThread } from '#lib/services/agent'
+import type {
+	AgentSocketEvent,
+	AgentSocketState,
+	AgentThread
+} from '#lib/services/agent'
 import { SUPERAGENT_AGENT } from '#lib/types/agent'
 import AgentPageTestWrapper from './AgentPageTestWrapper.svelte'
 
@@ -9,6 +13,29 @@ vi.mock('#lib/services/api', () => ({
 	api: {
 		get: vi.fn()
 	}
+}))
+
+const socketMock = {
+	sendPrompt: vi.fn(),
+	requestStatus: vi.fn(),
+	sendInterrupt: vi.fn(),
+	close: vi.fn()
+}
+let capturedOnEvent: ((event: AgentSocketEvent) => void) | undefined
+let capturedOnState: ((state: AgentSocketState) => void) | undefined
+
+vi.mock('#lib/services/agent/ws', () => ({
+	createAgentSocket: vi.fn(
+		(
+			_agentId: string,
+			onEvent: (event: unknown) => void,
+			onState?: (state: unknown) => void
+		) => {
+			capturedOnEvent = onEvent as typeof capturedOnEvent
+			capturedOnState = onState as typeof capturedOnState
+			return socketMock
+		}
+	)
 }))
 
 import { type ApiResponsePromise, api } from '#lib/services/api'
@@ -84,7 +111,7 @@ describe('AgentPage (superagent branch)', () => {
 			await expect.element(modelButton).toBeVisible()
 			await expect
 				.element(modelButton)
-				.toHaveTextContent(/auto|GPT|Claude|Gemini|Grok/i)
+				.toHaveTextContent(/Default|GPT|Claude|Gemini|Grok/i)
 		})
 
 		it('renders text area', async () => {
@@ -454,6 +481,342 @@ describe('AgentPage (superagent branch)', () => {
 
 			await expect.element(page.getByText('Processed data')).toBeVisible()
 			await expect.element(page.getByText('Connection refused')).toBeVisible()
+		})
+	})
+
+	describe('composer submit over websocket', () => {
+		it('sends the prompt on submit; the lane resync rides the live transition', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'hello over ws{Enter}')
+
+			await vi.waitFor(() => {
+				expect(socketMock.sendPrompt).toHaveBeenCalledWith(
+					'hello over ws',
+					null
+				)
+			})
+			// Submit does not ask for lane status; going live does.
+			expect(socketMock.requestStatus).not.toHaveBeenCalled()
+			capturedOnState?.('live')
+			await vi.waitFor(() => {
+				expect(socketMock.requestStatus).toHaveBeenCalledTimes(1)
+			})
+		})
+
+		it('renders live state from the socket state callback', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'connect me{Enter}')
+
+			capturedOnState?.('live')
+
+			await expect.element(page.getByText('connected')).toBeVisible()
+		})
+
+		it('renders reconnecting state and drops the stale lane', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'status please{Enter}')
+
+			capturedOnState?.('live')
+			capturedOnEvent?.({
+				type: 'lane_status',
+				agent_id: '_superagent',
+				data: {
+					active: true,
+					working: false,
+					model: null,
+					queue_len: 0,
+					conn_count: 1
+				}
+			})
+			await expect
+				.element(page.getByText(/lane active · Default · queue 0/))
+				.toBeVisible()
+
+			capturedOnState?.('reconnecting')
+			await expect.element(page.getByText('reconnecting…')).toBeVisible()
+			await vi.waitFor(() => {
+				expect(page.getByText(/lane active/).elements()).toHaveLength(0)
+			})
+		})
+
+		it('renders lane status from the lane_status event', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'status please{Enter}')
+
+			capturedOnState?.('live')
+			capturedOnEvent?.({
+				type: 'lane_status',
+				agent_id: '_superagent',
+				data: {
+					active: true,
+					working: false,
+					model: null,
+					queue_len: 0,
+					conn_count: 1
+				}
+			})
+
+			await expect
+				.element(page.getByText(/lane active · Default · queue 0/))
+				.toBeVisible()
+		})
+
+		it('echoes the prompt and streams the answer into the tail', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'stream me{Enter}')
+
+			await expect.element(page.getByText('stream me')).toBeVisible()
+
+			capturedOnEvent?.({
+				type: 'message_chunk',
+				agent_id: '_superagent',
+				data: { id: 'msg-1', delta: 'hello ' }
+			})
+			capturedOnEvent?.({
+				type: 'message_chunk',
+				agent_id: '_superagent',
+				data: { id: 'msg-1', delta: 'streamed' }
+			})
+			await expect.element(page.getByText('hello streamed')).toBeVisible()
+
+			capturedOnEvent?.({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'msg-1', content: 'hello streamed world' }
+			})
+			await expect.element(page.getByText('hello streamed world')).toBeVisible()
+		})
+
+		it('reconciles the stored thread when a turn settles', async () => {
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => ({
+					items: [
+						{
+							id: 'stored-a',
+							role: 'assistant',
+							content: 'stored answer',
+							createdAt: '2026-01-01T00:00:01.000Z'
+						},
+						{
+							id: 'stored-u',
+							role: 'user',
+							content: 'recon me',
+							createdAt: '2026-01-01T00:00:00.000Z'
+						}
+					],
+					nextCursor: null
+				})
+			} as ApiResponsePromise)
+
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'recon me{Enter}')
+			await expect.element(page.getByText('recon me')).toBeVisible()
+
+			capturedOnEvent?.({
+				type: 'message_chunk',
+				agent_id: '_superagent',
+				data: { id: 'msg-1', delta: 'stored ' }
+			})
+			capturedOnEvent?.({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'msg-1', content: 'stored answer' }
+			})
+
+			// The settle refetch pulls the persisted turn.
+			await vi.waitFor(() => {
+				expect(vi.mocked(api.get)).toHaveBeenCalledWith(
+					expect.stringContaining('agent/_superagent/thread')
+				)
+			})
+			// The stored page renders the turn; the live copies are
+			// gone — nothing appears twice.
+			await vi.waitFor(() => {
+				expect(page.getByText('recon me').elements()).toHaveLength(1)
+				expect(page.getByText('stored answer').elements()).toHaveLength(1)
+			})
+		})
+
+		it('reconciles a tool turn: live tool line swaps for the persisted row', async () => {
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => ({
+					items: [
+						{
+							id: 'stored-a',
+							role: 'assistant',
+							content: 'found 2 hits',
+							createdAt: '2026-01-01T00:00:02.000Z'
+						},
+						{
+							id: 'stored-t',
+							role: 'tool',
+							content:
+								'{"name":"web_search","args":{"query":"otters"},"result":"\\"2 hits\\""}',
+							createdAt: '2026-01-01T00:00:01.000Z'
+						},
+						{
+							id: 'stored-u',
+							role: 'user',
+							content: 'search otters',
+							createdAt: '2026-01-01T00:00:00.000Z'
+						}
+					],
+					nextCursor: null
+				})
+			} as ApiResponsePromise)
+
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'search otters{Enter}')
+
+			// The turn runs a tool before answering.
+			capturedOnEvent?.({
+				type: 'tool_call',
+				agent_id: '_superagent',
+				data: { id: 'call-1', name: 'web_search', args: '{"query":"otters"}' }
+			})
+			capturedOnEvent?.({
+				type: 'tool_result',
+				agent_id: '_superagent',
+				data: { id: 'call-1', result: '"2 hits"' }
+			})
+			capturedOnEvent?.({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'msg-1', content: 'found 2 hits' }
+			})
+
+			// The settle refetch carries the persisted tool row; the
+			// live tool line is gone — the name appears exactly once.
+			await vi.waitFor(() => {
+				expect(page.getByText(/web_search/).elements()).toHaveLength(1)
+			})
+		})
+
+		it('renders a failed turn as an inline error message', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'fail me{Enter}')
+
+			capturedOnEvent?.({
+				type: 'error',
+				agent_id: '_superagent',
+				data: { message: 'read default model: no rows in result set' }
+			})
+
+			await expect
+				.element(page.getByText('read default model: no rows in result set'))
+				.toBeVisible()
+		})
+
+		it('keeps following the stream as chunks grow the answer', async () => {
+			const scrollTo = vi.spyOn(HTMLElement.prototype, 'scrollTo')
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'follow me{Enter}')
+
+			capturedOnEvent?.({
+				type: 'message_chunk',
+				agent_id: '_superagent',
+				data: { id: 'msg-1', delta: 'first' }
+			})
+			await expect.element(page.getByText('first')).toBeVisible()
+
+			// A chunk that grows the existing bubble must scroll again —
+			// the follow cannot depend on the message count alone.
+			scrollTo.mockClear()
+			capturedOnEvent?.({
+				type: 'message_chunk',
+				agent_id: '_superagent',
+				data: { id: 'msg-1', delta: ' second' }
+			})
+			await expect.element(page.getByText('first second')).toBeVisible()
+			await vi.waitFor(() => {
+				expect(scrollTo).toHaveBeenCalled()
+			})
+			scrollTo.mockRestore()
+		})
+
+		it('renders the stop control while the lane works and sends interrupt on click', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'long turn{Enter}')
+
+			capturedOnEvent?.({
+				type: 'lane_status',
+				agent_id: '_superagent',
+				data: {
+					active: true,
+					working: true,
+					model: null,
+					queue_len: 0,
+					conn_count: 1
+				}
+			})
+
+			const stop = page.getByRole('button', { name: 'Stop' })
+			await expect.element(stop).toBeVisible()
+			await stop.click()
+			await vi.waitFor(() => {
+				expect(socketMock.sendInterrupt).toHaveBeenCalledTimes(1)
+			})
+		})
+
+		it('returns the send button when working clears', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'long turn{Enter}')
+
+			capturedOnEvent?.({
+				type: 'lane_status',
+				agent_id: '_superagent',
+				data: {
+					active: true,
+					working: true,
+					model: null,
+					queue_len: 0,
+					conn_count: 1
+				}
+			})
+			await expect
+				.element(page.getByRole('button', { name: 'Stop' }))
+				.toBeVisible()
+
+			capturedOnEvent?.({
+				type: 'lane_status',
+				agent_id: '_superagent',
+				data: {
+					active: true,
+					working: false,
+					model: null,
+					queue_len: 0,
+					conn_count: 1
+				}
+			})
+			await expect
+				.element(page.getByRole('button', { name: 'Stop' }))
+				.not.toBeInTheDocument()
+			await expect
+				.element(page.getByPlaceholder('Enter your query!'))
+				.toBeVisible()
 		})
 	})
 })

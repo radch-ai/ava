@@ -49,7 +49,7 @@ const defaultHeartbeat: HeartbeatConfig = {
 	enabled: false,
 	duration: '1hr',
 	content: '',
-	model: 'default'
+	model: undefined
 }
 
 /** The detail body the API answers: AgentConfigWithIdentity —
@@ -101,7 +101,7 @@ describe('agent/config service', () => {
 					enabled: true,
 					duration: '2hr',
 					content: 'Daily heartbeat',
-					model: 'gpt-4'
+					model: { id: 'gpt-4', providerId: 'p-1' }
 				}
 			)
 
@@ -258,7 +258,7 @@ describe('agent/config service', () => {
 				enabled: true,
 				duration: '30m',
 				content: 'Heartbeat content',
-				model: 'gpt-4'
+				model: { id: 'gpt-4', providerId: 'p-1' }
 			}
 			const detail = toDetail(createTestConfig(), 'ava', heartbeat)
 
@@ -294,7 +294,7 @@ describe('agent/config service', () => {
 			time: '09:00',
 			frequency: 'custom',
 			cronExpression: '0 9 * * 1',
-			model: 'auto',
+			model: undefined,
 			prompt: 'Weekly digest'
 		}
 

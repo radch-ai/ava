@@ -31,7 +31,7 @@ function createDefaultTestConfig(): AgentConfigWithIdentity {
 			enabled: false,
 			duration: '1hr',
 			content: '',
-			model: 'default'
+			model: undefined
 		}
 	}
 }

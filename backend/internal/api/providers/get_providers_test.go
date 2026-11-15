@@ -67,7 +67,7 @@ func newTestStore(t *testing.T, sqlDB *sql.DB) *vault.Store {
 func seedKey(t *testing.T, sqlDB *sql.DB, id, key string) {
 	t.Helper()
 	if err := newTestStore(t, sqlDB).Put(context.Background(),
-		vault.NameRuntime, providerEntryName(id), kindProvider, []byte(key), nil); err != nil {
+		vault.NameRuntime, ProviderEntryName(id), kindProvider, []byte(key), nil); err != nil {
 		t.Fatalf("seed key for %s: %v", id, err)
 	}
 }
@@ -84,7 +84,7 @@ func TestGetProvidersEmptyStore(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if got := rec.Body.String(); got != `{"defaultModel":"auto","providers":[]}`+"\n" {
+	if got := rec.Body.String(); got != `{"providers":[]}`+"\n" {
 		t.Errorf("body = %s, want empty list", got)
 	}
 }
@@ -108,7 +108,7 @@ func TestGetProvidersListsRows(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	want := `{"defaultModel":"auto","providers":[` +
+	want := `{"providers":[` +
 		`{"id":"p-1","name":"OpenRouter","baseUrl":"https://openrouter.ai/api/v1","hasKey":true,"models":["or/m1"]},` +
 		`{"id":"u-1","name":"Mistral","baseUrl":"https://api.mistral.ai/v1","hasKey":false,"models":["mistral/m1"]}]}` + "\n"
 	if got := rec.Body.String(); got != want {
