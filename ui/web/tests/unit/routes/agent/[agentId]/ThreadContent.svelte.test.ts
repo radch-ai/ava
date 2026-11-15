@@ -76,12 +76,14 @@ describe('ThreadContent', () => {
 			expect(element.closest('div')?.className).toContain('w-full')
 		})
 
-		it('applies assistant-specific foreground styling', async () => {
+		it('renders assistant text at full foreground', async () => {
 			render(ThreadContent, { threadItems: [mockMessages[1]] })
 
 			const element = await page.getByText('Hi there!').element()
 
-			expect(element.closest('div')?.className).toContain('text-foreground/90')
+			expect(element.closest('div')?.className).toContain(
+				'text-foreground mb-4'
+			)
 		})
 
 		it('applies spacing to assistant messages', async () => {

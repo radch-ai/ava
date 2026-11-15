@@ -61,7 +61,7 @@
 	{#each threadItems as message (message.id)}
 		{#if message.role === 'user'}
 			<div
-				class="bg-overlay-dark/70 text-foreground/80 hover:bg-overlay-dark/90 hover:text-foreground ml-auto w-fit max-w-[75%] rounded-2xl rounded-br-[4px] px-5 py-3 text-[15px] leading-relaxed shadow-sm"
+				class="bg-overlay-dark/70 text-foreground/90 hover:bg-overlay-dark/90 hover:text-foreground ml-auto w-fit max-w-[75%] rounded-2xl rounded-br-[4px] px-5 py-3 text-[15px] leading-relaxed shadow-sm"
 			>
 				{message.content}
 			</div>
@@ -99,7 +99,7 @@
 				</span>
 			</div>
 		{:else}
-			<div class="text-foreground/90 mb-4 w-full text-[15px] leading-relaxed">
+			<div class="text-foreground mb-4 w-full text-[15px] leading-relaxed">
 				<!-- biome-ignore lint/nursery/noSvelteAtHtmlTags: model output is sanitized with dompurify inside renderMarkdown -->
 				{@html renderMarkdown(message.content)}
 			</div>
