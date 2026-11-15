@@ -32,7 +32,7 @@
 		threadNextCursor?: string | null
 		threadIsLoadingMore?: boolean
 		threadLoadMoreError?: string | null
-		onThreadLoadMore?: () => void
+		onThreadLoadMore?: () => void | Promise<void>
 		activityFeed?: ActivityFeed | null
 		activityError?: string | null
 		isLoadingActivity?: boolean
@@ -93,36 +93,55 @@
 		})
 	})
 
-	// Load-more prepends older rows above the viewport; the browser's
-	// native scroll anchoring keeps the reader's position.
-	async function handleLoadMore() {
-		if (isConversation) {
-			onThreadLoadMore?.()
-			return
-		}
-
-		if (!activityFeed?.nextCursor || isLoadingMore) return
-
-		isLoadingMore = true
-		loadMoreError = null
-		const previousHeight = scrollRegionElement?.scrollHeight ?? 0
-
-		try {
-			const olderPage = await getAgentActivityFeed(
-				agentId,
-				20,
-				activityFeed.nextCursor
+	// A freshly opened thread starts at the newest message — once per
+	// agent, so live turns and Load-more never yank the view.
+	let bottomedAgent: string | undefined
+	$effect(() => {
+		if (threadItems?.length && bottomedAgent !== agentId) {
+			bottomedAgent = agentId
+			void tick().then(() =>
+				scrollRegionElement?.scrollTo({ top: scrollRegionElement.scrollHeight })
 			)
-			const mergedFeed = mergePastFeed(activityFeed, olderPage)
-			onActivityLoadMore?.(mergedFeed)
-			await tick()
-			const newHeight = scrollRegionElement?.scrollHeight ?? 0
-			scrollRegionElement?.scrollTo({ top: newHeight - previousHeight })
-		} catch (e) {
-			loadMoreError = e instanceof Error ? e.message : 'Failed to load more'
-		} finally {
-			isLoadingMore = false
 		}
+	})
+
+	// Load-more prepends older rows above the viewport; anchor the
+	// scroll by the height they added — native anchoring fails across
+	// the async fetch.
+	async function handleLoadMore() {
+		const el = scrollRegionElement
+		const previousScrollTop = el?.scrollTop ?? 0
+		const previousHeight = el?.scrollHeight ?? 0
+
+		if (isConversation) {
+			await onThreadLoadMore?.()
+		} else {
+			if (!activityFeed?.nextCursor || isLoadingMore) return
+
+			isLoadingMore = true
+			loadMoreError = null
+
+			try {
+				const olderPage = await getAgentActivityFeed(
+					agentId,
+					20,
+					activityFeed.nextCursor
+				)
+				const mergedFeed = mergePastFeed(activityFeed, olderPage)
+				onActivityLoadMore?.(mergedFeed)
+			} catch (e) {
+				loadMoreError = e instanceof Error ? e.message : 'Failed to load more'
+				return
+			} finally {
+				isLoadingMore = false
+			}
+		}
+
+		await tick()
+		const newHeight = scrollRegionElement?.scrollHeight ?? 0
+		scrollRegionElement?.scrollTo({
+			top: previousScrollTop + (newHeight - previousHeight)
+		})
 	}
 
 	const nextCursor = $derived(
