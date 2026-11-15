@@ -88,8 +88,10 @@ type UserAgent struct {
 	queryCtx    context.Context
 	queryCancel context.CancelFunc
 
-	// working reports a turn in flight; guarded by mu.
-	working bool
+	// working reports a turn in flight; reasoning reports the model
+	// streaming reasoning tokens within it. Both guarded by mu.
+	working   bool
+	reasoning bool
 
 	// turnMsgID and turnPrefix track the live turn's streamed text —
 	// the prefix a mid-turn join replays as one chunk. Guarded by
@@ -501,6 +503,9 @@ func (a *UserAgent) clearTurnPrefix() {
 // extends the replay prefix mid-turn joins receive.
 func (a *UserAgent) streamAnswer(ctx context.Context, stream *schema.StreamReader[*schema.Message], msgID string, answer *strings.Builder) error {
 	defer stream.Close()
+	// The reasoning flag covers the whole stream: on while reasoning
+	// tokens arrive, off once the answer or the stream ends.
+	defer a.setReasoning(false)
 	for {
 		chunk, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
@@ -512,15 +517,10 @@ func (a *UserAgent) streamAnswer(ctx context.Context, stream *schema.StreamReade
 		if chunk == nil {
 			continue
 		}
-		// Reasoning tokens ride the same chunk event; they are
-		// live-only — never accumulated into the answer or the
-		// replay prefix, and the settled message stays content-only.
-		if chunk.ReasoningContent != "" {
-			_ = a.conns.WriteJSON(ctx, wstypes.Event{
-				Type:    wstypes.EventTypeMessageChunk,
-				AgentID: a.agentID,
-				Data:    wstypes.MessageChunkEvent{ID: msgID, Reasoning: chunk.ReasoningContent},
-			})
+		if chunk.Content != "" {
+			a.setReasoning(false)
+		} else if chunk.ReasoningContent != "" {
+			a.setReasoning(true)
 		}
 		if chunk.Content == "" {
 			continue
@@ -564,6 +564,7 @@ func (a *UserAgent) LaneStatus() wstypes.LaneStatus {
 	return wstypes.LaneStatus{
 		Active:    a.ctx.Err() == nil,
 		Working:   a.working,
+		Reasoning: a.reasoning,
 		Model:     modelID,
 		QueueLen:  len(a.MsgCh),
 		ConnCount: a.conns.Count(),
@@ -579,6 +580,23 @@ func (a *UserAgent) setWorking(working bool) {
 		return
 	}
 	a.working = working
+	a.mu.Unlock()
+	_ = a.conns.WriteJSON(a.ctx, wstypes.Event{
+		Type:    wstypes.EventTypeLaneStatus,
+		AgentID: a.agentID,
+		Data:    a.LaneStatus(),
+	})
+}
+
+// setReasoning flips the model-reasoning flag and, on change, tells
+// the lane's connections.
+func (a *UserAgent) setReasoning(reasoning bool) {
+	a.mu.Lock()
+	if a.reasoning == reasoning {
+		a.mu.Unlock()
+		return
+	}
+	a.reasoning = reasoning
 	a.mu.Unlock()
 	_ = a.conns.WriteJSON(a.ctx, wstypes.Event{
 		Type:    wstypes.EventTypeLaneStatus,

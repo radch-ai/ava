@@ -1,6 +1,6 @@
 <script lang="ts">
+	import { BrainCircuit } from '@lucide/svelte'
 	import { renderMarkdown } from '#lib/services/agent/markdown'
-	import ThinkingLine from './ThinkingLine.svelte'
 	import ToolLine from './ToolLine.svelte'
 
 	interface ThreadItem {
@@ -8,9 +8,6 @@
 		role: 'user' | 'assistant' | 'tool' | 'error'
 		content: string
 		pending?: boolean
-		/** Assistant messages only: reasoning tokens as they streamed —
-		 * live-only, absent from settled thread rows. */
-		reasoning?: string
 		/** Tool rows only: the persisted invocation envelope. */
 		name?: string
 		args?: string
@@ -83,16 +80,28 @@
 				error={tool.error ?? null}
 				pending={message.pending}
 			/>
+		{:else if message.role === 'assistant' && !message.content}
+			<!-- The lane's reasoning signal stands in for an answer row
+		that does not exist yet; it renders only while the signal is
+		up. -->
+			<div
+				class="text-muted-foreground mr-auto mb-4 flex w-full items-center gap-2 py-1.5"
+			>
+				<BrainCircuit class="size-3.5 shrink-0" />
+				<span class="text-xs">Thinking</span>
+				<span class="flex gap-0.5">
+					{#each [0, 150, 300] as delay (delay)}
+						<span
+							class="bg-foreground/50 size-1 animate-pulse rounded-full"
+							style="animation-delay: {delay}ms"
+						></span>
+					{/each}
+				</span>
+			</div>
 		{:else}
 			<div
 				class="text-foreground/90 mr-auto mb-4 w-full text-[15px] leading-relaxed"
 			>
-				{#if message.reasoning}
-					<ThinkingLine
-						reasoning={message.reasoning}
-						thinking={!!message.pending && !message.content}
-					/>
-				{/if}
 				<!-- biome-ignore lint/nursery/noSvelteAtHtmlTags: model output is sanitized with dompurify inside renderMarkdown -->
 				{@html renderMarkdown(message.content)}
 				{#if message.pending}

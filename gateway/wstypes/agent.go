@@ -16,24 +16,23 @@ type PromptMessage struct {
 
 // LaneStatus is the payload of a lane_status event. Model is the
 // active lane's model id — display only. Working reports a turn in
-// flight; the composer's stop control tracks it.
+// flight; the composer's stop control tracks it. Reasoning reports
+// the model streaming reasoning tokens right now.
 type LaneStatus struct {
 	Active    bool   `json:"active"`
 	Working   bool   `json:"working"`
+	Reasoning bool   `json:"reasoning"`
 	Model     string `json:"model"`
 	QueueLen  int    `json:"queue_len"`
 	ConnCount int    `json:"conn_count"`
 }
 
 // MessageChunkEvent is the payload of a message_chunk event: one
-// streamed piece of the answer in flight — content, reasoning
-// tokens (models that think before answering), or both. The final
-// message event with the same ID is the authoritative record;
-// reasoning never settles into it.
+// streamed piece of the answer in flight. The final message event
+// with the same ID is the authoritative record.
 type MessageChunkEvent struct {
-	ID        string `json:"id"`
-	Delta     string `json:"delta"`
-	Reasoning string `json:"reasoning,omitempty"`
+	ID    string `json:"id"`
+	Delta string `json:"delta"`
 }
 
 // ToolCallEvent is the payload of a tool_call event: the model

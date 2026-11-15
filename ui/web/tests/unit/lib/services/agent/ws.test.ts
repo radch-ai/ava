@@ -64,6 +64,7 @@ describe('agent socket', () => {
 				data: {
 					active: true,
 					working: true,
+					reasoning: false,
 					model: 'gpt-4o',
 					queue_len: 2,
 					conn_count: 1
@@ -78,6 +79,7 @@ describe('agent socket', () => {
 				data: {
 					active: true,
 					working: true,
+					reasoning: false,
 					model: 'gpt-4o',
 					queue_len: 2,
 					conn_count: 1

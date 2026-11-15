@@ -185,10 +185,13 @@ func TestStatusRepliesLaneStatus(t *testing.T) {
 	if !ok {
 		t.Fatalf("lane_status data is not a map: %+v", event["data"])
 	}
-	for _, key := range []string{"active", "working", "model", "queue_len", "conn_count"} {
+	for _, key := range []string{"active", "working", "reasoning", "model", "queue_len", "conn_count"} {
 		if _, exists := data[key]; !exists {
 			t.Errorf("lane_status data missing %s", key)
 		}
+	}
+	if data["reasoning"] != false {
+		t.Errorf("status for a lane-less agent should not be reasoning, got %v", data["reasoning"])
 	}
 	if data["active"] != false {
 		t.Errorf("status for a lane-less agent should be inactive, got %v", data["active"])

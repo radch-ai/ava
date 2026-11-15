@@ -1,18 +1,20 @@
 package agent_test
 
-// Reasoning pins: models that think before answering stream
-// reasoning tokens alongside content; the wire carries them on the
-// same chunk event (reasoning field), correlated by turn id, while
-// the settled answer stays content-only — reasoning is live-only.
+// Reasoning pins: reasoning is a lane fact. The streamed answer
+// flips the lane's reasoning flag on at the first reasoning token
+// and off when the answer or the stream ends, and the lane_status
+// broadcasts carry the transitions — a join mid-thought reads the
+// flag from its status reply. Reasoning text itself never rides
+// the wire or lands in the thread.
 
 import (
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
+	"github.com/coder/websocket"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
@@ -35,8 +37,10 @@ func sseReasoningChunk(delta string) string {
 	return "data: " + string(raw) + "\n\n"
 }
 
-func TestTurnStreamsReasoningDeltas(t *testing.T) {
-	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// reasoningServer streams one reasoning phase then one answer delta.
+func reasoningServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)
 		for _, frame := range []string{
@@ -49,6 +53,21 @@ func TestTurnStreamsReasoningDeltas(t *testing.T) {
 		}
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
+}
+
+// nextLaneStatus reads events until the next lane_status and returns
+// its payload; turn output in between fails the pin.
+func nextLaneStatus(t *testing.T, c *websocket.Conn) wstypes.LaneStatus {
+	t.Helper()
+	for {
+		ev := readEvent(t, c)
+		require.Equal(t, wstypes.EventTypeLaneStatus, ev.Type, "unexpected event")
+		return eventPayload[wstypes.LaneStatus](t, ev)
+	}
+}
+
+func TestTurnSignalsReasoningPhases(t *testing.T) {
+	llm := reasoningServer(t)
 	defer llm.Close()
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
@@ -60,32 +79,63 @@ func TestTurnStreamsReasoningDeltas(t *testing.T) {
 		agent.Message{ID: "msg-1", Content: "hi"})
 	require.True(t, ok)
 
-	var reasoning strings.Builder
-	var content strings.Builder
-	var settled *wstypes.MessageEvent
-	for settled == nil {
-		ev := readEvent(t, c)
-		switch ev.Type {
-		case wstypes.EventTypeLaneStatus:
-			continue
-		case wstypes.EventTypeMessageChunk:
-			p := eventPayload[wstypes.MessageChunkEvent](t, ev)
-			require.Equal(t, "msg-1", p.ID)
-			reasoning.WriteString(p.Reasoning)
-			content.WriteString(p.Delta)
-		case wstypes.EventTypeMessage:
-			settled = new(wstypes.MessageEvent)
-			raw, _ := json.Marshal(ev.Data)
-			require.NoError(t, json.Unmarshal(raw, settled))
-		default:
-			t.Fatalf("unexpected event %v", ev.Type)
-		}
-	}
+	// The turn brackets itself with working; reasoning flips on at
+	// the first reasoning token — before any turn output — and off
+	// when the answer starts.
+	started := nextLaneStatus(t, c)
+	require.True(t, started.Working)
+	require.False(t, started.Reasoning)
 
-	require.Equal(t, "thinking hard about it", reasoning.String())
-	require.Equal(t, "the answer", content.String())
+	thinking := nextLaneStatus(t, c)
+	require.True(t, thinking.Reasoning)
 
-	// The settled answer carries content only — reasoning is
-	// live-only and never lands in the thread.
+	answering := nextLaneStatus(t, c)
+	require.False(t, answering.Reasoning)
+
+	// Only the answer streams; the settled record is content alone.
+	_, settled := readUntilMessage(t, c)
 	require.Equal(t, "the answer", settled.Content)
+
+	ended := nextLaneStatus(t, c)
+	require.False(t, ended.Working)
+	require.False(t, ended.Reasoning)
+}
+
+func TestReasoningSignalResetsWhenTheStreamEndsUnanswered(t *testing.T) {
+	// A stream that ends after reasoning, without ever answering,
+	// still lowers the flag — the turn cannot end mid-thought.
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		_, _ = w.Write([]byte(sseReasoningChunk("only thinking")))
+		flusher.Flush()
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer llm.Close()
+
+	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+		&agent.UserAgentManagerOptions{ResolveModel: fixedResolver(llm.URL)})
+
+	c, sc := wsPair(t)
+
+	ok := mgr.SubmitMsg(context.Background(), "agent-reason-end", "conn-1", sc,
+		agent.Message{ID: "msg-2", Content: "hi"})
+	require.True(t, ok)
+
+	started := nextLaneStatus(t, c)
+	require.True(t, started.Working)
+
+	thinking := nextLaneStatus(t, c)
+	require.True(t, thinking.Reasoning)
+
+	// The turn settles with an empty answer; the reasoning flag is
+	// already down by then.
+	ended := nextLaneStatus(t, c)
+	require.False(t, ended.Reasoning)
+	_, settled := readUntilMessage(t, c)
+	require.Empty(t, settled.Content)
+
+	final := nextLaneStatus(t, c)
+	require.False(t, final.Working)
+	require.False(t, final.Reasoning)
 }

@@ -541,6 +541,7 @@ describe('AgentPage (superagent branch)', () => {
 				data: {
 					active: true,
 					working: false,
+					reasoning: false,
 					model: null,
 					queue_len: 0,
 					conn_count: 1
@@ -570,6 +571,7 @@ describe('AgentPage (superagent branch)', () => {
 				data: {
 					active: true,
 					working: false,
+					reasoning: false,
 					model: null,
 					queue_len: 0,
 					conn_count: 1
@@ -607,6 +609,44 @@ describe('AgentPage (superagent branch)', () => {
 				data: { id: 'msg-1', content: 'hello streamed world' }
 			})
 			await expect.element(page.getByText('hello streamed world')).toBeVisible()
+		})
+
+		it('shows the thinking marker only while the lane reports reasoning', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'think hard{Enter}')
+			await expect.element(page.getByText('think hard')).toBeVisible()
+
+			capturedOnEvent?.({
+				type: 'lane_status',
+				agent_id: '_superagent',
+				data: {
+					active: true,
+					working: true,
+					reasoning: true,
+					model: null,
+					queue_len: 0,
+					conn_count: 1
+				}
+			})
+			await expect.element(page.getByText('Thinking')).toBeVisible()
+
+			capturedOnEvent?.({
+				type: 'lane_status',
+				agent_id: '_superagent',
+				data: {
+					active: true,
+					working: true,
+					reasoning: false,
+					model: null,
+					queue_len: 0,
+					conn_count: 1
+				}
+			})
+			await vi.waitFor(() => {
+				expect(page.getByText('Thinking').elements()).toHaveLength(0)
+			})
 		})
 
 		it('reconciles the stored thread when a turn settles', async () => {
@@ -662,15 +702,12 @@ describe('AgentPage (superagent branch)', () => {
 				expect(page.getByText('recon me').elements()).toHaveLength(1)
 				expect(page.getByText('stored answer').elements()).toHaveLength(1)
 			})
-			await vi.waitFor(() => {
-				const texts = Array.from(
-					container.querySelectorAll('div.flex.flex-col.gap-4 > *')
-				).map((el) => (el.textContent ?? '').trim())
-				expect(texts.indexOf('recon me')).toBeGreaterThanOrEqual(0)
-				expect(texts.indexOf('stored answer')).toBeGreaterThan(
-					texts.indexOf('recon me')
-				)
-			})
+			const texts = Array.from(
+				container.querySelectorAll('div.flex.flex-col.gap-4 > *')
+			).map((el) => (el.textContent ?? '').trim())
+			const promptIdx = texts.findIndex((t) => t.includes('recon me'))
+			const answerIdx = texts.findIndex((t) => t.includes('stored answer'))
+			expect(answerIdx).toBeGreaterThan(promptIdx)
 		})
 
 		it('reconciles a tool turn: live tool line swaps for the persisted row', async () => {
@@ -788,6 +825,7 @@ describe('AgentPage (superagent branch)', () => {
 				data: {
 					active: true,
 					working: true,
+					reasoning: false,
 					model: null,
 					queue_len: 0,
 					conn_count: 1
@@ -814,6 +852,7 @@ describe('AgentPage (superagent branch)', () => {
 				data: {
 					active: true,
 					working: true,
+					reasoning: false,
 					model: null,
 					queue_len: 0,
 					conn_count: 1
@@ -829,6 +868,7 @@ describe('AgentPage (superagent branch)', () => {
 				data: {
 					active: true,
 					working: false,
+					reasoning: false,
 					model: null,
 					queue_len: 0,
 					conn_count: 1

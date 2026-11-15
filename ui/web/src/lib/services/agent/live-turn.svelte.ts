@@ -12,9 +12,6 @@ export interface LiveMessage {
 	content: string
 	/** True while chunks are still arriving for an assistant message. */
 	pending?: boolean
-	/** Assistant messages only: the model's reasoning tokens as they
-	 * streamed — live-only, gone once the turn settles. */
-	reasoning?: string
 	name?: string
 	args?: string
 	result?: string
@@ -60,17 +57,13 @@ export function createLiveTurns() {
 			case 'message_chunk': {
 				const existing = messages.find((m) => m.id === event.data.id)
 				if (existing) {
-					if (event.data.reasoning)
-						existing.reasoning =
-							(existing.reasoning ?? '') + event.data.reasoning
-					if (event.data.delta) existing.content += event.data.delta
+					existing.content += event.data.delta
 					existing.pending = true
 				} else {
 					messages.push({
 						id: event.data.id,
 						role: 'assistant',
-						content: event.data.delta ?? '',
-						reasoning: event.data.reasoning,
+						content: event.data.delta,
 						pending: true
 					})
 				}
@@ -81,9 +74,6 @@ export function createLiveTurns() {
 				if (existing) {
 					existing.content = event.data.content
 					existing.pending = false
-					// Reasoning is live-only; the settled record is
-					// content alone.
-					delete existing.reasoning
 				} else {
 					messages.push({
 						id: event.data.id,
@@ -101,6 +91,25 @@ export function createLiveTurns() {
 					content: event.data.message
 				})
 				break
+			case 'lane_status': {
+				// While the lane reports the model reasoning, a marker
+				// stands in for the answer row that does not exist yet;
+				// the lane always lowers the signal before the turn ends,
+				// which removes it.
+				const marker = messages.find(
+					(m) => m.role === 'assistant' && !m.content
+				)
+				if (event.data.reasoning && !marker) {
+					messages.push({
+						id: `local-${crypto.randomUUID()}`,
+						role: 'assistant',
+						content: ''
+					})
+				} else if (!event.data.reasoning && marker) {
+					messages = messages.filter((m) => m !== marker)
+				}
+				break
+			}
 		}
 	}
 

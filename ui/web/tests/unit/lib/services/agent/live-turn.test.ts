@@ -7,11 +7,18 @@ function chunk(id: string, delta: string): AgentSocketEvent {
 	return { type: 'message_chunk', agent_id: '_superagent', data: { id, delta } }
 }
 
-function reasoningChunk(id: string, reasoning: string): AgentSocketEvent {
+function laneStatus(working: boolean, reasoning = false): AgentSocketEvent {
 	return {
-		type: 'message_chunk',
+		type: 'lane_status',
 		agent_id: '_superagent',
-		data: { id, reasoning }
+		data: {
+			active: true,
+			working,
+			reasoning,
+			model: '',
+			queue_len: 0,
+			conn_count: 1
+		}
 	}
 }
 
@@ -24,13 +31,12 @@ function errorEvent(message: string): AgentSocketEvent {
 }
 
 describe('live turns', () => {
-	it('echoes the submitted prompt as a live user message', () => {
+	it('echoes the prompt optimistically', () => {
 		const live = createLiveTurns()
 		live.echoUser('hello')
 
 		expect(live.messages).toHaveLength(1)
-		expect(live.messages[0].role).toBe('user')
-		expect(live.messages[0].content).toBe('hello')
+		expect(live.messages[0]).toMatchObject({ role: 'user', content: 'hello' })
 	})
 
 	it('accumulates chunk deltas into one pending assistant message', () => {
@@ -59,33 +65,6 @@ describe('live turns', () => {
 			content: 'hello streamed world',
 			pending: false
 		})
-	})
-
-	it('reasoning chunks accumulate into a thinking message the answer follows', () => {
-		const live = createLiveTurns()
-		live.applyEvent(reasoningChunk('msg-1', 'thinking '))
-		live.applyEvent(reasoningChunk('msg-1', 'hard'))
-		live.applyEvent(chunk('msg-1', 'the answer'))
-
-		expect(live.messages).toHaveLength(1)
-		expect(live.messages[0]).toMatchObject({
-			id: 'msg-1',
-			role: 'assistant',
-			reasoning: 'thinking hard',
-			content: 'the answer',
-			pending: true
-		})
-	})
-
-	it('the settled message retires the reasoning — it is live-only', () => {
-		const live = createLiveTurns()
-		live.applyEvent(reasoningChunk('msg-1', 'thinking'))
-		live.applyEvent(chunk('msg-1', 'the answer'))
-		live.applyEvent(message('msg-1', 'the answer'))
-
-		expect(live.messages[0].reasoning).toBeUndefined()
-		expect(live.messages[0].content).toBe('the answer')
-		expect(live.messages[0].pending).toBe(false)
 	})
 
 	it('a message event without prior chunks creates the message settled', () => {
@@ -155,19 +134,60 @@ describe('live turns', () => {
 			error: 'search backend down'
 		})
 	})
+
 	it('ignores events that are not part of a turn', () => {
 		const live = createLiveTurns()
-		live.applyEvent({
-			type: 'connected',
-			data: { conn_id: 'c1' }
-		})
-		live.applyEvent({
-			type: 'lane_status',
-			agent_id: '_superagent',
-			data: { active: true, model: '', queue_len: 0, conn_count: 1 }
-		})
+		live.applyEvent({ type: 'connected', data: { conn_id: 'c1' } })
+		live.applyEvent(laneStatus(false))
 
 		expect(live.messages).toHaveLength(0)
+	})
+})
+
+describe('reasoning marker', () => {
+	it('stands in for the answer row while the lane reasons — once', () => {
+		const live = createLiveTurns()
+		live.applyEvent(laneStatus(true, true))
+		live.applyEvent(laneStatus(true, true))
+
+		expect(live.messages).toHaveLength(1)
+		expect(live.messages[0]).toMatchObject({
+			role: 'assistant',
+			content: ''
+		})
+	})
+
+	it('is removed when the lane stops reasoning', () => {
+		const live = createLiveTurns()
+		live.applyEvent(laneStatus(true, true))
+		live.applyEvent(laneStatus(true, false))
+
+		expect(live.messages).toHaveLength(0)
+	})
+
+	it('gives way to the streamed answer — the signal lowers first', () => {
+		const live = createLiveTurns()
+		live.applyEvent(laneStatus(true, true))
+		live.applyEvent(laneStatus(true, false))
+		live.applyEvent(chunk('msg-1', 'the answer'))
+
+		expect(live.messages).toHaveLength(1)
+		expect(live.messages[0]).toMatchObject({
+			id: 'msg-1',
+			role: 'assistant',
+			content: 'the answer',
+			pending: true
+		})
+	})
+
+	it('is gone by the error that ends an unanswered turn', () => {
+		const live = createLiveTurns()
+		live.applyEvent(laneStatus(true, true))
+		live.applyEvent(laneStatus(false, false))
+		live.applyEvent(errorEvent('turn stopped'))
+
+		expect(live.messages).toHaveLength(1)
+		expect(live.messages[0].role).toBe('error')
 	})
 })
 
@@ -225,7 +245,6 @@ describe('live turn settlement', () => {
 		const live = createLiveTurns()
 		live.echoUser('hi')
 		live.applyEvent(errorEvent('read default model: no rows'))
-		live.applyEvent(message('msg-1', 'answer'))
 
 		live.settleTurn('msg-1', ['hi'])
 
