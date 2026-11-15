@@ -7,6 +7,14 @@ function chunk(id: string, delta: string): AgentSocketEvent {
 	return { type: 'message_chunk', agent_id: '_superagent', data: { id, delta } }
 }
 
+function reasoningChunk(id: string, reasoning: string): AgentSocketEvent {
+	return {
+		type: 'message_chunk',
+		agent_id: '_superagent',
+		data: { id, reasoning }
+	}
+}
+
 function message(id: string, content: string): AgentSocketEvent {
 	return { type: 'message', agent_id: '_superagent', data: { id, content } }
 }
@@ -51,6 +59,33 @@ describe('live turns', () => {
 			content: 'hello streamed world',
 			pending: false
 		})
+	})
+
+	it('reasoning chunks accumulate into a thinking message the answer follows', () => {
+		const live = createLiveTurns()
+		live.applyEvent(reasoningChunk('msg-1', 'thinking '))
+		live.applyEvent(reasoningChunk('msg-1', 'hard'))
+		live.applyEvent(chunk('msg-1', 'the answer'))
+
+		expect(live.messages).toHaveLength(1)
+		expect(live.messages[0]).toMatchObject({
+			id: 'msg-1',
+			role: 'assistant',
+			reasoning: 'thinking hard',
+			content: 'the answer',
+			pending: true
+		})
+	})
+
+	it('the settled message retires the reasoning — it is live-only', () => {
+		const live = createLiveTurns()
+		live.applyEvent(reasoningChunk('msg-1', 'thinking'))
+		live.applyEvent(chunk('msg-1', 'the answer'))
+		live.applyEvent(message('msg-1', 'the answer'))
+
+		expect(live.messages[0].reasoning).toBeUndefined()
+		expect(live.messages[0].content).toBe('the answer')
+		expect(live.messages[0].pending).toBe(false)
 	})
 
 	it('a message event without prior chunks creates the message settled', () => {

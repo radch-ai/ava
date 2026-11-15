@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { renderMarkdown } from '#lib/services/agent/markdown'
+	import ThinkingLine from './ThinkingLine.svelte'
 	import ToolLine from './ToolLine.svelte'
 
 	interface ThreadItem {
@@ -7,6 +8,9 @@
 		role: 'user' | 'assistant' | 'tool' | 'error'
 		content: string
 		pending?: boolean
+		/** Assistant messages only: reasoning tokens as they streamed —
+		 * live-only, absent from settled thread rows. */
+		reasoning?: string
 		/** Tool rows only: the persisted invocation envelope. */
 		name?: string
 		args?: string
@@ -83,6 +87,13 @@
 			<div
 				class="text-foreground/90 mr-auto mb-4 w-full text-[15px] leading-relaxed"
 			>
+				{#if message.reasoning}
+					<ThinkingLine
+						reasoning={message.reasoning}
+						thinking={!!message.pending && !message.content}
+					/>
+				{/if}
+				<!-- biome-ignore lint/nursery/noSvelteAtHtmlTags: model output is sanitized with dompurify inside renderMarkdown -->
 				{@html renderMarkdown(message.content)}
 				{#if message.pending}
 					<span

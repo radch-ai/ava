@@ -509,7 +509,20 @@ func (a *UserAgent) streamAnswer(ctx context.Context, stream *schema.StreamReade
 		if err != nil {
 			return err
 		}
-		if chunk == nil || chunk.Content == "" {
+		if chunk == nil {
+			continue
+		}
+		// Reasoning tokens ride the same chunk event; they are
+		// live-only — never accumulated into the answer or the
+		// replay prefix, and the settled message stays content-only.
+		if chunk.ReasoningContent != "" {
+			_ = a.conns.WriteJSON(ctx, wstypes.Event{
+				Type:    wstypes.EventTypeMessageChunk,
+				AgentID: a.agentID,
+				Data:    wstypes.MessageChunkEvent{ID: msgID, Reasoning: chunk.ReasoningContent},
+			})
+		}
+		if chunk.Content == "" {
 			continue
 		}
 		answer.WriteString(chunk.Content)

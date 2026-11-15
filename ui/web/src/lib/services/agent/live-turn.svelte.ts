@@ -12,7 +12,9 @@ export interface LiveMessage {
 	content: string
 	/** True while chunks are still arriving for an assistant message. */
 	pending?: boolean
-	/** Tool entries only: the invocation as it ran. */
+	/** Assistant messages only: the model's reasoning tokens as they
+	 * streamed — live-only, gone once the turn settles. */
+	reasoning?: string
 	name?: string
 	args?: string
 	result?: string
@@ -58,13 +60,17 @@ export function createLiveTurns() {
 			case 'message_chunk': {
 				const existing = messages.find((m) => m.id === event.data.id)
 				if (existing) {
-					existing.content += event.data.delta
+					if (event.data.reasoning)
+						existing.reasoning =
+							(existing.reasoning ?? '') + event.data.reasoning
+					if (event.data.delta) existing.content += event.data.delta
 					existing.pending = true
 				} else {
 					messages.push({
 						id: event.data.id,
 						role: 'assistant',
-						content: event.data.delta,
+						content: event.data.delta ?? '',
+						reasoning: event.data.reasoning,
 						pending: true
 					})
 				}
@@ -75,6 +81,9 @@ export function createLiveTurns() {
 				if (existing) {
 					existing.content = event.data.content
 					existing.pending = false
+					// Reasoning is live-only; the settled record is
+					// content alone.
+					delete existing.reasoning
 				} else {
 					messages.push({
 						id: event.data.id,

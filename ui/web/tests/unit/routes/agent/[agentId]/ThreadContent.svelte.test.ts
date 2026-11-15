@@ -440,4 +440,47 @@ describe('ThreadContent', () => {
 			expect(result.className).toContain('text-destructive')
 		})
 	})
+
+	describe('Reasoning entries', () => {
+		it('shows an open thinking block while only reasoning streams', async () => {
+			render(ThreadContent, {
+				threadItems: [
+					{
+						id: 'm1',
+						role: 'assistant',
+						content: '',
+						reasoning: 'deliberating quietly',
+						pending: true
+					}
+				]
+			})
+
+			await expect.element(page.getByText('Thinking')).toBeVisible()
+			// Auto-open while the answer has not started.
+			await expect.element(page.getByText(/deliberating quietly/)).toBeVisible()
+			const line = await page.getByRole('button').element()
+			expect(line.querySelector('.animate-pulse')).not.toBeNull()
+		})
+
+		it('collapses once the answer starts and expands on click', async () => {
+			render(ThreadContent, {
+				threadItems: [
+					{
+						id: 'm2',
+						role: 'assistant',
+						content: 'the answer',
+						reasoning: 'deliberating quietly',
+						pending: true
+					}
+				]
+			})
+
+			await expect.element(page.getByText('the answer')).toBeVisible()
+			// Auto-collapsed: reasoning stays out of the tree.
+			expect(page.getByText(/deliberating quietly/).elements()).toHaveLength(0)
+
+			await page.getByRole('button').click()
+			await expect.element(page.getByText(/deliberating quietly/)).toBeVisible()
+		})
+	})
 })

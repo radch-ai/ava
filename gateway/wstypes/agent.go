@@ -26,11 +26,14 @@ type LaneStatus struct {
 }
 
 // MessageChunkEvent is the payload of a message_chunk event: one
-// streamed piece of the answer in flight. The final message event
-// with the same ID is the authoritative record.
+// streamed piece of the answer in flight — content, reasoning
+// tokens (models that think before answering), or both. The final
+// message event with the same ID is the authoritative record;
+// reasoning never settles into it.
 type MessageChunkEvent struct {
-	ID    string `json:"id"`
-	Delta string `json:"delta"`
+	ID        string `json:"id"`
+	Delta     string `json:"delta"`
+	Reasoning string `json:"reasoning,omitempty"`
 }
 
 // ToolCallEvent is the payload of a tool_call event: the model
