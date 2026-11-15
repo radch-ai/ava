@@ -11,7 +11,25 @@ import AgentPageTestWrapper from './AgentPageTestWrapper.svelte'
 
 vi.mock('#lib/services/api', () => ({
 	api: {
-		get: vi.fn()
+		// The shared model catalog the selector's store loads once.
+		get: vi.fn((url: string) => ({
+			json: async () => {
+				if (url === 'models') {
+					return {
+						groups: [
+							{
+								providerName: 'OpenAI',
+								models: [
+									{ id: 'gpt-4o', providerId: 'p-1' },
+									{ id: 'gpt-4o-mini', providerId: 'p-1' }
+								]
+							}
+						]
+					}
+				}
+				return {}
+			}
+		}))
 	}
 }))
 
@@ -96,6 +114,7 @@ describe('AgentPage (superagent branch)', () => {
 	afterEach(async () => {
 		cleanup()
 		vi.clearAllMocks()
+		localStorage.clear()
 	})
 
 	describe('initial rendering', () => {
@@ -880,6 +899,67 @@ describe('AgentPage (superagent branch)', () => {
 			await expect
 				.element(page.getByPlaceholder('Enter your query!'))
 				.toBeVisible()
+		})
+	})
+
+	describe('model selector browser persistence', () => {
+		const storageKey = 'ava.model._superagent'
+
+		it('restores the saved selection on load', async () => {
+			localStorage.setItem(
+				storageKey,
+				JSON.stringify({ id: 'gpt-4o', providerId: 'p-1' })
+			)
+
+			render(AgentPageTestWrapper, { data: createMockData() })
+
+			await expect
+				.element(page.getByRole('combobox'))
+				.toHaveTextContent('gpt-4o')
+		})
+
+		it('persists the picked model', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+
+			await page.getByRole('combobox').click()
+			await page.getByRole('option', { name: 'gpt-4o-mini' }).click()
+
+			expect(localStorage.getItem(storageKey)).toBe(
+				JSON.stringify({ id: 'gpt-4o-mini', providerId: 'p-1' })
+			)
+		})
+
+		it('picking Default clears the stored selection', async () => {
+			localStorage.setItem(
+				storageKey,
+				JSON.stringify({ id: 'gpt-4o', providerId: 'p-1' })
+			)
+			render(AgentPageTestWrapper, { data: createMockData() })
+
+			await page.getByRole('combobox').click()
+			await page.getByRole('option', { name: 'Default' }).click()
+
+			expect(localStorage.getItem(storageKey)).toBeNull()
+			await expect
+				.element(page.getByRole('combobox'))
+				.toHaveTextContent('Default')
+		})
+
+		it('the selection rides the prompt frame', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			await page.getByRole('combobox').click()
+			await page.getByRole('option', { name: 'gpt-4o-mini' }).click()
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'hello{Enter}')
+
+			await vi.waitFor(() => {
+				expect(socketMock.sendPrompt).toHaveBeenCalledWith('hello', {
+					id: 'gpt-4o-mini',
+					providerId: 'p-1'
+				})
+			})
 		})
 	})
 })

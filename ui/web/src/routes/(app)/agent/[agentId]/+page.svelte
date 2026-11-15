@@ -48,7 +48,37 @@
 		}
 	})
 
-	let selectedModel = $state<ModelSelection>(null)
+	// The selected model rides each prompt frame; localStorage
+	// keeps the browser's choice across reloads.
+	const modelStorageKey = `ava.model.${data.agent.id}`
+	let selectedModel = $state<ModelSelection>(readStoredModel())
+
+	function readStoredModel(): ModelSelection {
+		try {
+			const raw = localStorage.getItem(modelStorageKey)
+			const entry = raw ? (JSON.parse(raw) as ModelSelection) : null
+			return entry &&
+				typeof entry.id === 'string' &&
+				typeof entry.providerId === 'string'
+				? entry
+				: null
+		} catch {
+			return null
+		}
+	}
+
+	function handleModelChange(selection: ModelSelection) {
+		selectedModel = selection
+		try {
+			if (selection) {
+				localStorage.setItem(modelStorageKey, JSON.stringify(selection))
+			} else {
+				localStorage.removeItem(modelStorageKey)
+			}
+		} catch {
+			// Storage unavailable: the selection lives for this session.
+		}
+	}
 
 	// One socket per conversation surface, opened eagerly on mount: a
 	// page (re)loaded mid-turn asks for lane status on connect, which
@@ -212,7 +242,8 @@
 			>
 				<span class="text-muted-foreground text-sm">Model:</span>
 				<ModelSelector
-					bind:value={selectedModel}
+					value={selectedModel}
+					onChange={handleModelChange}
 					class="!bg-overlay-dark/70 hover:!bg-overlay-light hover:!ring-ring hover:!ring-1"
 				/>
 			</div>
