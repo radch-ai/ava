@@ -349,19 +349,19 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 
 	if resolveModel == nil {
 		a.logger.Error().Str("agent_id", a.agentID).Msg("lane has no model resolver")
-		a.emitError(emitCtx, "no model resolver configured")
+		a.emitError(emitCtx, "no model resolver configured", "")
 		return
 	}
 	cfg, err := resolveModel(queryCtx, entry)
 	if err != nil {
 		a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("resolve model")
-		a.emitError(emitCtx, err.Error())
+		a.emitError(emitCtx, err.Error(), "")
 		return
 	}
 	chatModel, err := createChatModel(queryCtx, cfg)
 	if err != nil {
 		a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("build chat model")
-		a.emitError(emitCtx, err.Error())
+		a.emitError(emitCtx, err.Error(), "")
 		return
 	}
 	// The persona is fetched per turn: config edits apply to the next
@@ -384,13 +384,13 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 	einoAgent, err := buildEinoAgent(queryCtx, a.agentID, instruction, chatModel, turnTools)
 	if err != nil {
 		a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("build agent")
-		a.emitError(emitCtx, err.Error())
+		a.emitError(emitCtx, err.Error(), "")
 		return
 	}
 	runner, err := buildEinoRunner(queryCtx, einoAgent)
 	if err != nil {
 		a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("build runner")
-		a.emitError(emitCtx, err.Error())
+		a.emitError(emitCtx, err.Error(), "")
 		return
 	}
 
@@ -403,7 +403,8 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 				return
 			}
 			a.logger.Error().Err(event.Err).Str("agent_id", a.agentID).Msg("model query")
-			a.emitError(emitCtx, event.Err.Error())
+			text, toolName := turnError(event.Err)
+			a.emitError(emitCtx, text, toolName)
 			return
 		}
 		if event.Output == nil || event.Output.MessageOutput == nil {
@@ -423,7 +424,8 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 					return
 				}
 				a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("model stream")
-				a.emitError(emitCtx, err.Error())
+				text, toolName := turnError(err)
+				a.emitError(emitCtx, text, toolName)
 				return
 			}
 			continue
@@ -458,7 +460,7 @@ func (a *UserAgent) finishInterrupted(emitCtx context.Context, msgID string, ans
 		a.settleTurn(emitCtx, msgID, answer.String())
 		return
 	}
-	a.emitError(emitCtx, stoppedTurnMessage)
+	a.emitError(emitCtx, stoppedTurnMessage, "")
 }
 
 // settleTurn persists the assistant row, then broadcasts the final
@@ -537,15 +539,47 @@ func (a *UserAgent) streamAnswer(ctx context.Context, stream *schema.StreamReade
 	}
 }
 
+// toolFailure, when err is a tool invocation failure, names the
+// tool and renders its cause with the invoke-harness frame peeled
+// off. ok is false for anything else.
+func toolFailure(err error) (tool, cause string, ok bool) {
+	var terr *toolError
+	if !errors.As(err, &terr) {
+		return "", "", false
+	}
+	return terr.name, cleanToolError(terr), true
+}
+
+// turnError renders a turn failure for the wire: a tool failure
+// names its tool and shows its clean cause; anything else keeps its
+// own text.
+func turnError(err error) (text, toolName string) {
+	tool, cause, ok := toolFailure(err)
+	if !ok {
+		return err.Error(), ""
+	}
+	return cause, tool
+}
+
+// cleanToolError renders a tool failure's cause with the invoke
+// harness's frame peeled off, so the row shows why the tool failed
+// rather than how it was invoked.
+func cleanToolError(terr *toolError) string {
+	if inner := errors.Unwrap(terr.err); inner != nil {
+		return inner.Error()
+	}
+	return terr.err.Error()
+}
+
 // emitError reports a failed turn to the lane's connections. The
 // replay prefix retires first: nothing replays after the turn is
 // over.
-func (a *UserAgent) emitError(ctx context.Context, message string) {
+func (a *UserAgent) emitError(ctx context.Context, message, tool string) {
 	a.clearTurnPrefix()
 	_ = a.conns.WriteJSON(ctx, wstypes.Event{
 		Type:    wstypes.EventTypeError,
 		AgentID: a.agentID,
-		Data:    wstypes.ErrorEvent{Message: message},
+		Data:    wstypes.ErrorEvent{Message: message, Tool: tool},
 	})
 }
 

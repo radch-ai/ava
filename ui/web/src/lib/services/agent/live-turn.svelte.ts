@@ -85,11 +85,15 @@ export function createLiveTurns() {
 				break
 			}
 			case 'error':
-				messages.push({
-					id: `local-${crypto.randomUUID()}`,
-					role: 'error',
-					content: event.data.message
-				})
+				// A tool-attributed failure adds no bubble — the
+				// tool's own row shows it.
+				if (!event.data.tool) {
+					messages.push({
+						id: `local-${crypto.randomUUID()}`,
+						role: 'error',
+						content: event.data.message
+					})
+				}
 				break
 			case 'lane_status': {
 				// While the lane reports the model reasoning, a marker

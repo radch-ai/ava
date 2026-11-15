@@ -99,16 +99,9 @@
 				</span>
 			</div>
 		{:else}
-			<div
-				class="text-foreground/90 mr-auto mb-4 w-full text-[15px] leading-relaxed"
-			>
+			<div class="text-foreground/90 mb-4 w-full text-[15px] leading-relaxed">
 				<!-- biome-ignore lint/nursery/noSvelteAtHtmlTags: model output is sanitized with dompurify inside renderMarkdown -->
 				{@html renderMarkdown(message.content)}
-				{#if message.pending}
-					<span
-						class="bg-foreground/50 ml-0.5 inline-block size-[0.5em] animate-pulse rounded-[2px] align-baseline"
-					></span>
-				{/if}
 			</div>
 		{/if}
 	{/each}

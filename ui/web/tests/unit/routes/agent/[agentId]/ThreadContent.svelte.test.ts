@@ -68,12 +68,12 @@ describe('ThreadContent', () => {
 	describe('Assistant messages', () => {
 		// Assistant text renders as markdown, so styling pins target the
 		// message container, not the paragraph the text resolves to.
-		it('renders assistant message with left alignment', async () => {
+		it('renders assistant message full-width in the column', async () => {
 			render(ThreadContent, { threadItems: [mockMessages[1]] })
 
 			const element = await page.getByText('Hi there!').element()
 
-			expect(element.closest('div')?.className).toContain('mr-auto')
+			expect(element.closest('div')?.className).toContain('w-full')
 		})
 
 		it('applies assistant-specific foreground styling', async () => {
@@ -177,7 +177,7 @@ describe('ThreadContent', () => {
 			expect(element.className).toContain('text-destructive')
 		})
 
-		it('renders a pending assistant message with the pulse caret', async () => {
+		it('streams without a pulse caret — the composer Stop is the indicator', async () => {
 			render(ThreadContent, {
 				threadItems: [
 					{ id: 'a1', role: 'assistant', content: 'hel', pending: true }
@@ -185,21 +185,6 @@ describe('ThreadContent', () => {
 			})
 
 			const element = await page.getByText('hel', { exact: true }).element()
-
-			expect(
-				element.closest('div')?.querySelector('.animate-pulse')
-			).not.toBeNull()
-		})
-
-		it('renders a settled assistant message without the caret', async () => {
-			render(ThreadContent, {
-				threadItems: [
-					{ id: 'a1', role: 'assistant', content: 'hello', pending: false }
-				]
-			})
-
-			const element = await page.getByText('hello').element()
-
 			expect(element.closest('div')?.querySelector('.animate-pulse')).toBeNull()
 		})
 	})
@@ -383,7 +368,7 @@ describe('ThreadContent', () => {
 	})
 
 	describe('Tool entries', () => {
-		it('renders a persisted tool row as a single dimmed line that expands', async () => {
+		it('renders a persisted tool row as a single dimmed line that expands to one box', async () => {
 			render(ThreadContent, {
 				threadItems: [
 					{
@@ -396,12 +381,16 @@ describe('ThreadContent', () => {
 			})
 
 			await expect.element(page.getByText(/web_search/)).toBeVisible()
-			// Collapsed: the full result stays out of the accessibility tree.
-			expect(page.getByText('2 hits').elements()).toHaveLength(0)
+			// Collapsed: the result stays out of view.
+			await expect.element(page.getByText(/2 hits/)).not.toBeVisible()
 
 			await page.getByRole('button').click()
-			await expect.element(page.getByText('Args')).toBeVisible()
 			await expect.element(page.getByText(/2 hits/)).toBeVisible()
+			// One box, no Args/Result section labels.
+			expect(page.getByText('Args').elements()).toHaveLength(0)
+			expect(page.getByText('Result').elements()).toHaveLength(0)
+			const boxes = document.querySelectorAll('pre')
+			expect(boxes).toHaveLength(1)
 		})
 
 		it('renders a live pending tool entry with its pulse dot', async () => {
@@ -421,6 +410,23 @@ describe('ThreadContent', () => {
 			await expect.element(page.getByText(/web_search/)).toBeVisible()
 			const line = await page.getByRole('button').element()
 			expect(line.querySelector('.animate-pulse')).not.toBeNull()
+		})
+
+		it('marks a failed tool row with a red failure icon', async () => {
+			render(ThreadContent, {
+				threadItems: [
+					{
+						id: 't2',
+						role: 'tool',
+						content:
+							'{"name":"web_search","args":{},"result":"","error":"search backend down"}'
+					}
+				]
+			})
+
+			const trigger = await page.getByRole('button').element()
+			const icon = trigger.querySelector('svg')
+			expect(icon?.className.baseVal).toContain('text-destructive')
 		})
 
 		it('tints a failed tool result', async () => {

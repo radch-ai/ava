@@ -265,7 +265,6 @@ func TestEmptyEnabledListAttachesNoTools(t *testing.T) {
 	require.Empty(t, reqs[0].Tools, "empty enabled list attaches nothing")
 	require.Empty(t, echo.ranWith())
 }
-
 func TestToolFailureErrorsTurn(t *testing.T) {
 	echo := &fakeTool{name: "echo_tool", err: errors.New("search backend down")}
 	llm := newScriptedLLM(t,
@@ -289,6 +288,8 @@ func TestToolFailureErrorsTurn(t *testing.T) {
 
 	ev := readUntilError(t, c)
 	require.Equal(t, wstypes.EventTypeError, ev.Type)
+	require.Equal(t, "echo_tool",
+		eventPayload[wstypes.ErrorEvent](t, ev).Tool)
 
 	// A tool failure fails the whole turn: the drain-written user row
 	// stands with the failed invocation's tool row — its error kept

@@ -61,6 +61,9 @@ type MessageEvent struct {
 }
 
 // ErrorEvent is the payload of an error event: why a turn failed.
+// Tool is set when a tool invocation failed the turn — its row
+// already shows the failure, so clients need not repeat it.
 type ErrorEvent struct {
 	Message string `json:"message"`
+	Tool    string `json:"tool,omitempty"`
 }

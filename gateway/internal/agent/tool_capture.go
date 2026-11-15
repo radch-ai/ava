@@ -44,8 +44,22 @@ func (t *capturingTool) InvokableRun(ctx context.Context, args string, opts ...t
 	t.lane.emitToolCall(t.emitCtx, callID, t.name, args)
 	result, err := t.inner.InvokableRun(ctx, args, opts...)
 	t.lane.recordToolResult(t.emitCtx, callID, t.name, args, result, err)
+	if err != nil {
+		// Named on the way out so the turn's error event can say
+		// which tool failed without the runner's internal framing.
+		err = &toolError{name: t.name, err: err}
+	}
 	return result, err
 }
+
+// toolError carries the name of the tool an invocation failed in.
+type toolError struct {
+	name string
+	err  error
+}
+
+func (e *toolError) Error() string { return e.err.Error() }
+func (e *toolError) Unwrap() error { return e.err }
 
 // emitToolCall tells the lane's connections a tool is about to run.
 func (a *UserAgent) emitToolCall(ctx context.Context, id, name, args string) {
@@ -64,7 +78,9 @@ func (a *UserAgent) emitToolCall(ctx context.Context, id, name, args string) {
 func (a *UserAgent) recordToolResult(ctx context.Context, id, name, args, result string, invocationErr error) {
 	var errText *string
 	if invocationErr != nil {
-		msg := invocationErr.Error()
+		// Clean cause only: the row names its tool already; the
+		// harness frame is how it was invoked, not why it failed.
+		msg := cleanToolError(&toolError{name: name, err: invocationErr})
 		errText = &msg
 	}
 	_ = a.conns.WriteJSON(ctx, wstypes.Event{

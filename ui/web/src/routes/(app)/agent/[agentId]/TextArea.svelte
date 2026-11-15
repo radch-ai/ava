@@ -67,7 +67,7 @@
 			onclick={handleStop}
 		>
 			<CircleStop
-				class="[&_circle]:fill-destructive [&_circle]:stroke-destructive [&_rect]:fill-primary-foreground [&_rect]:stroke-primary-foreground size-9"
+				class="[&_circle]:fill-destructive [&_circle]:stroke-destructive [&_rect]:fill-primary-foreground [&_rect]:stroke-primary-foreground size-9 animate-pulse"
 			/>
 		</Button>
 	{:else}

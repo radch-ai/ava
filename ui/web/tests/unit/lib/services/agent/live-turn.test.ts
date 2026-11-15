@@ -26,8 +26,8 @@ function message(id: string, content: string): AgentSocketEvent {
 	return { type: 'message', agent_id: '_superagent', data: { id, content } }
 }
 
-function errorEvent(message: string): AgentSocketEvent {
-	return { type: 'error', agent_id: '_superagent', data: { message } }
+function errorEvent(message: string, tool?: string): AgentSocketEvent {
+	return { type: 'error', agent_id: '_superagent', data: { message, tool } }
 }
 
 describe('live turns', () => {
@@ -84,6 +84,24 @@ describe('live turns', () => {
 		expect(live.messages).toHaveLength(2)
 		expect(live.messages[1].role).toBe('error')
 		expect(live.messages[1].content).toBe('read default model: no rows')
+	})
+
+	it('a tool-attributed error adds no bubble — the tool row shows it', () => {
+		const live = createLiveTurns()
+		live.echoUser('search for otters')
+		live.applyEvent(errorEvent('no results found', 'duckduckgo_search'))
+
+		expect(live.messages.some((m) => m.role === 'error')).toBe(false)
+	})
+
+	it('a tool-attributed error still drops the thinking placeholder', () => {
+		const live = createLiveTurns()
+		live.echoUser('search for otters')
+		live.applyEvent(errorEvent('no results found', 'duckduckgo_search'))
+
+		expect(
+			live.messages.filter((m) => m.role === 'assistant' && !m.content)
+		).toHaveLength(0)
 	})
 
 	it('a tool call creates a pending tool entry the result completes', () => {
