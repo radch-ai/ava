@@ -148,10 +148,7 @@
 	</header>
 
 	<!-- ContentPanel -->
-	<div
-		class="custom-scrollbar flex-1 overflow-y-auto"
-		bind:this={scrollRegionElement}
-	>
+	<div class="flex-1 overflow-y-auto" bind:this={scrollRegionElement}>
 		<div class="content-container py-4">
 			{#if error}
 				<p
@@ -214,9 +211,5 @@
 
 	.content-container {
 		@apply mx-auto w-full max-md:px-6 md:max-w-[var(--content-max-width)];
-	}
-
-	.custom-scrollbar {
-		scrollbar-color: var(--muted-foreground) transparent;
 	}
 </style>

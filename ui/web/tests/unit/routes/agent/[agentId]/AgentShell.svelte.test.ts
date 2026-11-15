@@ -727,9 +727,7 @@ describe('AgentShell', () => {
 			const header = container.querySelector('header')
 			expect(header).toBeInTheDocument()
 
-			const scrollRegion = container.querySelector(
-				'.custom-scrollbar.flex-1.overflow-y-auto'
-			)
+			const scrollRegion = container.querySelector('.flex-1.overflow-y-auto')
 			expect(scrollRegion).toBeInTheDocument()
 			expect(scrollRegion?.previousElementSibling?.tagName).toBe('HEADER')
 			expect(scrollRegion?.nextElementSibling?.tagName).toBe('FOOTER')
@@ -743,9 +741,7 @@ describe('AgentShell', () => {
 				agent: agent
 			})
 
-			const scrollRegion = container.querySelector(
-				'.custom-scrollbar.flex-1.overflow-y-auto'
-			)
+			const scrollRegion = container.querySelector('.flex-1.overflow-y-auto')
 			expect(scrollRegion).toBeInTheDocument()
 			expect(scrollRegion).toHaveClass('flex-1')
 			expect(scrollRegion).toHaveClass('overflow-y-auto')
@@ -755,16 +751,6 @@ describe('AgentShell', () => {
 			)
 			expect(contentContainer).toBeInTheDocument()
 			expect(contentContainer).not.toHaveClass('overflow-y-auto')
-		})
-
-		it('content area uses custom-scrollbar styling', async () => {
-			const { container } = render(TestWrapper, {
-				agent: agent
-			})
-
-			const content = container.querySelector('.custom-scrollbar')
-			expect(content).toBeInTheDocument()
-			expect(content).toHaveClass('custom-scrollbar')
 		})
 	})
 
@@ -798,9 +784,7 @@ describe('AgentShell', () => {
 				activityFeed: null
 			})
 
-			const scrollRegion = container.querySelector(
-				'.custom-scrollbar.flex-1.overflow-y-auto'
-			)
+			const scrollRegion = container.querySelector('.flex-1.overflow-y-auto')
 			expect(scrollRegion).toBeInTheDocument()
 		})
 	})

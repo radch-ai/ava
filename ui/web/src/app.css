@@ -110,9 +110,29 @@
 	body {
 		@apply bg-background text-foreground;
 	}
-}
 
-/* Scrollbar stability (not needed app that is fixed to h-full) */
-/*html {*/
-/*scrollbar-gutter: stable;*/
-/*}*/
+	/* Slim scrollbars everywhere: exact width via the webkit pseudos,
+	 * standard properties for engines without them (Firefox). Setting
+	 * scrollbar-color/-width would disable the pseudos in Chromium. */
+	::-webkit-scrollbar {
+		width: 6px;
+		height: 6px;
+	}
+
+	::-webkit-scrollbar-thumb {
+		background: color-mix(in oklab, var(--muted-foreground) 35%, transparent);
+		border-radius: 9999px;
+	}
+
+	::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	@supports not selector(::-webkit-scrollbar) {
+		:root {
+			scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent)
+				transparent;
+			scrollbar-width: thin;
+		}
+	}
+}
