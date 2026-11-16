@@ -47,7 +47,10 @@ function validateThread(thread: unknown): AgentThread {
 			typeof msg.id !== 'string' ||
 			typeof msg.content !== 'string' ||
 			typeof msg.createdAt !== 'string' ||
-			(msg.role !== 'user' && msg.role !== 'assistant' && msg.role !== 'tool')
+			(msg.role !== 'user' &&
+				msg.role !== 'assistant' &&
+				msg.role !== 'tool' &&
+				msg.role !== 'error')
 		) {
 			throw new Error('Invalid message: malformed message structure')
 		}

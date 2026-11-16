@@ -85,14 +85,25 @@ export function createLiveTurns() {
 				break
 			}
 			case 'error':
-				// A tool-attributed failure adds no bubble — the
-				// tool's own row shows it.
-				if (!event.data.tool) {
-					messages.push({
-						id: `local-${crypto.randomUUID()}`,
-						role: 'error',
-						content: event.data.message
-					})
+				{
+					// A tool-attributed failure adds no bubble — the tool's
+					// own row shows it.
+					if (!event.data.tool) {
+						messages.push({
+							// A stored failure keeps its row id, so the
+							// settled copy and this one reconcile; transient
+							// errors stay locally keyed.
+							id: event.data.id || `local-${crypto.randomUUID()}`,
+							role: 'error',
+							content: event.data.message
+						})
+					}
+					// The failed turn's streamed prefix is done: it never
+					// becomes a pending row.
+					const failed = messages.find(
+						(m) => m.id === event.data.turn_id && m.role === 'assistant'
+					)
+					if (failed) failed.pending = false
 				}
 				break
 			case 'lane_status': {
@@ -119,17 +130,24 @@ export function createLiveTurns() {
 
 	/** Settles a finished turn: its rows are in the stored thread now,
 	 * so the live copies go — the settled assistant entry, the echoed
-	 * prompts the refetched page carries, and the tool entries, whose
-	 * wire ids never match the sink-minted row ids. Echoes the page
-	 * does not carry yet belong to turns still running; they stay.
-	 * Error bubbles are live-only and survive. */
-	function settleTurn(id: string, persistedPrompts: string[]) {
-		const persisted = new Set(persistedPrompts)
+	 * prompts the refetched page carries, the tool entries, whose
+	 * wire ids never match the sink-minted row ids, and error bubbles
+	 * the page carries by their stored id. Echoes the page does not
+	 * carry yet belong to turns still running; they stay. Transient
+	 * errors have no stored row and never retire here. */
+	function settleTurn(
+		id: string,
+		persistedPrompts: string[],
+		persistedErrors: string[] = []
+	) {
+		const prompts = new Set(persistedPrompts)
+		const errors = new Set(persistedErrors)
 		messages = messages.filter(
 			(m) =>
 				m.id !== id &&
 				m.role !== 'tool' &&
-				!(m.role === 'user' && persisted.has(m.content))
+				!(m.role === 'user' && prompts.has(m.content)) &&
+				!(m.role === 'error' && errors.has(m.id))
 		)
 	}
 	return {

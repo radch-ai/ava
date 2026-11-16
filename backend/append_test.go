@@ -148,3 +148,27 @@ func TestAppendThreadMessagesRejectsUnknownAgent(t *testing.T) {
 		t.Fatal("append for unknown agent succeeded, want the FK to reject it")
 	}
 }
+
+func TestAppendThreadMessagesUsesSuppliedID(t *testing.T) {
+	sqlDB := resolverDB(t)
+	seedThreadAgent(t, sqlDB, "a3")
+
+	// Terminal error rows name themselves on the wire; the sink must
+	// store that exact id, not mint a fresh one.
+	err := backend.AppendThreadMessages(context.Background(), "a3",
+		[]apitypes.ThreadMessageDraft{
+			{ID: "err-row-1", Role: apitypes.ThreadRoleError, Content: "no default model set"},
+		})
+	if err != nil {
+		t.Fatalf("AppendThreadMessages: %v", err)
+	}
+
+	rows := readThread(t, sqlDB, "a3")
+	if len(rows) != 1 {
+		t.Fatalf("thread rows = %d, want 1", len(rows))
+	}
+	if rows[0].ID != "err-row-1" || rows[0].Role != "error" || rows[0].Content != "no default model set" {
+		t.Errorf("row = %s/%s/%q, want err-row-1/error/\"no default model set\"",
+			rows[0].ID, rows[0].Role, rows[0].Content)
+	}
+}

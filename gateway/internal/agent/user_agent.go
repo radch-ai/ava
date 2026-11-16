@@ -11,6 +11,7 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	"github.com/coder/websocket"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 
 	"github.com/radch-ai/ava/backend"
@@ -337,9 +338,9 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 	a.beginTurn(msgID)
 
 	// The user's words persist before anything can fail: every
-	// failure mode below keeps the prompt in the thread, and a crash
-	// before the answer lands leaves an orphan user row — a failed
-	// turn reads the same either way.
+	// failure mode below keeps the prompt in the thread — failures
+	// append their own error row, and a crash before either leaves
+	// the user row standing alone.
 	if a.persistTurn != nil {
 		if err := a.persistTurn(emitCtx, a.agentID,
 			[]apitypes.ThreadMessageDraft{{Role: apitypes.ThreadRoleUser, Content: input.String()}}); err != nil {
@@ -349,19 +350,19 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 
 	if resolveModel == nil {
 		a.logger.Error().Str("agent_id", a.agentID).Msg("lane has no model resolver")
-		a.emitError(emitCtx, "no model resolver configured", "")
+		a.failTurn(emitCtx, msgID, "no model resolver configured", "")
 		return
 	}
 	cfg, err := resolveModel(queryCtx, entry)
 	if err != nil {
 		a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("resolve model")
-		a.emitError(emitCtx, err.Error(), "")
+		a.failTurn(emitCtx, msgID, err.Error(), "")
 		return
 	}
 	chatModel, err := createChatModel(queryCtx, cfg)
 	if err != nil {
 		a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("build chat model")
-		a.emitError(emitCtx, err.Error(), "")
+		a.failTurn(emitCtx, msgID, err.Error(), "")
 		return
 	}
 	// The persona is fetched per turn: config edits apply to the next
@@ -384,13 +385,13 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 	einoAgent, err := buildEinoAgent(queryCtx, a.agentID, instruction, chatModel, turnTools)
 	if err != nil {
 		a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("build agent")
-		a.emitError(emitCtx, err.Error(), "")
+		a.failTurn(emitCtx, msgID, err.Error(), "")
 		return
 	}
 	runner, err := buildEinoRunner(queryCtx, einoAgent)
 	if err != nil {
 		a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("build runner")
-		a.emitError(emitCtx, err.Error(), "")
+		a.failTurn(emitCtx, msgID, err.Error(), "")
 		return
 	}
 
@@ -404,7 +405,7 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 			}
 			a.logger.Error().Err(event.Err).Str("agent_id", a.agentID).Msg("model query")
 			text, toolName := turnError(event.Err)
-			a.emitError(emitCtx, text, toolName)
+			a.failTurn(emitCtx, msgID, text, toolName)
 			return
 		}
 		if event.Output == nil || event.Output.MessageOutput == nil {
@@ -425,7 +426,7 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 				}
 				a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("model stream")
 				text, toolName := turnError(err)
-				a.emitError(emitCtx, text, toolName)
+				a.failTurn(emitCtx, msgID, text, toolName)
 				return
 			}
 			continue
@@ -435,8 +436,9 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 		}
 	}
 	// The answer settles: persist first so the UI's refetch cannot
-	// outrun the write, then broadcast. Success only — a failed turn
-	// leaves the drain-written user row standing alone.
+	// outrun the write, then broadcast. A failed turn settles through
+	// failTurn instead; a crash between the two leaves the user row
+	// standing alone.
 	a.settleTurn(emitCtx, msgID, answer.String())
 }
 
@@ -454,13 +456,14 @@ func turnStopped(queryCtx context.Context, err error) bool {
 
 // finishInterrupted ends a user-stopped turn: whatever streamed
 // settles like a completed answer — history keeps it — and an empty
-// stop reports a human message instead of a raw cancellation error.
+// stop reports a transient human message, not a raw cancellation
+// error and not a durable row: a stop is not a failure.
 func (a *UserAgent) finishInterrupted(emitCtx context.Context, msgID string, answer *strings.Builder) {
 	if answer.Len() > 0 {
 		a.settleTurn(emitCtx, msgID, answer.String())
 		return
 	}
-	a.emitError(emitCtx, stoppedTurnMessage, "")
+	a.emitError(emitCtx, stoppedTurnMessage, "", "", "")
 }
 
 // settleTurn persists the assistant row, then broadcasts the final
@@ -571,15 +574,42 @@ func cleanToolError(terr *toolError) string {
 	return terr.err.Error()
 }
 
+// failTurn ends a failed turn. A turn-level failure (no tool
+// attribution) is persisted as an error row before its event — the
+// refetch a client makes on the event cannot outrun the write — and
+// the event then names the stored row, so live and reloaded state
+// converge on one id. A failed or missing sink leaves the row
+// unconfirmed: the event stays transient and carries the original
+// failure, never the sink's error. Tool-attributed failures already
+// persist in their envelope and stay transient here.
+func (a *UserAgent) failTurn(ctx context.Context, msgID, message, toolName string) {
+	rowID := ""
+	if toolName == "" && a.persistTurn != nil {
+		rowID = uuid.NewString()
+		if err := a.persistTurn(ctx, a.agentID,
+			[]apitypes.ThreadMessageDraft{{ID: rowID, Role: apitypes.ThreadRoleError, Content: message}}); err != nil {
+			a.logger.Warn().Err(err).Str("agent_id", a.agentID).Msg("persist error message")
+			rowID = ""
+		}
+	}
+	a.emitError(ctx, message, toolName, rowID, msgID)
+}
+
 // emitError reports a failed turn to the lane's connections. The
 // replay prefix retires first: nothing replays after the turn is
-// over.
-func (a *UserAgent) emitError(ctx context.Context, message, tool string) {
+// over. rowID names the stored error row when the failure persisted;
+// turnID names the failed turn's stream.
+func (a *UserAgent) emitError(ctx context.Context, message, tool, rowID, turnID string) {
 	a.clearTurnPrefix()
 	_ = a.conns.WriteJSON(ctx, wstypes.Event{
 		Type:    wstypes.EventTypeError,
 		AgentID: a.agentID,
-		Data:    wstypes.ErrorEvent{Message: message, Tool: tool},
+		Data: wstypes.ErrorEvent{
+			ID:      rowID,
+			TurnID:  turnID,
+			Message: message,
+			Tool:    tool,
+		},
 	})
 }
 

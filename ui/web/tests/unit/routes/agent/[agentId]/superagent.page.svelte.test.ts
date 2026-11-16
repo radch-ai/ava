@@ -786,7 +786,26 @@ describe('AgentPage (superagent branch)', () => {
 			})
 		})
 
-		it('renders a failed turn as an inline error message', async () => {
+		it('reconciles a stored failure into one durable error row', async () => {
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => ({
+					items: [
+						{
+							id: 'stored-u',
+							role: 'user',
+							content: 'fail me',
+							createdAt: '2026-01-01T00:00:00.000Z'
+						},
+						{
+							id: 'stored-e',
+							role: 'error',
+							content: 'no default model set — pick a model in the composer',
+							createdAt: '2026-01-01T00:00:01.000Z'
+						}
+					],
+					nextCursor: null
+				})
+			} as ApiResponsePromise)
 			render(AgentPageTestWrapper, { data: createMockData() })
 			const textarea = page.getByPlaceholder('Enter your query!')
 			await textarea.click()
@@ -795,12 +814,134 @@ describe('AgentPage (superagent branch)', () => {
 			capturedOnEvent?.({
 				type: 'error',
 				agent_id: '_superagent',
-				data: { message: 'read default model: no rows in result set' }
+				data: {
+					id: 'stored-e',
+					turn_id: 'msg-1',
+					message: 'no default model set — pick a model in the composer'
+				}
 			})
 
+			// The stored row replaces the live copy: prompt and failure
+			// each render exactly once.
+			await vi.waitFor(() => {
+				expect(
+					page
+						.getByText('no default model set — pick a model in the composer')
+						.elements()
+				).toHaveLength(1)
+				expect(page.getByText('fail me').elements()).toHaveLength(1)
+			})
+		})
+
+		it('keeps the live error through a failed refetch, retires it on the next settle', async () => {
+			const failing = {
+				json: async () => {
+					throw new Error('refetch down')
+				}
+			} as unknown as ApiResponsePromise
+			const recovered = {
+				json: async () => ({
+					items: [
+						{
+							id: 'stored-u',
+							role: 'user',
+							content: 'fail me',
+							createdAt: '2026-01-01T00:00:00.000Z'
+						},
+						{
+							id: 'stored-e',
+							role: 'error',
+							content: 'read provider p-1: no rows',
+							createdAt: '2026-01-01T00:00:01.000Z'
+						},
+						{
+							id: 'stored-a',
+							role: 'assistant',
+							content: 'later answer',
+							createdAt: '2026-01-01T00:00:02.000Z'
+						}
+					],
+					nextCursor: null
+				})
+			} as ApiResponsePromise
+
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'fail me{Enter}')
+
+			vi.mocked(api.get).mockReturnValueOnce(failing)
+			capturedOnEvent?.({
+				type: 'error',
+				agent_id: '_superagent',
+				data: {
+					id: 'stored-e',
+					turn_id: 'msg-1',
+					message: 'read provider p-1: no rows'
+				}
+			})
+			// The refetch fails: the live copy stays the truth.
 			await expect
-				.element(page.getByText('read default model: no rows in result set'))
+				.element(page.getByText('read provider p-1: no rows'))
 				.toBeVisible()
+
+			vi.mocked(api.get).mockReturnValue(recovered)
+			capturedOnEvent?.({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'msg-2', content: 'later answer' }
+			})
+			// The next terminal event retries the pending stored error:
+			// its row lands, the live copy retires — exactly one bubble.
+			await vi.waitFor(() => {
+				expect(
+					page.getByText('read provider p-1: no rows').elements()
+				).toHaveLength(1)
+			})
+		})
+
+		it('renders repeated identical failures as distinct rows', async () => {
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => ({
+					items: [
+						{
+							id: 'u-1',
+							role: 'user',
+							content: 'fail me',
+							createdAt: '2026-01-01T00:00:00.000Z'
+						},
+						{
+							id: 'e-1',
+							role: 'error',
+							content: 'same failure',
+							createdAt: '2026-01-01T00:00:01.000Z'
+						},
+						{
+							id: 'e-2',
+							role: 'error',
+							content: 'same failure',
+							createdAt: '2026-01-01T00:00:02.000Z'
+						}
+					],
+					nextCursor: null
+				})
+			} as ApiResponsePromise)
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'fail me{Enter}')
+
+			for (const id of ['e-1', 'e-2']) {
+				capturedOnEvent?.({
+					type: 'error',
+					agent_id: '_superagent',
+					data: { id, turn_id: 'msg-1', message: 'same failure' }
+				})
+			}
+
+			await vi.waitFor(() => {
+				expect(page.getByText('same failure').elements()).toHaveLength(2)
+			})
 		})
 
 		it('keeps following the stream as chunks grow the answer', async () => {

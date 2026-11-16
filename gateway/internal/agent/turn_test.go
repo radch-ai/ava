@@ -233,7 +233,10 @@ func TestTurnResolverErrorEmitsErrorAndKeepsLane(t *testing.T) {
 	require.Equal(t, wstypes.EventTypeError, ev.Type)
 	p := eventPayload[wstypes.ErrorEvent](t, ev)
 	require.Contains(t, p.Message, "no rows")
-
+	// No sink is bound: the error is transient — nothing stored to
+	// name, but the turn is.
+	require.Empty(t, p.ID)
+	require.Equal(t, "msg-1", p.TurnID)
 	// The lane survives the failed turn and runs the next one.
 	ok = mgr.SubmitMsg(context.Background(), "agent-rerr", "conn-1", sc,
 		agent.Message{ID: "msg-2", Content: "again"})
@@ -477,9 +480,10 @@ func (s *recordingSink) persist(ctx context.Context, agentID string, msgs []apit
 	s.mu.Lock()
 	s.calls = append(s.calls, msgs)
 	fail := s.fail
-	// Park only the first assistant draft; later turns' drafts flow
-	// through.
-	park := s.blocked != nil && msgs[0].Role == apitypes.ThreadRoleAssistant && !s.parked
+	// Park only the first assistant or error draft; later turns'
+	// drafts flow through.
+	park := s.blocked != nil && !s.parked &&
+		(msgs[0].Role == apitypes.ThreadRoleAssistant || msgs[0].Role == apitypes.ThreadRoleError)
 	if park {
 		s.parked = true
 	}
@@ -594,7 +598,7 @@ func TestTurnPersistsAssistantBeforeFinalEvent(t *testing.T) {
 	require.Equal(t, "ordered", p.Content)
 }
 
-func TestTurnErrorPersistsUserOnly(t *testing.T) {
+func TestTurnErrorPersistsUserThenErrorRow(t *testing.T) {
 	llm := fakeOpenAI(t, "never reached")
 	defer llm.Close()
 
@@ -616,12 +620,117 @@ func TestTurnErrorPersistsUserOnly(t *testing.T) {
 
 	ev := readUntilError(t, c)
 	require.Equal(t, wstypes.EventTypeError, ev.Type)
+	p := eventPayload[wstypes.ErrorEvent](t, ev)
+	require.Equal(t, "msg-1", p.TurnID)
 
+	// The failure lands as an error row after the user row, and the
+	// event names that row — live and reloaded state converge on it.
 	calls := sink.recorded()
-	require.Len(t, calls, 1)
+	require.Len(t, calls, 2)
 	require.Equal(t,
 		[]apitypes.ThreadMessageDraft{{Role: apitypes.ThreadRoleUser, Content: "hello"}},
 		calls[0])
+	require.Len(t, calls[1], 1)
+	require.Equal(t, apitypes.ThreadRoleError, calls[1][0].Role)
+	require.Equal(t, "read provider p-1: no rows", calls[1][0].Content)
+	require.NotEmpty(t, p.ID)
+	require.Equal(t, p.ID, calls[1][0].ID)
+}
+
+func TestTurnErrorPersistsBeforeEvent(t *testing.T) {
+	sink := &recordingSink{blocked: make(chan struct{}), release: make(chan struct{})}
+	defer sink.unblock()
+	resolver := func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
+		return backend.ResolvedModel{}, errors.New("read provider p-1: no rows")
+	}
+	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+		&agent.UserAgentManagerOptions{
+			ResolveModel: resolver,
+			PersistTurn:  sink.persist,
+		})
+
+	c, sc := wsPair(t)
+
+	ok := mgr.SubmitMsg(context.Background(), "agent-errorder", "conn-1", sc,
+		agent.Message{ID: "msg-1", Content: "hello"})
+	require.True(t, ok)
+
+	select {
+	case <-sink.blocked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("error draft never reached the sink")
+	}
+	// While the error write is parked, the failure must not be on the
+	// wire — a client refetching on the event would miss the row.
+	if ev, arrived := readEventMaybe(t, c, 150*time.Millisecond); arrived {
+		require.NotEqual(t, wstypes.EventTypeError, ev.Type,
+			"error event outran the error write")
+	}
+
+	sink.unblock()
+	p := eventPayload[wstypes.ErrorEvent](t, readUntilError(t, c))
+	require.NotEmpty(t, p.ID)
+	calls := sink.recorded()
+	require.Equal(t, p.ID, calls[1][0].ID)
+}
+
+func TestTurnErrorSinkFailureStaysTransient(t *testing.T) {
+	sink := &recordingSink{fail: errors.New("db down")}
+	resolver := func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
+		return backend.ResolvedModel{}, errors.New("read provider p-1: no rows")
+	}
+	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+		&agent.UserAgentManagerOptions{
+			ResolveModel: resolver,
+			PersistTurn:  sink.persist,
+		})
+
+	c, sc := wsPair(t)
+
+	ok := mgr.SubmitMsg(context.Background(), "agent-errsink", "conn-1", sc,
+		agent.Message{ID: "msg-1", Content: "hello"})
+	require.True(t, ok)
+
+	// The row never confirmed: the event keeps the original failure,
+	// claims no stored id, and the write was still attempted.
+	p := eventPayload[wstypes.ErrorEvent](t, readUntilError(t, c))
+	require.Equal(t, "read provider p-1: no rows", p.Message)
+	require.Empty(t, p.ID)
+	require.Equal(t, "msg-1", p.TurnID)
+	calls := sink.recorded()
+	require.Len(t, calls, 2)
+	require.Equal(t, apitypes.ThreadRoleError, calls[1][0].Role)
+}
+
+func TestTurnStreamErrorPersistsErrorRow(t *testing.T) {
+	// A model that answers 500 fails the query itself — a later
+	// failure exit than the resolver.
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer llm.Close()
+
+	sink := &recordingSink{}
+	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+		&agent.UserAgentManagerOptions{
+			ResolveModel: fixedResolver(llm.URL),
+			PersistTurn:  sink.persist,
+		})
+
+	c, sc := wsPair(t)
+
+	ok := mgr.SubmitMsg(context.Background(), "agent-errstream", "conn-1", sc,
+		agent.Message{ID: "msg-1", Content: "hello"})
+	require.True(t, ok)
+
+	p := eventPayload[wstypes.ErrorEvent](t, readUntilError(t, c))
+	require.NotEmpty(t, p.ID)
+	require.NotEmpty(t, p.Message)
+	calls := sink.recorded()
+	require.Len(t, calls, 2)
+	require.Equal(t, apitypes.ThreadRoleError, calls[1][0].Role)
+	require.Equal(t, p.Message, calls[1][0].Content)
+	require.Equal(t, p.ID, calls[1][0].ID)
 }
 
 func TestTurnSinkFailureDoesNotFailTurn(t *testing.T) {

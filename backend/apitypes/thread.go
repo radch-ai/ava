@@ -2,13 +2,14 @@ package apitypes
 
 import "encoding/json"
 
-// ThreadRole is who said a thread message.
+// ThreadRole is the kind of row a thread message is.
 type ThreadRole string
 
 const (
 	ThreadRoleUser      ThreadRole = "user"
 	ThreadRoleAssistant ThreadRole = "assistant"
 	ThreadRoleTool      ThreadRole = "tool"
+	ThreadRoleError     ThreadRole = "error"
 )
 
 // ToolEnvelope is the content of a role='tool' row: one completed
@@ -31,10 +32,12 @@ type ThreadMessage struct {
 	CreatedAt string     `json:"createdAt"`
 }
 
-// ThreadMessageDraft is a message queued for the thread. The sink
-// mints the id and timestamp when it lands — they are storage
-// concerns, not part of the draft.
+// ThreadMessageDraft is a message queued for the thread. An empty ID
+// has the sink mint one; a supplied ID (terminal error rows, so the
+// failure's event can name its stored row) is used verbatim. The
+// timestamp stays the sink's — it owns ordering.
 type ThreadMessageDraft struct {
+	ID      string     `json:"id,omitempty"`
 	Role    ThreadRole `json:"role"`
 	Content string     `json:"content"`
 }

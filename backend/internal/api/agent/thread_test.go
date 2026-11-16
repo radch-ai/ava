@@ -116,6 +116,34 @@ func TestGetThreadPageOrder(t *testing.T) {
 	}
 }
 
+func TestGetThreadCarriesErrorRows(t *testing.T) {
+	sqlDB, queries := threadStore(t)
+	for i, seed := range []struct{ id, role, content string }{
+		{"m1", "user", "prompt"},
+		{"m2", "error", "no default model set"},
+	} {
+		if _, err := sqlDB.Exec(
+			`INSERT INTO thread_messages (id, agent_id, role, content, created_at)
+			 VALUES (?, 'research', ?, ?, ?)`,
+			seed.id, seed.role, seed.content, pageBase+int64(i)*1000,
+		); err != nil {
+			t.Fatalf("seed %s: %v", seed.id, err)
+		}
+	}
+
+	code, page := getThreadPage(t, queries, "/agent/research/thread")
+	if code != http.StatusOK {
+		t.Fatalf("code = %d, want 200", code)
+	}
+	if len(page.Items) != 2 {
+		t.Fatalf("items = %d, want 2", len(page.Items))
+	}
+	if got := page.Items[1]; got.ID != "m2" || got.Role != apitypes.ThreadRoleError ||
+		got.Content != "no default model set" {
+		t.Errorf("error row = %s/%s/%q, want m2/error/\"no default model set\"", got.ID, got.Role, got.Content)
+	}
+}
+
 func TestGetThreadCursorWalk(t *testing.T) {
 	sqlDB, queries := threadStore(t)
 	seedMessages(t, sqlDB, "research", "m1", "m2", "m3", "m4", "m5")

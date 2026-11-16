@@ -156,24 +156,40 @@
 	}
 
 	// Turn events fold into the live conversation tail; lane state
-	// mirrors into the strip. A settled turn is in the stored thread
-	// now — the sink wrote before the settle event — so its refetch
-	// replaces the newest window (keeping any loaded older pages) and
-	// the live copies it covers are dropped. Pages arrive oldest→
-	// newest; anything already loaded that the fresh window does not
-	// carry is strictly older, so the settled turn lands at the
-	// bottom.
+	// mirrors into the strip. A turn is over when its final message
+	// or its stored failure arrives — the sink wrote before the
+	// event, so a refetch replaces the newest window (keeping any
+	// loaded older pages) and the live copies it covers are dropped.
+	// Pages arrive oldest→newest; anything already loaded that the
+	// fresh window does not carry is strictly older, so the settled
+	// turn lands at the bottom. Refetches serialize — an older
+	// response can never overwrite a newer snapshot — and a stored
+	// error whose refetch failed retries on the next terminal event
+	// instead of lingering as a live copy forever.
+	let reconcileChain: Promise<void> = Promise.resolve()
+	const pendingErrorRows = new Set<string>()
+
 	function handleSocketEvent(event: AgentSocketEvent) {
 		liveTurns.applyEvent(event)
 		if (event.type === 'lane_status') {
 			laneStatus = event.data
 		}
 		if (event.type === 'message') {
-			void reconcileTurn(event.data.id)
+			queueReconcile(event.data.id)
+		}
+		if (event.type === 'error' && !event.data.tool && event.data.id) {
+			queueReconcile(event.data.turn_id, event.data.id)
 		}
 	}
 
+	function queueReconcile(turnId: string, errorRowId?: string) {
+		if (errorRowId) pendingErrorRows.add(errorRowId)
+		reconcileChain = reconcileChain.then(() => reconcileTurn(turnId))
+	}
+
 	async function reconcileTurn(id: string) {
+		// The stored errors this pass may settle; the rest retry.
+		const settlingErrors = [...pendingErrorRows]
 		try {
 			const fresh = await getAgentThread(data.agent.id, 20)
 			const loaded = thread?.items ?? []
@@ -184,11 +200,15 @@
 			}
 			liveTurns.settleTurn(
 				id,
-				fresh.items.filter((m) => m.role === 'user').map((m) => m.content)
+				fresh.items.filter((m) => m.role === 'user').map((m) => m.content),
+				fresh.items.filter((m) => m.role === 'error').map((m) => m.id)
 			)
+			for (const errorId of settlingErrors) {
+				if (freshIds.has(errorId)) pendingErrorRows.delete(errorId)
+			}
 		} catch {
 			// Refetch failed: the live tail stays the truth until the
-			// next settle retries.
+			// next terminal event retries the pending stored errors.
 		}
 	}
 

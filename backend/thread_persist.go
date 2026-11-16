@@ -31,11 +31,13 @@ func bindPersist(queries *db.Queries) {
 	persistQueries = queries
 }
 
-// AppendThreadMessages writes drafts to an agent's thread. It mints
-// each row's id and a millisecond timestamp, strictly rising within
-// the call and across calls — the assistant row a turn appends after
-// its user row always sorts after it. Unknown agents fail on the
-// foreign key; the caller decides whether that matters.
+// AppendThreadMessages writes drafts to an agent's thread. A draft
+// may carry its own id (terminal error rows name theirs on the
+// wire); otherwise one is minted. Each row gets a millisecond
+// timestamp, strictly rising within the call and across calls — the
+// assistant row a turn appends after its user row always sorts after
+// it. Unknown agents fail on the foreign key; the caller decides
+// whether that matters.
 func AppendThreadMessages(ctx context.Context, agentID string, msgs []apitypes.ThreadMessageDraft) error {
 	if len(msgs) == 0 {
 		return nil
@@ -48,7 +50,10 @@ func AppendThreadMessages(ctx context.Context, agentID string, msgs []apitypes.T
 		now = lastPersistedMs + 1
 	}
 	for i, m := range msgs {
-		id := uuid.NewString()
+		id := m.ID
+		if id == "" {
+			id = uuid.NewString()
+		}
 		if err := persistQueries.InsertThreadMessage(ctx, db.InsertThreadMessageParams{
 			ID:        id,
 			AgentID:   agentID,

@@ -62,8 +62,13 @@ type MessageEvent struct {
 
 // ErrorEvent is the payload of an error event: why a turn failed.
 // Tool is set when a tool invocation failed the turn — its row
-// already shows the failure, so clients need not repeat it.
+// already shows the failure, so clients need not repeat it. ID names
+// the stored error row when the failure persisted; without one the
+// error is transient (stopped turns, tool failures, a failed write).
+// TurnID names the failed turn's stream, like the message events'.
 type ErrorEvent struct {
+	ID      string `json:"id,omitempty"`
+	TurnID  string `json:"turn_id,omitempty"`
 	Message string `json:"message"`
 	Tool    string `json:"tool,omitempty"`
 }

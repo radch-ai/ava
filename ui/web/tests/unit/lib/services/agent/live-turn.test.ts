@@ -26,8 +26,16 @@ function message(id: string, content: string): AgentSocketEvent {
 	return { type: 'message', agent_id: '_superagent', data: { id, content } }
 }
 
-function errorEvent(message: string, tool?: string): AgentSocketEvent {
-	return { type: 'error', agent_id: '_superagent', data: { message, tool } }
+function errorEvent(
+	message: string,
+	tool?: string,
+	ids?: { id?: string; turnId?: string }
+): AgentSocketEvent {
+	return {
+		type: 'error',
+		agent_id: '_superagent',
+		data: { message, tool, id: ids?.id, turn_id: ids?.turnId }
+	}
 }
 
 describe('live turns', () => {
@@ -84,6 +92,38 @@ describe('live turns', () => {
 		expect(live.messages).toHaveLength(2)
 		expect(live.messages[1].role).toBe('error')
 		expect(live.messages[1].content).toBe('read default model: no rows')
+	})
+
+	it('a stored failure keeps the wire row id; a transient one stays local', () => {
+		const stored = createLiveTurns()
+		stored.applyEvent(
+			errorEvent('no default model set', undefined, {
+				id: 'err-1',
+				turnId: 'msg-1'
+			})
+		)
+		expect(stored.messages[0].id).toBe('err-1')
+
+		const transient = createLiveTurns()
+		transient.applyEvent(errorEvent('turn stopped'))
+		expect(transient.messages[0].id).toMatch(/^local-/)
+	})
+
+	it('the failed turn’s streamed prefix stops pending', () => {
+		const live = createLiveTurns()
+		live.applyEvent(chunk('msg-1', 'partial '))
+		live.applyEvent(chunk('msg-1', 'answer'))
+		live.applyEvent(
+			errorEvent('model stream broke', undefined, { turnId: 'msg-1' })
+		)
+
+		expect(live.messages).toHaveLength(2)
+		expect(live.messages[0]).toMatchObject({
+			id: 'msg-1',
+			pending: false,
+			content: 'partial answer'
+		})
+		expect(live.messages[1].role).toBe('error')
 	})
 
 	it('a tool-attributed error adds no bubble — the tool row shows it', () => {
@@ -259,14 +299,54 @@ describe('live turn settlement', () => {
 		expect(live.messages).toHaveLength(0)
 	})
 
-	it('settle keeps error bubbles — they are live-only', () => {
+	it('settle retires a durable error the page carries, keeps uncovered ones', () => {
 		const live = createLiveTurns()
 		live.echoUser('hi')
-		live.applyEvent(errorEvent('read default model: no rows'))
+		live.applyEvent(
+			errorEvent('no default model set', undefined, {
+				id: 'err-stored',
+				turnId: 'msg-1'
+			})
+		)
+		live.applyEvent(errorEvent('turn stopped'))
+		live.applyEvent(
+			errorEvent('old failure', undefined, { id: 'err-not-loaded' })
+		)
 
-		live.settleTurn('msg-1', ['hi'])
+		// The refetched page carries err-stored only: its live copy
+		// retires. The transient stop and the error whose row the page
+		// did not carry (older than its window) both stay.
+		live.settleTurn('msg-1', ['hi'], ['err-stored'])
 
-		expect(live.messages).toHaveLength(1)
-		expect(live.messages[0].role).toBe('error')
+		expect(live.messages).toHaveLength(2)
+		expect(live.messages[0]).toMatchObject({
+			role: 'error',
+			content: 'turn stopped'
+		})
+		expect(live.messages[1]).toMatchObject({
+			role: 'error',
+			content: 'old failure'
+		})
+	})
+
+	it('settle keeps a running later turn while retiring a stored error', () => {
+		const live = createLiveTurns()
+		live.applyEvent(
+			errorEvent('no default model set', undefined, { id: 'err-1' })
+		)
+		live.echoUser('next prompt')
+		live.applyEvent(chunk('msg-2', 'streaming'))
+
+		live.settleTurn('msg-x', [], ['err-1'])
+
+		expect(live.messages).toHaveLength(2)
+		expect(live.messages[0]).toMatchObject({
+			role: 'user',
+			content: 'next prompt'
+		})
+		expect(live.messages[1]).toMatchObject({
+			id: 'msg-2',
+			pending: true
+		})
 	})
 })

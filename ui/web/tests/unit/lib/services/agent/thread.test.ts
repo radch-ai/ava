@@ -94,6 +94,38 @@ describe('agent/thread service', () => {
 				'malformed message'
 			)
 		})
+
+		it('accepts stored error rows', async () => {
+			const thread = createThread({
+				items: [
+					createThreadMessage(),
+					createThreadMessage({
+						id: 'stored-e',
+						role: 'error',
+						content: 'no default model set'
+					})
+				]
+			})
+
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => thread
+			} as ApiResponsePromise)
+
+			await expect(getAgentThread('_superagent')).resolves.toEqual(thread)
+		})
+
+		it('still rejects roles outside the wire contract', async () => {
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => ({
+					items: [createThreadMessage({ role: 'system' as never })],
+					nextCursor: null
+				})
+			} as ApiResponsePromise)
+
+			await expect(getAgentThread('_superagent')).rejects.toThrow(
+				'malformed message'
+			)
+		})
 	})
 
 	describe('mergePastThread', () => {
