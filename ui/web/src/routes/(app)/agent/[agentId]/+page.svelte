@@ -254,12 +254,8 @@
 	onActivityLoadMore={handleActivityLoadMore}
 >
 	{#if isSuperagent}
-		<div
-			class="items-end max-md:flex max-md:flex-col md:grid md:grid-cols-[1fr_var(--content-max-width)_1fr]"
-		>
-			<div
-				class="mr-2 flex items-center justify-end gap-1 max-md:my-2 md:mb-[2.5px] md:ml-4"
-			>
+		<div class="mx-auto w-full md:max-w-[calc(var(--content-max-width)+2rem)]">
+			<div class="mr-3.25 mb-1 flex items-center justify-end gap-1">
 				<span class="text-muted-foreground text-sm">Model:</span>
 				<ModelSelector
 					value={selectedModel}
