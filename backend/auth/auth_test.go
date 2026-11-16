@@ -28,7 +28,7 @@ const testUIToken = "test-ui-token-0123456789abcdef"
 func newAuthStack(t *testing.T) http.Handler {
 	t.Helper()
 
-	apiHandler, authSessions, err := backend.New(testdb.Open(t, true), zerolog.Nop(),
+	apiHandler, authSessions, _, err := backend.New(testdb.Open(t, true), zerolog.Nop(),
 		bytes.Repeat([]byte{0x42}, 32))
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)

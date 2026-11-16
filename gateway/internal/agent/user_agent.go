@@ -35,18 +35,18 @@ type Message struct {
 }
 
 // ModelResolver maps a selection to a callable endpoint. An alias of
-// the backend.ResolveModel signature, so the bound function needs no
-// adapter.
+// backend TurnService.ResolveModel, so the bound method value needs
+// no adapter.
 type ModelResolver = func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error)
 
 // TurnSink appends a turn's messages to the agent's thread. An alias
-// of the backend.AppendThreadMessages signature, so the bound
-// function needs no adapter.
+// of backend TurnService.AppendThreadMessages, so the bound method
+// value needs no adapter.
 type TurnSink = func(ctx context.Context, agentID string, msgs []apitypes.ThreadMessageDraft) error
 
 // AgentConfigSource reads an agent's editable config — the prompt
-// texts and tool list a turn needs. An alias of the
-// backend.GetAgentConfig signature, so the bound function needs no
+// texts and tool list a turn needs. An alias of backend
+// TurnService.GetAgentConfig, so the bound method value needs no
 // adapter.
 type AgentConfigSource = func(ctx context.Context, agentID string) (*apitypes.AgentConfig, error)
 

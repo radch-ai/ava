@@ -24,7 +24,8 @@ import (
 // providers, and user secrets.
 //
 // It also returns the vault-backed session store (auth.NewVaultSessions)
-// the binary's auth layer consumes.
+// the binary's auth layer consumes, and the TurnService whose method
+// values the binary binds into the gateway.
 //
 // Routes are mount-relative and carry no auth of their own: the
 // binary wires the backend/auth middleware around them, mounting
@@ -35,19 +36,17 @@ import (
 //
 // Wire types live in backend/apitypes — the UI's TypeScript types are
 // generated from it (`just typegen`).
-func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte) (http.Handler, auth.Sessions, error) {
+func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte) (http.Handler, auth.Sessions, *TurnService, error) {
 	master, err := vault.NewMasterAEAD(masterKey)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	vaultStore, err := vault.NewStore(sqlDB, master)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	queries := db.New(sqlDB)
-	bindResolver(queries, vaultStore)
-	bindPersist(queries)
-	bindAgentConfig(queries)
+	turns := &TurnService{queries: queries, vaultStore: vaultStore}
 	mux := http.NewServeMux()
 
 	// Agents.
@@ -85,5 +84,5 @@ func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte) (http.Handler, 
 	mux.Handle("PUT /vault/{name}", api.Log(logger, vaults.PutSecret(vaultStore)))
 	mux.Handle("DELETE /vault/{name}", api.Log(logger, vaults.DeleteSecret(vaultStore)))
 
-	return mux, auth.NewVaultSessions(vaultStore), nil
+	return mux, auth.NewVaultSessions(vaultStore), turns, nil
 }

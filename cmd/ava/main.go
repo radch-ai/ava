@@ -145,7 +145,7 @@ func serve(logger zerolog.Logger) {
 	}
 	logger.Info().Str("path", cfg.DBPath).Msg("store ready")
 
-	apiRouter, authSessions, err := backend.New(sqlDB, logger, cfg.MasterKey)
+	apiRouter, authSessions, turnSvc, err := backend.New(sqlDB, logger, cfg.MasterKey)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Vault bootstrap failed")
 	}
@@ -156,9 +156,9 @@ func serve(logger zerolog.Logger) {
 	apiHandler := authMiddleware.Authenticate(apiRouter)
 
 	gw, err := gateway.New(&gateway.Config{
-		ResolveModel:   backend.ResolveModel,
-		PersistTurn:    backend.AppendThreadMessages,
-		GetAgentConfig: backend.GetAgentConfig,
+		ResolveModel:   turnSvc.ResolveModel,
+		PersistTurn:    turnSvc.AppendThreadMessages,
+		GetAgentConfig: turnSvc.GetAgentConfig,
 	}, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Failed to create gateway handler")

@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/radch-ai/ava/backend"
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/backend/internal/db"
 )
@@ -36,10 +35,10 @@ func readThread(t *testing.T, sqlDB *sql.DB, agentID string) []db.ListThreadFirs
 }
 
 func TestAppendThreadMessagesMintsOrderedRows(t *testing.T) {
-	sqlDB := resolverDB(t)
+	sqlDB, svc := resolverDB(t)
 	seedThreadAgent(t, sqlDB, "a1")
 
-	err := backend.AppendThreadMessages(context.Background(), "a1",
+	err := svc.AppendThreadMessages(context.Background(), "a1",
 		[]apitypes.ThreadMessageDraft{
 			{Role: apitypes.ThreadRoleUser, Content: "hello"},
 			{Role: apitypes.ThreadRoleAssistant, Content: "hi there"},
@@ -70,7 +69,7 @@ func TestAppendThreadMessagesMintsOrderedRows(t *testing.T) {
 }
 
 func TestAppendThreadMessagesToolDraftRoundTrip(t *testing.T) {
-	sqlDB := resolverDB(t)
+	sqlDB, svc := resolverDB(t)
 	seedThreadAgent(t, sqlDB, "a2")
 
 	// One turn's rows: prompt, a tool invocation, the answer — the
@@ -83,7 +82,7 @@ func TestAppendThreadMessagesToolDraftRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal envelope: %v", err)
 	}
-	err = backend.AppendThreadMessages(context.Background(), "a2", []apitypes.ThreadMessageDraft{
+	err = svc.AppendThreadMessages(context.Background(), "a2", []apitypes.ThreadMessageDraft{
 		{Role: apitypes.ThreadRoleUser, Content: "search for ava"},
 		{Role: apitypes.ThreadRoleTool, Content: string(envelope)},
 		{Role: apitypes.ThreadRoleAssistant, Content: "found 2 hits"},
@@ -115,7 +114,7 @@ func TestAppendThreadMessagesToolDraftRoundTrip(t *testing.T) {
 }
 
 func TestAppendThreadMessagesTimestampsRiseAcrossCalls(t *testing.T) {
-	sqlDB := resolverDB(t)
+	sqlDB, svc := resolverDB(t)
 	seedThreadAgent(t, sqlDB, "a1")
 
 	ctx := context.Background()
@@ -125,7 +124,7 @@ func TestAppendThreadMessagesTimestampsRiseAcrossCalls(t *testing.T) {
 		{{Role: apitypes.ThreadRoleUser, Content: "first"}},
 		{{Role: apitypes.ThreadRoleAssistant, Content: "answer"}},
 	} {
-		if err := backend.AppendThreadMessages(ctx, "a1", drafts); err != nil {
+		if err := svc.AppendThreadMessages(ctx, "a1", drafts); err != nil {
 			t.Fatalf("AppendThreadMessages: %v", err)
 		}
 	}
@@ -141,8 +140,8 @@ func TestAppendThreadMessagesTimestampsRiseAcrossCalls(t *testing.T) {
 }
 
 func TestAppendThreadMessagesRejectsUnknownAgent(t *testing.T) {
-	resolverDB(t)
-	err := backend.AppendThreadMessages(context.Background(), "ghost",
+	_, svc := resolverDB(t)
+	err := svc.AppendThreadMessages(context.Background(), "ghost",
 		[]apitypes.ThreadMessageDraft{{Role: apitypes.ThreadRoleUser, Content: "hello"}})
 	if err == nil {
 		t.Fatal("append for unknown agent succeeded, want the FK to reject it")
@@ -150,12 +149,12 @@ func TestAppendThreadMessagesRejectsUnknownAgent(t *testing.T) {
 }
 
 func TestAppendThreadMessagesUsesSuppliedID(t *testing.T) {
-	sqlDB := resolverDB(t)
+	sqlDB, svc := resolverDB(t)
 	seedThreadAgent(t, sqlDB, "a3")
 
 	// Terminal error rows name themselves on the wire; the sink must
 	// store that exact id, not mint a fresh one.
-	err := backend.AppendThreadMessages(context.Background(), "a3",
+	err := svc.AppendThreadMessages(context.Background(), "a3",
 		[]apitypes.ThreadMessageDraft{
 			{ID: "err-row-1", Role: apitypes.ThreadRoleError, Content: "no default model set"},
 		})

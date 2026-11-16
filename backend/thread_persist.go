@@ -8,7 +8,6 @@ package backend
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,20 +16,6 @@ import (
 	"github.com/radch-ai/ava/backend/internal/db"
 )
 
-var (
-	persistMu      sync.Mutex
-	persistQueries *db.Queries
-	// lastPersistedMs is the newest timestamp this process handed out;
-	// the next append never reuses or undercuts it.
-	lastPersistedMs int64
-)
-
-// bindPersist arms AppendThreadMessages with the handle New already
-// holds.
-func bindPersist(queries *db.Queries) {
-	persistQueries = queries
-}
-
 // AppendThreadMessages writes drafts to an agent's thread. A draft
 // may carry its own id (terminal error rows name theirs on the
 // wire); otherwise one is minted. Each row gets a millisecond
@@ -38,23 +23,23 @@ func bindPersist(queries *db.Queries) {
 // assistant row a turn appends after its user row always sorts after
 // it. Unknown agents fail on the foreign key; the caller decides
 // whether that matters.
-func AppendThreadMessages(ctx context.Context, agentID string, msgs []apitypes.ThreadMessageDraft) error {
+func (s *TurnService) AppendThreadMessages(ctx context.Context, agentID string, msgs []apitypes.ThreadMessageDraft) error {
 	if len(msgs) == 0 {
 		return nil
 	}
-	persistMu.Lock()
-	defer persistMu.Unlock()
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
 
 	now := time.Now().UnixMilli()
-	if now <= lastPersistedMs {
-		now = lastPersistedMs + 1
+	if now <= s.lastPersistedMs {
+		now = s.lastPersistedMs + 1
 	}
 	for i, m := range msgs {
 		id := m.ID
 		if id == "" {
 			id = uuid.NewString()
 		}
-		if err := persistQueries.InsertThreadMessage(ctx, db.InsertThreadMessageParams{
+		if err := s.queries.InsertThreadMessage(ctx, db.InsertThreadMessageParams{
 			ID:        id,
 			AgentID:   agentID,
 			Role:      string(m.Role),
@@ -64,6 +49,6 @@ func AppendThreadMessages(ctx context.Context, agentID string, msgs []apitypes.T
 			return fmt.Errorf("append thread message: %w", err)
 		}
 	}
-	lastPersistedMs = now + int64(len(msgs)) - 1
+	s.lastPersistedMs = now + int64(len(msgs)) - 1
 	return nil
 }

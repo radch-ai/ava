@@ -34,7 +34,7 @@ func TestServerChain(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
 
-	apiRouter, authSessions, err := backend.New(sqlDB, logger, bytes.Repeat([]byte{0x42}, 32))
+	apiRouter, authSessions, _, err := backend.New(sqlDB, logger, bytes.Repeat([]byte{0x42}, 32))
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}

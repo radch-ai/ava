@@ -2,8 +2,8 @@ package backend_test
 
 // Resolver pins: an explicit pair — or a set default — resolves to
 // the provider's endpoint; a missing default, unknown provider, or
-// missing key fails closed. The tests call the package function
-// directly — the same shape the gateway uses.
+// missing key fails closed. The tests call the TurnService methods
+// directly — the same method values the gateway binds.
 
 import (
 	"context"
@@ -20,15 +20,16 @@ import (
 	"github.com/radch-ai/ava/backend/internal/vault"
 )
 
-// resolverDB boots a fresh backend — which binds ResolveModel — over
-// its own seeded database.
-func resolverDB(t *testing.T) *sql.DB {
+// resolverDB boots a fresh backend over its own seeded database and
+// hands back its turn service.
+func resolverDB(t *testing.T) (*sql.DB, *backend.TurnService) {
 	t.Helper()
 	sqlDB := testdb.Open(t, true)
-	if _, _, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey); err != nil {
+	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey)
+	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}
-	return sqlDB
+	return sqlDB, svc
 }
 
 func seedProvider(t *testing.T, sqlDB *sql.DB, id, baseURL string) {
@@ -58,11 +59,11 @@ func seedProviderKey(t *testing.T, sqlDB *sql.DB, id, key string) {
 }
 
 func TestResolveModelEndpoint(t *testing.T) {
-	sqlDB := resolverDB(t)
+	sqlDB, svc := resolverDB(t)
 	seedProvider(t, sqlDB, "prov-1", "https://api.example.com/v1")
 	seedProviderKey(t, sqlDB, "prov-1", "sk-test")
 
-	got, err := backend.ResolveModel(context.Background(),
+	got, err := svc.ResolveModel(context.Background(),
 		&apitypes.ModelEntry{ID: "glm-4.7", ProviderID: "prov-1"})
 	if err != nil {
 		t.Fatalf("ResolveModel: %v", err)
@@ -78,8 +79,8 @@ func TestResolveModelEndpoint(t *testing.T) {
 }
 
 func TestResolveModelNilWithoutDefaultFails(t *testing.T) {
-	resolverDB(t)
-	got, err := backend.ResolveModel(context.Background(), nil)
+	_, svc := resolverDB(t)
+	got, err := svc.ResolveModel(context.Background(), nil)
 	if err == nil || got != (backend.ResolvedModel{}) {
 		t.Fatalf("ResolveModel nil entry, no default = (%+v, %v), want zero value and an error", got, err)
 	}
@@ -96,7 +97,7 @@ func TestResolveModelNilWithoutDefaultFails(t *testing.T) {
 }
 
 func TestResolveModelNilFollowsDefault(t *testing.T) {
-	sqlDB := resolverDB(t)
+	sqlDB, svc := resolverDB(t)
 	seedProvider(t, sqlDB, "prov-1", "https://api.example.com/v1")
 	seedProviderKey(t, sqlDB, "prov-1", "sk-test")
 	if _, err := sqlDB.ExecContext(context.Background(),
@@ -105,7 +106,7 @@ func TestResolveModelNilFollowsDefault(t *testing.T) {
 		t.Fatalf("seed default model: %v", err)
 	}
 
-	got, err := backend.ResolveModel(context.Background(), nil)
+	got, err := svc.ResolveModel(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("ResolveModel nil entry with default: %v", err)
 	}
@@ -120,17 +121,17 @@ func TestResolveModelNilFollowsDefault(t *testing.T) {
 }
 
 func TestResolveModelUnknownProviderFails(t *testing.T) {
-	resolverDB(t)
+	_, svc := resolverDB(t)
 	entry := &apitypes.ModelEntry{ID: "glm-4.7", ProviderID: "missing-prov"}
-	if got, err := backend.ResolveModel(context.Background(), entry); err == nil || got != (backend.ResolvedModel{}) {
+	if got, err := svc.ResolveModel(context.Background(), entry); err == nil || got != (backend.ResolvedModel{}) {
 		t.Fatalf("ResolveModel unknown provider = (%+v, %v), want zero value and an error", got, err)
 	}
 }
 
 func TestResolveModelKeylessProviderFails(t *testing.T) {
-	sqlDB := resolverDB(t)
+	sqlDB, svc := resolverDB(t)
 	seedProvider(t, sqlDB, "prov-2", "https://api.example.com/v1")
-	if got, err := backend.ResolveModel(context.Background(),
+	if got, err := svc.ResolveModel(context.Background(),
 		&apitypes.ModelEntry{ID: "glm-4.7", ProviderID: "prov-2"}); err == nil || got != (backend.ResolvedModel{}) {
 		t.Fatalf("ResolveModel keyless provider = (%+v, %v), want zero value and an error", got, err)
 	}

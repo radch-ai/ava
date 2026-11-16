@@ -39,15 +39,15 @@ type Config struct {
 	// field exists for tests to shrink the wait.
 	PingInterval time.Duration
 	// ResolveModel maps a selection to a callable endpoint — bound
-	// to backend.ResolveModel by the binary at boot. Zero keeps the
+	// to TurnService.ResolveModel by the binary at boot. Zero keeps the
 	// lanes unresolved: turns fail closed.
 	ResolveModel agent.ModelResolver
 	// PersistTurn appends a turn's messages to the agent's thread —
-	// bound to backend.AppendThreadMessages by the binary at boot.
+	// bound to TurnService.AppendThreadMessages by the binary at boot.
 	// Zero keeps turns ephemeral.
 	PersistTurn agent.TurnSink
 	// GetAgentConfig reads an agent's config for each turn's prompt —
-	// bound to backend.GetAgentConfig by the binary at boot. Zero
+	// bound to TurnService.GetAgentConfig by the binary at boot. Zero
 	// keeps turns persona-less.
 	GetAgentConfig agent.AgentConfigSource
 }

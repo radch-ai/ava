@@ -8,7 +8,6 @@ import (
 
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/backend/internal/api/providers"
-	"github.com/radch-ai/ava/backend/internal/db"
 	"github.com/radch-ai/ava/backend/internal/vault"
 )
 
@@ -21,28 +20,14 @@ type ResolvedModel struct {
 	Model   string
 }
 
-// Store handles ResolveModel runs over; New binds them at boot,
-// before the gateway serves.
-var (
-	resolveQueries    *db.Queries
-	resolveVaultStore *vault.Store
-)
-
-// bindResolver arms ResolveModel with the handles New already holds.
-func bindResolver(queries *db.Queries, vaultStore *vault.Store) {
-	resolveQueries = queries
-	resolveVaultStore = vaultStore
-}
-
-// ResolveModel maps a model selection to its endpoint — the function
-// the gateway calls directly on this package. A nil entry follows
-// the global default (the default_model row); none set fails
-// closed. The pair is trusted as given: stored model lists are
-// custom ids only — fetched system models are never stored — so
-// membership is not checked.
-func ResolveModel(ctx context.Context, entry *apitypes.ModelEntry) (ResolvedModel, error) {
+// ResolveModel maps a model selection to its endpoint — the call the
+// gateway makes each turn. A nil entry follows the global default
+// (the default_model row); none set fails closed. The pair is
+// trusted as given: stored model lists are custom ids only — fetched
+// system models are never stored — so membership is not checked.
+func (s *TurnService) ResolveModel(ctx context.Context, entry *apitypes.ModelEntry) (ResolvedModel, error) {
 	if entry == nil {
-		def, err := resolveQueries.GetDefaultModel(ctx)
+		def, err := s.queries.GetDefaultModel(ctx)
 		if err != nil {
 			// No row set is a configuration state, not a failure to
 			// read one — it reaches users verbatim.
@@ -53,11 +38,11 @@ func ResolveModel(ctx context.Context, entry *apitypes.ModelEntry) (ResolvedMode
 		}
 		entry = &apitypes.ModelEntry{ProviderID: def.ProviderID, ID: def.Model}
 	}
-	row, err := resolveQueries.GetProvider(ctx, entry.ProviderID)
+	row, err := s.queries.GetProvider(ctx, entry.ProviderID)
 	if err != nil {
 		return ResolvedModel{}, fmt.Errorf("read provider %s: %w", entry.ProviderID, err)
 	}
-	key, _, err := resolveVaultStore.Get(ctx, vault.NameRuntime, providers.ProviderEntryName(entry.ProviderID))
+	key, _, err := s.vaultStore.Get(ctx, vault.NameRuntime, providers.ProviderEntryName(entry.ProviderID))
 	if err != nil {
 		return ResolvedModel{}, fmt.Errorf("read key for provider %s: %w", entry.ProviderID, err)
 	}

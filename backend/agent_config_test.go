@@ -9,12 +9,10 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
-
-	"github.com/radch-ai/ava/backend"
 )
 
 func TestGetAgentConfigMapsPromptFields(t *testing.T) {
-	sqlDB := resolverDB(t)
+	sqlDB, svc := resolverDB(t)
 	if _, err := sqlDB.ExecContext(context.Background(),
 		`INSERT INTO agents (id, name, icon, soul_personality, soul_identity, user_context,
 			operating_instructions, tools_context, tools_enabled)
@@ -23,7 +21,7 @@ func TestGetAgentConfigMapsPromptFields(t *testing.T) {
 		t.Fatalf("seed agent: %v", err)
 	}
 
-	cfg, err := backend.GetAgentConfig(context.Background(), "persona-1")
+	cfg, err := svc.GetAgentConfig(context.Background(), "persona-1")
 	if err != nil {
 		t.Fatalf("GetAgentConfig: %v", err)
 	}
@@ -45,9 +43,9 @@ func TestGetAgentConfigMapsPromptFields(t *testing.T) {
 }
 
 func TestGetAgentConfigUnknownAgentFailsNoRows(t *testing.T) {
-	_ = resolverDB(t)
+	_, svc := resolverDB(t)
 
-	_, err := backend.GetAgentConfig(context.Background(), "ghost")
+	_, err := svc.GetAgentConfig(context.Background(), "ghost")
 	if err == nil {
 		t.Fatal("GetAgentConfig on unknown agent: no error")
 	}
