@@ -83,8 +83,15 @@ func TestResolveModelNilWithoutDefaultFails(t *testing.T) {
 	if err == nil || got != (backend.ResolvedModel{}) {
 		t.Fatalf("ResolveModel nil entry, no default = (%+v, %v), want zero value and an error", got, err)
 	}
-	if !strings.Contains(err.Error(), "default model") {
-		t.Fatalf("ResolveModel nil entry, no default: error = %q, want it to name the default model", err)
+	// The message tells the user what to do; the SQL plumbing stays
+	// server-side.
+	if !strings.Contains(err.Error(), "default model") || !strings.Contains(err.Error(), "pick") {
+		t.Fatalf("ResolveModel nil entry, no default: error = %q, want an actionable no-default message", err)
+	}
+	for _, internal := range []string{"sql:", "no rows", "read default model"} {
+		if strings.Contains(err.Error(), internal) {
+			t.Fatalf("ResolveModel nil entry, no default: error = %q, leaks %q", err, internal)
+		}
 	}
 }
 

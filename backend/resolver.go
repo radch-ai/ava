@@ -2,6 +2,8 @@ package backend
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/radch-ai/ava/backend/apitypes"
@@ -42,6 +44,11 @@ func ResolveModel(ctx context.Context, entry *apitypes.ModelEntry) (ResolvedMode
 	if entry == nil {
 		def, err := resolveQueries.GetDefaultModel(ctx)
 		if err != nil {
+			// No row set is a configuration state, not a failure to
+			// read one — it reaches users verbatim.
+			if errors.Is(err, sql.ErrNoRows) {
+				return ResolvedModel{}, errors.New("no default model set — pick a model in the composer")
+			}
 			return ResolvedModel{}, fmt.Errorf("read default model: %w", err)
 		}
 		entry = &apitypes.ModelEntry{ProviderID: def.ProviderID, ID: def.Model}
