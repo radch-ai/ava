@@ -15,8 +15,8 @@ func TestGetAgentConfigMapsPromptFields(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
 	if _, err := sqlDB.ExecContext(context.Background(),
 		`INSERT INTO agents (id, name, icon, soul_personality, soul_identity, user_context,
-			operating_instructions, tools_context, tools_enabled)
-		 VALUES (?, 'Persona', 'globe', 'warm', 'companion', NULL, 'house rules', 'prefer search', '["search"]')`,
+			operating_instructions, tools_context)
+		 VALUES (?, 'Persona', 'globe', 'warm', 'companion', NULL, 'house rules', 'prefer search')`,
 		"persona-1"); err != nil {
 		t.Fatalf("seed agent: %v", err)
 	}
@@ -36,9 +36,6 @@ func TestGetAgentConfigMapsPromptFields(t *testing.T) {
 	}
 	if cfg.ToolsContext == nil || *cfg.ToolsContext != "prefer search" {
 		t.Errorf("tools context = %v, want %q", cfg.ToolsContext, "prefer search")
-	}
-	if cfg.ToolsEnabled == nil || len(*cfg.ToolsEnabled) != 1 || (*cfg.ToolsEnabled)[0] != "search" {
-		t.Errorf("tools enabled = %v, want [search]", cfg.ToolsEnabled)
 	}
 }
 

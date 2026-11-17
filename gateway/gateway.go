@@ -50,6 +50,10 @@ type Config struct {
 	// bound to TurnService.GetAgentConfig by the binary at boot. Zero
 	// keeps turns persona-less.
 	GetAgentConfig agent.AgentConfigSource
+	// Tools fetches an agent's effective tools for each turn — bound
+	// to TurnService.AgentTools by the binary at boot. Zero keeps
+	// turns tool-less.
+	Tools agent.AgentToolsFunc
 }
 
 // New builds the gateway. The gateway is a single WebSocket endpoint:
@@ -60,6 +64,7 @@ func New(cfg *Config, logger zerolog.Logger) (*Gateway, error) {
 	resolve := agent.ModelResolver(nil)
 	var persist agent.TurnSink
 	var getConfig agent.AgentConfigSource
+	var toolsFn agent.AgentToolsFunc
 	if cfg != nil {
 		if cfg.PingInterval > 0 {
 			interval = cfg.PingInterval
@@ -67,11 +72,13 @@ func New(cfg *Config, logger zerolog.Logger) (*Gateway, error) {
 		resolve = cfg.ResolveModel
 		persist = cfg.PersistTurn
 		getConfig = cfg.GetAgentConfig
+		toolsFn = cfg.Tools
 	}
 	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{
 		ResolveModel:   resolve,
 		PersistTurn:    persist,
 		GetAgentConfig: getConfig,
+		Tools:          toolsFn,
 	})
 	return &Gateway{
 		handler: handleWS(interval, logger, mgr),

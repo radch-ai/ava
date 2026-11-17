@@ -28,6 +28,6 @@ ava/
 ├── utils/                # shared helpers (env access, logger setup, serve incl. healthz probe)
 ├── cmd/ava/              # the ava binary; binds AVA_* envs, mounts backend + gateway
 ├── backend/              # control plane; apitypes = wire contract, UI types generate from it (public surface: backend.go)
-├── gateway/              # realtime component — ws handler scaffold (public surface: gateway.go)
+├── gateway/              # realtime component — WebSocket turn engine: lanes, model/tools seams, tool capture (public surface: gateway.go)
 └── ui/web/               # ava-webui — client of the generated wire types (lib/types/gen, via `just typegen`)
 ```

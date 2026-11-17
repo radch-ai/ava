@@ -149,14 +149,9 @@ export const FIELD_CONFIGS: Record<string, FieldConfig> = {
 			"Define operating rules, priorities, and do/don't guidelines..."
 	},
 	toolsContext: {
-		label: 'Tools Context',
+		label: 'Tools',
 		description: 'Notes about local tools, conventions, and integrations',
 		placeholder: 'E.g., "Calendar: Google Calendar. CRM: HubSpot."'
-	},
-	toolsEnabled: {
-		label: 'Enabled Tools',
-		description: 'Toggle which tools this agent can use',
-		placeholder: ''
 	},
 	heartbeat: {
 		label: 'Heartbeat',
@@ -181,7 +176,6 @@ export const AGENT_FIELDS = {
 		'userContext',
 		'operatingInstructions',
 		'toolsContext',
-		'toolsEnabled',
 		'heartbeat',
 		'cronJobs'
 	] as const,
@@ -191,7 +185,6 @@ export const AGENT_FIELDS = {
 		'soul',
 		'operatingInstructions',
 		'toolsContext',
-		'toolsEnabled',
 		'heartbeat'
 	] as const
 }
@@ -251,7 +244,6 @@ export function createDefaultAgentConfig(): AgentConfig &
 		soul: createDefaultSoulConfig(),
 		operatingInstructions: '',
 		toolsContext: '',
-		toolsEnabled: [],
 		heartbeat: createDefaultHeartbeatConfig()
 	}
 }

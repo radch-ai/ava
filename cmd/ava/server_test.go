@@ -33,8 +33,8 @@ func TestServerChain(t *testing.T) {
 		t.Fatalf("sqlstore.OpenSQLite: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-
-	apiRouter, authSessions, _, err := backend.New(sqlDB, logger, bytes.Repeat([]byte{0x42}, 32))
+	apiRouter, authSessions, turnSvc, err := backend.New(sqlDB, logger,
+		bytes.Repeat([]byte{0x42}, 32))
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}
@@ -44,7 +44,9 @@ func TestServerChain(t *testing.T) {
 	}
 	apiHandler := authMiddleware.Authenticate(apiRouter)
 
-	wsHandler, err := gateway.New(&gateway.Config{}, logger)
+	wsHandler, err := gateway.New(&gateway.Config{
+		Tools: turnSvc.AgentTools,
+	}, logger)
 	if err != nil {
 		t.Fatalf("gateway.New: %v", err)
 	}

@@ -4,7 +4,8 @@
 		ArrowRightFromLine,
 		LogOut,
 		Plus,
-		Server
+		Server,
+		Wrench
 	} from '@lucide/svelte'
 	import { onMount } from 'svelte'
 	import AgentIcon from '#components/agent-icons/index.svelte'
@@ -164,6 +165,20 @@
 	<Sidebar.Separator />
 	<Sidebar.Footer>
 		<Sidebar.Menu>
+			<Sidebar.MenuItem>
+				<Sidebar.MenuButton
+					isActive={page.route.id === '/(app)/settings/tools'}
+				>
+					{#snippet child({ props })}
+						<a href={resolve('/(app)/settings/tools')} {...props}>
+							<Wrench class="size-4" />
+							<span class="font-medium group-data-[collapsible=icon]:hidden"
+								>MCP &amp; Tools</span
+							>
+						</a>
+					{/snippet}
+				</Sidebar.MenuButton>
+			</Sidebar.MenuItem>
 			<Sidebar.MenuItem>
 				<Sidebar.MenuButton
 					isActive={page.route.id === '/(app)/settings/providers'}

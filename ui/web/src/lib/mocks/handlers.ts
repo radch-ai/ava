@@ -21,8 +21,19 @@ import {
 	type HeartbeatConfig,
 	SUPERAGENT_AGENT
 } from '../types/agent.ts'
+import type {
+	AgentTool,
+	GetToolsResponse,
+	ToggleAgentToolRequest,
+	ToggleToolRequest
+} from '../types/tool.ts'
 import { deriveAgentId, isValidAgentName } from './agent-id.ts'
-import { type MockStore, PROVIDER_SEED_DATA, type ProviderRow } from './data.ts'
+import {
+	BUILTIN_TOOL_IDS,
+	type MockStore,
+	PROVIDER_SEED_DATA,
+	type ProviderRow
+} from './data.ts'
 
 interface CursorItem {
 	id: string
@@ -391,8 +402,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			store.configurations.set(id, {
 				soul: body.soul,
 				operatingInstructions: body.operatingInstructions,
-				toolsContext: body.toolsContext,
-				toolsEnabled: body.toolsEnabled ?? []
+				toolsContext: body.toolsContext
 			})
 			const agent: AgentIdentity = {
 				id,
@@ -400,6 +410,9 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				icon: body.icon as AgentIconName
 			}
 			store.agents.push(agent)
+			// New agents get the built-ins granted, like the database's
+			// insert rule.
+			store.toolGrants.set(id, new Set(BUILTIN_TOOL_IDS))
 			return HttpResponse.json({ id }, { status: 201 })
 		}),
 
@@ -455,6 +468,92 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				)
 			}
 			return HttpResponse.json({ systemModels: systemModelsFor(row) })
+		}),
+
+		// The tool catalog: the whole list, then the global switch.
+		http.get('*/api/tools', () =>
+			HttpResponse.json<GetToolsResponse>({ tools: [...store.tools] })
+		),
+
+		http.patch('*/api/tools/:id', async ({ params, request }) => {
+			const id = String(params.id)
+			const row = store.tools.find((tool) => tool.id === id)
+			if (!row) {
+				return HttpResponse.json(
+					{ message: `Tool "${id}" not found` },
+					{ status: 404 }
+				)
+			}
+			const body = (await request.json()) as ToggleToolRequest
+			if (typeof body.enabled !== 'boolean') {
+				return HttpResponse.json(
+					{ message: 'enabled is required' },
+					{ status: 400 }
+				)
+			}
+			row.enabled = body.enabled
+			return HttpResponse.json({ ...row })
+		}),
+
+		// The agent's tool view, then its live preference toggle. A
+		// globally disabled tool keeps its grant — the switch, not the
+		// grant, gates use.
+		http.get('*/api/agent/:id/tools', ({ params }) => {
+			const id = String(params.id)
+			if (!store.configurations.has(id)) {
+				return HttpResponse.json<ErrorResponse>(
+					{ message: `Agent "${id}" not found` },
+					{ status: 404 }
+				)
+			}
+			const grants = store.toolGrants.get(id) ?? new Set<string>()
+			return HttpResponse.json({
+				tools: store.tools.map(
+					(tool): AgentTool => ({
+						id: tool.id,
+						name: tool.name,
+						description: tool.description,
+						globalEnabled: tool.enabled,
+						agentEnabled: grants.has(tool.id)
+					})
+				)
+			})
+		}),
+
+		http.patch('*/api/agent/:id/tools/:toolId', async ({ params, request }) => {
+			const id = String(params.id)
+			if (!store.configurations.has(id)) {
+				return HttpResponse.json<ErrorResponse>(
+					{ message: `Agent "${id}" not found` },
+					{ status: 404 }
+				)
+			}
+			const toolId = String(params.toolId)
+			const tool = store.tools.find((row) => row.id === toolId)
+			if (!tool) {
+				return HttpResponse.json<ErrorResponse>(
+					{ message: `Tool "${toolId}" not found` },
+					{ status: 404 }
+				)
+			}
+			const body = (await request.json()) as ToggleAgentToolRequest
+			if (typeof body.enabled !== 'boolean') {
+				return HttpResponse.json<ErrorResponse>(
+					{ message: 'enabled is required' },
+					{ status: 400 }
+				)
+			}
+			const grants = store.toolGrants.get(id) ?? new Set<string>()
+			if (body.enabled) grants.add(toolId)
+			else grants.delete(toolId)
+			store.toolGrants.set(id, grants)
+			return HttpResponse.json({
+				id: tool.id,
+				name: tool.name,
+				description: tool.description,
+				globalEnabled: tool.enabled,
+				agentEnabled: grants.has(toolId)
+			})
 		}),
 
 		http.post('*/api/providers', async ({ request }) => {

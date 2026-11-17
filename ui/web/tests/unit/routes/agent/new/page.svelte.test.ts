@@ -24,7 +24,10 @@ vi.mock('#lib/services/agent/config', () => ({
 	getCronJobs: vi.fn(),
 	createCronJob: vi.fn(),
 	updateCronJob: vi.fn(),
-	deleteCronJob: vi.fn()
+	deleteCronJob: vi.fn(),
+	// The Tools panel fetches only once the agent exists
+	getAgentTools: vi.fn(),
+	toggleAgentTool: vi.fn()
 }))
 
 // Mock SvelteKit navigation
@@ -246,18 +249,18 @@ describe('New Agent Page', () => {
 	})
 
 	describe('Tools Configuration', () => {
-		it('shows Tools Context button in sidebar', async () => {
+		it('shows Tools button in sidebar', async () => {
 			render(NewAgentPage)
 
-			const toolsButton = page.getByRole('button', { name: /tools context/i })
+			const toolsButton = page.getByRole('button', { name: /^Tools$/ })
 			await expect.element(toolsButton).toBeVisible()
 		})
 
 		it('shows tools context field when selected', async () => {
 			render(NewAgentPage)
 
-			// Click on Tools Context in sidebar
-			const toolsButton = page.getByRole('button', { name: /tools context/i })
+			// Click on Tools in sidebar
+			const toolsButton = page.getByRole('button', { name: /^Tools$/ })
 			await toolsButton.click()
 
 			// Should show tools context textarea (find by placeholder from FIELD_CONFIGS)

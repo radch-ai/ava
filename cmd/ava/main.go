@@ -143,7 +143,6 @@ func serve(logger zerolog.Logger) {
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Failed to open store")
 	}
-	logger.Info().Str("path", cfg.DBPath).Msg("store ready")
 
 	apiRouter, authSessions, turnSvc, err := backend.New(sqlDB, logger, cfg.MasterKey)
 	if err != nil {
@@ -159,6 +158,7 @@ func serve(logger zerolog.Logger) {
 		ResolveModel:   turnSvc.ResolveModel,
 		PersistTurn:    turnSvc.AppendThreadMessages,
 		GetAgentConfig: turnSvc.GetAgentConfig,
+		Tools:          turnSvc.AgentTools,
 	}, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Failed to create gateway handler")

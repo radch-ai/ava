@@ -39,7 +39,8 @@ func GetAgentConfig(queries *db.Queries) api.Handler {
 // row, replace the columns the patch carries, rewrite the row. No
 // name validation — renaming to anything, including other agents'
 // names, is the UI's call. System rows keep their identity: name/icon
-// patches are skipped, config patches still apply.
+// patches are skipped, config patches still apply. Tool preferences
+// live behind their own per-agent endpoints, not in this save.
 func UpdateAgentConfig(queries *db.Queries) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		var req apitypes.AgentEditableFields
@@ -79,15 +80,6 @@ func UpdateAgentConfig(queries *db.Queries) api.Handler {
 		if req.ToolsContext != nil {
 			row.ToolsContext = *req.ToolsContext
 		}
-		toolsEnabled := row.ToolsEnabled
-		if req.ToolsEnabled != nil {
-			encoded, err := json.Marshal(*req.ToolsEnabled)
-			if err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("marshal toolsEnabled for %q: %w", id, err)
-			}
-			toolsEnabled = string(encoded)
-		}
 
 		if err := queries.UpdateAgentConfig(r.Context(), db.UpdateAgentConfigParams{
 			Name:                  row.Name,
@@ -97,7 +89,6 @@ func UpdateAgentConfig(queries *db.Queries) api.Handler {
 			UserContext:           userContext,
 			OperatingInstructions: row.OperatingInstructions,
 			ToolsContext:          row.ToolsContext,
-			ToolsEnabled:          toolsEnabled,
 			ID:                    id,
 		}); err != nil {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
@@ -155,7 +146,8 @@ func stringPtrNil(v sql.NullString) *string {
 // loadBundle assembles the full agent bundle: the agent row (system
 // rows included) and its heartbeat row or the disabled default.
 // found is false only for a missing agent. Cron jobs are fetched
-// lazily via the cron-jobs endpoints, not here.
+// lazily via the cron-jobs endpoints, not here; tools live behind
+// their own per-agent endpoints too.
 func loadBundle(ctx context.Context, queries *db.Queries, id string) (apitypes.AgentConfigWithIdentity, bool, error) {
 	row, err := queries.GetAgentConfig(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -163,12 +155,6 @@ func loadBundle(ctx context.Context, queries *db.Queries, id string) (apitypes.A
 	}
 	if err != nil {
 		return apitypes.AgentConfigWithIdentity{}, false, fmt.Errorf("get agent %q: %w", id, err)
-	}
-
-	toolsEnabled := []string{}
-	if err := json.Unmarshal([]byte(row.ToolsEnabled), &toolsEnabled); err != nil {
-		// NOT NULL DEFAULT '[]'; only hand-edited data can miss.
-		toolsEnabled = []string{}
 	}
 
 	heartbeat := defaultHeartbeat
@@ -195,7 +181,6 @@ func loadBundle(ctx context.Context, queries *db.Queries, id string) (apitypes.A
 				UserContext:           stringPtrNil(row.UserContext),
 				OperatingInstructions: &row.OperatingInstructions,
 				ToolsContext:          &row.ToolsContext,
-				ToolsEnabled:          &toolsEnabled,
 			},
 			Heartbeat: heartbeat,
 		},

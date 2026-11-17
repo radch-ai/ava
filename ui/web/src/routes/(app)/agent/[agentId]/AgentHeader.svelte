@@ -6,7 +6,6 @@
 	import { SUPERAGENT_AGENT_ID } from '#lib/config'
 	import { getAgentConfig } from '#lib/services/agent'
 	import type { AgentConfigWithIdentity, AgentIdentity } from '#lib/types/agent'
-	import type { Tool } from '#lib/types/tool'
 	import { invalidate } from '$app/navigation'
 	import ConfigSheet from './ConfigSheet.svelte'
 
@@ -38,9 +37,6 @@
 			onTabChange(tab)
 		}
 	}
-
-	// TODO: Fetch available tools from API
-	const availableTools: Tool[] = []
 
 	async function openSettings() {
 		if (!configuration && !isLoading) {
@@ -114,7 +110,6 @@
 		bind:isSheetOpened={configSheetOpen}
 		closeSheet={() => (configSheetOpen = false)}
 		{configuration}
-		{availableTools}
 		agentId={agent.id}
 		onSaved={(config) => {
 			configuration = config

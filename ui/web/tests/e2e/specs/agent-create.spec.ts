@@ -47,7 +47,7 @@ test.describe('agent creation', () => {
 			.fill('Always be helpful')
 
 		// Tools context
-		await page.getByRole('button', { name: 'Tools Context' }).click()
+		await page.getByRole('button', { name: 'Tools' }).click()
 		await page
 			.getByPlaceholder('E.g., "Calendar: Google Calendar. CRM: HubSpot."')
 			.fill('Calendar: Google Calendar')

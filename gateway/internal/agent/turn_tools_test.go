@@ -1,9 +1,9 @@
 package agent_test
 
-// Tool pins: the config's enabled list decides which registered
-// tools the turn attaches — empty attaches nothing — a tool round
-// rides the ReAct loop (call, result fed back, streamed answer),
-// and a failing tool errors the turn with the user row standing.
+// Tool pins: the fetched set is what the turn attaches — empty
+// attaches nothing — a tool round rides the ReAct loop (call, result
+// fed back, streamed answer), and a failing tool errors the turn
+// with the user row standing.
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -120,15 +121,19 @@ func newScriptedLLM(t *testing.T, responses ...string) *scriptedLLM {
 // fakeTool is an invokable test tool: it answers a fixed result or
 // a fixed error and records the arguments it ran with.
 type fakeTool struct {
-	name   string
-	result string
-	err    error
+	name    string
+	result  string
+	err     error
+	infoErr error
 
 	mu    sync.Mutex
 	calls []string
 }
 
 func (t *fakeTool) Info(_ context.Context) (*schema.ToolInfo, error) {
+	if t.infoErr != nil {
+		return nil, t.infoErr
+	}
 	return &schema.ToolInfo{
 		Name: t.name,
 		Desc: "test tool",
@@ -156,17 +161,34 @@ func (t *fakeTool) ranWith() []string {
 	return out
 }
 
-// fixedTools serves one registry to every lane.
-func fixedTools(ts ...tool.BaseTool) agent.ToolSource {
-	return func() []tool.BaseTool { return ts }
+// fixedTools answers every turn with the same tools.
+func fixedTools(ts ...tool.InvokableTool) agent.AgentToolsFunc {
+	return func(context.Context, string) ([]tool.InvokableTool, error) { return ts, nil }
 }
 
-func enabledConfig(names ...string) *apitypes.AgentConfig {
-	return &apitypes.AgentConfig{
-		AgentEditableFields: apitypes.AgentEditableFields{
-			ToolsEnabled: &names,
-		},
-	}
+// A selected tool that cannot describe itself fails the turn before
+// the model is called — never silently dropped from the offered set.
+func TestToolMetadataFailureFailsTurn(t *testing.T) {
+	broken := &fakeTool{name: "echo_tool", infoErr: errors.New("schema unavailable")}
+	llm := newScriptedLLM(t, sseChunk("never reached"))
+
+	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+		&agent.UserAgentManagerOptions{
+			ResolveModel: fixedResolver(llm.URL),
+			Tools:        fixedTools(broken),
+		})
+
+	c, sc := wsPair(t)
+
+	ok := mgr.SubmitMsg(context.Background(), "agent-toolinfo", "conn-1", sc,
+		agent.Message{ID: "msg-1", Content: "hi"})
+	require.True(t, ok)
+
+	ev := readUntilError(t, c)
+	require.Equal(t, wstypes.EventTypeError, ev.Type)
+	require.Contains(t,
+		eventPayload[wstypes.ErrorEvent](t, ev).Message, "schema unavailable")
+	require.Empty(t, llm.requests(), "the model must not be called")
 }
 
 func TestToolRoundFeedsResultAndStreamsAnswer(t *testing.T) {
@@ -177,9 +199,8 @@ func TestToolRoundFeedsResultAndStreamsAnswer(t *testing.T) {
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel:   fixedResolver(llm.URL),
-			GetAgentConfig: fixedConfig(enabledConfig("echo_tool")),
-			ToolSource:     fixedTools(echo),
+			ResolveModel: fixedResolver(llm.URL),
+			Tools:        fixedTools(echo),
 		})
 
 	c, sc := wsPair(t)
@@ -213,16 +234,15 @@ func TestToolRoundFeedsResultAndStreamsAnswer(t *testing.T) {
 	require.Equal(t, "tool says hi", toolMsg.Content)
 }
 
-func TestEnabledListFiltersRegistry(t *testing.T) {
+func TestFetchedToolsAreAllOffered(t *testing.T) {
 	echo := &fakeTool{name: "echo_tool", result: "unused"}
 	weather := &fakeTool{name: "weather_tool", result: "sunny"}
 	llm := newScriptedLLM(t, sseChunk("no tools needed"))
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel:   fixedResolver(llm.URL),
-			GetAgentConfig: fixedConfig(enabledConfig("weather_tool")),
-			ToolSource:     fixedTools(echo, weather),
+			ResolveModel: fixedResolver(llm.URL),
+			Tools:        fixedTools(echo, weather),
 		})
 
 	c, sc := wsPair(t)
@@ -236,19 +256,19 @@ func TestEnabledListFiltersRegistry(t *testing.T) {
 
 	reqs := llm.requests()
 	require.Len(t, reqs, 1)
-	require.Len(t, reqs[0].Tools, 1, "only the enabled tool is offered")
-	require.Equal(t, "weather_tool", reqs[0].Tools[0].Function.Name)
+	require.Len(t, reqs[0].Tools, 2, "everything the fetch returned is offered")
+	require.Equal(t, "echo_tool", reqs[0].Tools[0].Function.Name)
+	require.Equal(t, "weather_tool", reqs[0].Tools[1].Function.Name)
 }
 
-func TestEmptyEnabledListAttachesNoTools(t *testing.T) {
+func TestEmptyFetchAttachesNoTools(t *testing.T) {
 	echo := &fakeTool{name: "echo_tool", result: "unused"}
 	llm := newScriptedLLM(t, sseChunk("plain answer"))
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel:   fixedResolver(llm.URL),
-			GetAgentConfig: fixedConfig(enabledConfig()),
-			ToolSource:     fixedTools(echo),
+			ResolveModel: fixedResolver(llm.URL),
+			Tools:        fixedTools(),
 		})
 
 	c, sc := wsPair(t)
@@ -262,7 +282,7 @@ func TestEmptyEnabledListAttachesNoTools(t *testing.T) {
 
 	reqs := llm.requests()
 	require.Len(t, reqs, 1)
-	require.Empty(t, reqs[0].Tools, "empty enabled list attaches nothing")
+	require.Empty(t, reqs[0].Tools, "empty fetch attaches nothing")
 	require.Empty(t, echo.ranWith())
 }
 func TestToolFailureErrorsTurn(t *testing.T) {
@@ -274,10 +294,9 @@ func TestToolFailureErrorsTurn(t *testing.T) {
 	sink := &recordingSink{}
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel:   fixedResolver(llm.URL),
-			GetAgentConfig: fixedConfig(enabledConfig("echo_tool")),
-			ToolSource:     fixedTools(echo),
-			PersistTurn:    sink.persist,
+			ResolveModel: fixedResolver(llm.URL),
+			Tools:        fixedTools(echo),
+			PersistTurn:  sink.persist,
 		})
 
 	c, sc := wsPair(t)
@@ -302,4 +321,76 @@ func TestToolFailureErrorsTurn(t *testing.T) {
 	require.Equal(t, apitypes.ThreadRoleTool, calls[1][0].Role)
 	require.JSONEq(t, `{"name":"echo_tool","args":{"query":"plush otters"},
 		"result":"","error":"search backend down"}`, calls[1][0].Content)
+}
+
+// A failed fetch fails the turn outright — never a silent tool-less
+// default — and the model is never called.
+func TestToolFetchFailureFailsTurn(t *testing.T) {
+	llm := newScriptedLLM(t, sseChunk("never reached"))
+
+	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+		&agent.UserAgentManagerOptions{
+			ResolveModel: fixedResolver(llm.URL),
+			Tools: func(context.Context, string) ([]tool.InvokableTool, error) {
+				return nil, errors.New("tools store unreachable")
+			},
+		})
+
+	c, sc := wsPair(t)
+
+	ok := mgr.SubmitMsg(context.Background(), "agent-toolsread", "conn-1", sc,
+		agent.Message{ID: "msg-1", Content: "hi"})
+	require.True(t, ok)
+
+	ev := readUntilError(t, c)
+	require.Equal(t, wstypes.EventTypeError, ev.Type)
+	require.Contains(t,
+		eventPayload[wstypes.ErrorEvent](t, ev).Message, "tools store unreachable")
+	require.Empty(t, llm.requests(), "the model must not be called")
+}
+
+// A stop during setup is a stop, not a failure: the tools read is
+// interrupted mid-flight, the turn reports the transient stop
+// notice, and no durable error row — nor a model call — follows.
+func TestInterruptDuringToolFetchReportsStopped(t *testing.T) {
+	llm := newScriptedLLM(t, sseChunk("never reached"))
+	entered := make(chan struct{})
+	sink := &recordingSink{}
+
+	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+		&agent.UserAgentManagerOptions{
+			ResolveModel: fixedResolver(llm.URL),
+			PersistTurn:  sink.persist,
+			Tools: func(ctx context.Context, _ string) ([]tool.InvokableTool, error) {
+				close(entered)
+				<-ctx.Done()
+				return nil, ctx.Err()
+			},
+		})
+
+	c, sc := wsPair(t)
+
+	ok := mgr.SubmitMsg(context.Background(), "agent-toolstop", "conn-1", sc,
+		agent.Message{ID: "msg-1", Content: "hi"})
+	require.True(t, ok)
+
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("tools never fetched")
+	}
+
+	ag := mgr.Get("agent-toolstop")
+	require.NotNil(t, ag)
+	ag.Interrupt()
+
+	ev := readUntilError(t, c)
+	p := eventPayload[wstypes.ErrorEvent](t, ev)
+	require.Equal(t, "turn stopped", p.Message)
+
+	// The user row stands alone: a stop writes no error row.
+	calls := sink.recorded()
+	require.Len(t, calls, 1)
+	require.Equal(t, apitypes.ThreadRoleUser, calls[0][0].Role)
+	require.Empty(t, llm.requests(), "the model must not be called")
 }

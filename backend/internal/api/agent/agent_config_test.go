@@ -1,8 +1,9 @@
 package agent
 
 // GetAgentConfig / UpdateAgentConfig handler tests over the real
-// store: the seeded bundle, shallow patch semantics, and the system
-// identity guard. Route mounting is pinned in backend's tests.
+// store: the seeded bundle, shallow patch semantics, the system
+// identity guard, and the tool-preference replacement. Route
+// mounting is pinned in backend's tests.
 
 import (
 	"net/http"
@@ -64,13 +65,15 @@ func TestGetAgentConfigSeededSuperagent(t *testing.T) {
 	for _, want := range []string{
 		`"id":"_superagent"`, `"name":"Ava"`, `"icon":"message-square"`,
 		`"heartbeat":{"model":null,"enabled":true,"duration":"30m","content":"Check agent heartbeats and flag anything stalled. If nothing needs attention, reply NO_REPLY."}`,
-		`"toolsEnabled":[]`, `"userContext":`,
+		`"userContext":`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %s:\n%s", want, body)
 		}
 	}
 }
+
+// Built-ins inherit ON: an agent with no preference rows sees them in
 
 func TestGetAgentConfigUnknownAgent(t *testing.T) {
 	queries := db.New(testdb.Open(t, true))
@@ -96,8 +99,7 @@ func TestUpdateAgentConfigAppliesPatch(t *testing.T) {
 		http.MethodPatch, "/agent/research/config", `{
 			"name": "Research Two", "icon": "bot",
 			"soul": {"personality": "skeptical", "identity": "checks sources"},
-			"operatingInstructions": "verify twice",
-			"toolsEnabled": ["fs.read", "browser.browse"]
+			"operatingInstructions": "verify twice"
 		}`)
 	if err != nil {
 		t.Fatal(err)
@@ -122,10 +124,9 @@ func TestUpdateAgentConfigAppliesPatch(t *testing.T) {
 	if row.OperatingInstructions != "verify twice" {
 		t.Errorf("operatingInstructions = %q, want verify twice", row.OperatingInstructions)
 	}
-	if row.ToolsEnabled != `["fs.read","browser.browse"]` {
-		t.Errorf("toolsEnabled = %s, want the JSON array", row.ToolsEnabled)
-	}
 }
+
+// A carried toolsEnabled replaces the preference rows for the whole
 
 func TestUpdateAgentConfigSoulReplacesWhole(t *testing.T) {
 	queries := configStore(t)

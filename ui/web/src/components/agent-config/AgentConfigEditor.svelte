@@ -13,7 +13,6 @@
 		getAgentFields,
 		getChangedFields
 	} from '#lib/types/agent'
-	import type { Tool } from '#lib/types/tool'
 	import AgentIconPicker from './AgentIconPicker.svelte'
 	import ConfigTextField from './ConfigTextField.svelte'
 	import CronJobEditor from './CronJobEditor.svelte'
@@ -25,7 +24,6 @@
 		/** The agent whose config is edited; undefined on the new-agent page */
 		agentId?: string
 		configuration: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>
-		availableTools?: Tool[]
 		/** Called when save is clicked with the configuration */
 		onSave: (
 			config: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>
@@ -47,7 +45,6 @@
 	let {
 		agentId,
 		configuration,
-		availableTools = [],
 		onSave,
 		onCancel,
 		saveLabel = 'Save',
@@ -220,11 +217,6 @@
 							if (localConfiguration) localConfiguration.userContext = v
 						}}
 					/>
-				{:else if selectedField === 'toolsEnabled'}
-					<ToolsEditor
-						tools={availableTools}
-						bind:enabledToolIds={localConfiguration.toolsEnabled}
-					/>
 				{:else if selectedField === 'operatingInstructions'}
 					<ConfigTextField
 						value={localConfiguration.operatingInstructions}
@@ -235,9 +227,9 @@
 						}}
 					/>
 				{:else if selectedField === 'toolsContext'}
-					<ConfigTextField
+					<ToolsEditor
+						{agentId}
 						value={localConfiguration.toolsContext}
-						config={FIELD_CONFIGS.toolsContext}
 						onchange={(v) => {
 							if (localConfiguration) localConfiguration.toolsContext = v
 						}}

@@ -26,7 +26,6 @@ function createDefaultTestConfig(): AgentConfigWithIdentity {
 		userContext: '',
 		operatingInstructions: '',
 		toolsContext: '',
-		toolsEnabled: [],
 		heartbeat: {
 			enabled: false,
 			duration: '1hr',

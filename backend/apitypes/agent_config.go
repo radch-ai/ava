@@ -11,7 +11,6 @@ type AgentEditableFields struct {
 	UserContext           *string     `json:"userContext,omitempty"`
 	OperatingInstructions *string     `json:"operatingInstructions,omitempty"`
 	ToolsContext          *string     `json:"toolsContext,omitempty"`
-	ToolsEnabled          *[]string   `json:"toolsEnabled,omitempty"`
 }
 
 // AgentConfig is the editable fields plus the heartbeat. In the

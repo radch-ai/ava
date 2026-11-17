@@ -5,13 +5,16 @@ import { AgentConfigEditor } from '#components/agent-config'
 import { createCronJob, deleteCronJob, getCronJobs } from '#lib/services/agent'
 import { invalidateCronJobs } from '#lib/services/agent/cron-jobs.svelte'
 import type { AgentConfig, AgentIdentity, CronJob } from '#lib/types/agent'
-import type { Tool } from '#lib/types/tool'
 
 vi.mock('#lib/services/agent/config', () => ({
 	getCronJobs: vi.fn(),
 	createCronJob: vi.fn(),
 	updateCronJob: vi.fn(),
-	deleteCronJob: vi.fn()
+	deleteCronJob: vi.fn(),
+	// The Tools panel fetches on open; empty catalog keeps the
+	// textarea tests free of tool rows.
+	getAgentTools: vi.fn().mockResolvedValue([]),
+	toggleAgentTool: vi.fn()
 }))
 
 // Helper to create default superagent configuration
@@ -24,7 +27,6 @@ function createDefaultSuperagentConfig(): AgentConfig &
 		userContext: 'User context test',
 		operatingInstructions: 'Be helpful',
 		toolsContext: 'Tools info',
-		toolsEnabled: [],
 		heartbeat: {
 			enabled: false,
 			duration: '1hr',
@@ -43,7 +45,6 @@ function createDefaultAgentConfig(): AgentConfig &
 		soul: { personality: 'Efficient', identity: 'Task runner' },
 		operatingInstructions: 'Complete tasks',
 		toolsContext: 'Test tools',
-		toolsEnabled: [],
 		heartbeat: {
 			enabled: false,
 			duration: '1hr',
@@ -57,7 +58,6 @@ function createDefaultAgentConfig(): AgentConfig &
 function createProps(
 	overrides: Partial<{
 		configuration: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>
-		availableTools: Tool[]
 		onSave: (
 			config: AgentConfig & Pick<AgentIdentity, 'name' | 'icon'>
 		) => void | Promise<void>
@@ -147,10 +147,7 @@ describe('AgentConfigEditor', () => {
 				.element(page.getByRole('button', { name: /operating instructions/i }))
 				.toBeVisible()
 			await expect
-				.element(page.getByRole('button', { name: /tools context/i }))
-				.toBeVisible()
-			await expect
-				.element(page.getByRole('button', { name: /enabled tools/i }))
+				.element(page.getByRole('button', { name: /^Tools$/ }))
 				.toBeVisible()
 			await expect
 				.element(page.getByRole('button', { name: /heartbeat/i }))
@@ -207,10 +204,7 @@ describe('AgentConfigEditor', () => {
 				.element(page.getByRole('button', { name: /operating instructions/i }))
 				.toBeVisible()
 			await expect
-				.element(page.getByRole('button', { name: /tools context/i }))
-				.toBeVisible()
-			await expect
-				.element(page.getByRole('button', { name: /enabled tools/i }))
+				.element(page.getByRole('button', { name: /^Tools$/ }))
 				.toBeVisible()
 			await expect
 				.element(page.getByRole('button', { name: /heartbeat/i }))
@@ -277,10 +271,10 @@ describe('AgentConfigEditor', () => {
 				.toBeVisible()
 		})
 
-		it('switches to Tools Context when clicked', async () => {
+		it('switches to Tools when clicked', async () => {
 			render(AgentConfigEditor, createProps())
 
-			await page.getByRole('button', { name: /tools context/i }).click()
+			await page.getByRole('button', { name: /^Tools$/ }).click()
 
 			await expect.element(page.getByPlaceholder(/calendar/i)).toBeVisible()
 		})
@@ -303,15 +297,6 @@ describe('AgentConfigEditor', () => {
 			await expect
 				.element(page.getByRole('button', { name: /add scheduled prompt/i }))
 				.toBeVisible()
-		})
-
-		it('switches to Enabled Tools when clicked', async () => {
-			render(AgentConfigEditor, createProps())
-
-			await page.getByRole('button', { name: /enabled tools/i }).click()
-
-			// Tools editor shows empty state message when no tools
-			await expect.element(page.getByText(/no tools available/i)).toBeVisible()
 		})
 
 		it('shows active styling on selected field', async () => {
@@ -499,7 +484,7 @@ describe('AgentConfigEditor', () => {
 			const onSave = vi.fn()
 			render(AgentConfigEditor, createProps({ onSave }))
 
-			await page.getByRole('button', { name: /tools context/i }).click()
+			await page.getByRole('button', { name: /^Tools$/ }).click()
 			const textarea = page.getByPlaceholder(/calendar/i)
 			await textarea.fill('New tools context')
 
@@ -559,39 +544,6 @@ describe('AgentConfigEditor', () => {
 			await expect
 				.element(page.getByText('Custom helper text here'))
 				.toBeVisible()
-		})
-	})
-
-	describe('Tools editor', () => {
-		beforeEach(() => {
-			vi.clearAllMocks()
-		})
-
-		it('shows available tools when provided', async () => {
-			const tools: Tool[] = [
-				{ id: 'tool-1', name: 'Calendar', description: 'Calendar tool' },
-				{ id: 'tool-2', name: 'Email', description: 'Email tool' }
-			]
-
-			render(AgentConfigEditor, createProps({ availableTools: tools }))
-
-			await page.getByRole('button', { name: /enabled tools/i }).click()
-
-			// Use more specific selectors to avoid matching description text
-			await expect
-				.element(page.getByRole('switch', { name: /calendar/i }))
-				.toBeVisible()
-			await expect
-				.element(page.getByRole('switch', { name: /email/i }))
-				.toBeVisible()
-		})
-
-		it('shows empty state when no tools available', async () => {
-			render(AgentConfigEditor, createProps({ availableTools: [] }))
-
-			await page.getByRole('button', { name: /enabled tools/i }).click()
-
-			await expect.element(page.getByText(/no tools available/i)).toBeVisible()
 		})
 	})
 

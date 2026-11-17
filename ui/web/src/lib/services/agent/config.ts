@@ -7,6 +7,11 @@ import type {
 	CronJob,
 	HeartbeatConfig
 } from '#lib/types/agent'
+import type {
+	AgentTool,
+	GetAgentToolsResponse,
+	ToggleAgentToolRequest
+} from '#lib/types/tool'
 import { api } from '../api'
 
 export async function getAgentConfig(
@@ -68,6 +73,27 @@ export async function updateCronJob(
 /** Delete one cron job by id. */
 export async function deleteCronJob(agentId: string, jobId: string) {
 	await api.delete(`agent/${agentId}/cron-jobs/${jobId}`)
+}
+
+/** The agent's tool view — the whole catalog, each row with its
+ * global switch and this agent's preference. Only the Tools panel
+ * calls this; it refetches per open so global changes show. */
+export async function getAgentTools(agentId: string): Promise<AgentTool[]> {
+	const { tools } = await api
+		.get(`agent/${agentId}/tools`)
+		.json<GetAgentToolsResponse>()
+	return tools
+}
+
+/** Flip one tool's agent preference; answers the saved view row. */
+export async function toggleAgentTool(
+	agentId: string,
+	toolId: string,
+	body: ToggleAgentToolRequest
+): Promise<AgentTool> {
+	return api
+		.patch(`agent/${agentId}/tools/${toolId}`, { json: body })
+		.json<AgentTool>()
 }
 
 /**

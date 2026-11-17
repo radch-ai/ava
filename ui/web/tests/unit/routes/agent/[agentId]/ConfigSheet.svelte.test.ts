@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
 import type { AgentConfigWithIdentity } from '#lib/types/agent'
-import type { Tool } from '#lib/types/tool'
 import ConfigSheet from '#routes/agent/[agentId]/ConfigSheet.svelte'
 
 // Helper to create default superagent configuration
@@ -15,7 +14,6 @@ function createDefaultSuperagentConfig(): AgentConfigWithIdentity {
 		userContext: 'User context test',
 		operatingInstructions: 'Be helpful',
 		toolsContext: 'Tools info',
-		toolsEnabled: [],
 		heartbeat: {
 			enabled: false,
 			duration: '1hr',
@@ -34,7 +32,6 @@ function createDefaultAgentConfig(): AgentConfigWithIdentity {
 		soul: { personality: 'Efficient', identity: 'Task runner' },
 		operatingInstructions: 'Complete tasks',
 		toolsContext: 'Test tools',
-		toolsEnabled: [],
 		heartbeat: {
 			enabled: false,
 			duration: '1hr',
@@ -50,7 +47,6 @@ function createProps(
 		isSheetOpened: boolean
 		closeSheet: () => void
 		configuration: AgentConfigWithIdentity
-		availableTools: Tool[]
 		agentId: string
 		onSaved: (config: AgentConfigWithIdentity) => void
 	}> = {}
@@ -59,7 +55,6 @@ function createProps(
 		isSheetOpened: false,
 		closeSheet: vi.fn(),
 		configuration: createDefaultSuperagentConfig(),
-		availableTools: [] as Tool[],
 		agentId: '_superagent',
 		onSaved: vi.fn(),
 		...overrides
@@ -73,7 +68,10 @@ vi.mock('#lib/services/agent/config', () => ({
 	getCronJobs: vi.fn(),
 	createCronJob: vi.fn(),
 	updateCronJob: vi.fn(),
-	deleteCronJob: vi.fn()
+	deleteCronJob: vi.fn(),
+	// The Tools panel fetches on open
+	getAgentTools: vi.fn().mockResolvedValue([]),
+	toggleAgentTool: vi.fn()
 }))
 
 import { updateAgentConfig, updateHeartbeat } from '#lib/services/agent'
@@ -466,10 +464,10 @@ describe('ConfigSheet', () => {
 			await expect.element(page.getByRole('textbox')).toBeVisible()
 		})
 
-		it('clicking Tools Context button shows text field', async () => {
+		it('clicking Tools button shows the tools panel', async () => {
 			render(ConfigSheet, createProps({ isSheetOpened: true }))
 
-			await page.getByRole('button', { name: /tools context/i }).click()
+			await page.getByRole('button', { name: /^Tools$/ }).click()
 
 			await expect.element(page.getByRole('textbox')).toBeVisible()
 		})
@@ -492,15 +490,6 @@ describe('ConfigSheet', () => {
 
 			// Should show heartbeat checkbox
 			await expect.element(page.getByRole('checkbox')).toBeVisible()
-		})
-
-		it('clicking Enabled Tools button shows tools editor', async () => {
-			render(ConfigSheet, createProps({ isSheetOpened: true }))
-
-			await page.getByRole('button', { name: /enabled tools/i }).click()
-
-			// Should show tools section
-			await expect.element(page.getByText(/no tools available/i)).toBeVisible()
 		})
 	})
 

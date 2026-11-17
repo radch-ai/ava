@@ -50,9 +50,11 @@ type TurnSink = func(ctx context.Context, agentID string, msgs []apitypes.Thread
 // adapter.
 type AgentConfigSource = func(ctx context.Context, agentID string) (*apitypes.AgentConfig, error)
 
-// ToolSource lists the tools a turn may attach — the registry the
-// config's enabled list filters.
-type ToolSource = func() []tool.BaseTool
+// AgentToolsFunc fetches an agent's effective tools for a turn —
+// permissions applied, ready for the capture wrapper. An alias of
+// backend TurnService.AgentTools, so the bound method value needs
+// no adapter.
+type AgentToolsFunc = func(ctx context.Context, agentID string) ([]tool.InvokableTool, error)
 
 type UserAgentOptions struct {
 	AgentID     string
@@ -69,11 +71,11 @@ type UserAgentOptions struct {
 	// GetAgentConfig reads the agent's config for each turn's
 	// prompt; bound by the gateway at boot.
 	GetAgentConfig AgentConfigSource
-	// ToolSource lists the registered tools every turn filters its
-	// enabled list against; the manager defaults it to the global
-	// registry.
-	ToolSource ToolSource
-	Logger     zerolog.Logger
+	// Tools fetches the agent's effective tools for each turn —
+	// permissions applied; bound by the gateway at boot. A failed
+	// read fails the turn; a user stop during it settles as a stop.
+	Tools  AgentToolsFunc
+	Logger zerolog.Logger
 }
 
 type UserAgent struct {
@@ -107,9 +109,8 @@ type UserAgent struct {
 	resolveModel   ModelResolver
 	persistTurn    TurnSink
 	getAgentConfig AgentConfigSource
-	toolSource     ToolSource
-
-	model *apitypes.ModelEntry
+	tools          AgentToolsFunc
+	model          *apitypes.ModelEntry
 }
 
 // newUserAgent creates a lane agent and starts its message loop.
@@ -139,7 +140,7 @@ func newUserAgent(ctx context.Context, opts UserAgentOptions) *UserAgent {
 		resolveModel:   opts.ResolveModel,
 		persistTurn:    opts.PersistTurn,
 		getAgentConfig: opts.GetAgentConfig,
-		toolSource:     opts.ToolSource,
+		tools:          opts.Tools,
 
 		onExit: opts.OnExit,
 	}
@@ -271,35 +272,6 @@ func (a *UserAgent) startTurn() context.Context {
 	return a.queryCtx
 }
 
-// enabledTools keeps the registered tools the config enables, each
-// wrapped for capture. The registry lists the candidates; the
-// enabled list decides, and an empty one attaches nothing — fresh
-// agents never surprise with tool calls. emitCtx is the turn's
-// cancel-proof context the wrappers report on.
-func (a *UserAgent) enabledTools(ctx context.Context, emitCtx context.Context, enabled *[]string) []tool.BaseTool {
-	if enabled == nil || len(*enabled) == 0 || a.toolSource == nil {
-		return nil
-	}
-	registered := a.toolSource()
-	want := make(map[string]struct{}, len(*enabled))
-	for _, name := range *enabled {
-		want[name] = struct{}{}
-	}
-	var kept []tool.BaseTool
-	for _, t := range registered {
-		info, err := t.Info(ctx)
-		if err != nil {
-			continue
-		}
-		if _, ok := want[info.Name]; ok {
-			if runnable, isInvokable := t.(tool.InvokableTool); isInvokable {
-				kept = append(kept, &capturingTool{inner: runnable, name: info.Name, lane: a, emitCtx: emitCtx})
-			}
-		}
-	}
-	return kept
-}
-
 // processTurn runs one turn: resolve the batch's model selection,
 // query the model, and settle the answer — assembled or, when the
 // user stops it, whatever streamed so far — to the lane's
@@ -368,10 +340,8 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 	// The persona is fetched per turn: config edits apply to the next
 	// prompt without lane churn. A missing config or a failed read
 	// fails open — a persona-less answer beats none, unlike the
-	// resolver, where no model means no answer at all. The same
-	// fetch decides the turn's tools: no config means no tools.
+	// model resolver, where no model means no answer at all.
 	instruction := ""
-	var turnTools []tool.BaseTool
 	if a.getAgentConfig != nil {
 		cfg, err := a.getAgentConfig(queryCtx, a.agentID)
 		if err != nil {
@@ -379,19 +349,32 @@ func (a *UserAgent) processTurn(queryCtx context.Context, messages []Message) {
 				Msg("fetch agent config; turn proceeds without persona")
 		} else {
 			instruction = BuildSystemPrompt(cfg)
-			turnTools = a.enabledTools(queryCtx, emitCtx, cfg.ToolsEnabled)
+		}
+	}
+	// Tools arrive through their own seam — permissions and global
+	// switches already applied, ready to wrap. A failed read or an
+	// unreadable manifest fails the turn; an empty set is an honest
+	// tool-less turn. A stop during setup is not a failure.
+	var turnTools []tool.BaseTool
+	if a.tools != nil {
+		impls, err := a.tools(queryCtx, a.agentID)
+		if err != nil {
+			a.setupFailure(emitCtx, queryCtx, msgID, err, "resolve tools")
+			return
+		}
+		if turnTools, err = a.wrapTools(queryCtx, emitCtx, impls); err != nil {
+			a.setupFailure(emitCtx, queryCtx, msgID, err, "wrap tools")
+			return
 		}
 	}
 	einoAgent, err := buildEinoAgent(queryCtx, a.agentID, instruction, chatModel, turnTools)
 	if err != nil {
-		a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("build agent")
-		a.failTurn(emitCtx, msgID, err.Error(), "")
+		a.setupFailure(emitCtx, queryCtx, msgID, err, "build agent")
 		return
 	}
 	runner, err := buildEinoRunner(queryCtx, einoAgent)
 	if err != nil {
-		a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("build runner")
-		a.failTurn(emitCtx, msgID, err.Error(), "")
+		a.setupFailure(emitCtx, queryCtx, msgID, err, "build runner")
 		return
 	}
 
@@ -464,6 +447,19 @@ func (a *UserAgent) finishInterrupted(emitCtx context.Context, msgID string, ans
 		return
 	}
 	a.emitError(emitCtx, stoppedTurnMessage, "", "", "")
+}
+
+// setupFailure ends a turn that failed before the ReAct loop. A stop
+// during setup is a stop like any other — transient, no durable
+// failure row — while a real setup error persists as one, naming its
+// stage in the log.
+func (a *UserAgent) setupFailure(emitCtx, queryCtx context.Context, msgID string, err error, stage string) {
+	if turnStopped(queryCtx, err) {
+		a.finishInterrupted(emitCtx, msgID, new(strings.Builder))
+		return
+	}
+	a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg(stage)
+	a.failTurn(emitCtx, msgID, err.Error(), "")
 }
 
 // settleTurn persists the assistant row, then broadcasts the final
@@ -564,14 +560,24 @@ func turnError(err error) (text, toolName string) {
 	return cause, tool
 }
 
-// cleanToolError renders a tool failure's cause with the invoke
-// harness's frame peeled off, so the row shows why the tool failed
-// rather than how it was invoked.
-func cleanToolError(terr *toolError) string {
-	if inner := errors.Unwrap(terr.err); inner != nil {
+// invokeHarnessFrame prefixes every error eino's tool adapter wraps
+// around a LocalFunc's failure (components/tool/utils/invokable_func.go).
+const invokeHarnessFrame = "[LocalFunc] "
+
+// cleanToolError renders a tool failure's cause: the tool's own
+// attribution drops (the row already names it) and the invoke
+// harness's frame peels off, so the text shows why the tool failed
+// rather than how it was invoked. Any other wrapping keeps its
+// context — a tool's own "fetch customer record: ..." survives.
+func cleanToolError(err error) string {
+	var terr *toolError
+	if errors.As(err, &terr) {
+		err = terr.err
+	}
+	if inner := errors.Unwrap(err); inner != nil && strings.HasPrefix(err.Error(), invokeHarnessFrame) {
 		return inner.Error()
 	}
-	return terr.err.Error()
+	return err.Error()
 }
 
 // failTurn ends a failed turn. A turn-level failure (no tool

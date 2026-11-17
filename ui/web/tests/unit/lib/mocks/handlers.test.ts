@@ -144,7 +144,6 @@ describe('mock API handlers', () => {
 			name: string
 			icon: string
 			soul: { personality: string; identity: string }
-			toolsEnabled: string[]
 			heartbeat: {
 				model?: ModelEntry | null
 				enabled: boolean
@@ -156,7 +155,6 @@ describe('mock API handlers', () => {
 		expect(detail.icon).toBe('pencil')
 		expect(detail.name).toBe('Scribe')
 		expect(typeof detail.soul.personality).toBe('string')
-		expect(Array.isArray(detail.toolsEnabled)).toBe(true)
 		// The body is flat: heartbeat rides beside the config fields —
 		// a full config even without a saved row. Scribe has no row:
 		// disabled with empty fields and default routing (no model);
@@ -364,8 +362,7 @@ describe('mock API handlers', () => {
 				icon: 'bot',
 				soul: { personality: '', identity: '' },
 				operatingInstructions: '',
-				toolsContext: '',
-				toolsEnabled: []
+				toolsContext: ''
 			})
 		})
 		expect(created.status).toBe(201)
@@ -390,8 +387,7 @@ describe('mock API handlers', () => {
 			config: {
 				soul: { personality: '', identity: '' },
 				operatingInstructions: '',
-				toolsContext: '',
-				toolsEnabled: []
+				toolsContext: ''
 			}
 		})
 
@@ -413,8 +409,7 @@ describe('mock API handlers', () => {
 				config: {
 					soul: { personality: '', identity: '' },
 					operatingInstructions: '',
-					toolsContext: '',
-					toolsEnabled: []
+					toolsContext: ''
 				}
 			})
 		})
@@ -431,8 +426,7 @@ describe('mock API handlers', () => {
 					icon: 'bot',
 					soul: { personality: '', identity: '' },
 					operatingInstructions: '',
-					toolsContext: '',
-					toolsEnabled: []
+					toolsContext: ''
 				})
 			})
 			expect(res.status).toBe(400)
@@ -713,6 +707,97 @@ describe('mock API handlers', () => {
 				method: 'DELETE'
 			})
 			expect(gone.status).toBe(404)
+		})
+	})
+
+	describe('agent tool endpoints', () => {
+		it('answers the seeded view: built-ins granted, global switch shown', async () => {
+			const body = (await (
+				await fetch(`${BASE}/agent/research/tools`)
+			).json()) as {
+				tools: Array<{
+					id: string
+					globalEnabled: boolean
+					agentEnabled: boolean
+				}>
+			}
+			// The view row carries display fields too; the switches are
+			// the contract under test.
+			expect(
+				body.tools.map(({ id, globalEnabled, agentEnabled }) => ({
+					id,
+					globalEnabled,
+					agentEnabled
+				}))
+			).toEqual([
+				{
+					id: 'duckduckgo_search',
+					globalEnabled: true,
+					agentEnabled: true
+				}
+			])
+
+			const unknownAgent = await fetch(`${BASE}/agent/ghost/tools`)
+			expect(unknownAgent.status).toBe(404)
+		})
+
+		it('toggles the grant live and validates the request', async () => {
+			const off = await fetch(
+				`${BASE}/agent/research/tools/duckduckgo_search`,
+				{
+					method: 'PATCH',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ enabled: false })
+				}
+			)
+			expect(off.status).toBe(200)
+			const offBody = (await off.json()) as { agentEnabled: boolean }
+			expect(offBody.agentEnabled).toBe(false)
+
+			const listed = (await (
+				await fetch(`${BASE}/agent/research/tools`)
+			).json()) as { tools: Array<{ id: string; agentEnabled: boolean }> }
+			expect(listed.tools[0].agentEnabled).toBe(false)
+
+			const backOn = await fetch(
+				`${BASE}/agent/research/tools/duckduckgo_search`,
+				{
+					method: 'PATCH',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ enabled: true })
+				}
+			)
+			const onBody = (await backOn.json()) as { agentEnabled: boolean }
+			expect(onBody.agentEnabled).toBe(true)
+
+			const unknownTool = await fetch(`${BASE}/agent/research/tools/nope`, {
+				method: 'PATCH',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ enabled: true })
+			})
+			expect(unknownTool.status).toBe(404)
+
+			const missing = await fetch(
+				`${BASE}/agent/research/tools/duckduckgo_search`,
+				{
+					method: 'PATCH',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({})
+				}
+			)
+			expect(missing.status).toBe(400)
+		})
+
+		it('grants the built-ins to a newly created agent', async () => {
+			await fetch(`${BASE}/agent`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ name: 'Toolcheck', icon: 'bot' })
+			})
+			const body = (await (
+				await fetch(`${BASE}/agent/toolcheck/tools`)
+			).json()) as { tools: Array<{ agentEnabled: boolean }> }
+			expect(body.tools[0].agentEnabled).toBe(true)
 		})
 	})
 })

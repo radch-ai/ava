@@ -1,14 +1,18 @@
 package agent
 
 // Tool capture: every enabled tool rides a wrapper so the lane sees
-// invocations as they happen. The wrapper is the only place where a
-// call's arguments and its outcome meet — the runner's event stream
-// reports tool results but never the arguments — so the wire's
-// call/result pair and the thread's tool row both hang off it.
+// invocations as they happen. Eino ships callbacks and tool-call
+// middleware, but its tool adapter drops the result when an
+// invocation returns an error, so the wrapper is the one place where
+// a call's arguments, its original result and its error are all in
+// hand — the wire's call/result pair and the thread's tool row both
+// hang off it.
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
@@ -19,19 +23,44 @@ import (
 	"github.com/radch-ai/ava/gateway/wstypes"
 )
 
-// capturingTool delegates to the wrapped tool and reports each
-// invocation to the lane: the call before it runs, the outcome after.
-// Both reports go out on emitCtx, which outlives the turn's cancel —
-// a failed or stopped turn still reports its last tool's outcome.
+// wrapTools rides every fetched implementation on the capture
+// wrapper, once per turn — the fetch already applied permissions and
+// global switches. Metadata is read here, not per invocation, and a
+// selected tool that cannot describe itself fails the turn: a tool
+// the model was promised must never vanish silently.
+func (a *UserAgent) wrapTools(ctx context.Context, emitCtx context.Context, impls []tool.InvokableTool) ([]tool.BaseTool, error) {
+	if len(impls) == 0 {
+		return nil, nil
+	}
+	wrapped := make([]tool.BaseTool, 0, len(impls))
+	for _, impl := range impls {
+		info, err := impl.Info(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("tool metadata: %w", err)
+		}
+		if info == nil || info.Name == "" {
+			return nil, errors.New("tool metadata: missing name")
+		}
+		wrapped = append(wrapped, &capturingTool{inner: impl, info: info, lane: a, emitCtx: emitCtx})
+	}
+	return wrapped, nil
+}
+
+// capturingTool delegates to the wrapped implementation and reports
+// each invocation to the lane: the call before it runs, the outcome
+// after. info is the turn's snapshot, so the runner's schema and the
+// wire's name agree without re-reading the implementation. Both
+// reports go out on emitCtx, which outlives the turn's cancel — a
+// failed or stopped turn still reports its last tool's outcome.
 type capturingTool struct {
 	inner   tool.InvokableTool
-	name    string
+	info    *schema.ToolInfo
 	lane    *UserAgent
 	emitCtx context.Context
 }
 
-func (t *capturingTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
-	return t.inner.Info(ctx)
+func (t *capturingTool) Info(context.Context) (*schema.ToolInfo, error) {
+	return t.info, nil
 }
 
 func (t *capturingTool) InvokableRun(ctx context.Context, args string, opts ...tool.Option) (string, error) {
@@ -41,13 +70,13 @@ func (t *capturingTool) InvokableRun(ctx context.Context, args string, opts ...t
 	if callID == "" {
 		callID = uuid.NewString()
 	}
-	t.lane.emitToolCall(t.emitCtx, callID, t.name, args)
+	t.lane.emitToolCall(t.emitCtx, callID, t.info.Name, args)
 	result, err := t.inner.InvokableRun(ctx, args, opts...)
-	t.lane.recordToolResult(t.emitCtx, callID, t.name, args, result, err)
+	t.lane.recordToolResult(t.emitCtx, callID, t.info.Name, args, result, err)
 	if err != nil {
 		// Named on the way out so the turn's error event can say
 		// which tool failed without the runner's internal framing.
-		err = &toolError{name: t.name, err: err}
+		err = &toolError{name: t.info.Name, err: err}
 	}
 	return result, err
 }
@@ -78,9 +107,9 @@ func (a *UserAgent) emitToolCall(ctx context.Context, id, name, args string) {
 func (a *UserAgent) recordToolResult(ctx context.Context, id, name, args, result string, invocationErr error) {
 	var errText *string
 	if invocationErr != nil {
-		// Clean cause only: the row names its tool already; the
-		// harness frame is how it was invoked, not why it failed.
-		msg := cleanToolError(&toolError{name: name, err: invocationErr})
+		// One rendered cause for both the event and the row, so live
+		// and reloaded state never disagree on wording.
+		msg := cleanToolError(invocationErr)
 		errText = &msg
 	}
 	_ = a.conns.WriteJSON(ctx, wstypes.Event{
@@ -114,9 +143,6 @@ func rawJSON(s string) json.RawMessage {
 	if json.Valid([]byte(s)) {
 		return json.RawMessage(s)
 	}
-	quoted, err := json.Marshal(s)
-	if err != nil {
-		return json.RawMessage(`""`)
-	}
+	quoted, _ := json.Marshal(s) // cannot fail for a string
 	return quoted
 }

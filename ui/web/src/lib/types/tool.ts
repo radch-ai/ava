@@ -1,15 +1,19 @@
 /**
  * Tool Types
  *
- * Tools are shared across agents - the user configures the full set at the server level.
- * The enabled state is per-agent via toolsEnabled: string[] in agent config.
+ * The wire contract lives in Go and is generated into
+ * #lib/types/gen/apitypes.gen (gitignored) via `just typegen` —
+ * regenerate, never edit.
+ *
+ * Tools are installed globally (MCP & Tools); agents hold only a
+ * per-agent preference referencing the catalog id.
  */
 
-/**
- * Tool definition
- */
-export interface Tool {
-	id: string
-	name: string
-	description?: string
-}
+export type {
+	AgentTool,
+	GetAgentToolsResponse,
+	GetToolsResponse,
+	ToggleAgentToolRequest,
+	ToggleToolRequest,
+	Tool
+} from '#lib/types/gen/apitypes.gen'

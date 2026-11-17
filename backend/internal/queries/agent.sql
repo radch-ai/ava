@@ -17,8 +17,9 @@ SELECT * FROM agents WHERE id = ?;
 -- name: UpdateAgentConfig :exec
 -- Full-row rewrite of the mutable columns; the save surface does
 -- read-modify-write in Go, so every column is written every time.
+-- Tool preferences live in their own rows, replaced by the same
+-- transaction when the patch carries them.
 UPDATE agents
 SET name = ?, icon = ?, soul_personality = ?, soul_identity = ?,
-    user_context = ?, operating_instructions = ?, tools_context = ?,
-    tools_enabled = ?
+    user_context = ?, operating_instructions = ?, tools_context = ?
 WHERE id = ?;

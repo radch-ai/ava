@@ -35,7 +35,7 @@ func TestAgentsColumnSet(t *testing.T) {
 		t.Fatalf("table_info rows: %v", err)
 	}
 	want := []string{"id", "name", "icon", "soul_personality", "soul_identity",
-		"user_context", "operating_instructions", "tools_context", "tools_enabled",
+		"user_context", "operating_instructions", "tools_context",
 		"created_at"}
 	if !slices.Equal(got, want) {
 		t.Errorf("agents columns = %v, want %v", got, want)
@@ -58,32 +58,9 @@ func TestCreatedAtStampedByDatabase(t *testing.T) {
 	).Scan(&createdAt); err != nil {
 		t.Fatalf("read created_at: %v", err)
 	}
-	// Micros since epoch, within 10s of now — the stamp comes from the
-	// database clock, not the test.
+	// Micros since epoch, within 10s of now — the stamp comes from
+	// the database clock, not the test.
 	if delta := createdAt - time.Now().UnixMicro(); delta < -10*time.Second.Microseconds() || delta > 10*time.Second.Microseconds() {
 		t.Errorf("created_at delta = %dµs, want within ±10s of now", delta)
-	}
-}
-
-// tools_enabled defaults to the empty JSON array — never NULL, the
-// bundle's [] shape.
-func TestToolsEnabledDefaultsToEmptyArray(t *testing.T) {
-	sqlDB := testdb.Open(t, true)
-	queries := db.New(sqlDB)
-	// CreateAgent omits tools_enabled — the column default applies.
-	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
-		ID: "research", Name: "Research", Icon: "globe",
-	}); err != nil {
-		t.Fatalf("create agent: %v", err)
-	}
-
-	var toolsEnabled string
-	if err := sqlDB.QueryRow(
-		`SELECT tools_enabled FROM agents WHERE id = 'research'`,
-	).Scan(&toolsEnabled); err != nil {
-		t.Fatalf("read tools_enabled: %v", err)
-	}
-	if toolsEnabled != "[]" {
-		t.Errorf("tools_enabled = %s, want []", toolsEnabled)
 	}
 }

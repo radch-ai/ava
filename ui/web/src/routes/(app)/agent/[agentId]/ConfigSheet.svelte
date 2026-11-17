@@ -16,14 +16,11 @@
 		getConfigurationField,
 		setConfigurationField
 	} from '#lib/types/agent'
-	import type { Tool } from '#lib/types/tool'
 
 	interface Props {
 		isSheetOpened: boolean
 		closeSheet: () => void
 		configuration: AgentConfigWithIdentity
-		/** All available tools, configured by the user at the server level */
-		availableTools: Tool[]
 		/** Agent id for API calls */
 		agentId: string
 		/** Called after successful save with the new configuration */
@@ -34,7 +31,6 @@
 		isSheetOpened = $bindable(),
 		closeSheet,
 		configuration,
-		availableTools,
 		agentId,
 		onSaved
 	}: Props = $props()
@@ -124,7 +120,6 @@
 		<AgentConfigEditor
 			{agentId}
 			{configuration}
-			{availableTools}
 			onSave={handleSave}
 			onCancel={handleCancel}
 			bind:hasChanges

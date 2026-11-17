@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -36,7 +37,7 @@ func readAllUntilMessage(t *testing.T, c *websocket.Conn) []wstypes.Event {
 	}
 }
 
-// toolRoundManager wires a lane whose one enabled tool reports to
+// toolRoundManager wires a lane whose one resolved tool reports to
 // both the wire and the given sink.
 func toolRoundManager(t *testing.T, echo *fakeTool, llmResponses []string,
 	persist func(context.Context, string, []apitypes.ThreadMessageDraft) error) *agent.UserAgentManager {
@@ -44,10 +45,9 @@ func toolRoundManager(t *testing.T, echo *fakeTool, llmResponses []string,
 	llm := newScriptedLLM(t, llmResponses...)
 	return agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel:   fixedResolver(llm.URL),
-			GetAgentConfig: fixedConfig(enabledConfig("echo_tool")),
-			ToolSource:     fixedTools(echo),
-			PersistTurn:    persist,
+			ResolveModel: fixedResolver(llm.URL),
+			Tools:        fixedTools(echo),
+			PersistTurn:  persist,
 		})
 }
 
@@ -157,4 +157,41 @@ func TestMidTurnSinkFailureStillCompletesTurn(t *testing.T) {
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
 	require.Len(t, sink.calls, 3)
+}
+
+// The wire's failure text and the persisted row's text come from one
+// rendering — a client watching live and one reloading history read
+// the same cause, and the tool's own wrapping survives it.
+func TestToolFailureTextMatchesPersistedRow(t *testing.T) {
+	echo := &fakeTool{name: "echo_tool",
+		err: fmt.Errorf("search backend down: %w", errors.New("timeout"))}
+	sink := &recordingSink{}
+	mgr := toolRoundManager(t, echo,
+		[]string{toolCallChunk("echo_tool") + toolCallDone(), sseChunk("never reached")}, sink.persist)
+
+	c, sc := wsPair(t)
+	ok := mgr.SubmitMsg(context.Background(), "agent-capfail", "conn-1", sc,
+		agent.Message{ID: "msg-1", Content: "search for otters"})
+	require.True(t, ok)
+
+	var resultErr *string
+	for {
+		ev := readEvent(t, c)
+		switch ev.Type {
+		case wstypes.EventTypeToolResult:
+			resultErr = eventPayload[wstypes.ToolResultEvent](t, ev).Error
+		case wstypes.EventTypeError:
+			require.NotNil(t, resultErr)
+			require.Equal(t, "search backend down: timeout", *resultErr)
+
+			calls := sink.recorded()
+			require.Len(t, calls, 2)
+			require.Equal(t, apitypes.ThreadRoleTool, calls[1][0].Role)
+			var env apitypes.ToolEnvelope
+			require.NoError(t, json.Unmarshal([]byte(calls[1][0].Content), &env))
+			require.NotNil(t, env.Error)
+			require.Equal(t, *resultErr, *env.Error)
+			return
+		}
+	}
 }

@@ -22,6 +22,14 @@ func TestCleanToolErrorKeepsPlainToolError(t *testing.T) {
 		cleanToolError(&toolError{name: "echo_tool", err: plain}))
 }
 
+// A tool's own wrapping keeps its context: only the adapter's
+// [LocalFunc] frame is peeled, never an arbitrary layer.
+func TestCleanToolErrorKeepsToolContext(t *testing.T) {
+	wrapped := fmt.Errorf("fetch customer record: %w", errors.New("connection reset"))
+	require.Equal(t, "fetch customer record: connection reset",
+		cleanToolError(&toolError{name: "crm_lookup", err: wrapped}))
+}
+
 func TestToolFailureNamesToolAndCause(t *testing.T) {
 	plain := errors.New("search backend down")
 	tool, cause, ok := toolFailure(&toolError{name: "echo_tool", err: plain})

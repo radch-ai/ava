@@ -39,7 +39,6 @@ function createTestConfig(
 		userContext: 'Test context',
 		operatingInstructions: 'Test instructions',
 		toolsContext: 'Test tools',
-		toolsEnabled: [],
 		heartbeat: defaultHeartbeat,
 		...overrides
 	}
@@ -94,16 +93,12 @@ describe('agent/config service', () => {
 		})
 
 		it('carries the separate-table entities beside config', async () => {
-			const detail = toDetail(
-				createTestConfig({ toolsEnabled: ['web-search', 'code-execution'] }),
-				'ava',
-				{
-					enabled: true,
-					duration: '2hr',
-					content: 'Daily heartbeat',
-					model: { id: 'gpt-4', providerId: 'p-1' }
-				}
-			)
+			const detail = toDetail(createTestConfig({}), 'ava', {
+				enabled: true,
+				duration: '2hr',
+				content: 'Daily heartbeat',
+				model: { id: 'gpt-4', providerId: 'p-1' }
+			})
 
 			vi.mocked(api.get).mockReturnValue({
 				json: async () => detail
@@ -111,7 +106,6 @@ describe('agent/config service', () => {
 
 			const result = await getAgentConfig('ava')
 
-			expect(result.toolsEnabled).toEqual(['web-search', 'code-execution'])
 			expect(result.heartbeat?.enabled).toBe(true)
 		})
 
@@ -205,7 +199,6 @@ describe('agent/config service', () => {
 
 		it('updates tools configuration', async () => {
 			const configUpdate = {
-				toolsEnabled: ['web-search', 'code-execution', 'file-system'],
 				toolsContext: 'Updated tools context'
 			}
 			const patch: AgentEditableFields = configUpdate
@@ -217,11 +210,6 @@ describe('agent/config service', () => {
 
 			const result = await updateAgentConfig('ava', patch)
 
-			expect(result.toolsEnabled).toEqual([
-				'web-search',
-				'code-execution',
-				'file-system'
-			])
 			expect(result.toolsContext).toBe('Updated tools context')
 		})
 
