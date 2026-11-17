@@ -396,10 +396,6 @@ func (a *UserAgent) failureOutcome(toolName string) turnOutcome {
 	return outcomeMessageFailed
 }
 
-// stoppedTurnMessage is the wire text for a turn the user stopped
-// before it said anything.
-const stoppedTurnMessage = "turn stopped"
-
 // turnStopped separates a user stop from a real failure: the turn's
 // context has exactly one cancel source (the queue's interrupt), so a
 // canceled context alone identifies a stop.
@@ -407,17 +403,15 @@ func turnStopped(queryCtx context.Context) bool {
 	return queryCtx.Err() != nil
 }
 
-// finishInterrupted ends a user-stopped turn: whatever streamed
-// settles like a completed answer — history keeps it — and an empty
-// stop reports a transient human message naming the stopped turn,
-// not a raw cancellation error and not a durable row: a stop is not
-// a failure.
+// finishInterrupted ends a user-stopped turn. Whatever streamed
+// settles like a completed answer — history keeps it. An empty stop
+// emits nothing at all — no error, no draft row: a stop is not a
+// failure, the user message already stands in the transcript, and
+// the next prompt is simply another user turn.
 func (a *UserAgent) finishInterrupted(emitCtx context.Context, msgID string, answer *strings.Builder) {
 	if answer.Len() > 0 {
 		a.settleTurn(emitCtx, msgID, answer.String())
-		return
 	}
-	a.emitError(emitCtx, stoppedTurnMessage, "", "", msgID)
 }
 
 // settleTurn persists the assistant row, then broadcasts the final

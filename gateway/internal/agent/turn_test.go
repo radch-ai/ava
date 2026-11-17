@@ -337,9 +337,23 @@ func TestTurnInterruptCancelsQuery(t *testing.T) {
 
 	mgr.Interrupt("agent-int")
 
-	// The interrupted turn reports its cancellation...
-	ev := readUntilError(t, c)
-	require.Equal(t, wstypes.EventTypeError, ev.Type)
+	// The stopped turn winds down through status and queue traffic
+	// only — an error would turn the stop into a failure.
+	for idle := false; !idle; {
+		ev := readEvent(t, c)
+		switch ev.Type {
+		case wstypes.EventTypeQueueState, wstypes.EventTypeMessageChunk,
+			wstypes.EventTypeToolCall, wstypes.EventTypeToolResult:
+		case wstypes.EventTypeLaneStatus:
+			if !eventPayload[wstypes.LaneStatus](t, ev).Working {
+				idle = true
+			}
+		case wstypes.EventTypeError:
+			t.Fatalf("a stop must not emit an error event: %+v", ev.Data)
+		default:
+			t.Fatalf("unexpected event %v", ev.Type)
+		}
+	}
 
 	// ...and, a stop not being a failure, the queue is free to run
 	// the next item.
@@ -530,29 +544,34 @@ func TestInterruptMidStreamSettlesPartial(t *testing.T) {
 		calls[1])
 }
 
-func TestInterruptEmptyAnswerReportsStopped(t *testing.T) {
+// A stop before any output is a quiet stop: no error, no assistant
+// row — the user message stands alone until the next prompt.
+func TestInterruptBeforeOutputEmitsNothing(t *testing.T) {
 	arrived := make(chan struct{})
 	release := make(chan struct{})
 	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(arrived)
 		select {
-		case <-r.Context().Done():
 		case <-release:
+		case <-r.Context().Done():
 		}
 	}))
 	defer llm.Close()
 	defer close(release)
 
+	target := llm.URL
 	sink := &recordingSink{}
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel: fixedResolver(llm.URL),
-			PersistTurn:  sink.persist,
+			ResolveModel: func(_ context.Context, _ *apitypes.ModelEntry) (backend.ResolvedModel, error) {
+				return backend.ResolvedModel{BaseURL: target, APIKey: "sk-test", Model: "test-model"}, nil
+			},
+			PersistTurn: sink.persist,
 		})
 
 	c, sc := wsPair(t)
 
-	itemID := submit(t, mgr, "agent-stop2", "conn-1", sc, "hi")
+	submit(t, mgr, "agent-stop2", "conn-1", sc, "hi")
 
 	select {
 	case <-arrived:
@@ -562,17 +581,37 @@ func TestInterruptEmptyAnswerReportsStopped(t *testing.T) {
 
 	mgr.Interrupt("agent-stop2")
 
-	// Nothing was said, so the stop reports as a human message naming
-	// its turn, not a raw cancellation error.
-	ev := readUntilError(t, c)
-	p := eventPayload[wstypes.ErrorEvent](t, ev)
-	require.Equal(t, "turn stopped", p.Message)
-	require.Equal(t, itemID, p.TurnID)
+	// The turn winds down through status and queue traffic only; an
+	// error event here would turn the stop into a failure.
+	for idle := false; !idle; {
+		ev := readEvent(t, c)
+		switch ev.Type {
+		case wstypes.EventTypeQueueState, wstypes.EventTypeMessageChunk,
+			wstypes.EventTypeToolCall, wstypes.EventTypeToolResult:
+		case wstypes.EventTypeLaneStatus:
+			if !eventPayload[wstypes.LaneStatus](t, ev).Working {
+				idle = true
+			}
+		case wstypes.EventTypeError:
+			t.Fatalf("a stop must not emit an error event: %+v", ev.Data)
+		default:
+			t.Fatalf("unexpected event %v", ev.Type)
+		}
+	}
 
-	// The user row stands alone — no assistant draft for an empty stop.
+	// The user row stands alone — no assistant draft, no error row.
 	calls := sink.recorded()
 	require.Len(t, calls, 1)
 	require.Equal(t, apitypes.ThreadRoleUser, calls[0][0].Role)
+
+	// The lane keeps serving: the next prompt runs and settles.
+	fast := fakeOpenAI(t, "quick reply")
+	defer fast.Close()
+	target = fast.URL
+	c2, sc2 := wsPair(t)
+	submit(t, mgr, "agent-stop2", "conn-2", sc2, "again")
+	_, p := readUntilMessage(t, c2)
+	require.Equal(t, "quick reply", p.Content)
 }
 
 func TestTurnSurvivesSubmittingConnectionLoss(t *testing.T) {

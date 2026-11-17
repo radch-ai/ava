@@ -333,14 +333,12 @@ func TestToolFetchFailureFailsTurn(t *testing.T) {
 	require.Empty(t, llm.requests(), "the model must not be called")
 }
 
-// A stop during setup is a stop, not a failure: the tools read is
-// interrupted mid-flight, the turn reports the transient stop
-// notice, and no durable error row — nor a model call — follows.
-func TestInterruptDuringToolFetchReportsStopped(t *testing.T) {
+// A stop during tool setup is a quiet stop: no error event, no
+// error row — the user message stands alone.
+func TestInterruptDuringToolFetchEmitsNothing(t *testing.T) {
 	llm := newScriptedLLM(t, sseChunk("never reached"))
 	entered := make(chan struct{})
 	sink := &recordingSink{}
-
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
 			ResolveModel: fixedResolver(llm.URL),
@@ -366,9 +364,21 @@ func TestInterruptDuringToolFetchReportsStopped(t *testing.T) {
 	require.NotNil(t, ag)
 	ag.Interrupt()
 
-	ev := readUntilError(t, c)
-	p := eventPayload[wstypes.ErrorEvent](t, ev)
-	require.Equal(t, "turn stopped", p.Message)
+	for idle := false; !idle; {
+		ev := readEvent(t, c)
+		switch ev.Type {
+		case wstypes.EventTypeQueueState, wstypes.EventTypeMessageChunk,
+			wstypes.EventTypeToolCall, wstypes.EventTypeToolResult:
+		case wstypes.EventTypeLaneStatus:
+			if !eventPayload[wstypes.LaneStatus](t, ev).Working {
+				idle = true
+			}
+		case wstypes.EventTypeError:
+			t.Fatalf("a stop must not emit an error event: %+v", ev.Data)
+		default:
+			t.Fatalf("unexpected event %v", ev.Type)
+		}
+	}
 
 	// The user row stands alone: a stop writes no error row.
 	calls := sink.recorded()

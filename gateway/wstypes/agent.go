@@ -123,8 +123,9 @@ type MessageEvent struct {
 // Tool is set when a tool invocation failed the turn — its row
 // already shows the failure, so clients need not repeat it. ID names
 // the stored error row when the failure persisted; without one the
-// error is transient (stopped turns, tool failures, a failed write).
-// TurnID names the failed turn's stream, like the message events'.
+// error is transient (tool failures, a failed write — stopped turns
+// emit nothing at all). TurnID names the failed turn's stream, like
+// the message events'.
 type ErrorEvent struct {
 	ID      string `json:"id,omitempty"`
 	TurnID  string `json:"turn_id,omitempty"`
