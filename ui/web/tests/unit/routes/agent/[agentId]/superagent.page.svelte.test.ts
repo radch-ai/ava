@@ -33,8 +33,26 @@ vi.mock('#lib/services/api', () => ({
 	}
 }))
 
+const acceptedOp = { accepted: true, itemId: 'q-test' }
 const socketMock = {
-	sendPrompt: vi.fn(),
+	sendPrompt: vi.fn((content: string) => {
+		// The gateway's snapshot after admission shows the item
+		// running: the page's user-row echo hangs off that
+		// transition, exactly as the real server orders it.
+		capturedOnEvent?.({
+			type: 'queue_state',
+			agent_id: '_superagent',
+			data: {
+				items: [],
+				paused: false,
+				active: { id: 'q-test', content, user_message_id: 'stored-u' }
+			}
+		})
+		return Promise.resolve(acceptedOp)
+	}),
+	sendNow: vi.fn((_itemId: string, _selection: unknown) =>
+		Promise.resolve(acceptedOp)
+	),
 	requestStatus: vi.fn(),
 	sendInterrupt: vi.fn(),
 	close: vi.fn()
@@ -147,21 +165,21 @@ describe('AgentPage (superagent branch)', () => {
 			const { container } = render(AgentPageTestWrapper, {
 				data: createMockData()
 			})
-
 			const footer = container.querySelector('footer')
 			expect(footer).toBeInTheDocument()
 			expect(footer?.className).not.toContain('content-container')
 
-			const gridContainer = footer?.querySelector('.md\\:grid')
-			expect(gridContainer).toBeInTheDocument()
-			expect(gridContainer?.className).toContain(
-				'md:grid-cols-[1fr_var(--content-max-width)_1fr]'
+			// The composer column: full-width wrapper capping at the
+			// content max width, selector row stacked above it.
+			const composerColumn = footer?.querySelector(
+				'.mx-auto.w-full.md\\:max-w-\\[calc\\(var\\(--content-max-width\\)\\+2rem\\)\\]'
 			)
+			expect(composerColumn).toBeInTheDocument()
 
-			const modelSelectorContainer = container.querySelector(
-				'.mr-2.flex.items-center.justify-end'
+			const modelSelectorRow = composerColumn?.querySelector(
+				'.mr-3\\.25.flex.items-center.justify-end'
 			)
-			expect(modelSelectorContainer).toBeInTheDocument()
+			expect(modelSelectorRow).toBeInTheDocument()
 		})
 	})
 
@@ -602,6 +620,70 @@ describe('AgentPage (superagent branch)', () => {
 				.toBeVisible()
 		})
 
+		it('counts the send-now reservation in the lane strip', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'status please{Enter}')
+
+			capturedOnState?.('live')
+			capturedOnEvent?.({
+				type: 'lane_status',
+				agent_id: '_superagent',
+				data: {
+					active: true,
+					working: true,
+					reasoning: false,
+					model: null,
+					queue_len: 0,
+					conn_count: 1
+				}
+			})
+
+			// Waiting rows are pending plus the pinned reservation.
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [{ id: 'q-1', content: 'first waiting' }],
+					next: { id: 'q-2', content: 'second waiting' },
+					paused: false
+				}
+			})
+			await expect.element(page.getByText(/queue 2/)).toBeVisible()
+
+			// A stale lane_status count never lowers the projection.
+			capturedOnEvent?.({
+				type: 'lane_status',
+				agent_id: '_superagent',
+				data: {
+					active: true,
+					working: true,
+					reasoning: false,
+					model: null,
+					queue_len: 1,
+					conn_count: 1
+				}
+			})
+			await expect.element(page.getByText(/queue 2/)).toBeVisible()
+
+			// The claim empties the queue and the count follows.
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [],
+					active: {
+						id: 'q-2',
+						content: 'second waiting',
+						user_message_id: 'u-2'
+					},
+					paused: false
+				}
+			})
+			await expect.element(page.getByText(/queue 0/)).toBeVisible()
+		})
+
 		it('echoes the prompt and streams the answer into the tail', async () => {
 			render(AgentPageTestWrapper, { data: createMockData() })
 			const textarea = page.getByPlaceholder('Enter your query!')
@@ -766,12 +848,17 @@ describe('AgentPage (superagent branch)', () => {
 			capturedOnEvent?.({
 				type: 'tool_call',
 				agent_id: '_superagent',
-				data: { id: 'call-1', name: 'web_search', args: '{"query":"otters"}' }
+				data: {
+					id: 'call-1',
+					turn_id: 'msg-1',
+					name: 'web_search',
+					args: '{"query":"otters"}'
+				}
 			})
 			capturedOnEvent?.({
 				type: 'tool_result',
 				agent_id: '_superagent',
-				data: { id: 'call-1', result: '"2 hits"' }
+				data: { id: 'call-1', turn_id: 'msg-1', result: '"2 hits"' }
 			})
 			capturedOnEvent?.({
 				type: 'message',
@@ -1034,12 +1121,285 @@ describe('AgentPage (superagent branch)', () => {
 					conn_count: 1
 				}
 			})
+			// The settle snapshot clears the claim, as the gateway
+			// publishes it when the turn finishes.
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: { items: [], paused: false }
+			})
 			await expect
 				.element(page.getByRole('button', { name: 'Stop' }))
 				.not.toBeInTheDocument()
 			await expect
 				.element(page.getByPlaceholder('Enter your query!'))
 				.toBeVisible()
+		})
+	})
+
+	describe('queue surface', () => {
+		it('renders pending items from snapshots, oldest first', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [
+						{ id: 'q-1', content: 'first waiting' },
+						{ id: 'q-2', content: 'second waiting' }
+					],
+					paused: false
+				}
+			})
+
+			await expect.element(page.getByText('first waiting')).toBeVisible()
+			await expect.element(page.getByText('second waiting')).toBeVisible()
+
+			// The strip's queue count follows snapshots, not just
+			// lane_status broadcasts.
+			capturedOnState?.('live')
+			capturedOnEvent?.({
+				type: 'lane_status',
+				agent_id: '_superagent',
+				data: {
+					active: true,
+					working: false,
+					reasoning: false,
+					model: null,
+					queue_len: 0,
+					conn_count: 1
+				}
+			})
+			await expect.element(page.getByText(/queue 2/)).toBeVisible()
+		})
+
+		it('targets the clicked item with send_now', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [
+						{ id: 'q-1', content: 'first waiting' },
+						{ id: 'q-2', content: 'second waiting' }
+					],
+					paused: false
+				}
+			})
+
+			await page
+				.getByRole('button', { name: /send immediately/i })
+				.nth(1)
+				.click()
+
+			await vi.waitFor(() => {
+				expect(socketMock.sendNow).toHaveBeenCalledWith('q-2', null)
+			})
+		})
+
+		it('shows the paused label with waiting work and hides the block without it', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [{ id: 'q-1', content: 'waiting' }],
+					paused: true
+				}
+			})
+
+			await expect
+				.element(
+					page.getByText(/^Paused — choose Send immediately to continue\.$/)
+				)
+				.toBeVisible()
+
+			// The queue block exists only with waiting work — an empty,
+			// unpaused snapshot removes it whole, label included.
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: { items: [], paused: false }
+			})
+			await vi.waitFor(() => {
+				expect(
+					page
+						.getByText(/^Paused — choose Send immediately to continue\.$/)
+						.elements()
+				).toHaveLength(0)
+			})
+		})
+
+		it('replaces the projection wholesale on each snapshot', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [{ id: 'q-1', content: 'about to run' }],
+					paused: false
+				}
+			})
+			await expect.element(page.getByText('about to run')).toBeVisible()
+
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [],
+					paused: false,
+					active: { id: 'q-1', content: 'about to run', user_message_id: 'u-1' }
+				}
+			})
+			await vi.waitFor(() => {
+				expect(page.getByText('about to run').elements()).toHaveLength(1)
+			})
+		})
+
+		it('never re-flashes an executed item as waiting (stale snapshot replay)', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [{ id: 'q-1', content: 'claimed already' }],
+					paused: false
+				}
+			})
+			await expect.element(page.getByText('claimed already')).toBeVisible()
+
+			// The claim snapshot arrives; the item executes and its
+			// user row takes over the transcript.
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [],
+					paused: false,
+					active: {
+						id: 'q-1',
+						content: 'claimed already',
+						user_message_id: 'u-1'
+					}
+				}
+			})
+			// A stale pre-claim snapshot replays (reconnect backlog
+			// order): it must not resurrect the waiting entry.
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [{ id: 'q-1', content: 'claimed already' }],
+					paused: false
+				}
+			})
+
+			await vi.waitFor(() => {
+				expect(
+					page.getByRole('list', { name: 'Pending prompts' }).elements()
+				).toHaveLength(0)
+			})
+			await expect
+				.element(page.getByText('claimed already', { exact: true }))
+				.toBeVisible()
+		})
+
+		it('renders the reserved item as a pinned action-less next row', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [{ id: 'q-1', content: 'still waiting' }],
+					next: { id: 'n-1', content: 'chosen next' },
+					paused: false
+				}
+			})
+
+			// The reservation stays visible, pinned above the waiting
+			// items, with no send-now control of its own.
+			await expect.element(page.getByText('chosen next')).toBeVisible()
+			const reserved = await page.getByText('chosen next').element()
+			const reservedRow = reserved.closest('li')
+			expect(reservedRow?.querySelector('button')).toBeNull()
+
+			// The claim snapshot retires the pinned row: the item
+			// leaves the queue surface for its transcript user row.
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [{ id: 'q-1', content: 'still waiting' }],
+					active: {
+						id: 'n-1',
+						content: 'chosen next',
+						user_message_id: 'u-next'
+					},
+					paused: false
+				}
+			})
+			const queueList = await page
+				.getByRole('list', { name: 'Pending prompts' })
+				.element()
+			await vi.waitFor(() => {
+				expect(queueList.textContent ?? '').not.toContain('chosen next')
+			})
+		})
+
+		it('shows the user row the moment the claim snapshot arrives', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'queue me then run{Enter}')
+
+			// The mock replays the claim-shaped snapshot the gateway
+			// now publishes at claim time; the row exists before any
+			// message chunk is fed.
+			await expect.element(page.getByText('queue me then run')).toBeVisible()
+		})
+
+		it('swaps Send for Stop while a queue item executes, without lane_status', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [],
+					paused: false,
+					active: {
+						id: 'q-1',
+						content: 'running',
+						user_message_id: 'u-1'
+					}
+				}
+			})
+
+			await expect
+				.element(page.getByRole('button', { name: /^Stop$/ }))
+				.toBeVisible()
+			await expect
+				.element(page.getByRole('button', { name: /^Send$/ }))
+				.not.toBeInTheDocument()
+		})
+
+		it('shows Send while an error-paused queue holds pending items', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [{ id: 'q-1', content: 'held by pause' }],
+					paused: true
+				}
+			})
+
+			await expect
+				.element(page.getByRole('button', { name: /^Send$/ }))
+				.toBeVisible()
+			await expect
+				.element(page.getByRole('button', { name: /^Stop$/ }))
+				.not.toBeInTheDocument()
 		})
 	})
 

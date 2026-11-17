@@ -10,7 +10,9 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -120,6 +122,13 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 		}
 		defer func() { _ = conn.CloseNow() }()
 
+		// Inbound frames may carry a full prompt up to the admission
+		// bound; the default 32 KiB read limit would close the socket
+		// on a legitimate long prompt before admission could reject
+		// or accept it. Over-length frames reach the handler, whose
+		// validation answers with queue_result.
+		conn.SetReadLimit(maxPromptBytes + 8192)
+
 		connID := uuid.New().String()
 		logger = logger.With().Str("conn_id", connID).Logger()
 
@@ -133,9 +142,7 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 			if joinedAgent == "" {
 				return
 			}
-			if ag := mgr.Get(joinedAgent); ag != nil {
-				ag.RemoveConn(connID)
-			}
+			mgr.RemoveConn(joinedAgent, connID)
 		}()
 
 		go keepalive(ctx, conn, interval, logger)
@@ -197,21 +204,29 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 
 			switch env.Type {
 			case wstypes.EnvelopeTypePrompt:
-				payload, err := json.Marshal(env.Data)
-				if err != nil {
-					logger.Warn().Err(err).Msg("malformed prompt message")
-					continue
-				}
 				var msg wstypes.PromptMessage
-				if err := json.Unmarshal(payload, &msg); err != nil {
+				if err := json.Unmarshal(env.Data, &msg); err != nil {
 					logger.Warn().Err(err).Msg("malformed prompt message")
 					continue
 				}
-				if joinedAgent == "" {
-					joinedAgent = env.AgentID
+				// Admission validates content before anything binds or
+				// mutates: empty-after-trim and over-length prompts are
+				// answered through queue_result and dropped.
+				content := strings.TrimSpace(msg.Content)
+				if reject := validatePromptContent(msg.Content, content); reject != nil {
+					logger.Warn().Err(reject).Str("agent_id", env.AgentID).Msg("prompt rejected")
+					if rerr := replyQueueResult(ctx, conn, env.AgentID, msg.RequestID, "", reject); rerr != nil {
+						logger.Warn().Err(rerr).Msg("failed to send queue_result event")
+						return
+					}
+					continue
 				}
-				// Route into the lane: first submit creates it, every
-				// submit adds this connection and queues the message.
+				if !bindAgent(&joinedAgent, env.AgentID) {
+					logger.Warn().Str("agent_id", env.AgentID).Msg("connection already bound to another agent")
+					continue
+				}
+				// Enqueue into the agent's queue: first submit creates
+				// the state, every submit subscribes this connection.
 				// A nil model follows the default routing.
 				var entry *apitypes.ModelEntry
 				modelID, providerID := "", ""
@@ -223,37 +238,65 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 					Str("agent_id", env.AgentID).
 					Str("model", modelID).
 					Str("provider_id", providerID).
-					Int("content_len", len(msg.Content)).
+					Int("content_len", len(content)).
 					Msg("prompt received over ws")
-				mgr.SubmitMsg(ctx, env.AgentID, connID, conn, agent.Message{
-					ID:      uuid.New().String(),
-					Content: msg.Content,
-					Model:   entry,
-				})
+				itemID, err := mgr.Submit(env.AgentID, connID, conn, content, entry)
+				if rerr := replyQueueResult(ctx, conn, env.AgentID, msg.RequestID, itemID, err); rerr != nil {
+					logger.Warn().Err(rerr).Msg("failed to send queue_result event")
+					return
+				}
+				if err != nil {
+					logger.Warn().Err(err).Str("agent_id", env.AgentID).Msg("queue admission rejected")
+				}
+			case wstypes.EnvelopeTypeSendNow:
+				var msg wstypes.SendNowMessage
+				if err := json.Unmarshal(env.Data, &msg); err != nil {
+					logger.Warn().Err(err).Msg("malformed send_now message")
+					continue
+				}
+				if !bindAgent(&joinedAgent, env.AgentID) {
+					logger.Warn().Str("agent_id", env.AgentID).Msg("connection already bound to another agent")
+					continue
+				}
+				var entry *apitypes.ModelEntry
+				if msg.Model != nil {
+					entry = &apitypes.ModelEntry{ID: msg.Model.ID, ProviderID: msg.Model.ProviderID}
+				}
+				itemID, err := mgr.SendNow(env.AgentID, msg.ItemID, entry)
+				if rerr := replyQueueResult(ctx, conn, env.AgentID, msg.RequestID, itemID, err); rerr != nil {
+					logger.Warn().Err(rerr).Msg("failed to send queue_result event")
+					return
+				}
+				if err != nil {
+					logger.Warn().Err(err).Str("item_id", msg.ItemID).Msg("send_now rejected")
+				}
 			case wstypes.EnvelopeTypeStatus:
-				// Reply first, then join: a status request doubles
-				// as the lane join, so a page (re)opened mid-turn
-				// receives the streamed prefix and everything after
-				// it, instead of a frozen working indicator. Joining
-				// a lane-less agent is a no-op — the reply above
-				// already reports it idle.
+				// One conversation per socket: the status frame binds its
+				// agent exactly like a prompt — cross-agent frames are
+				// rejected, not a silent re-bind. Reply first, then join:
+				// a status request doubles as the lane join, so a page
+				// (re)opened mid-turn receives the queue snapshot, the
+				// streamed prefix, and everything after them. Joining an
+				// agent without a worker still subscribes — pending work
+				// survives the worker.
+				if !bindAgent(&joinedAgent, env.AgentID) {
+					logger.Warn().Str("agent_id", env.AgentID).Msg("connection already bound to another agent")
+					continue
+				}
 				writeCtx, writeCancel := context.WithTimeout(ctx, 10*time.Second)
 				err := wsjson.Write(writeCtx, conn, wstypes.Event{
 					Type:    wstypes.EventTypeLaneStatus,
 					AgentID: env.AgentID,
-					Data:    mgr.Get(env.AgentID).LaneStatus(),
+					Data:    mgr.Status(env.AgentID),
 				})
 				writeCancel()
 				if err != nil {
 					logger.Warn().Err(err).Msg("failed to send lane_status event")
 					return
 				}
-				joinedAgent = env.AgentID
 				mgr.Join(env.AgentID, connID, conn)
 			case wstypes.EnvelopeTypeInterrupt:
-				if ag := mgr.Get(env.AgentID); ag != nil {
-					ag.Interrupt()
-				}
+				mgr.Interrupt(env.AgentID)
 			default:
 				logger.Debug().Str("type", string(env.Type)).Msg("unknown message type")
 			}
@@ -288,4 +331,56 @@ func keepalive(ctx context.Context, conn *websocket.Conn, interval time.Duration
 			}
 		}
 	}
+}
+
+// bindAgent fixes the connection's agent on first use and rejects
+// cross-agent frames afterwards: one conversation per socket.
+func bindAgent(joined *string, agentID string) bool {
+	if *joined == "" {
+		*joined = agentID
+		return true
+	}
+	return *joined == agentID
+}
+
+// maxPromptBytes bounds one prompt's raw content length.
+const maxPromptBytes = 64 << 10
+
+// Prompt admission rejections; user-facing text rides queue_result,
+// and no queue state changes on rejection.
+var (
+	errPromptEmpty   = errors.New("prompt is empty")
+	errPromptTooLong = errors.New("prompt is too long")
+)
+
+// validatePromptContent classifies raw and trimmed prompt content:
+// raw length is bounded, trimmed emptiness rejected.
+func validatePromptContent(raw, trimmed string) error {
+	if len(raw) > maxPromptBytes {
+		return errPromptTooLong
+	}
+	if trimmed == "" {
+		return errPromptEmpty
+	}
+	return nil
+}
+
+// replyQueueResult answers one prompt or send_now frame on the
+// requesting connection. Admission rejections carry a user-facing
+// reason and change no queue state.
+func replyQueueResult(ctx context.Context, conn *websocket.Conn, agentID, requestID, itemID string, queueErr error) error {
+	ev := wstypes.QueueResultEvent{RequestID: requestID}
+	if queueErr != nil {
+		ev.Error = queueErr.Error()
+	} else {
+		ev.Accepted = true
+		ev.ItemID = itemID
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return wsjson.Write(writeCtx, conn, wstypes.Event{
+		Type:    wstypes.EventTypeQueueResult,
+		AgentID: agentID,
+		Data:    ev,
+	})
 }

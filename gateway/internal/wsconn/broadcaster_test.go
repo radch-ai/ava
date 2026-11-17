@@ -2,6 +2,7 @@ package wsconn_test
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,7 +24,6 @@ func TestBroadcaster_New(t *testing.T) {
 
 	assert.NotNil(t, b)
 	assert.Equal(t, 0, b.Count())
-	assert.False(t, b.HasConnections())
 }
 
 func TestBroadcaster_AddNil(t *testing.T) {
@@ -34,7 +34,6 @@ func TestBroadcaster_AddNil(t *testing.T) {
 	b.Add("conn-1", nil)
 
 	assert.Equal(t, 0, b.Count())
-	assert.False(t, b.HasConnections())
 }
 
 func TestBroadcaster_AddAndCount(t *testing.T) {
@@ -58,9 +57,6 @@ func TestBroadcaster_AddAndCount(t *testing.T) {
 
 	b.Add("conn-2", c2)
 	assert.Equal(t, 2, b.Count())
-
-	assert.True(t, b.HasConnections())
-	assert.ElementsMatch(t, []string{"conn-1", "conn-2"}, b.ConnIDs())
 }
 
 func TestBroadcaster_AddReplace(t *testing.T) {
@@ -102,7 +98,6 @@ func TestBroadcaster_Remove(t *testing.T) {
 
 	b.Remove("conn-1")
 	assert.Equal(t, 0, b.Count())
-	assert.False(t, b.HasConnections())
 
 	// Remove non-existent is safe
 	b.Remove("conn-unknown")
@@ -184,11 +179,14 @@ func TestBroadcaster_WriteJSON_RemovesFailed(t *testing.T) {
 	// Wait for close to propagate
 	time.Sleep(100 * time.Millisecond)
 
-	// Write should fail and remove the dead connection
+	// Write enqueues without touching the socket; the dead peer is
+	// dropped by its own writer failing, so removal is eventual.
 	err := b.WriteJSON(context.Background(), map[string]string{"type": "test"})
-	require.NoError(t, err) // No error - just removes failed conns
+	require.NoError(t, err) // No error - the dead conn is dropped, not reported
 
-	assert.Equal(t, 0, b.Count()) // Connection removed
+	require.Eventually(t, func() bool {
+		return b.Count() == 0
+	}, 3*time.Second, 20*time.Millisecond, "dead connection must be dropped")
 }
 
 func TestBroadcaster_WriteJSON_NoConnections(t *testing.T) {
@@ -217,15 +215,16 @@ func stallServer(t *testing.T) *httptest.Server {
 }
 
 // A peer that never reads must not hold the lane's events hostage:
-// the write is bounded by the per-conn deadline, the stalled peer is
-// dropped, and the healthy peer keeps receiving.
+// publishing is a non-blocking enqueue — it cannot stall on any peer.
+// The stalled peer is dropped once its own writer times out or its
+// queue overflows, and the healthy peer keeps receiving in order.
 func TestBroadcasterStalledConnDoesNotBlockHealthyPeer(t *testing.T) {
 	b := wsconn.NewBroadcasterWithTimeout(zerolog.Nop(), 2*time.Second)
 
 	cStalled := connectWS(t, stallServer(t).URL)
 	defer closeConn(cStalled)
 
-	healthy := newMockWSserver(t)
+	healthy := newFullCaptureWSserver(t)
 	defer healthy.Close()
 	cHealthy := connectWS(t, healthy.URL)
 	defer closeConn(cHealthy)
@@ -233,24 +232,60 @@ func TestBroadcasterStalledConnDoesNotBlockHealthyPeer(t *testing.T) {
 	b.Add("stalled", cStalled)
 	b.Add("healthy", cHealthy)
 
-	// A few megabytes overflow the stalled peer's unread socket
-	// buffers, so its write cannot finish — it can only end at its
-	// deadline.
+	// The jumbo fills the stalled peer's socket without entering the
+	// timed window below: in a blocking design every later publish
+	// waits on that full socket until the peer's write deadline, and
+	// even in the enqueue design marshaling eight megabytes can take
+	// longer than the bound under -race load — so the pin times a
+	// small publish against a socket that is already full.
 	jumbo := map[string]string{"type": "test", "data": strings.Repeat("x", 8<<20)}
+	require.NoError(t, b.WriteJSON(context.Background(), jumbo))
 
 	start := time.Now()
-	err := b.WriteJSON(context.Background(), jumbo)
+	err := b.WriteJSON(context.Background(), map[string]string{"type": "after"})
 	elapsed := time.Since(start)
 	require.NoError(t, err)
-	require.Less(t, elapsed, 4*time.Second,
-		"a stalled peer must bound the write by its deadline, not its unread buffer")
+	require.Less(t, elapsed, 500*time.Millisecond,
+		"publishing must be non-blocking enqueue, not a write bounded by any peer's deadline")
 
-	// The stalled peer is gone; the healthy one stays.
-	assert.ElementsMatch(t, []string{"healthy"}, b.ConnIDs())
+	// The healthy peer receives both events in order; the stalled one
+	// is dropped once its own write deadline passes.
+	require.Eventually(t, func() bool {
+		msgs := healthy.GetMessages()
+		return len(msgs) == 2 &&
+			strings.Contains(msgs[0], "test") &&
+			strings.Contains(msgs[1], "after")
+	}, 3*time.Second, 20*time.Millisecond, "healthy peer must receive both events in order")
+	require.Eventually(t, func() bool {
+		return b.Count() == 1
+	}, 4*time.Second, 20*time.Millisecond, "stalled peer must be dropped by its write deadline")
+}
 
-	// And the survivor keeps receiving.
-	require.NoError(t, b.WriteJSON(context.Background(), map[string]string{"type": "after"}))
-	assert.Equal(t, 1, b.Count())
+// Publishing is a per-connection FIFO: the order of WriteJSON calls
+// is the order each connection reads its frames. Queue snapshots rely
+// on this to precede the chunks that follow them.
+func TestBroadcasterWriteJSONPreservesOrderPerConn(t *testing.T) {
+	logger := zerolog.Nop()
+	b := wsconn.NewBroadcaster(logger)
+
+	s := newCaptureWSserver(t)
+	defer s.Close()
+	c := connectWS(t, s.URL)
+	defer closeConn(c)
+
+	b.Add("conn-1", c)
+
+	require.NoError(t, b.WriteJSON(context.Background(), map[string]string{"type": "first"}))
+	require.NoError(t, b.WriteJSON(context.Background(), map[string]string{"type": "second"}))
+	require.NoError(t, b.WriteJSON(context.Background(), map[string]string{"type": "third"}))
+
+	require.Eventually(t, func() bool {
+		msgs := s.GetMessages()
+		return len(msgs) == 3 &&
+			strings.Contains(msgs[0], "first") &&
+			strings.Contains(msgs[1], "second") &&
+			strings.Contains(msgs[2], "third")
+	}, 3*time.Second, 20*time.Millisecond, "frames must arrive in publish order")
 }
 
 func TestBroadcaster_ConcurrentAddRemove(t *testing.T) {
@@ -345,6 +380,50 @@ func newCaptureWSserver(t *testing.T) *captureWSServer {
 			s.addMessage(string(buf[:n]))
 		}
 	}))
+	return s
+}
+
+// fullCaptureWSserver records every frame it receives whole — unlike
+// captureWSServer, which samples each frame's first 4 KiB and so
+// chokes on jumbo payloads.
+type fullCaptureWSserver struct {
+	*httptest.Server
+	mu       sync.Mutex
+	messages []string
+}
+
+func (s *fullCaptureWSserver) GetMessages() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.messages...)
+}
+
+func newFullCaptureWSserver(t *testing.T) *fullCaptureWSserver {
+	t.Helper()
+	s := &fullCaptureWSserver{}
+	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer closeConn(c)
+		// Jumbo test frames dwarf the default 32 KiB read limit.
+		c.SetReadLimit(-1)
+		for {
+			_, reader, err := c.Reader(context.Background())
+			if err != nil {
+				return
+			}
+			data, err := io.ReadAll(reader)
+			if err != nil {
+				return
+			}
+			s.mu.Lock()
+			s.messages = append(s.messages, string(data))
+			s.mu.Unlock()
+		}
+	}))
+	t.Cleanup(s.Close)
 	return s
 }
 

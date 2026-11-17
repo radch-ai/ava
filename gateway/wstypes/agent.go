@@ -7,11 +7,25 @@ type ModelRef struct {
 	ProviderID string `json:"provider_id"`
 }
 
-// PromptMessage is the payload of a prompt frame; message IDs are
-// assigned server-side. Model nil = default routing.
+// PromptMessage is the payload of a prompt frame; the item ID is
+// assigned server-side and returns via queue_result, which echoes
+// RequestID. Model nil = default routing.
 type PromptMessage struct {
-	Content string    `json:"content"`
-	Model   *ModelRef `json:"model"`
+	RequestID string    `json:"request_id,omitempty"`
+	Content   string    `json:"content"`
+	Model     *ModelRef `json:"model"`
+}
+
+// SendNowMessage is the payload of a send_now frame: promote one
+// pending item to run next, interrupting the active turn. The item
+// is addressed by its queue ID, never resubmitted as text. Model is
+// the caller's current selection; a paused queue rebinds its failed-
+// model entries to it, a healthy queue ignores it. Model nil =
+// default routing.
+type SendNowMessage struct {
+	RequestID string    `json:"request_id,omitempty"`
+	ItemID    string    `json:"item_id"`
+	Model     *ModelRef `json:"model"`
 }
 
 // LaneStatus is the payload of a lane_status event. Model is the
@@ -27,6 +41,46 @@ type LaneStatus struct {
 	ConnCount int    `json:"conn_count"`
 }
 
+// QueueItem is one queued prompt: the model selection captured at
+// submission (nil = default routing) rides the item.
+type QueueItem struct {
+	ID      string    `json:"id"`
+	Content string    `json:"content"`
+	Model   *ModelRef `json:"model,omitempty"`
+}
+
+// QueueActiveItem is the executing item. UserMessageID names the
+// started turn's persisted user row — distinct from the stream ID,
+// which stays the item ID.
+type QueueActiveItem struct {
+	ID            string    `json:"id"`
+	Content       string    `json:"content"`
+	Model         *ModelRef `json:"model,omitempty"`
+	UserMessageID string    `json:"user_message_id"`
+}
+
+// QueueResultEvent is the payload of a queue_result event: the reply
+// to one prompt or send_now frame, correlated by RequestID. A
+// rejection carries a user-facing reason and changes no queue state.
+type QueueResultEvent struct {
+	RequestID string `json:"request_id"`
+	Accepted  bool   `json:"accepted"`
+	ItemID    string `json:"item_id,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+// QueueStateEvent is the payload of a queue_state event: the
+// authoritative queue snapshot, always a full replacement. Items are
+// pending work oldest-first, excluding the active item and the
+// reserved-next one; Next is claimed-but-not-started work so a
+// reconnect cannot mistake it for lost.
+type QueueStateEvent struct {
+	Items  []QueueItem      `json:"items"`
+	Active *QueueActiveItem `json:"active,omitempty"`
+	Next   *QueueItem       `json:"next,omitempty"`
+	Paused bool             `json:"paused"`
+}
+
 // MessageChunkEvent is the payload of a message_chunk event: one
 // streamed piece of the answer in flight. The final message event
 // with the same ID is the authoritative record.
@@ -37,18 +91,23 @@ type MessageChunkEvent struct {
 
 // ToolCallEvent is the payload of a tool_call event: the model
 // invoked a tool. ID is the model's tool-call id; the matching
-// tool_result carries the same one.
+// tool_result carries the same one. TurnID names the queue item that
+// issued the call — a late result keeps its turn, not whichever turn
+// is active when it lands.
 type ToolCallEvent struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Args string `json:"args"`
+	ID     string `json:"id"`
+	TurnID string `json:"turn_id,omitempty"`
+	Name   string `json:"name"`
+	Args   string `json:"args"`
 }
 
 // ToolResultEvent is the payload of a tool_result event: one
 // invocation completed. Error is set when the tool failed; result
-// then carries whatever the tool managed to say.
+// then carries whatever the tool managed to say. TurnID matches the
+// originating tool_call's.
 type ToolResultEvent struct {
 	ID     string  `json:"id"`
+	TurnID string  `json:"turn_id,omitempty"`
 	Result string  `json:"result"`
 	Error  *string `json:"error,omitempty"`
 }

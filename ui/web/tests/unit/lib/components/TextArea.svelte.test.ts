@@ -131,6 +131,60 @@ describe('TextArea', () => {
 		})
 	})
 
+	describe('Queue-aware submission', () => {
+		it('keeps the draft and shows the reason when submission rejects', async () => {
+			render(TextArea, {
+				onsubmit: () => Promise.reject(new Error('queue is full'))
+			})
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'overflow{Enter}')
+
+			await expect.element(page.getByText('queue is full')).toBeVisible()
+			await expect.element(textarea).toHaveValue('overflow')
+		})
+
+		it('keeps text typed while waiting; only the accepted draft clears', async () => {
+			const { promise, resolve } = Promise.withResolvers<void>()
+			render(TextArea, { onsubmit: () => promise })
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'first{Enter}')
+			await textarea.fill('edited while waiting')
+
+			resolve()
+			await expect.element(textarea).toHaveValue('edited while waiting')
+		})
+
+		it('replaces Send with Stop while a turn runs', async () => {
+			render(TextArea, {
+				onsubmit: () => Promise.resolve(),
+				working: true
+			})
+
+			await expect
+				.element(page.getByRole('button', { name: 'Stop' }))
+				.toBeVisible()
+			await expect
+				.element(page.getByRole('button', { name: 'Send' }))
+				.not.toBeInTheDocument()
+		})
+
+		it('keeps exactly one submit control in the slot', async () => {
+			render(TextArea, {
+				onsubmit: () => Promise.resolve(),
+				working: true
+			})
+
+			const controls = page.getByRole('button', { name: /^(Stop|Send)$/ })
+			await vi.waitFor(() => {
+				expect(controls.elements()).toHaveLength(1)
+			})
+		})
+	})
+
 	describe('onsubmit callback', () => {
 		it('calls onsubmit with trimmed text', async () => {
 			const mockSubmit = vi.fn()

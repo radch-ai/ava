@@ -1,17 +1,16 @@
 package agent
 
-// The drop path: a submit landing on a lane whose agent already
-// exited must return false and say so — the message would otherwise
-// vanish into a channel nobody drains, or worse, report success
-// while never running. The lane is staged in exactly the state
-// OnExit occupies between close(done) and the map delete: dead, but
-// still mapped.
+// The admission race: a submit landing on a queue whose worker is on
+// its way out must never strand an accepted item. The manager-owned
+// state outlives the worker — its exit hook respawns one when work
+// arrived during the exit — so every accepted prompt eventually
+// executes, proved by the sink's user rows.
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -24,51 +23,21 @@ import (
 	"github.com/radch-ai/ava/backend/apitypes"
 )
 
-// lockedLogs is a race-safe zerolog sink.
-type lockedLogs struct {
-	mu sync.Mutex
-	b  bytes.Buffer
-}
-
-func (w *lockedLogs) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.b.Write(p)
-}
-
-func (w *lockedLogs) String() string {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.b.String()
-}
-
-func TestSubmitMsgWarnsOnExitedLane(t *testing.T) {
-	logs := &lockedLogs{}
-	m := NewUserAgentManager(zerolog.New(logs), &UserAgentManagerOptions{})
-
-	dead := &agentLane{
-		msgCh: make(chan Message, defaultMsgQueueSize),
-		done:  make(chan struct{}),
+func TestSubmitRacingWorkerExitNeverStrandsAcceptedItems(t *testing.T) {
+	// One plain SSE answer per request: every turn settles, so the
+	// only way a prompt goes missing is a stranded admission.
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		_, _ = w.Write([]byte("data: {\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"m\",\"choices\":[{\"index\":0,\"finish_reason\":null,\"delta\":{\"role\":\"assistant\",\"content\":\"ok\"}}]}\n\n"))
+		flusher.Flush()
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer llm.Close()
+	resolver := func(context.Context, *apitypes.ModelEntry) (backend.ResolvedModel, error) {
+		return backend.ResolvedModel{BaseURL: llm.URL, APIKey: "sk-test", Model: "test-model"}, nil
 	}
-	m.lanes.Store("agent-drop", dead)
-	dead.once.Do(func() {}) // arm init: SubmitMsg's once.Do must not rebuild the lane
-	close(dead.done)
 
-	// The conn is never reached: a dead lane is rejected before the
-	// broadcaster sees it.
-	ok := m.SubmitMsg(context.Background(), "agent-drop", "conn-1", nil,
-		Message{ID: "m1", Content: "hi"})
-	require.False(t, ok, "submit onto an exited lane must report the drop")
-	require.Contains(t, logs.String(), "submit dropped",
-		"a dropped submit must log its warning")
-}
-
-// TestSubmitMsgRacingExitNeverReportsFalseSuccess drives the real
-// loop against concurrent submits: the lane's idle timeout is one
-// tick away from firing, so its exit races the senders the whole
-// way. Every SubmitMsg that reports success must eventually run —
-// the sink's user rows are the proof.
-func TestSubmitMsgRacingExitNeverReportsFalseSuccess(t *testing.T) {
 	var sinkMu sync.Mutex
 	var persisted strings.Builder
 	sink := func(_ context.Context, _ string, msgs []apitypes.ThreadMessageDraft) error {
@@ -79,34 +48,19 @@ func TestSubmitMsgRacingExitNeverReportsFalseSuccess(t *testing.T) {
 		}
 		return nil
 	}
-	noModel := func(context.Context, *apitypes.ModelEntry) (backend.ResolvedModel, error) {
-		// The resolver failing is fine: the user row persists before
-		// any resolution, so it still proves the turn ran.
-		return backend.ResolvedModel{}, errors.New("no model in race test")
-	}
 
+	// A nanosecond idle timeout makes the worker's exit race the
+	// senders the whole way through.
 	m := NewUserAgentManager(zerolog.Nop(), &UserAgentManagerOptions{
-		ResolveModel: noModel,
+		ResolveModel: resolver,
 		PersistTurn:  sink,
+		IdleTimeout:  time.Nanosecond,
 	})
 
-	lane := &agentLane{
-		msgCh: make(chan Message, defaultMsgQueueSize),
-		done:  make(chan struct{}),
-	}
-	lane.once.Do(func() {}) // arm init: SubmitMsg must not rebuild the lane
-	lane.agent = newUserAgent(context.WithoutCancel(context.Background()), UserAgentOptions{
-		AgentID:     "agent-race",
-		MsgCh:       lane.msgCh,
-		IdleTimeout: time.Nanosecond, // the exit races the senders
-		PersistTurn: sink,
-		Logger:      zerolog.Nop(),
-		OnExit: func() {
-			close(lane.done)
-			m.lanes.Delete("agent-race")
-		},
-	})
-	m.lanes.Store("agent-race", lane)
+	s := m.state("agent-race")
+	s.workerMu.Lock()
+	s.worker = m.newWorker(s)
+	s.workerMu.Unlock()
 
 	const racers = 64
 	accepted := make([]bool, racers)
@@ -115,14 +69,15 @@ func TestSubmitMsgRacingExitNeverReportsFalseSuccess(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			accepted[i] = m.SubmitMsg(context.Background(), "agent-race",
-				"conn-1", nil, Message{ID: "m", Content: fmt.Sprintf("hi-%d", i)})
+			_, err := m.Submit("agent-race", "conn-1", nil,
+				fmt.Sprintf("hi-%d", i), nil)
+			accepted[i] = err == nil
 		}()
 	}
 	wg.Wait()
 
-	// Every reported success must show up as a persisted prompt;
-	// an orphaned buffer message never would.
+	// Every reported success must show up as a persisted prompt; an
+	// item stranded in a dead worker's wake never would.
 	require.Eventually(t, func() bool {
 		sinkMu.Lock()
 		defer sinkMu.Unlock()
@@ -133,6 +88,6 @@ func TestSubmitMsgRacingExitNeverReportsFalseSuccess(t *testing.T) {
 			}
 		}
 		return true
-	}, 5*time.Second, 10*time.Millisecond,
+	}, 10*time.Second, 10*time.Millisecond,
 		"a submit reported success but its prompt never ran")
 }

@@ -1,12 +1,13 @@
 package agent_test
 
 // Mid-turn join pins: a connection attached while a turn streams
-// first receives the turn's accumulated text as one replay chunk —
-// ordered before the chunks still to come — so a page reopened
-// mid-turn isn't frozen out of the live tail.
+// first receives the queue snapshot, then the turn's accumulated
+// text as one replay chunk — ordered before the chunks still to
+// come — so a page reopened mid-turn isn't frozen out of the live
+// tail. Joining an agent without a worker still subscribes: the
+// queue outlives the worker.
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -37,7 +38,7 @@ func gatedStream(t *testing.T) (url string, release chan struct{}) {
 	return llm.URL, release
 }
 
-func TestJoinMidTurnReplaysPrefix(t *testing.T) {
+func TestJoinMidTurnReplaysQueueThenPrefix(t *testing.T) {
 	url, release := gatedStream(t)
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
@@ -46,9 +47,7 @@ func TestJoinMidTurnReplaysPrefix(t *testing.T) {
 	c1, sc1 := wsPair(t)
 	c2, sc2 := wsPair(t)
 
-	ok := mgr.SubmitMsg(context.Background(), "agent-join", "conn-1", sc1,
-		agent.Message{ID: "msg-1", Content: "hi"})
-	require.True(t, ok)
+	itemID := submit(t, mgr, "agent-join", "conn-1", sc1, "hi")
 
 	// conn-1 confirms the first chunk is on the wire; the prefix is
 	// now replayable.
@@ -62,12 +61,22 @@ func TestJoinMidTurnReplaysPrefix(t *testing.T) {
 	mgr.Join("agent-join", "conn-2", sc2)
 	close(release)
 
-	// The joiner sees the replayed prefix, the live remainder, the
-	// final message, and the turn-end status — in order.
+	// The joiner sees the queue snapshot first — the running item is
+	// active, not lost — then the replayed prefix, the live
+	// remainder, the final message, and the turn-end status, in
+	// order.
+	snapshot := readQueueState(t, c2)
+	require.NotNil(t, snapshot.Active)
+	require.Equal(t, itemID, snapshot.Active.ID)
+	require.NotEmpty(t, snapshot.Active.UserMessageID,
+		"the joiner can render the running turn's user row")
+	require.Empty(t, snapshot.Items)
+	require.False(t, snapshot.Paused)
+
 	ev := readEvent(t, c2)
 	require.Equal(t, wstypes.EventTypeMessageChunk, ev.Type)
 	p := eventPayload[wstypes.MessageChunkEvent](t, ev)
-	require.Equal(t, "msg-1", p.ID)
+	require.Equal(t, itemID, p.ID)
 	require.Equal(t, "par ", p.Delta)
 
 	ev = readEvent(t, c2)
@@ -85,12 +94,23 @@ func TestJoinMidTurnReplaysPrefix(t *testing.T) {
 	require.False(t, ended.Working)
 }
 
-func TestJoinWithoutLaneIsNoOp(t *testing.T) {
+// TestJoinWithoutWorkerSubscribesToQueue pins the subscribe-first
+// lifecycle: a joiner arriving before any prompt — or after the
+// worker's idle exit — attaches to the queue state and receives its
+// snapshot without a worker ever running.
+func TestJoinWithoutWorkerSubscribesToQueue(t *testing.T) {
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{ResolveModel: fixedResolver("http://unused")})
 
-	_, sc := wsPair(t)
-	// No lane exists for this agent; joining must not create one.
+	c, sc := wsPair(t)
 	mgr.Join("agent-nolane", "conn-1", sc)
-	require.Nil(t, mgr.Get("agent-nolane"))
+
+	require.Nil(t, mgr.Get("agent-nolane"), "join must not spawn a worker")
+
+	// The empty snapshot is on the wire for the joiner.
+	snapshot := readQueueState(t, c)
+	require.Empty(t, snapshot.Items)
+	require.False(t, snapshot.Paused)
+
+	require.Equal(t, 1, mgr.Status("agent-nolane").ConnCount)
 }

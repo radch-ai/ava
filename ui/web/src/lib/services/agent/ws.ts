@@ -11,10 +11,15 @@
  * by `just typegen` (gateway/wstypes → wstypes.gen).
  *
  * Browsers never auto-reconnect WebSockets, so this module owns the
- * retry loop: any drop schedules a backoff reconnect, and messages
- * queued in the gap flush on reopen. Liveness itself is the gateway's
- * job (protocol-level pings); a closed socket here means the gateway
- * went away or the network did.
+ * retry loop. Mutations (prompt, send_now) are request-correlated
+ * and answered by queue_result; they are never buffered across a
+ * reconnect — an admission is the gateway's to confirm, and a frame
+ * replayed after a gap could arrive in a different world than the
+ * one it was typed in. A lost connection settles outstanding
+ * operations as unconfirmed; the caller keeps the draft, and the
+ * queue snapshot that follows the next live transition is the truth.
+ * Liveness itself is the gateway's job (protocol-level pings); a
+ * closed socket here means the gateway went away or the network did.
  */
 
 import type { ModelSelection } from '#lib/models'
@@ -27,11 +32,14 @@ import type {
 	MessageChunkEvent,
 	MessageEvent,
 	PromptMessage,
+	QueueResultEvent,
+	QueueStateEvent,
+	SendNowMessage,
 	ToolCallEvent,
 	ToolResultEvent
 } from '#lib/types/gen/wstypes.gen'
 
-export type { LaneStatus }
+export type { LaneStatus, QueueResultEvent, QueueStateEvent }
 
 /** Events the gateway sends. Types without an arm here are dropped at
  * the decode boundary. */
@@ -43,11 +51,14 @@ export type AgentSocketEvent =
 	| (Event & { type: 'tool_result'; data: ToolResultEvent })
 	| (Event & { type: 'message'; data: MessageEvent })
 	| (Event & { type: 'error'; data: ErrorEvent })
+	| (Event & { type: 'queue_result'; data: QueueResultEvent })
+	| (Event & { type: 'queue_state'; data: QueueStateEvent })
 
 /** Client wire frames: the envelope head plus the per-kind payload
  * (gateway/wstypes → wstypes.gen). */
 export type ClientMessage =
 	| (Envelope & { type: 'prompt'; data: PromptMessage })
+	| (Envelope & { type: 'send_now'; data: SendNowMessage })
 	| (Envelope & { type: 'status' })
 	| (Envelope & { type: 'interrupt' })
 
@@ -55,10 +66,27 @@ export type ClientMessage =
  * the gateway's connected event, not by the TCP handshake. */
 export type AgentSocketState = 'connecting' | 'live' | 'reconnecting'
 
+/** One queue operation's outcome, correlated by request id. */
+export interface QueueOperation {
+	accepted: boolean
+	/** The admitted or targeted item's stable id, when known. */
+	itemId?: string
+	/** User-facing rejection reason; empty when accepted. */
+	error?: string
+}
+
 /** The handle a conversation surface owns: send frames, drop the
  * connection. Reconnects happen inside. */
 export interface AgentSocket {
-	sendPrompt(content: string, selection: ModelSelection): void
+	/** Enqueues a prompt; resolves when the gateway answers. */
+	sendPrompt(
+		content: string,
+		selection: ModelSelection
+	): Promise<QueueOperation>
+	/** Promotes one pending item to run next; the selection rides the
+	 * frame so a paused queue can rebind its failed-model entries.
+	 * Resolves on the answer. */
+	sendNow(itemId: string, selection: ModelSelection): Promise<QueueOperation>
 	/** The gateway replies with a `lane_status` event. */
 	requestStatus(): void
 	/** Cancels the running turn; the lane broadcasts its end. */
@@ -68,6 +96,9 @@ export interface AgentSocket {
 
 const RECONNECT_BASE_MS = 1000
 const RECONNECT_CAP_MS = 15000
+/** How long a mutation waits for its queue_result before resolving
+ * as unconfirmed — a lost ack must not disable the composer forever. */
+const ACK_TIMEOUT_MS = 15_000
 
 /** Decode one wire frame into its typed event; the only place raw
  * payload data is cast. */
@@ -121,6 +152,18 @@ function decodeEvent(frame: unknown): AgentSocketEvent | undefined {
 				agent_id: typed.agent_id as string,
 				data: typed.data as ErrorEvent
 			}
+		case 'queue_result':
+			return {
+				type: 'queue_result',
+				agent_id: typed.agent_id as string,
+				data: typed.data as QueueResultEvent
+			}
+		case 'queue_state':
+			return {
+				type: 'queue_state',
+				agent_id: typed.agent_id as string,
+				data: typed.data as QueueStateEvent
+			}
 		default:
 			console.debug('agent socket: untyped event', frame)
 			return undefined
@@ -136,38 +179,68 @@ export function createAgentSocket(
 	let closedByUs = false
 	let reconnectAttempts = 0
 	let reconnectTimer: ReturnType<typeof setTimeout> | undefined
-	const pending: ClientMessage[] = []
 
-	function setState(state: AgentSocketState) {
-		onState?.(state)
+	// Outstanding request-correlated operations: settled by the
+	// matching queue_result, as unconfirmed when the connection they
+	// rode is gone, or as unconfirmed when the ack times out.
+	interface PendingOp {
+		settle: (result: QueueOperation) => void
+		timer: ReturnType<typeof setTimeout>
+	}
+	const pendingOps = new Map<string, PendingOp>()
+
+	function settleOp(requestId: string, result: QueueOperation) {
+		const op = pendingOps.get(requestId)
+		if (!op) {
+			return
+		}
+		pendingOps.delete(requestId)
+		clearTimeout(op.timer)
+		op.settle(result)
+	}
+
+	function settleUnconfirmed(detail: string) {
+		for (const [requestId, op] of pendingOps) {
+			pendingOps.delete(requestId)
+			clearTimeout(op.timer)
+			op.settle({ accepted: false, error: detail })
+		}
 	}
 
 	function connect() {
-		// Same-origin /ws like the api client's /api: proxied by the vite
-		// dev/preview servers; prod serves it from the single binary.
-		setState(reconnectAttempts > 0 ? 'reconnecting' : 'connecting')
+		// Same-origin /ws like the api client's /api: proxied by the
+		// vite dev/preview servers; prod serves it from the single
+		// binary.
+		onState?.(reconnectAttempts > 0 ? 'reconnecting' : 'connecting')
 		socket = new WebSocket('/ws')
-		socket.onopen = () => {
-			for (const msg of pending.splice(0)) {
-				send(msg)
-			}
-		}
 		socket.onmessage = (message) => {
 			try {
 				const event = decodeEvent(JSON.parse(message.data))
-				if (event) {
-					if (event.type === 'connected') {
-						reconnectAttempts = 0
-						setState('live')
-					}
-					onEvent(event)
+				if (!event) {
+					return
 				}
+				if (event.type === 'connected') {
+					reconnectAttempts = 0
+					onState?.('live')
+				}
+				if (event.type === 'queue_result') {
+					settleOp(event.data.request_id, {
+						accepted: event.data.accepted,
+						itemId: event.data.item_id || undefined,
+						error: event.data.error || undefined
+					})
+				}
+				onEvent(event)
 			} catch {
 				console.warn('agent socket: unparseable frame', message.data)
 			}
 		}
 		socket.onclose = () => {
 			socket = undefined
+			// A mutation that never heard back is unconfirmed, not
+			// rejected: the reconnect's fresh queue snapshot is the
+			// truth, so no frame ever replays from here.
+			settleUnconfirmed('connection lost before the gateway answered')
 			if (closedByUs) {
 				return
 			}
@@ -180,7 +253,7 @@ export function createAgentSocket(
 			Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempts, RECONNECT_CAP_MS) *
 			(0.75 + Math.random() / 2)
 		reconnectAttempts += 1
-		setState('reconnecting')
+		onState?.('reconnecting')
 		reconnectTimer = setTimeout(() => {
 			reconnectTimer = undefined
 			if (!socket) {
@@ -189,16 +262,35 @@ export function createAgentSocket(
 		}, delay)
 	}
 
-	function send(msg: ClientMessage) {
-		if (!socket || socket.readyState !== WebSocket.OPEN) {
-			pending.push(msg)
-			return
+	/** Mutations require a live connection; they are never buffered,
+	 * and a socket closed by us never reopens. */
+	function submitMutation(
+		build: (requestId: string) => ClientMessage
+	): Promise<QueueOperation> {
+		if (closedByUs || !socket || socket.readyState !== WebSocket.OPEN) {
+			return Promise.reject(new Error('not connected'))
 		}
-		socket.send(JSON.stringify(msg))
+		const requestId = crypto.randomUUID()
+		const { promise, resolve } = Promise.withResolvers<QueueOperation>()
+		const timer = setTimeout(() => {
+			settleOp(requestId, {
+				accepted: false,
+				error: 'unconfirmed: the gateway did not answer in time'
+			})
+		}, ACK_TIMEOUT_MS)
+		pendingOps.set(requestId, { settle: resolve, timer })
+		socket.send(JSON.stringify(build(requestId)))
+		return promise
+	}
+
+	function sendFrame(msg: ClientMessage) {
+		if (socket && socket.readyState === WebSocket.OPEN) {
+			socket.send(JSON.stringify(msg))
+		}
 	}
 
 	function ensureConnected() {
-		if (!socket && !reconnectTimer) {
+		if (!closedByUs && !socket && !reconnectTimer) {
 			connect()
 		}
 	}
@@ -210,31 +302,45 @@ export function createAgentSocket(
 
 	return {
 		sendPrompt(content: string, selection: ModelSelection) {
-			ensureConnected()
-			send({
+			return submitMutation((requestId) => ({
 				type: 'prompt',
 				agent_id: agentId,
 				data: {
+					request_id: requestId,
 					content,
 					// ws frames use provider_id casing
 					model: selection
 						? { id: selection.id, provider_id: selection.providerId }
 						: undefined
 				}
-			})
+			}))
+		},
+		sendNow(itemId: string, selection: ModelSelection) {
+			return submitMutation((requestId) => ({
+				type: 'send_now',
+				agent_id: agentId,
+				data: {
+					request_id: requestId,
+					item_id: itemId,
+					// ws frames use provider_id casing
+					model: selection
+						? { id: selection.id, provider_id: selection.providerId }
+						: undefined
+				}
+			}))
 		},
 		requestStatus() {
-			ensureConnected()
-			send({ type: 'status', agent_id: agentId })
+			sendFrame({ type: 'status', agent_id: agentId })
 		},
 		sendInterrupt() {
-			ensureConnected()
-			send({ type: 'interrupt', agent_id: agentId })
+			sendFrame({ type: 'interrupt', agent_id: agentId })
 		},
 
+		/** Terminal: a closed socket never reopens — the page owns a
+		 * fresh socket per mount. */
 		close() {
 			closedByUs = true
-			pending.length = 0
+			settleUnconfirmed('closed before the gateway answered')
 			if (reconnectTimer) {
 				clearTimeout(reconnectTimer)
 				reconnectTimer = undefined

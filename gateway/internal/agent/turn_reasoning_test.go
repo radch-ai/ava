@@ -1,14 +1,13 @@
 package agent_test
 
 // Reasoning pins: reasoning is a lane fact. The streamed answer
-// flips the lane's reasoning flag on at the first reasoning token
+// flips the worker's reasoning flag on at the first reasoning token
 // and off when the answer or the stream ends, and the lane_status
 // broadcasts carry the transitions — a join mid-thought reads the
-// flag from its status reply. Reasoning text itself never rides
-// the wire or lands in the thread.
+// flag from its status reply. Reasoning text itself never rides the
+// wire or lands in the thread.
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -30,7 +29,7 @@ func sseReasoningChunk(delta string) string {
 		"model": "test-model",
 		"choices": []any{map[string]any{
 			"index": 0, "finish_reason": nil,
-			"delta": map[string]any{"reasoning_content": delta},
+			"delta": map[string]any{"role": "assistant", "reasoning_content": delta},
 		}},
 	}
 	raw, _ := json.Marshal(payload)
@@ -43,26 +42,28 @@ func reasoningServer(t *testing.T) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)
-		for _, frame := range []string{
-			sseReasoningChunk("thinking hard "),
-			sseReasoningChunk("about it"),
-			sseChunk("the answer"),
-		} {
-			_, _ = w.Write([]byte(frame))
-			flusher.Flush()
-		}
+		_, _ = w.Write([]byte(sseReasoningChunk("pondering")))
+		flusher.Flush()
+		_, _ = w.Write([]byte(sseChunk("the answer")))
+		flusher.Flush()
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 }
 
 // nextLaneStatus reads events until the next lane_status and returns
-// its payload; turn output in between fails the pin.
+// its payload; queue traffic in between is fine, turn output is not.
 func nextLaneStatus(t *testing.T, c *websocket.Conn) wstypes.LaneStatus {
 	t.Helper()
 	for {
 		ev := readEvent(t, c)
-		require.Equal(t, wstypes.EventTypeLaneStatus, ev.Type, "unexpected event")
-		return eventPayload[wstypes.LaneStatus](t, ev)
+		switch ev.Type {
+		case wstypes.EventTypeQueueState, wstypes.EventTypeQueueResult:
+			continue
+		case wstypes.EventTypeLaneStatus:
+			return eventPayload[wstypes.LaneStatus](t, ev)
+		default:
+			t.Fatalf("unexpected event %v", ev.Type)
+		}
 	}
 }
 
@@ -75,9 +76,7 @@ func TestTurnSignalsReasoningPhases(t *testing.T) {
 
 	c, sc := wsPair(t)
 
-	ok := mgr.SubmitMsg(context.Background(), "agent-reason", "conn-1", sc,
-		agent.Message{ID: "msg-1", Content: "hi"})
-	require.True(t, ok)
+	submit(t, mgr, "agent-reason", "conn-1", sc, "hi")
 
 	// The turn brackets itself with working; reasoning flips on at
 	// the first reasoning token — before any turn output — and off
@@ -118,9 +117,7 @@ func TestReasoningSignalResetsWhenTheStreamEndsUnanswered(t *testing.T) {
 
 	c, sc := wsPair(t)
 
-	ok := mgr.SubmitMsg(context.Background(), "agent-reason-end", "conn-1", sc,
-		agent.Message{ID: "msg-2", Content: "hi"})
-	require.True(t, ok)
+	submit(t, mgr, "agent-reason-end", "conn-1", sc, "hi")
 
 	started := nextLaneStatus(t, c)
 	require.True(t, started.Working)

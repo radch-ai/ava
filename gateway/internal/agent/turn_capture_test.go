@@ -57,9 +57,7 @@ func TestToolRoundEmitsWireEventsInOrder(t *testing.T) {
 		[]string{toolCallChunk("echo_tool") + toolCallDone(), sseChunk("final answer")}, nil)
 
 	c, sc := wsPair(t)
-	ok := mgr.SubmitMsg(context.Background(), "agent-capwire", "conn-1", sc,
-		agent.Message{ID: "msg-1", Content: "search for otters"})
-	require.True(t, ok)
+	itemID := submit(t, mgr, "agent-capwire", "conn-1", sc, "search for otters")
 
 	frames := readAllUntilMessage(t, c)
 	var call wstypes.ToolCallEvent
@@ -82,9 +80,11 @@ func TestToolRoundEmitsWireEventsInOrder(t *testing.T) {
 	}
 	require.Equal(t, []string{"call", "result", "chunk", "message"}, order)
 	require.Equal(t, "call-1", call.ID)
+	require.Equal(t, itemID, call.TurnID, "tool events carry their turn's item id")
 	require.Equal(t, "echo_tool", call.Name)
 	require.Equal(t, `{"query":"plush otters"}`, call.Args)
 	require.Equal(t, "call-1", result.ID)
+	require.Equal(t, itemID, result.TurnID)
 	require.Equal(t, "tool says hi", result.Result)
 	require.Nil(t, result.Error)
 }
@@ -94,11 +94,8 @@ func TestToolRowPersistsBetweenUserAndAssistant(t *testing.T) {
 	sink := &recordingSink{}
 	mgr := toolRoundManager(t, echo,
 		[]string{toolCallChunk("echo_tool") + toolCallDone(), sseChunk("final answer")}, sink.persist)
-
 	c, sc := wsPair(t)
-	ok := mgr.SubmitMsg(context.Background(), "agent-cappersist", "conn-1", sc,
-		agent.Message{ID: "msg-1", Content: "search for otters"})
-	require.True(t, ok)
+	submit(t, mgr, "agent-cappersist", "conn-1", sc, "search for otters")
 	_, p := readUntilMessage(t, c)
 	require.Equal(t, "final answer", p.Content)
 
@@ -143,11 +140,8 @@ func TestMidTurnSinkFailureStillCompletesTurn(t *testing.T) {
 	sink := &toolFailingSink{failFor: apitypes.ThreadRoleTool}
 	mgr := toolRoundManager(t, echo,
 		[]string{toolCallChunk("echo_tool") + toolCallDone(), sseChunk("final answer")}, sink.persist)
-
 	c, sc := wsPair(t)
-	ok := mgr.SubmitMsg(context.Background(), "agent-capsink", "conn-1", sc,
-		agent.Message{ID: "msg-1", Content: "search for otters"})
-	require.True(t, ok)
+	submit(t, mgr, "agent-capsink", "conn-1", sc, "search for otters")
 
 	// The tool row's failed write costs nothing: no error event, the
 	// answer arrives, and every write was still attempted.
@@ -170,9 +164,7 @@ func TestToolFailureTextMatchesPersistedRow(t *testing.T) {
 		[]string{toolCallChunk("echo_tool") + toolCallDone(), sseChunk("never reached")}, sink.persist)
 
 	c, sc := wsPair(t)
-	ok := mgr.SubmitMsg(context.Background(), "agent-capfail", "conn-1", sc,
-		agent.Message{ID: "msg-1", Content: "search for otters"})
-	require.True(t, ok)
+	submit(t, mgr, "agent-capfail", "conn-1", sc, "search for otters")
 
 	var resultErr *string
 	for {

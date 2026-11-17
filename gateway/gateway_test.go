@@ -96,16 +96,18 @@ func TestPromptWithoutResolverEmitsError(t *testing.T) {
 	}
 
 	// The lane runs the turn; with no model resolver bound, the turn
-	// fails and the failure reaches the wire. The turn is bracketed
-	// by lane_status events; read past them to the outcome.
+	// fails and the failure reaches the wire. Queue admission and the
+	// turn's lane_status bracket come first; read past them.
 	var event map[string]any
 	for {
 		if err := wsjson.Read(ctx, conn, &event); err != nil {
 			t.Fatalf("reading turn outcome failed: %v", err)
 		}
-		if event["type"] != "lane_status" {
-			break
+		switch event["type"] {
+		case "lane_status", "queue_result", "queue_state":
+			continue
 		}
+		break
 	}
 	if event["type"] != "error" {
 		t.Fatalf("expected error event, got %v", event["type"])
@@ -139,16 +141,18 @@ func TestPromptResolverErrorReachesWire(t *testing.T) {
 	}
 
 	// A resolver failure — provider missing from the store — reaches
-	// the submitting connection verbatim, past the turn's lane_status
-	// bracket.
+	// the submitting connection verbatim, past the queue admission
+	// ack and the turn's lane_status bracket.
 	var event map[string]any
 	for {
 		if err := wsjson.Read(ctx, conn, &event); err != nil {
 			t.Fatalf("reading turn outcome failed: %v", err)
 		}
-		if event["type"] != "lane_status" {
-			break
+		switch event["type"] {
+		case "lane_status", "queue_result", "queue_state":
+			continue
 		}
+		break
 	}
 	if event["type"] != "error" {
 		t.Fatalf("expected error event, got %v", event["type"])
@@ -198,6 +202,146 @@ func TestStatusRepliesLaneStatus(t *testing.T) {
 	}
 	if data["conn_count"] != float64(0) {
 		t.Errorf("status for a lane-less agent should have no connections, got %v", data["conn_count"])
+	}
+}
+
+// A status frame binds the socket to one agent exactly like a prompt:
+// a cross-agent frame afterwards is rejected, not a silent re-bind.
+func TestStatusBindsAgentLikePrompt(t *testing.T) {
+	conn, ctx := dialGateway(t)
+
+	// Join agent A through the status frame and read its reply.
+	err := wsjson.Write(ctx, conn, map[string]string{
+		"type": "status", "agent_id": "agent-a",
+	})
+	if err != nil {
+		t.Fatalf("writing status failed: %v", err)
+	}
+	var laneStatus map[string]any
+	if err := wsjson.Read(ctx, conn, &laneStatus); err != nil {
+		t.Fatalf("reading lane_status failed: %v", err)
+	}
+	if laneStatus["type"] != "lane_status" {
+		t.Fatalf("expected lane_status, got %v", laneStatus["type"])
+	}
+
+	// A prompt for agent B on the same socket is dropped; then a
+	// prompt for the bound agent is admitted. The first queue_result
+	// to arrive must answer the bound prompt — the cross-agent frame
+	// is never answered.
+	err = wsjson.Write(ctx, conn, map[string]any{
+		"type": "prompt", "agent_id": "agent-b",
+		"data": map[string]any{"request_id": "r1", "content": "hi"},
+	})
+	if err != nil {
+		t.Fatalf("writing cross-agent prompt failed: %v", err)
+	}
+	err = wsjson.Write(ctx, conn, map[string]any{
+		"type": "prompt", "agent_id": "agent-a",
+		"data": map[string]any{"request_id": "r2", "content": "hi"},
+	})
+	if err != nil {
+		t.Fatalf("writing bound prompt failed: %v", err)
+	}
+	for {
+		var event map[string]any
+		if err := wsjson.Read(ctx, conn, &event); err != nil {
+			t.Fatalf("reading queue_result failed: %v", err)
+		}
+		if event["type"] != "queue_result" {
+			continue
+		}
+		data := event["data"].(map[string]any)
+		if data["request_id"] == "r1" {
+			t.Fatal("cross-agent prompt must not be answered")
+		}
+		if data["request_id"] != "r2" {
+			continue
+		}
+		if data["accepted"] != true {
+			t.Fatalf("bound-agent prompt must be accepted, got %+v", data)
+		}
+		break
+	}
+}
+
+// Prompt content is validated at admission: whitespace-only and
+// over-length prompts are rejected through queue_result with no queue
+// state change, and admitted content is trimmed.
+func TestPromptContentValidated(t *testing.T) {
+	conn, ctx := dialGateway(t)
+
+	write := func(requestID, content string) {
+		t.Helper()
+		err := wsjson.Write(ctx, conn, map[string]any{
+			"type": "prompt", "agent_id": "_superagent",
+			"data": map[string]any{"request_id": requestID, "content": content},
+		})
+		if err != nil {
+			t.Fatalf("writing prompt %s failed: %v", requestID, err)
+		}
+	}
+	// readResult waits for the named reply. A rejected prompt must not
+	// mutate the queue, so any queue_state seen while waiting for a
+	// rejection's reply fails the test; the accepted prompt's state
+	// is expected only after its reply.
+	readResult := func(requestID string, allowQueueState bool) map[string]any {
+		t.Helper()
+		for {
+			var event map[string]any
+			if err := wsjson.Read(ctx, conn, &event); err != nil {
+				t.Fatalf("reading events failed: %v", err)
+			}
+			if event["type"] == "queue_state" {
+				if !allowQueueState {
+					t.Fatalf("rejected prompt %s changed queue state: %+v", requestID, event["data"])
+				}
+				continue
+			}
+			if event["type"] != "queue_result" {
+				continue
+			}
+			data := event["data"].(map[string]any)
+			if data["request_id"] == requestID {
+				return data
+			}
+		}
+	}
+
+	write("ws", "   ")
+	if data := readResult("ws", false); data["accepted"] != false {
+		t.Fatalf("whitespace prompt must be rejected, got %+v", data)
+	} else if msg, _ := data["error"].(string); msg == "" {
+		t.Fatal("rejection must carry a reason")
+	}
+
+	write("long", strings.Repeat("x", 64<<10+1))
+	if data := readResult("long", false); data["accepted"] != false {
+		t.Fatalf("over-length prompt must be rejected, got %+v", data)
+	}
+
+	write("trim", "  hi  ")
+	if data := readResult("trim", true); data["accepted"] != true {
+		t.Fatalf("trimmable prompt must be accepted, got %+v", data)
+	}
+	for {
+		var event map[string]any
+		if err := wsjson.Read(ctx, conn, &event); err != nil {
+			t.Fatalf("reading queue snapshot failed: %v", err)
+		}
+		if event["type"] != "queue_state" {
+			continue
+		}
+		snapshot := event["data"].(map[string]any)
+		items, _ := snapshot["items"].([]any)
+		if len(items) == 0 {
+			t.Fatalf("expected the admitted item in the snapshot, got %+v", snapshot)
+		}
+		first := items[0].(map[string]any)
+		if first["content"] != "hi" {
+			t.Fatalf("admitted content must be trimmed, got %q", first["content"])
+		}
+		break
 	}
 }
 
@@ -294,7 +438,11 @@ func TestStatusJoinsLaneAndReplaysPrefix(t *testing.T) {
 
 	close(release)
 
+	// The join backlog carries the queue snapshot before the prefix.
 	chunk := read()
+	for chunk["type"] == "queue_state" {
+		chunk = read()
+	}
 	if chunk["type"] != "message_chunk" {
 		t.Fatalf("expected replayed chunk, got %v", chunk["type"])
 	}
@@ -374,22 +522,31 @@ func TestStatusReflectsLiveLane(t *testing.T) {
 		t.Fatalf("writing status request failed: %v", err)
 	}
 
-	var event map[string]any
-	if err := wsjson.Read(ctx, conn, &event); err != nil {
-		t.Fatalf("reading lane_status failed: %v", err)
-	}
-	data, ok := event["data"].(map[string]any)
-	if !ok {
-		t.Fatalf("lane_status data is not a map: %+v", event["data"])
-	}
-	if data["active"] != true {
-		t.Errorf("live lane should be active, got %v", data["active"])
-	}
-	if data["model"] != "gpt-4o" {
-		t.Errorf("live lane should report the submitted model, got %v", data["model"])
-	}
-	if data["conn_count"].(float64) < 1 {
-		t.Errorf("submitting connection should be counted, got %v", data["conn_count"])
+	// The connection carries the admission ack and queue snapshots
+	// before the status reply; drain until the live lane reports
+	// itself with the submitted model.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var event map[string]any
+		if err := wsjson.Read(ctx, conn, &event); err != nil {
+			t.Fatalf("reading lane_status failed: %v", err)
+		}
+		if event["type"] != "lane_status" {
+			continue
+		}
+		data, ok := event["data"].(map[string]any)
+		if !ok {
+			t.Fatalf("lane_status data is not a map: %+v", event["data"])
+		}
+		if data["active"] == true && data["model"] == "gpt-4o" {
+			if data["conn_count"].(float64) < 1 {
+				t.Errorf("submitting connection should be counted, got %v", data["conn_count"])
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("live lane never reported the submitted model: %+v", data)
+		}
 	}
 }
 
@@ -430,9 +587,17 @@ func TestDisconnectDropsFromLane(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("writing status request failed: %v", err)
 		}
+		// Drain queue traffic from the prompts; the next lane_status
+		// this poll reads is the reply.
 		var event map[string]any
-		if err := wsjson.Read(ctx, conn1, &event); err != nil {
-			t.Fatalf("reading lane_status failed: %v", err)
+		for {
+			if err := wsjson.Read(ctx, conn1, &event); err != nil {
+				t.Fatalf("reading lane_status failed: %v", err)
+			}
+			if event["type"] != "lane_status" {
+				continue
+			}
+			break
 		}
 		if event["data"].(map[string]any)["conn_count"].(float64) == 1 {
 			return

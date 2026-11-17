@@ -6,6 +6,7 @@ package agent_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
+	"github.com/radch-ai/ava/backend"
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/gateway/internal/agent"
 	"github.com/radch-ai/ava/gateway/wstypes"
@@ -39,9 +41,8 @@ func TestDrainInterruptsAndSettlesTurns(t *testing.T) {
 
 	c, sc := wsPair(t)
 
-	ok := mgr.SubmitMsg(context.Background(), "agent-drain", "conn-1", sc,
-		agent.Message{ID: "msg-1", Content: "hi"})
-	require.True(t, ok)
+	_, err := mgr.Submit("agent-drain", "conn-1", sc, "hi", nil)
+	require.NoError(t, err)
 
 	// The turn is streaming its partial; wait for it to reach the
 	// wire so there is something worth settling.
@@ -65,5 +66,40 @@ func TestDrainInterruptsAndSettlesTurns(t *testing.T) {
 		[]apitypes.ThreadMessageDraft{{Role: apitypes.ThreadRoleAssistant, Content: "par "}},
 		calls[1])
 
-	require.False(t, mgr.Get("agent-drain").LaneStatus().Working)
+	require.False(t, mgr.Status("agent-drain").Working)
+}
+
+// Drain ends the queue for good: a drained worker exits with the
+// manager's root context, and no replacement spawns behind it — the
+// gate would hold every claim anyway.
+func TestDrainStopsWorkersWithoutRespawn(t *testing.T) {
+	failing := func(context.Context, *apitypes.ModelEntry) (backend.ResolvedModel, error) {
+		return backend.ResolvedModel{}, errors.New("no default model set")
+	}
+	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+		&agent.UserAgentManagerOptions{ResolveModel: failing})
+
+	c, sc := wsPair(t)
+
+	// The first turn fails instantly, pausing with the second item
+	// waiting: a live worker with work it can never claim.
+	submit(t, mgr, "agent-drainstop", "conn-1", sc, "hi")
+	submit(t, mgr, "agent-drainstop", "conn-1", sc, "again")
+
+	for settled := false; !settled; {
+		ev := readEvent(t, c)
+		if ev.Type != wstypes.EventTypeQueueState {
+			continue
+		}
+		settled = eventPayload[wstypes.QueueStateEvent](t, ev).Paused
+	}
+	require.NotNil(t, mgr.Get("agent-drainstop"),
+		"a paused queue with waiting work keeps its worker")
+
+	mgr.Drain(time.Second)
+
+	require.Eventually(t, func() bool {
+		return mgr.Get("agent-drainstop") == nil
+	}, 2*time.Second, 20*time.Millisecond,
+		"a drained worker exits with the manager root and no replacement spawns")
 }

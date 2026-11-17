@@ -1,5 +1,10 @@
 package agent
 
+// UserAgentManager owns one agentState per agent — the authoritative
+// queue and its subscribers — and spawns disposable runtime workers
+// on demand. A worker's idle exit releases the worker only; pending
+// work, pause state, and connections stay with the state.
+
 import (
 	"context"
 	"sync"
@@ -7,6 +12,9 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/rs/zerolog"
+
+	"github.com/radch-ai/ava/backend/apitypes"
+	"github.com/radch-ai/ava/gateway/wstypes"
 )
 
 // UserAgentManagerOptions configures a new UserAgentManager.
@@ -17,23 +25,30 @@ type UserAgentManagerOptions struct {
 	// PersistTurn appends turn messages to the thread for every
 	// lane; bound by the gateway at boot.
 	PersistTurn TurnSink
-	// GetAgentConfig reads an agent's config for each lane's
-	// prompts; bound by the gateway at boot.
+	// IdleTimeout overrides the worker's idle eviction; zero keeps
+	// the default. It exists for tests to shrink the wait.
+	IdleTimeout time.Duration
+	// GetAgentConfig reads an agent's editable config — the prompt
+	// texts and tool list a turn needs; bound by the gateway at boot.
 	GetAgentConfig AgentConfigSource
 	// Tools fetches each lane's effective tools per turn —
 	// permissions applied; nil leaves lanes tool-less.
 	Tools AgentToolsFunc
 }
 
-// UserAgentManager manages agent lanes with thread-safe access.
-// Uses sync.Map for lock-free reads.
+// UserAgentManager manages per-agent queue states with thread-safe
+// access. Uses sync.Map for lock-free reads.
 type UserAgentManager struct {
-	lanes          sync.Map // map[agentID]*agentLane
+	states         sync.Map // map[agentID]*agentState
 	logger         zerolog.Logger
 	resolveModel   ModelResolver
 	persistTurn    TurnSink
 	getAgentConfig AgentConfigSource
+	idleTimeout    time.Duration
 	tools          AgentToolsFunc
+
+	rootCtx    context.Context
+	rootCancel context.CancelFunc
 }
 
 // NewUserAgentManager creates a new UserAgentManager.
@@ -46,157 +61,210 @@ func NewUserAgentManager(logger zerolog.Logger, opts *UserAgentManagerOptions) *
 		m.persistTurn = opts.PersistTurn
 		m.getAgentConfig = opts.GetAgentConfig
 		m.tools = opts.Tools
+		m.idleTimeout = opts.IdleTimeout
 	}
+	m.rootCtx, m.rootCancel = context.WithCancel(context.Background())
 	return m
 }
 
-const (
-	defaultMsgQueueSize = 20
-)
-
-// agentLane holds the channel coordination and agent reference.
-// sync.Once ensures the lane and agent are initialized exactly once;
-// exitMu serializes the exit (closing done) against a submit's final
-// check-and-send so the two can never interleave.
-type agentLane struct {
-	once    sync.Once
-	exitMu  sync.Mutex
-	msgCh   chan Message   // message channel
-	done    chan struct{}  // closed when the agent exits
-	agentWg sync.WaitGroup // waits for agent to be initialized
-	agent   *UserAgent
+// state returns the agent's queue state, creating it if needed. The
+// state exists before any prompt: subscriptions attach to it even
+// while no worker runs.
+func (m *UserAgentManager) state(agentID string) *agentState {
+	if v, ok := m.states.Load(agentID); ok {
+		return v.(*agentState)
+	}
+	s := newAgentState(agentID, m.logger)
+	s.ensureWorker = func() { m.ensureWorker(s) }
+	actual, _ := m.states.LoadOrStore(agentID, s)
+	return actual.(*agentState)
 }
 
-// SubmitMsg sends a message to an agent, creating it if needed.
-// Also adds the connection to the agent's broadcaster for streaming.
-// Returns false if the agent has exited.
-func (m *UserAgentManager) SubmitMsg(ctx context.Context, agentID, connID string, conn *websocket.Conn, msg Message) bool {
-	key := agentID
-
-	// Get or create lane
-	lane := &agentLane{}
-	if actual, ok := m.lanes.LoadOrStore(key, lane); ok {
-		lane = actual.(*agentLane)
-	}
-
-	// Initialize lane and agent exactly once
-	lane.once.Do(func() {
-		lane.msgCh = make(chan Message, defaultMsgQueueSize)
-		lane.done = make(chan struct{})
-
-		lane.agentWg.Go(func() {
-			// The lane outlives the submitting connection: its
-			// lifetime is the idle timeout, not any one peer.
-			lane.agent = newUserAgent(context.WithoutCancel(ctx), UserAgentOptions{
-				AgentID:        agentID,
-				Model:          msg.Model,
-				MsgCh:          lane.msgCh,
-				ResolveModel:   m.resolveModel,
-				PersistTurn:    m.persistTurn,
-				GetAgentConfig: m.getAgentConfig,
-				Tools:          m.tools,
-				Logger:         m.logger,
-				OnExit: func() {
-					lane.exitMu.Lock()
-					defer lane.exitMu.Unlock()
-					close(lane.done)
-					m.lanes.Delete(key)
-				},
-			})
-		})
-	})
-
-	// once.Do returns as soon as the goroutine is launched, not when it finishes.
-	// All callers block here until lane.agent is initialized.
-	lane.agentWg.Wait()
-
-	// A lane whose agent already exited is rejected up front: the
-	// broadcaster must not see conns for a dead lane.
-	select {
-	case <-lane.done:
-		m.logger.Warn().Str("agent_id", agentID).Msg("submit dropped: lane exited")
-		return false
-	default:
-	}
-
-	// Add connection to agent's broadcaster and update model.
-	lane.agent.addConn(connID, conn)
-	lane.agent.updateModel(msg.Model)
-
-	// The exit lock closes the drop window for good: without it a
-	// select with both arms ready picks randomly, so a submit could
-	// land a message in a lane whose loop already decided to leave —
-	// success reported, prompt never run. Under the lock there is no
-	// middle state: either the send beats the close (the loop's
-	// emptiness check sees the message) or done is closed and the
-	// submit reports the drop.
-	lane.exitMu.Lock()
-	select {
-	case <-lane.done:
-		lane.exitMu.Unlock()
-		m.logger.Warn().Str("agent_id", agentID).Msg("submit dropped: lane exited")
-		return false
-	case lane.msgCh <- msg:
-		lane.exitMu.Unlock()
-		return true
-	}
-}
-
-// Join attaches a connection to an existing lane so it receives the
-// lane's events — including a replay of the live turn's streamed
-// prefix. A lane that doesn't exist stays nonexistent: the status
-// reply already reports an idle lane.
-func (m *UserAgentManager) Join(agentID, connID string, conn *websocket.Conn) {
-	val, ok := m.lanes.Load(agentID)
-	if !ok {
+// ensureWorker installs exactly one live worker on the state; the
+// worker claims from the queue and exits on idle without touching
+// the state's lifetime.
+func (m *UserAgentManager) ensureWorker(s *agentState) {
+	s.workerMu.Lock()
+	defer s.workerMu.Unlock()
+	if s.worker != nil {
 		return
 	}
-	lane := val.(*agentLane)
-	lane.agentWg.Wait()
-	lane.agent.Join(connID, conn)
+	s.worker = m.newWorker(s)
 }
 
-// Get returns the agent for agentID or nil if not found.
-func (m *UserAgentManager) Get(agentID string) *UserAgent {
-	key := agentID
+// newWorker builds and starts a worker; caller holds workerMu.
+func (m *UserAgentManager) newWorker(s *agentState) *UserAgent {
+	return newUserAgent(m.rootCtx, UserAgentOptions{
+		AgentID:        s.agentID,
+		State:          s,
+		IdleTimeout:    m.idleTimeout,
+		ResolveModel:   m.resolveModel,
+		PersistTurn:    m.persistTurn,
+		GetAgentConfig: m.getAgentConfig,
+		Tools:          m.tools,
+		Logger:         m.logger,
+		OnExit:         func(w *UserAgent) { m.workerExited(s, w) },
+	})
+}
 
-	if val, ok := m.lanes.Load(key); ok {
-		return val.(*agentLane).agent
+// workerExited clears a worker that finished. Only the matching
+// generation clears; a replacement may already be installed. Work
+// that arrived while the worker was leaving spawns a replacement —
+// an accepted item is never stranded in a dead worker's wake — but a
+// draining queue ends for good: no replacement runs a gated claim.
+func (m *UserAgentManager) workerExited(s *agentState, w *UserAgent) {
+	s.workerMu.Lock()
+	defer s.workerMu.Unlock()
+	if s.worker != w {
+		return
+	}
+	s.worker = nil
+	if s.hasWork() && !s.drainingNow() {
+		s.worker = m.newWorker(s)
+		return
+	}
+	if s.conns.Count() == 0 {
+		m.states.Delete(s.agentID)
+	}
+}
+
+// Submit attaches the connection to the agent's subscribers,
+// enqueues one prompt, and ensures a worker can pick it up. A
+// rejected admission (full queue, draining) still leaves the
+// connection subscribed; the gateway reports the rejection.
+func (m *UserAgentManager) Submit(agentID, connID string, conn *websocket.Conn, content string, model *apitypes.ModelEntry) (string, error) {
+	s := m.state(agentID)
+	s.conns.Add(connID, conn)
+	item, err := s.enqueue(content, model)
+	if err != nil {
+		return "", err
+	}
+	return item.id, nil
+}
+
+// SendNow promotes one pending item to run next, carrying the
+// caller's current model selection: a paused queue rebinds its
+// failed-model entries to it, a healthy queue ignores it. The
+// gateway maps the error to a rejected queue_result; the queue
+// mutates only on success.
+func (m *UserAgentManager) SendNow(agentID, itemID string, model *apitypes.ModelEntry) (string, error) {
+	s := m.state(agentID)
+	item, err := s.sendNow(itemID, model)
+	if err != nil {
+		return "", err
+	}
+	return item.id, nil
+}
+
+// Join attaches a connection to the agent's subscribers so it
+// receives the queue snapshot and, while a turn streams, its
+// streamed prefix — ordered before the chunks still to come.
+func (m *UserAgentManager) Join(agentID, connID string, conn *websocket.Conn) {
+	s := m.state(agentID)
+	s.workerMu.Lock()
+	w := s.worker
+	s.workerMu.Unlock()
+	if w != nil {
+		w.Join(connID, conn)
+		return
+	}
+	s.conns.AddWithBacklog(connID, conn, func() []any {
+		return []any{wstypes.Event{
+			Type:    wstypes.EventTypeQueueState,
+			AgentID: agentID,
+			Data:    s.stateSnapshot(),
+		}}
+	})
+}
+
+// Get returns the agent's live worker or nil; workers are optional
+// surfaces over the durable queue state.
+func (m *UserAgentManager) Get(agentID string) *UserAgent {
+	if v, ok := m.states.Load(agentID); ok {
+		s := v.(*agentState)
+		s.workerMu.Lock()
+		defer s.workerMu.Unlock()
+		return s.worker
 	}
 	return nil
 }
 
-// Drain ends the manager's live work: every running turn is
-// interrupted — a partial answer settles into the thread per the
-// interrupt rules — and the call waits, bounded by timeout, for the
-// turns to finish persisting. Connections are gone by the time a
-// server drains (its context ended them); persistence is the
-// durable path, and a reconnecting UI refetches into it.
-func (m *UserAgentManager) Drain(timeout time.Duration) {
-	m.lanes.Range(func(_, val any) bool {
-		if ag := val.(*agentLane).agent; ag != nil {
-			ag.Interrupt()
+// Status snapshots the agent onto the wire even without a worker —
+// a queue can hold pending work while idle.
+func (m *UserAgentManager) Status(agentID string) wstypes.LaneStatus {
+	if v, ok := m.states.Load(agentID); ok {
+		s := v.(*agentState)
+		s.workerMu.Lock()
+		w := s.worker
+		s.workerMu.Unlock()
+		if w != nil {
+			return w.LaneStatus()
 		}
+		return wstypes.LaneStatus{
+			QueueLen:  s.queueLen(),
+			ConnCount: s.conns.Count(),
+		}
+	}
+	return wstypes.LaneStatus{}
+}
+
+// Interrupt is the Stop button: cancel the active item, if any, and
+// hold the queue behind it — waiting work pauses instead of running
+// on. Send-now's own interrupt never arms the gate.
+func (m *UserAgentManager) Interrupt(agentID string) {
+	if v, ok := m.states.Load(agentID); ok {
+		v.(*agentState).stopNow()
+	}
+}
+
+// RemoveConn drops a connection from the agent's subscribers, worker
+// or not. An empty, idle state is collected here too.
+func (m *UserAgentManager) RemoveConn(agentID, connID string) {
+	if v, ok := m.states.Load(agentID); ok {
+		s := v.(*agentState)
+		s.conns.Remove(connID)
+		s.workerMu.Lock()
+		idle := s.worker == nil
+		s.workerMu.Unlock()
+		if idle && !s.hasWork() && s.conns.Count() == 0 {
+			m.states.Delete(agentID)
+		}
+	}
+}
+
+// Drain ends the manager's live work: every queue stops admitting
+// and claiming, each running item is interrupted — its partial
+// answer settles into the thread per the interrupt rules — and the
+// call waits, bounded by timeout, for the items to finish
+// persisting. Workers then wind down with the manager's context;
+// pending queue items are in-memory state and do not outlive the
+// process.
+func (m *UserAgentManager) Drain(timeout time.Duration) {
+	m.states.Range(func(_, val any) bool {
+		s := val.(*agentState)
+		s.beginDrain()
+		s.interruptActive()
 		return true
 	})
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if !m.anyWorking() {
-			return
+		if !m.anyActive() {
+			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	m.rootCancel()
 }
 
-// anyWorking reports whether any lane still runs a turn.
-func (m *UserAgentManager) anyWorking() bool {
-	working := false
-	m.lanes.Range(func(_, val any) bool {
-		if ag := val.(*agentLane).agent; ag != nil && ag.LaneStatus().Working {
-			working = true
+// anyActive reports whether any queue still executes an item.
+func (m *UserAgentManager) anyActive() bool {
+	active := false
+	m.states.Range(func(_, val any) bool {
+		if val.(*agentState).hasActive() {
+			active = true
 			return false
 		}
 		return true
 	})
-	return working
+	return active
 }

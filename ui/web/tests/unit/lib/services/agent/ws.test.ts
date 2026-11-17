@@ -32,6 +32,16 @@ function lastSocket(): FakeWebSocket {
 	return sockets[sockets.length - 1]
 }
 
+/** Opens the latest socket so mutations can ride it. */
+function openSocket() {
+	lastSocket().readyState = FakeWebSocket.OPEN
+	lastSocket().onopen?.()
+}
+
+function sentFrames(): unknown[] {
+	return lastSocket().sent.map((frame) => JSON.parse(frame))
+}
+
 afterEach(() => {
 	sockets.length = 0
 })
@@ -39,10 +49,9 @@ afterEach(() => {
 describe('agent socket', () => {
 	it('decodes connected frames into typed events', () => {
 		const events: unknown[] = []
-		createAgentSocket('_superagent', (event) => events.push(event)).sendPrompt(
-			'hi',
-			null
-		)
+		createAgentSocket('_superagent', (event) =>
+			events.push(event)
+		).requestStatus()
 
 		lastSocket().onmessage?.({
 			data: JSON.stringify({ type: 'connected', data: { conn_id: 'c1' } })
@@ -88,7 +97,7 @@ describe('agent socket', () => {
 		])
 	})
 
-	it('decodes message_chunk frames with their payload as data', () => {
+	it('decodes queue_state frames as full-replacement snapshots', () => {
 		const events: unknown[] = []
 		createAgentSocket('_superagent', (event) =>
 			events.push(event)
@@ -96,185 +105,224 @@ describe('agent socket', () => {
 
 		lastSocket().onmessage?.({
 			data: JSON.stringify({
-				type: 'message_chunk',
-				agent_id: '_superagent',
-				data: { id: 'msg-1', delta: 'hel' }
-			})
-		})
-
-		expect(events).toEqual([
-			{
-				type: 'message_chunk',
-				agent_id: '_superagent',
-				data: { id: 'msg-1', delta: 'hel' }
-			}
-		])
-	})
-
-	it('decodes message frames with their payload as data', () => {
-		const events: unknown[] = []
-		createAgentSocket('_superagent', (event) =>
-			events.push(event)
-		).requestStatus()
-
-		lastSocket().onmessage?.({
-			data: JSON.stringify({
-				type: 'message',
-				agent_id: '_superagent',
-				data: { id: 'msg-1', content: 'hello' }
-			})
-		})
-
-		expect(events).toEqual([
-			{
-				type: 'message',
-				agent_id: '_superagent',
-				data: { id: 'msg-1', content: 'hello' }
-			}
-		])
-	})
-
-	it('decodes tool_call frames with their payload as data', () => {
-		const events: unknown[] = []
-		createAgentSocket('_superagent', (event) =>
-			events.push(event)
-		).requestStatus()
-
-		lastSocket().onmessage?.({
-			data: JSON.stringify({
-				type: 'tool_call',
-				agent_id: '_superagent',
-				data: { id: 'call-1', name: 'web_search', args: '{"query":"otters"}' }
-			})
-		})
-
-		expect(events).toEqual([
-			{
-				type: 'tool_call',
-				agent_id: '_superagent',
-				data: { id: 'call-1', name: 'web_search', args: '{"query":"otters"}' }
-			}
-		])
-	})
-
-	it('decodes tool_result frames with their payload as data', () => {
-		const events: unknown[] = []
-		createAgentSocket('_superagent', (event) =>
-			events.push(event)
-		).requestStatus()
-
-		lastSocket().onmessage?.({
-			data: JSON.stringify({
-				type: 'tool_result',
-				agent_id: '_superagent',
-				data: { id: 'call-1', result: '"2 hits"', error: 'boom' }
-			})
-		})
-
-		expect(events).toEqual([
-			{
-				type: 'tool_result',
-				agent_id: '_superagent',
-				data: { id: 'call-1', result: '"2 hits"', error: 'boom' }
-			}
-		])
-	})
-
-	it('decodes error frames with their payload as data', () => {
-		const events: unknown[] = []
-		createAgentSocket('_superagent', (event) =>
-			events.push(event)
-		).requestStatus()
-
-		lastSocket().onmessage?.({
-			data: JSON.stringify({
-				type: 'error',
-				agent_id: '_superagent',
-				data: { message: 'read default model: no rows' }
-			})
-		})
-
-		expect(events).toEqual([
-			{
-				type: 'error',
-				agent_id: '_superagent',
-				data: { message: 'read default model: no rows' }
-			}
-		])
-	})
-
-	it('drops frames whose type has no event arm', () => {
-		const events: unknown[] = []
-		createAgentSocket('_superagent', (event) =>
-			events.push(event)
-		).requestStatus()
-
-		lastSocket().onmessage?.({
-			data: JSON.stringify({ type: 'message_delta', data: { text: 'x' } })
-		})
-		lastSocket().onmessage?.({ data: 'not json' })
-
-		expect(events).toEqual([])
-	})
-
-	it('queues client messages until the socket is open, then flushes', () => {
-		const socket = createAgentSocket('_superagent', () => {})
-
-		socket.sendPrompt('queued prompt', null)
-		socket.requestStatus()
-		expect(lastSocket().sent).toEqual([])
-
-		lastSocket().readyState = FakeWebSocket.OPEN
-		lastSocket().onopen?.()
-
-		expect(lastSocket().sent.map((frame) => JSON.parse(frame))).toEqual([
-			{
-				type: 'prompt',
-				agent_id: '_superagent',
-				data: { content: 'queued prompt' }
-			},
-			{ type: 'status', agent_id: '_superagent' }
-		])
-	})
-	it('a concrete selection rides the frame as the model pair', () => {
-		const socket = createAgentSocket('_superagent', () => {})
-
-		socket.sendPrompt('hi', { id: 'openai/gpt-4o', providerId: 'p-1' })
-		lastSocket().readyState = FakeWebSocket.OPEN
-		lastSocket().onopen?.()
-
-		expect(lastSocket().sent.map((frame) => JSON.parse(frame))).toEqual([
-			{
-				type: 'prompt',
+				type: 'queue_state',
 				agent_id: '_superagent',
 				data: {
-					content: 'hi',
-					model: { id: 'openai/gpt-4o', provider_id: 'p-1' }
+					items: [{ id: 'q-1', content: 'waiting' }],
+					paused: true
+				}
+			})
+		})
+
+		expect(events).toEqual([
+			{
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [{ id: 'q-1', content: 'waiting' }],
+					paused: true
 				}
 			}
 		])
 	})
 
-	it('sendInterrupt rides the wire as an interrupt envelope', () => {
+	it('resolves a pending prompt through its queue_result', async () => {
 		const socket = createAgentSocket('_superagent', () => {})
+		openSocket()
+
+		const pending = socket.sendPrompt('hi', null)
+		const frame = sentFrames()[0] as {
+			data: { request_id: string }
+		}
+		expect(frame).toMatchObject({
+			type: 'prompt',
+			agent_id: '_superagent',
+			data: { content: 'hi' }
+		})
+
+		lastSocket().onmessage?.({
+			data: JSON.stringify({
+				type: 'queue_result',
+				agent_id: '_superagent',
+				data: {
+					request_id: frame.data.request_id,
+					accepted: true,
+					item_id: 'q-9'
+				}
+			})
+		})
+
+		await expect(pending).resolves.toEqual({
+			accepted: true,
+			itemId: 'q-9',
+			error: undefined
+		})
+	})
+
+	it('resolves a send_now through its queue_result and frames item id and selection', async () => {
+		const socket = createAgentSocket('_superagent', () => {})
+		openSocket()
+
+		const pending = socket.sendNow('q-1', {
+			id: 'm-fix',
+			providerId: 'prov'
+		})
+		expect(sentFrames()[0]).toMatchObject({
+			type: 'send_now',
+			agent_id: '_superagent',
+			data: {
+				item_id: 'q-1',
+				model: { id: 'm-fix', provider_id: 'prov' }
+			}
+		})
+
+		const frame = sentFrames()[0] as { data: { request_id: string } }
+		lastSocket().onmessage?.({
+			data: JSON.stringify({
+				type: 'queue_result',
+				agent_id: '_superagent',
+				data: {
+					request_id: frame.data.request_id,
+					accepted: false,
+					error: 'item is not pending in this queue'
+				}
+			})
+		})
+
+		await expect(pending).resolves.toEqual({
+			accepted: false,
+			itemId: undefined,
+			error: 'item is not pending in this queue'
+		})
+	})
+
+	it('ignores queue_results for other request ids', async () => {
+		const socket = createAgentSocket('_superagent', () => {})
+		openSocket()
+
+		const pending = socket.sendPrompt('hi', null)
+		const frame = sentFrames()[0] as { data: { request_id: string } }
+		lastSocket().onmessage?.({
+			data: JSON.stringify({
+				type: 'queue_result',
+				data: { request_id: 'not-mine', accepted: true, item_id: 'q-x' }
+			})
+		})
+		// A foreign result cannot settle it; only the matching id can.
+		lastSocket().onmessage?.({
+			data: JSON.stringify({
+				type: 'queue_result',
+				data: {
+					request_id: frame.data.request_id,
+					accepted: false,
+					error: 'queue is full'
+				}
+			})
+		})
+
+		await expect(pending).resolves.toEqual({
+			accepted: false,
+			itemId: undefined,
+			error: 'queue is full'
+		})
+	})
+
+	it('settles outstanding operations as unconfirmed when the connection drops', async () => {
+		const socket = createAgentSocket('_superagent', () => {})
+		openSocket()
+
+		const pending = socket.sendPrompt('hi', null)
+		lastSocket().close()
+
+		await expect(pending).resolves.toMatchObject({
+			accepted: false,
+			error: expect.stringContaining('connection lost')
+		})
+	})
+
+	it('rejects mutations while the socket is not live — nothing buffers', async () => {
+		const socket = createAgentSocket('_superagent', () => {})
+
+		await expect(socket.sendPrompt('queued prompt', null)).rejects.toThrow(
+			'not connected'
+		)
+		socket.requestStatus()
+		expect(lastSocket().sent).toEqual([])
+	})
+
+	it('settles an unanswered operation as unconfirmed after 15 seconds', async () => {
+		vi.useFakeTimers()
+		const socket = createAgentSocket('_superagent', () => {})
+		openSocket()
+
+		const pending = socket.sendPrompt('no answer', null)
+		const settled = expect(pending).resolves.toMatchObject({
+			accepted: false,
+			error: expect.stringContaining('unconfirmed')
+		})
+
+		vi.advanceTimersByTime(15_000)
+		await settled
+
+		vi.useRealTimers()
+	})
+
+	it('close is terminal: sends reject and no connection is resurrected', async () => {
+		vi.useFakeTimers()
+		const socket = createAgentSocket('_superagent', () => {})
+		openSocket()
+		socket.close()
+		const socketCount = sockets.length
+
+		await expect(socket.sendPrompt('after close', null)).rejects.toThrow(
+			'not connected'
+		)
+		socket.requestStatus()
+		socket.sendInterrupt()
+
+		vi.advanceTimersByTime(120_000)
+		expect(sockets).toHaveLength(socketCount)
+
+		vi.useRealTimers()
+	})
+
+	it('a concrete selection rides the frame as the model pair', () => {
+		const socket = createAgentSocket('_superagent', () => {})
+		openSocket()
+
+		socket.sendPrompt('hi', { id: 'openai/gpt-4o', providerId: 'p-1' })
+
+		expect(sentFrames()[0]).toMatchObject({
+			type: 'prompt',
+			agent_id: '_superagent',
+			data: {
+				content: 'hi',
+				model: { id: 'openai/gpt-4o', provider_id: 'p-1' }
+			}
+		})
+	})
+
+	it('sendInterrupt rides the wire as an interrupt envelope when live', () => {
+		const socket = createAgentSocket('_superagent', () => {})
+		openSocket()
 
 		socket.sendInterrupt()
-		lastSocket().readyState = FakeWebSocket.OPEN
-		lastSocket().onopen?.()
 
-		expect(lastSocket().sent.map((frame) => JSON.parse(frame))).toEqual([
-			{ type: 'interrupt', agent_id: '_superagent' }
-		])
+		expect(sentFrames()[0]).toEqual({
+			type: 'interrupt',
+			agent_id: '_superagent',
+			data: undefined
+		})
 	})
-	it('close drops queued messages and closes the socket', () => {
+
+	it('close settles pending operations and closes the socket', async () => {
 		const socket = createAgentSocket('_superagent', () => {})
-		socket.sendPrompt('never sent', null)
+		openSocket()
+		const pending = socket.sendPrompt('never answered', null)
 
 		socket.close()
 		expect(lastSocket().readyState).toBe(3)
-
-		lastSocket().onopen?.()
-		expect(lastSocket().sent).toEqual([])
+		await expect(pending).resolves.toMatchObject({ accepted: false })
 	})
 
 	it('reports connection state: connecting, then live on the greeting', () => {
@@ -283,7 +331,7 @@ describe('agent socket', () => {
 			'_superagent',
 			() => {},
 			(state) => states.push(state)
-		).sendPrompt('hi', null)
+		)
 
 		lastSocket().onmessage?.({
 			data: JSON.stringify({ type: 'connected', data: { conn_id: 'c1' } })
@@ -296,12 +344,11 @@ describe('agent socket', () => {
 		vi.useFakeTimers()
 		vi.spyOn(Math, 'random').mockReturnValue(0.5)
 		const states: string[] = []
-		const socket = createAgentSocket(
+		createAgentSocket(
 			'_superagent',
 			() => {},
 			(state) => states.push(state)
 		)
-		socket.sendPrompt('hi', null)
 		lastSocket().onmessage?.({
 			data: JSON.stringify({ type: 'connected', data: { conn_id: 'c1' } })
 		})
@@ -326,8 +373,7 @@ describe('agent socket', () => {
 	it('caps the backoff at 15 seconds', () => {
 		vi.useFakeTimers()
 		vi.spyOn(Math, 'random').mockReturnValue(0.5)
-		const socket = createAgentSocket('_superagent', () => {})
-		socket.sendPrompt('hi', null)
+		createAgentSocket('_superagent', () => {})
 
 		// Six drops without a successful greeting in between.
 		for (let drop = 0; drop < 6; drop++) {
@@ -347,7 +393,6 @@ describe('agent socket', () => {
 	it('close stops the reconnect loop', () => {
 		vi.useFakeTimers()
 		const socket = createAgentSocket('_superagent', () => {})
-		socket.sendPrompt('hi', null)
 		const before = sockets.length
 
 		lastSocket().close()
@@ -358,31 +403,36 @@ describe('agent socket', () => {
 		vi.useRealTimers()
 	})
 
-	it('messages sent during a drop flush after reconnect', () => {
+	it('a mutation during a drop never replays after reconnect', async () => {
 		vi.useFakeTimers()
 		vi.spyOn(Math, 'random').mockReturnValue(0.5)
 		const socket = createAgentSocket('_superagent', () => {})
-		socket.sendPrompt('first', null)
-		lastSocket().readyState = FakeWebSocket.OPEN
-		lastSocket().onopen?.()
-		expect(lastSocket().sent).toHaveLength(1)
+		openSocket()
 
 		lastSocket().close()
-		socket.sendPrompt('queued while down', null)
+		const rejected = socket.sendPrompt('typed while down', null)
+		await expect(rejected).rejects.toThrow('not connected')
 
 		vi.advanceTimersByTime(1000)
-		lastSocket().readyState = FakeWebSocket.OPEN
-		lastSocket().onopen?.()
+		openSocket()
 
-		expect(lastSocket().sent.map((frame) => JSON.parse(frame))).toEqual([
-			{
-				type: 'prompt',
-				agent_id: '_superagent',
-				data: { content: 'queued while down' }
-			}
-		])
+		expect(lastSocket().sent).toEqual([])
 
 		vi.useRealTimers()
 		vi.restoreAllMocks()
+	})
+
+	it('drops frames whose type has no event arm', () => {
+		const events: unknown[] = []
+		createAgentSocket('_superagent', (event) =>
+			events.push(event)
+		).requestStatus()
+
+		lastSocket().onmessage?.({
+			data: JSON.stringify({ type: 'message_delta', data: { text: 'x' } })
+		})
+		lastSocket().onmessage?.({ data: 'not json' })
+
+		expect(events).toEqual([])
 	})
 })

@@ -180,9 +180,7 @@ func TestToolMetadataFailureFailsTurn(t *testing.T) {
 
 	c, sc := wsPair(t)
 
-	ok := mgr.SubmitMsg(context.Background(), "agent-toolinfo", "conn-1", sc,
-		agent.Message{ID: "msg-1", Content: "hi"})
-	require.True(t, ok)
+	submit(t, mgr, "agent-toolinfo", "conn-1", sc, "hi")
 
 	ev := readUntilError(t, c)
 	require.Equal(t, wstypes.EventTypeError, ev.Type)
@@ -204,10 +202,7 @@ func TestToolRoundFeedsResultAndStreamsAnswer(t *testing.T) {
 		})
 
 	c, sc := wsPair(t)
-
-	ok := mgr.SubmitMsg(context.Background(), "agent-tools", "conn-1", sc,
-		agent.Message{ID: "msg-1", Content: "search for otters"})
-	require.True(t, ok)
+	submit(t, mgr, "agent-tools", "conn-1", sc, "search for otters")
 
 	_, p := readUntilMessage(t, c)
 	require.Equal(t, "final answer", p.Content)
@@ -246,10 +241,7 @@ func TestFetchedToolsAreAllOffered(t *testing.T) {
 		})
 
 	c, sc := wsPair(t)
-
-	ok := mgr.SubmitMsg(context.Background(), "agent-filter", "conn-1", sc,
-		agent.Message{ID: "msg-1", Content: "hi"})
-	require.True(t, ok)
+	submit(t, mgr, "agent-filter", "conn-1", sc, "hi")
 
 	_, p := readUntilMessage(t, c)
 	require.Equal(t, "no tools needed", p.Content)
@@ -272,10 +264,7 @@ func TestEmptyFetchAttachesNoTools(t *testing.T) {
 		})
 
 	c, sc := wsPair(t)
-
-	ok := mgr.SubmitMsg(context.Background(), "agent-notools", "conn-1", sc,
-		agent.Message{ID: "msg-1", Content: "hi"})
-	require.True(t, ok)
+	submit(t, mgr, "agent-notools", "conn-1", sc, "hi")
 
 	_, p := readUntilMessage(t, c)
 	require.Equal(t, "plain answer", p.Content)
@@ -300,24 +289,21 @@ func TestToolFailureErrorsTurn(t *testing.T) {
 		})
 
 	c, sc := wsPair(t)
-
-	ok := mgr.SubmitMsg(context.Background(), "agent-toolfail", "conn-1", sc,
-		agent.Message{ID: "msg-1", Content: "search for otters"})
-	require.True(t, ok)
+	submit(t, mgr, "agent-toolfail", "conn-1", sc, "search for otters")
 
 	ev := readUntilError(t, c)
 	require.Equal(t, wstypes.EventTypeError, ev.Type)
 	require.Equal(t, "echo_tool",
 		eventPayload[wstypes.ErrorEvent](t, ev).Tool)
 
-	// A tool failure fails the whole turn: the drain-written user row
+	// A tool failure fails the whole turn: the claim-written user row
 	// stands with the failed invocation's tool row — its error kept
-	// in the envelope — and no assistant row joins them.
+	// in the envelope — and no assistant row joins them. The queue
+	// is not paused: a tool failure is not a message failure.
 	calls := sink.recorded()
 	require.Len(t, calls, 2)
-	require.Equal(t,
-		[]apitypes.ThreadMessageDraft{{Role: apitypes.ThreadRoleUser, Content: "search for otters"}},
-		calls[0])
+	require.Equal(t, apitypes.ThreadRoleUser, calls[0][0].Role)
+	require.Equal(t, "search for otters", calls[0][0].Content)
 	require.Equal(t, apitypes.ThreadRoleTool, calls[1][0].Role)
 	require.JSONEq(t, `{"name":"echo_tool","args":{"query":"plush otters"},
 		"result":"","error":"search backend down"}`, calls[1][0].Content)
@@ -338,9 +324,7 @@ func TestToolFetchFailureFailsTurn(t *testing.T) {
 
 	c, sc := wsPair(t)
 
-	ok := mgr.SubmitMsg(context.Background(), "agent-toolsread", "conn-1", sc,
-		agent.Message{ID: "msg-1", Content: "hi"})
-	require.True(t, ok)
+	submit(t, mgr, "agent-toolsread", "conn-1", sc, "hi")
 
 	ev := readUntilError(t, c)
 	require.Equal(t, wstypes.EventTypeError, ev.Type)
@@ -370,9 +354,7 @@ func TestInterruptDuringToolFetchReportsStopped(t *testing.T) {
 
 	c, sc := wsPair(t)
 
-	ok := mgr.SubmitMsg(context.Background(), "agent-toolstop", "conn-1", sc,
-		agent.Message{ID: "msg-1", Content: "hi"})
-	require.True(t, ok)
+	submit(t, mgr, "agent-toolstop", "conn-1", sc, "hi")
 
 	select {
 	case <-entered:

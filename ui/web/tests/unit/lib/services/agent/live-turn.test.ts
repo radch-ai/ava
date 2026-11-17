@@ -38,13 +38,62 @@ function errorEvent(
 	}
 }
 
+function toolCall(
+	callId: string,
+	turnId: string,
+	name = 'web_search'
+): AgentSocketEvent {
+	return {
+		type: 'tool_call',
+		agent_id: '_superagent',
+		data: { id: callId, turn_id: turnId, name, args: '{"query":"otters"}' }
+	}
+}
+
+function toolResult(
+	callId: string,
+	turnId: string,
+	data: { result?: string; error?: string } = {}
+): AgentSocketEvent {
+	return {
+		type: 'tool_result',
+		agent_id: '_superagent',
+		data: {
+			id: callId,
+			turn_id: turnId,
+			result: data.result ?? '"2 hits"',
+			error: data.error
+		}
+	}
+}
+
 describe('live turns', () => {
-	it('echoes the prompt optimistically', () => {
+	it('adds the running item’s user row under its server id', () => {
 		const live = createLiveTurns()
-		live.echoUser('hello')
+		live.beginUser('user-row-1', 'hello')
 
 		expect(live.messages).toHaveLength(1)
-		expect(live.messages[0]).toMatchObject({ role: 'user', content: 'hello' })
+		expect(live.messages[0]).toMatchObject({
+			id: 'user-row-1',
+			role: 'user',
+			content: 'hello'
+		})
+	})
+
+	it('never duplicates a user row on repeated snapshots', () => {
+		const live = createLiveTurns()
+		live.beginUser('user-row-1', 'hello')
+		live.beginUser('user-row-1', 'hello')
+
+		expect(live.messages).toHaveLength(1)
+	})
+
+	it('keeps both user rows when two prompts read alike', () => {
+		const live = createLiveTurns()
+		live.beginUser('user-row-1', 'same words')
+		live.beginUser('user-row-2', 'same words')
+
+		expect(live.messages.filter((m) => m.role === 'user')).toHaveLength(2)
 	})
 
 	it('accumulates chunk deltas into one pending assistant message', () => {
@@ -86,7 +135,7 @@ describe('live turns', () => {
 
 	it('an error event appends an error message with the reason', () => {
 		const live = createLiveTurns()
-		live.echoUser('hi')
+		live.beginUser('user-row-1', 'hi')
 		live.applyEvent(errorEvent('read default model: no rows'))
 
 		expect(live.messages).toHaveLength(2)
@@ -128,44 +177,27 @@ describe('live turns', () => {
 
 	it('a tool-attributed error adds no bubble — the tool row shows it', () => {
 		const live = createLiveTurns()
-		live.echoUser('search for otters')
+		live.beginUser('user-row-1', 'search for otters')
 		live.applyEvent(errorEvent('no results found', 'duckduckgo_search'))
 
 		expect(live.messages.some((m) => m.role === 'error')).toBe(false)
 	})
 
-	it('a tool-attributed error still drops the thinking placeholder', () => {
-		const live = createLiveTurns()
-		live.echoUser('search for otters')
-		live.applyEvent(errorEvent('no results found', 'duckduckgo_search'))
-
-		expect(
-			live.messages.filter((m) => m.role === 'assistant' && !m.content)
-		).toHaveLength(0)
-	})
-
 	it('a tool call creates a pending tool entry the result completes', () => {
 		const live = createLiveTurns()
-		live.applyEvent({
-			type: 'tool_call',
-			agent_id: '_superagent',
-			data: { id: 'call-1', name: 'web_search', args: '{"query":"otters"}' }
-		})
+		live.applyEvent(toolCall('call-1', 'msg-1'))
 
 		expect(live.messages).toHaveLength(1)
 		expect(live.messages[0]).toMatchObject({
-			id: 'call-1',
+			id: 'msg-1:call-1',
+			turnId: 'msg-1',
 			role: 'tool',
 			name: 'web_search',
 			args: '{"query":"otters"}',
 			pending: true
 		})
 
-		live.applyEvent({
-			type: 'tool_result',
-			agent_id: '_superagent',
-			data: { id: 'call-1', result: '"2 hits"' }
-		})
+		live.applyEvent(toolResult('call-1', 'msg-1'))
 
 		expect(live.messages[0]).toMatchObject({
 			pending: false,
@@ -174,18 +206,29 @@ describe('live turns', () => {
 		})
 	})
 
+	it('a reused tool-call id lands on its own turn’s row', () => {
+		const live = createLiveTurns()
+		live.applyEvent(toolCall('call-1', 'msg-1'))
+		live.applyEvent(toolCall('call-1', 'msg-2'))
+
+		expect(live.messages).toHaveLength(2)
+		expect(live.messages[0].id).toBe('msg-1:call-1')
+		expect(live.messages[1].id).toBe('msg-2:call-1')
+
+		live.applyEvent(toolResult('call-1', 'msg-2'))
+		expect(live.messages[0].pending).toBe(true)
+		expect(live.messages[1].pending).toBe(false)
+	})
+
 	it('a tool error rides the completed entry', () => {
 		const live = createLiveTurns()
-		live.applyEvent({
-			type: 'tool_call',
-			agent_id: '_superagent',
-			data: { id: 'call-9', name: 'web_search', args: '{}' }
-		})
-		live.applyEvent({
-			type: 'tool_result',
-			agent_id: '_superagent',
-			data: { id: 'call-9', result: '', error: 'search backend down' }
-		})
+		live.applyEvent(toolCall('call-9', 'msg-1'))
+		live.applyEvent(
+			toolResult('call-9', 'msg-1', {
+				result: '',
+				error: 'search backend down'
+			})
+		)
 
 		expect(live.messages[0]).toMatchObject({
 			pending: false,
@@ -197,6 +240,11 @@ describe('live turns', () => {
 		const live = createLiveTurns()
 		live.applyEvent({ type: 'connected', data: { conn_id: 'c1' } })
 		live.applyEvent(laneStatus(false))
+		live.applyEvent({
+			type: 'queue_state',
+			agent_id: '_superagent',
+			data: { items: [], paused: false }
+		})
 
 		expect(live.messages).toHaveLength(0)
 	})
@@ -247,61 +295,75 @@ describe('reasoning marker', () => {
 		expect(live.messages).toHaveLength(1)
 		expect(live.messages[0].role).toBe('error')
 	})
+
+	it('trails the user row even when the join order inverts them', () => {
+		const live = createLiveTurns()
+		// A (re)connect mid-reasoning delivers the lane status before
+		// the queue snapshot that mints the user row — the marker must
+		// still render below it, never above.
+		live.applyEvent(laneStatus(true, true))
+		live.beginUser('user-row-1', 'prompt')
+
+		expect(live.messages.map((m) => m.role)).toEqual(['user', 'assistant'])
+		expect(live.messages[1].content).toBe('')
+	})
 })
 
 describe('live turn settlement', () => {
-	it('settle drops the settled assistant and its echoed prompt', () => {
+	it('settle drops the settled assistant and its user row', () => {
 		const live = createLiveTurns()
-		live.echoUser('hi')
+		live.beginUser('user-row-1', 'hi')
 		live.applyEvent(chunk('msg-1', 'ans'))
-		live.settleTurn('msg-1', ['hi'])
+		live.settleTurn('msg-1', ['user-row-1'])
 
 		expect(live.messages).toHaveLength(0)
 	})
 
-	it('settle drops its entries but keeps echoes the thread does not carry yet', () => {
+	it('settle drops its entries but keeps rows the thread does not carry yet', () => {
 		const live = createLiveTurns()
-		live.echoUser('settled prompt')
+		live.beginUser('user-row-1', 'settled prompt')
 		live.applyEvent(chunk('msg-1', 'ans'))
 		live.applyEvent(message('msg-1', 'ans settled'))
-		live.echoUser('still running')
+		live.beginUser('user-row-2', 'still running')
 		live.applyEvent(chunk('msg-2', 'partial'))
 
-		live.settleTurn('msg-1', ['settled prompt'])
+		live.settleTurn('msg-1', ['user-row-1'])
 
 		// The settled turn lives in the stored thread now; the running
-		// turn — echo and partial answer — stays live.
+		// turn — user row and partial answer — stays live.
 		expect(live.messages).toHaveLength(2)
 		expect(live.messages[0]).toMatchObject({
 			role: 'user',
 			content: 'still running'
 		})
 		expect(live.messages[1]).toMatchObject({
-			role: 'assistant',
 			id: 'msg-2',
+			role: 'assistant',
 			content: 'partial',
 			pending: true
 		})
 	})
 
-	it('settle drops the turn’s tool entries — their ids never match the thread rows', () => {
+	it('settle drops only its own turn’s tool entries', () => {
 		const live = createLiveTurns()
-		live.echoUser('search')
-		live.applyEvent({
-			type: 'tool_call',
-			agent_id: '_superagent',
-			data: { id: 'call-1', name: 'web_search', args: '{}' }
-		})
+		live.beginUser('user-row-1', 'search')
+		live.applyEvent(toolCall('call-1', 'msg-1'))
 		live.applyEvent(message('msg-1', 'found it'))
+		live.applyEvent(toolCall('call-2', 'msg-2'))
 
-		live.settleTurn('msg-1', ['search'])
+		live.settleTurn('msg-1', ['user-row-1'])
 
-		expect(live.messages).toHaveLength(0)
+		expect(live.messages).toHaveLength(1)
+		expect(live.messages[0]).toMatchObject({
+			id: 'msg-2:call-2',
+			role: 'tool',
+			pending: true
+		})
 	})
 
 	it('settle retires a durable error the page carries, keeps uncovered ones', () => {
 		const live = createLiveTurns()
-		live.echoUser('hi')
+		live.beginUser('user-row-1', 'hi')
 		live.applyEvent(
 			errorEvent('no default model set', undefined, {
 				id: 'err-stored',
@@ -316,7 +378,7 @@ describe('live turn settlement', () => {
 		// The refetched page carries err-stored only: its live copy
 		// retires. The transient stop and the error whose row the page
 		// did not carry (older than its window) both stay.
-		live.settleTurn('msg-1', ['hi'], ['err-stored'])
+		live.settleTurn('msg-1', ['user-row-1'], ['err-stored'])
 
 		expect(live.messages).toHaveLength(2)
 		expect(live.messages[0]).toMatchObject({
@@ -334,7 +396,7 @@ describe('live turn settlement', () => {
 		live.applyEvent(
 			errorEvent('no default model set', undefined, { id: 'err-1' })
 		)
-		live.echoUser('next prompt')
+		live.beginUser('user-row-2', 'next prompt')
 		live.applyEvent(chunk('msg-2', 'streaming'))
 
 		live.settleTurn('msg-x', [], ['err-1'])

@@ -6,7 +6,9 @@ package agent
 // invocation returns an error, so the wrapper is the one place where
 // a call's arguments, its original result and its error are all in
 // hand — the wire's call/result pair and the thread's tool row both
-// hang off it.
+// hang off it. The turn id rides the wrapper, captured when the
+// turn's tools were built: a late result reports its own turn, not
+// whichever turn is active when it lands.
 
 import (
 	"context"
@@ -28,7 +30,7 @@ import (
 // global switches. Metadata is read here, not per invocation, and a
 // selected tool that cannot describe itself fails the turn: a tool
 // the model was promised must never vanish silently.
-func (a *UserAgent) wrapTools(ctx context.Context, emitCtx context.Context, impls []tool.InvokableTool) ([]tool.BaseTool, error) {
+func (a *UserAgent) wrapTools(ctx context.Context, emitCtx context.Context, turnID string, impls []tool.InvokableTool) ([]tool.BaseTool, error) {
 	if len(impls) == 0 {
 		return nil, nil
 	}
@@ -41,7 +43,7 @@ func (a *UserAgent) wrapTools(ctx context.Context, emitCtx context.Context, impl
 		if info == nil || info.Name == "" {
 			return nil, errors.New("tool metadata: missing name")
 		}
-		wrapped = append(wrapped, &capturingTool{inner: impl, info: info, lane: a, emitCtx: emitCtx})
+		wrapped = append(wrapped, &capturingTool{inner: impl, info: info, lane: a, turnID: turnID, emitCtx: emitCtx})
 	}
 	return wrapped, nil
 }
@@ -56,6 +58,7 @@ type capturingTool struct {
 	inner   tool.InvokableTool
 	info    *schema.ToolInfo
 	lane    *UserAgent
+	turnID  string
 	emitCtx context.Context
 }
 
@@ -70,9 +73,9 @@ func (t *capturingTool) InvokableRun(ctx context.Context, args string, opts ...t
 	if callID == "" {
 		callID = uuid.NewString()
 	}
-	t.lane.emitToolCall(t.emitCtx, callID, t.info.Name, args)
+	t.lane.emitToolCall(t.emitCtx, callID, t.turnID, t.info.Name, args)
 	result, err := t.inner.InvokableRun(ctx, args, opts...)
-	t.lane.recordToolResult(t.emitCtx, callID, t.info.Name, args, result, err)
+	t.lane.recordToolResult(t.emitCtx, callID, t.turnID, t.info.Name, args, result, err)
 	if err != nil {
 		// Named on the way out so the turn's error event can say
 		// which tool failed without the runner's internal framing.
@@ -91,20 +94,20 @@ func (e *toolError) Error() string { return e.err.Error() }
 func (e *toolError) Unwrap() error { return e.err }
 
 // emitToolCall tells the lane's connections a tool is about to run.
-func (a *UserAgent) emitToolCall(ctx context.Context, id, name, args string) {
-	_ = a.conns.WriteJSON(ctx, wstypes.Event{
+func (a *UserAgent) emitToolCall(ctx context.Context, id, turnID, name, args string) {
+	_ = a.state.conns.WriteJSON(ctx, wstypes.Event{
 		Type:    wstypes.EventTypeToolCall,
 		AgentID: a.agentID,
-		Data:    wstypes.ToolCallEvent{ID: id, Name: name, Args: args},
+		Data:    wstypes.ToolCallEvent{ID: id, TurnID: turnID, Name: name, Args: args},
 	})
 }
 
 // recordToolResult reports a completed invocation: the wire event,
 // then the thread row — best-effort as every persistence site, so a
 // sick sink logs and the turn runs on. The row lands between the
-// drain-written user row and the settle-written assistant row, so
+// claim-written user row and the settle-written assistant row, so
 // the thread records what a turn did even when it later fails.
-func (a *UserAgent) recordToolResult(ctx context.Context, id, name, args, result string, invocationErr error) {
+func (a *UserAgent) recordToolResult(ctx context.Context, id, turnID, name, args, result string, invocationErr error) {
 	var errText *string
 	if invocationErr != nil {
 		// One rendered cause for both the event and the row, so live
@@ -112,10 +115,10 @@ func (a *UserAgent) recordToolResult(ctx context.Context, id, name, args, result
 		msg := cleanToolError(invocationErr)
 		errText = &msg
 	}
-	_ = a.conns.WriteJSON(ctx, wstypes.Event{
+	_ = a.state.conns.WriteJSON(ctx, wstypes.Event{
 		Type:    wstypes.EventTypeToolResult,
 		AgentID: a.agentID,
-		Data:    wstypes.ToolResultEvent{ID: id, Result: result, Error: errText},
+		Data:    wstypes.ToolResultEvent{ID: id, TurnID: turnID, Result: result, Error: errText},
 	})
 	if a.persistTurn == nil {
 		return

@@ -1,5 +1,9 @@
 package agent_test
 
+// Broadcaster-facing pins through the manager's queue-state APIs:
+// connections attach, count, replace, and remove — all against the
+// manager-owned state, so they work with or without a live worker.
+
 import (
 	"context"
 	"net/http"
@@ -16,14 +20,16 @@ import (
 	"github.com/radch-ai/ava/gateway/internal/agent"
 )
 
-// TestUserAgent_MultipleConnections tests adding multiple connections to an agent
-func TestUserAgent_MultipleConnections(t *testing.T) {
-	logger := zerolog.Nop()
-	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
+// submitConn enqueues a prompt from one connection; the manager
+// binds no resolver here, so the test stays about connections.
+func submitConn(mgr *agent.UserAgentManager, agentID, connID string, conn *websocket.Conn) {
+	_, _ = mgr.Submit(agentID, connID, conn, "test",
+		&apitypes.ModelEntry{ID: "gpt-4o"})
+}
 
-	agentID := "agent-multi-conn"
+func TestMultipleConnectionsAttach(t *testing.T) {
+	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{})
 
-	// Create mock websocket connections
 	s1 := newMockWSserver(t)
 	defer s1.Close()
 	c1 := connectWS(t, s1.URL)
@@ -39,33 +45,19 @@ func TestUserAgent_MultipleConnections(t *testing.T) {
 	c3 := connectWS(t, s3.URL)
 	defer closeConn(c3)
 
-	// First message creates agent and adds first connection
-	msg := agent.Message{Content: "test", ID: "msg-1", Model: &apitypes.ModelEntry{ID: "gpt-4o"}}
-	ok := mgr.SubmitMsg(context.Background(), agentID, "conn-1", c1, msg)
-	require.True(t, ok)
+	agentID := "agent-multi-conn"
+	submitConn(mgr, agentID, "conn-1", c1)
+	assert.Equal(t, 1, mgr.Status(agentID).ConnCount)
 
-	ag := mgr.Get(agentID)
-	require.NotNil(t, ag)
-	require.Equal(t, 1, ag.ConnCount())
+	submitConn(mgr, agentID, "conn-2", c2)
+	assert.Equal(t, 2, mgr.Status(agentID).ConnCount)
 
-	// Submit more messages with different connections (simulates multi-device)
-	msg2 := agent.Message{Content: "test2", ID: "msg-2", Model: &apitypes.ModelEntry{ID: "gpt-4o"}}
-	ok = mgr.SubmitMsg(context.Background(), agentID, "conn-2", c2, msg2)
-	require.True(t, ok)
-	assert.Equal(t, 2, ag.ConnCount())
-
-	msg3 := agent.Message{Content: "test3", ID: "msg-3", Model: &apitypes.ModelEntry{ID: "gpt-4o"}}
-	ok = mgr.SubmitMsg(context.Background(), agentID, "conn-3", c3, msg3)
-	require.True(t, ok)
-	assert.Equal(t, 3, ag.ConnCount())
+	submitConn(mgr, agentID, "conn-3", c3)
+	assert.Equal(t, 3, mgr.Status(agentID).ConnCount)
 }
 
-// TestUserAgent_RemoveConnection tests removing connections from an agent
-func TestUserAgent_RemoveConnection(t *testing.T) {
-	logger := zerolog.Nop()
-	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
-
-	agentID := "agent-remove"
+func TestRemoveConnectionDropsFromState(t *testing.T) {
+	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{})
 
 	s1 := newMockWSserver(t)
 	defer s1.Close()
@@ -77,142 +69,77 @@ func TestUserAgent_RemoveConnection(t *testing.T) {
 	c2 := connectWS(t, s2.URL)
 	defer closeConn(c2)
 
-	// Create agent and add connections via SubmitMsg
-	msg := agent.Message{Content: "test", ID: "msg-1", Model: &apitypes.ModelEntry{ID: "gpt-4o"}}
-	mgr.SubmitMsg(context.Background(), agentID, "conn-1", c1, msg)
-	mgr.SubmitMsg(context.Background(), agentID, "conn-2", c2, msg)
+	agentID := "agent-remove"
+	submitConn(mgr, agentID, "conn-1", c1)
+	submitConn(mgr, agentID, "conn-2", c2)
+	require.Equal(t, 2, mgr.Status(agentID).ConnCount)
 
-	ag := mgr.Get(agentID)
-	require.NotNil(t, ag)
-	assert.Equal(t, 2, ag.ConnCount())
+	mgr.RemoveConn(agentID, "conn-1")
+	assert.Equal(t, 1, mgr.Status(agentID).ConnCount)
 
-	// Remove first connection
-	ag.RemoveConn("conn-1")
-	assert.Equal(t, 1, ag.ConnCount())
-
-	// Remove second connection
-	ag.RemoveConn("conn-2")
-	assert.Equal(t, 0, ag.ConnCount())
+	mgr.RemoveConn(agentID, "conn-2")
+	assert.Equal(t, 0, mgr.Status(agentID).ConnCount)
 }
 
-// TestUserAgent_RemoveNonExistent tests removing a connection that doesn't exist
-func TestUserAgent_RemoveNonExistent(t *testing.T) {
-	logger := zerolog.Nop()
-	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
+func TestRemoveNonExistentConnectionIsSafe(t *testing.T) {
+	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{})
 
-	agentID := "agent-noexist"
-
-	// Create agent
 	s := newMockWSserver(t)
 	defer s.Close()
 	c := connectWS(t, s.URL)
 	defer closeConn(c)
 
-	msg := agent.Message{Content: "test", ID: "msg-1", Model: &apitypes.ModelEntry{ID: "gpt-4o"}}
-	mgr.SubmitMsg(context.Background(), agentID, "conn-1", c, msg)
+	agentID := "agent-noexist"
+	submitConn(mgr, agentID, "conn-1", c)
+	require.Equal(t, 1, mgr.Status(agentID).ConnCount)
 
-	ag := mgr.Get(agentID)
-	require.NotNil(t, ag)
-	assert.Equal(t, 1, ag.ConnCount())
-
-	// Remove non-existent connection ID is safe
-	ag.RemoveConn("conn-unknown")
-	assert.Equal(t, 1, ag.ConnCount()) // Original still there
+	mgr.RemoveConn(agentID, "conn-unknown")
+	assert.Equal(t, 1, mgr.Status(agentID).ConnCount)
 }
 
-// TestUserAgent_ReplaceConnection tests replacing a connection with same ID
-func TestUserAgent_ReplaceConnection(t *testing.T) {
-	logger := zerolog.Nop()
-	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
+func TestReplaceConnectionWithSameID(t *testing.T) {
+	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{})
+
+	s1 := newMockWSserver(t)
+	defer s1.Close()
+	c1 := connectWS(t, s1.URL)
+
+	s2 := newMockWSserver(t)
+	defer s2.Close()
+	c2 := connectWS(t, s2.URL)
 
 	agentID := "agent-replace"
+	submitConn(mgr, agentID, "conn-1", c1)
+	require.Equal(t, 1, mgr.Status(agentID).ConnCount)
 
-	s1 := newMockWSserver(t)
-	defer s1.Close()
-	c1 := connectWS(t, s1.URL)
+	// Same conn id, new connection: replaced, not added.
+	submitConn(mgr, agentID, "conn-1", c2)
+	assert.Equal(t, 1, mgr.Status(agentID).ConnCount)
 
-	s2 := newMockWSserver(t)
-	defer s2.Close()
-	c2 := connectWS(t, s2.URL)
-
-	// Create agent with first connection
-	msg := agent.Message{Content: "test", ID: "msg-1", Model: &apitypes.ModelEntry{ID: "gpt-4o"}}
-	mgr.SubmitMsg(context.Background(), agentID, "conn-1", c1, msg)
-
-	ag := mgr.Get(agentID)
-	require.NotNil(t, ag)
-	assert.Equal(t, 1, ag.ConnCount())
-
-	// Replace with same ID but different connection (via SubmitMsg)
-	mgr.SubmitMsg(context.Background(), agentID, "conn-1", c2, msg)
-
-	// Should still be 1 (replaced, not added)
-	assert.Equal(t, 1, ag.ConnCount())
-
-	// Old connection should be closed
+	// The replaced connection is closed.
 	_, _, err := c1.Reader(context.Background())
-	assert.Error(t, err) // c1 should be closed
+	assert.Error(t, err)
 }
 
-// TestUserAgent_StatusIncludesConnCount tests that GetStatus includes connection count
-func TestUserAgent_StatusIncludesConnCount(t *testing.T) {
-	logger := zerolog.Nop()
-	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
-
-	agentID := "agent-status"
-
-	s1 := newMockWSserver(t)
-	defer s1.Close()
-	c1 := connectWS(t, s1.URL)
-	defer closeConn(c1)
-
-	s2 := newMockWSserver(t)
-	defer s2.Close()
-	c2 := connectWS(t, s2.URL)
-	defer closeConn(c2)
-
-	// Create agent and add connections via SubmitMsg
-	msg := agent.Message{Content: "test", ID: "msg-1", Model: &apitypes.ModelEntry{ID: "gpt-4o"}}
-	mgr.SubmitMsg(context.Background(), agentID, "conn-1", c1, msg)
-	mgr.SubmitMsg(context.Background(), agentID, "conn-2", c2, msg)
-
-	ag := mgr.Get(agentID)
-	require.NotNil(t, ag)
-
-	status := ag.LaneStatus()
-	assert.Equal(t, 2, status.ConnCount)
-	assert.Equal(t, true, status.Active)
-}
-
-// TestUserAgent_ConcurrentConnectionOps tests thread safety of connection operations
-func TestUserAgent_ConcurrentConnectionOps(t *testing.T) {
-	logger := zerolog.Nop()
-	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
+func TestConcurrentConnectionOps(t *testing.T) {
+	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{})
 
 	agentID := "agent-concurrent"
-
-	// Create agent first
-	msg := agent.Message{Content: "test", ID: "msg-1", Model: &apitypes.ModelEntry{ID: "gpt-4o"}}
-	mgr.SubmitMsg(context.Background(), agentID, "conn-init", nil, msg)
-
-	ag := mgr.Get(agentID)
-	require.NotNil(t, ag)
+	submitConn(mgr, agentID, "conn-init", nil)
 
 	const numOps = 50
 	done := make(chan bool, 2)
 
-	// Concurrent SubmitMsg (which adds connections)
 	go func() {
-		for i := 0; i < numOps; i++ {
-			mgr.SubmitMsg(context.Background(), agentID, "conn-add-"+string(rune(i)), nil, msg)
+		for i := range numOps {
+			submitConn(mgr, agentID, "conn-add-"+string(rune(i)), nil)
 		}
 		done <- true
 	}()
 
-	// Concurrent removes
 	go func() {
-		for i := 0; i < numOps; i++ {
-			ag.RemoveConn("conn-remove-" + string(rune(i)))
+		for i := range numOps {
+			mgr.RemoveConn(agentID, "conn-remove-"+string(rune(i)))
 		}
 		done <- true
 	}()
@@ -220,10 +147,8 @@ func TestUserAgent_ConcurrentConnectionOps(t *testing.T) {
 	<-done
 	<-done
 
-	// Should not panic or race
+	// Should not panic or race.
 }
-
-// Helper functions
 
 func newMockWSserver(t *testing.T) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -235,8 +160,7 @@ func newMockWSserver(t *testing.T) *httptest.Server {
 
 		// Keep connection alive
 		for {
-			_, _, err := c.Read(context.Background())
-			if err != nil {
+			if _, _, err := c.Read(context.Background()); err != nil {
 				return
 			}
 		}

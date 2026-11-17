@@ -33,6 +33,10 @@
 		threadIsLoadingMore?: boolean
 		threadLoadMoreError?: string | null
 		onThreadLoadMore?: () => void | Promise<void>
+		/** Waiting queue rows rendered below the thread: changes resize
+		 * the scroll region, so a reader near the bottom stays pinned
+		 * instead of losing the newest rows under the fold. */
+		queueRows?: number
 		activityFeed?: ActivityFeed | null
 		activityError?: string | null
 		isLoadingActivity?: boolean
@@ -56,6 +60,7 @@
 		activityError,
 		isLoadingActivity,
 		onActivityLoadMore,
+		queueRows,
 		children
 	}: Props = $props()
 
@@ -63,8 +68,11 @@
 	const isConversation = $derived(
 		agentId === SUPERAGENT_AGENT_ID && activeTab === 'conversation'
 	)
+	const liveIds = $derived(new Set((liveItems ?? []).map((m) => m.id)))
+	// A running turn's user row is live; the refetched stored copy
+	// must not render beside it. Live wins until the turn settles.
 	const conversationItems = $derived([
-		...(threadItems ?? []),
+		...(threadItems ?? []).filter((m) => !liveIds.has(m.id)),
 		...(liveItems ?? [])
 	])
 
@@ -92,6 +100,28 @@
 			if (nearBottom) el.scrollTo({ top: el.scrollHeight })
 		})
 	})
+
+	// The queue rendered below the thread resizes the scroll region: a
+	// reader near the bottom stays pinned to the newest rows instead of
+	// losing them under the fold; a reader elsewhere keeps the position.
+	$effect(() => {
+		void queueRows
+		void tick().then(() => {
+			const el = scrollRegionElement
+			if (!el) return
+			const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+			if (nearBottom) el.scrollTo({ top: el.scrollHeight })
+		})
+	})
+
+	// Forced scroll for the submit moment only: unconditional, unlike
+	// the near-bottom followers above — a submit always shows the newest
+	// content; a queued item claiming later never scrolls.
+	export function scrollToBottom() {
+		void tick().then(() =>
+			scrollRegionElement?.scrollTo({ top: scrollRegionElement.scrollHeight })
+		)
+	}
 
 	// A freshly opened thread starts at the newest message — once per
 	// agent, so live turns and Load-more never yank the view.

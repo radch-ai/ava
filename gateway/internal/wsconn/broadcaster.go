@@ -3,23 +3,50 @@ package wsconn
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/coder/websocket/wsjson"
 	"github.com/rs/zerolog"
 )
 
 // DefaultWriteTimeout is the default timeout for writes.
 const DefaultWriteTimeout = 10 * time.Second
 
-// Broadcaster manages multiple WebSocket connections for fan-out streaming.
-// Thread-safe: uses RWMutex for concurrent access to connection map.
+// outboundQueueCapacity bounds one connection's pending events. A peer
+// this far behind is dead: it is dropped rather than allowed to stall
+// producers. Full-replacement snapshots make the drop lossless for the
+// peer — a reconnecting client resyncs from the next snapshot.
+const outboundQueueCapacity = 256
+
+// outbound is one connection's event queue with its dedicated writer.
+// out is never closed — producers enqueue non-blocking and a stopped
+// writer's leftovers are garbage once the outbound is unregistered —
+// so no enqueue can panic against a concurrent shutdown. Evictions
+// close the socket: a connection the broadcaster gives up on must be
+// forced to reconnect, not left open and silent.
+type outbound struct {
+	conn     *websocket.Conn
+	out      chan []byte
+	stop     chan struct{}
+	stopOnce sync.Once
+}
+
+// shutdown asks the writer to exit; safe from any goroutine.
+func (o *outbound) shutdown() {
+	o.stopOnce.Do(func() { close(o.stop) })
+}
+
+// Broadcaster manages multiple WebSocket connections for fan-out
+// streaming. Publishing is a non-blocking enqueue under the map lock;
+// each connection's own writer goroutine drains its queue, so no
+// producer ever waits on a peer's socket.
 type Broadcaster struct {
-	mu           sync.RWMutex
-	conns        map[string]*websocket.Conn // connID -> connection
+	mu           sync.Mutex
+	conns        map[string]*outbound // connID -> outbound
 	writeTimeout time.Duration
+	capacity     int
 	logger       zerolog.Logger
 }
 
@@ -30,16 +57,44 @@ func NewBroadcaster(logger zerolog.Logger) *Broadcaster {
 }
 
 // NewBroadcasterWithTimeout creates a broadcaster whose per-conn
-// writes are bounded by the given deadline; non-positive falls back
-// to the default.
+// writes are bounded by the given deadline; non-positive falls back to
+// the default.
 func NewBroadcasterWithTimeout(logger zerolog.Logger, writeTimeout time.Duration) *Broadcaster {
+	return newBroadcaster(logger, writeTimeout, outboundQueueCapacity)
+}
+
+// newBroadcaster builds a broadcaster with an explicit per-conn queue
+// capacity; the unexported seam exists for capacity-sensitive tests.
+func newBroadcaster(logger zerolog.Logger, writeTimeout time.Duration, capacity int) *Broadcaster {
 	if writeTimeout <= 0 {
 		writeTimeout = DefaultWriteTimeout
 	}
 	return &Broadcaster{
-		conns:        make(map[string]*websocket.Conn),
+		conns:        make(map[string]*outbound),
 		writeTimeout: writeTimeout,
+		capacity:     capacity,
 		logger:       logger,
+	}
+}
+
+// registerLocked installs a connection's outbound and starts its
+// writer; caller holds mu.
+func (b *Broadcaster) registerLocked(connID string, conn *websocket.Conn) *outbound {
+	o := &outbound{
+		conn: conn,
+		out:  make(chan []byte, b.capacity),
+		stop: make(chan struct{}),
+	}
+	b.conns[connID] = o
+	go b.writeLoop(connID, o)
+	return o
+}
+
+// replaceLocked shuts down a same-id predecessor; caller holds mu.
+func (b *Broadcaster) replaceLocked(connID string, conn *websocket.Conn) {
+	if old, exists := b.conns[connID]; exists && old.conn != conn {
+		_ = old.conn.Close(websocket.StatusNormalClosure, "replaced by new connection")
+		old.shutdown()
 	}
 }
 
@@ -54,80 +109,100 @@ func (b *Broadcaster) Add(connID string, conn *websocket.Conn) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Close old connection if replacing
-	if old, exists := b.conns[connID]; exists && old != conn {
-		_ = old.Close(websocket.StatusNormalClosure, "replaced by new connection")
-	}
-
-	b.conns[connID] = conn
+	b.replaceLocked(connID, conn)
+	b.registerLocked(connID, conn)
 	b.logger.Debug().Str("conn_id", connID).Int("total", len(b.conns)).Msg("connection added to broadcaster")
 }
 
-// Remove removes a connection from the broadcast list.
-// Safe to call even if connID doesn't exist.
+// Remove removes a connection from the broadcast list and stops its
+// writer. Safe to call even if connID does not exist.
 func (b *Broadcaster) Remove(connID string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	delete(b.conns, connID)
+	if o, ok := b.conns[connID]; ok {
+		delete(b.conns, connID)
+		o.shutdown()
+	}
 	b.logger.Debug().Str("conn_id", connID).Int("total", len(b.conns)).Msg("connection removed from broadcaster")
 }
 
-// Count returns the number of active connections.
-func (b *Broadcaster) Count() int {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	return len(b.conns)
-}
+// WriteJSON marshals v once and enqueues it on every connection — a
+// non-blocking send under the map lock, so publishers serialize only
+// on the enqueue and never on a peer's socket. Per-connection FIFO is
+// the ordering contract: the order of WriteJSON calls is the order
+// each connection reads its frames. A full queue or a failing write
+// evicts the connection — evictions close the socket, so the dropped
+// peer reconnects and resyncs from the next full-replacement snapshot
+// instead of lingering as a silent zombie. The context is unused —
+// writes are bounded by the per-conn deadline, not any producer's.
+func (b *Broadcaster) WriteJSON(_ context.Context, v any) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
 
-// WriteJSON writes v as JSON to all connections, each write running
-// concurrently under its own deadline — a stalled peer is dropped
-// when its deadline passes, never waited on by the others. The map
-// lock stays held for the whole fan-out so an Add cannot interleave
-// its first event between peers' writes. Removes any connections
-// that fail to write.
-func (b *Broadcaster) WriteJSON(ctx context.Context, v interface{}) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-
-	if len(b.conns) == 0 {
-		return nil // No connections, nothing to do
+	for connID, o := range b.conns {
+		select {
+		case o.out <- data:
+		default:
+			b.evictLocked(connID, o)
+			b.logger.Debug().Str("conn_id", connID).
+				Msg("outbound queue overflow, dropping connection")
+		}
 	}
-
-	var failedMu sync.Mutex
-	var failed []string
-	var wg sync.WaitGroup
-	for connID, conn := range b.conns {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			writeCtx, cancel := context.WithTimeout(ctx, b.writeTimeout)
-			defer cancel()
-			if err := wsjson.Write(writeCtx, conn, v); err != nil {
-				b.logger.Debug().Err(err).Str("conn_id", connID).
-					Msg("failed to write to connection, removing")
-				failedMu.Lock()
-				failed = append(failed, connID)
-				failedMu.Unlock()
-			}
-		}()
-	}
-	wg.Wait()
-
-	// Remove failed connections.
-	for _, connID := range failed {
-		delete(b.conns, connID)
-	}
-
 	return nil
 }
 
-// AddWithBacklog adds a connection and first delivers the backlog
-// the callback builds — both under the map lock, so the backlog is
-// ordered before anything a concurrent WriteJSON emits afterwards.
-// The callback runs with the lock held; build the backlog from lane
-// state under the lane's own mutex there. A failed backlog write
-// drops the join.
+// evictLocked unregisters a connection, stops its writer, and closes
+// its socket. Caller holds mu.
+func (b *Broadcaster) evictLocked(connID string, o *outbound) {
+	if cur, ok := b.conns[connID]; ok && cur == o {
+		delete(b.conns, connID)
+	}
+	o.shutdown()
+	_ = o.conn.CloseNow()
+}
+
+// writeLoop drains one connection's queue to its socket. A write
+// error ends the loop and evicts the connection — closing the socket,
+// since a peer that cannot be written to must reconnect rather than
+// keep an open-but-silent connection. Shutdown ends it without
+// touching the socket — the owner closes removed connections.
+func (b *Broadcaster) writeLoop(connID string, o *outbound) {
+	for {
+		select {
+		case data := <-o.out:
+			ctx, cancel := context.WithTimeout(context.Background(), b.writeTimeout)
+			err := o.conn.Write(ctx, websocket.MessageText, data)
+			cancel()
+			if err == nil {
+				continue
+			}
+			b.logger.Debug().Err(err).Str("conn_id", connID).
+				Msg("failed to write to connection, removing")
+			b.mu.Lock()
+			b.evictLocked(connID, o)
+			b.mu.Unlock()
+			return
+		case <-o.stop:
+			return
+		}
+	}
+}
+
+// AddWithBacklog adds a connection and first delivers the backlog the
+// callback builds. The callback, the registration, and the backlog's
+// enqueue are one critical section against concurrent WriteJSON
+// publishes, so the backlog a joiner receives is never missing an
+// event that postdates its snapshot — per-connection FIFO then keeps
+// the backlog ahead of everything enqueued after it. No socket write
+// happens under the lock: the frames ride the connection's own queue
+// and its writer drains them. A backlog that fails to marshal or fit
+// the queue drops the join. The callback runs with the lock held;
+// build the backlog from lane state under the lane's own mutex there.
 func (b *Broadcaster) AddWithBacklog(connID string, conn *websocket.Conn, backlog func() []any) {
 	if conn == nil {
 		return
@@ -136,40 +211,32 @@ func (b *Broadcaster) AddWithBacklog(connID string, conn *websocket.Conn, backlo
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	b.replaceLocked(connID, conn)
+	o := b.registerLocked(connID, conn)
 	for _, v := range backlog() {
-		writeCtx, cancel := context.WithTimeout(context.Background(), b.writeTimeout)
-		err := wsjson.Write(writeCtx, conn, v)
-		cancel()
+		data, err := json.Marshal(v)
 		if err != nil {
-			b.logger.Debug().Err(err).Str("conn_id", connID).Msg("backlog write failed, dropping join")
+			b.logger.Debug().Err(err).Str("conn_id", connID).
+				Msg("backlog marshal failed, dropping join")
+			b.evictLocked(connID, o)
+			return
+		}
+		select {
+		case o.out <- data:
+		default:
+			b.logger.Debug().Str("conn_id", connID).
+				Msg("backlog overflowed queue, dropping join")
+			b.evictLocked(connID, o)
 			return
 		}
 	}
-
-	// Close old connection if replacing.
-	if old, exists := b.conns[connID]; exists && old != conn {
-		_ = old.Close(websocket.StatusNormalClosure, "replaced by new connection")
-	}
-
-	b.conns[connID] = conn
-	b.logger.Debug().Str("conn_id", connID).Int("total", len(b.conns)).Msg("connection added to broadcaster")
+	b.logger.Debug().Str("conn_id", connID).Int("total", len(b.conns)).
+		Msg("connection added to broadcaster")
 }
 
-// HasConnections returns true if there are any active connections.
-func (b *Broadcaster) HasConnections() bool {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	return len(b.conns) > 0
-}
-
-// ConnIDs returns a list of all connection IDs (for debugging).
-func (b *Broadcaster) ConnIDs() []string {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	ids := make([]string, 0, len(b.conns))
-	for id := range b.conns {
-		ids = append(ids, id)
-	}
-	return ids
+// Count returns the number of active connections.
+func (b *Broadcaster) Count() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.conns)
 }

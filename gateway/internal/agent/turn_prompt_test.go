@@ -1,6 +1,6 @@
 package agent_test
 
-// Turn persona pins: the lane fetches the agent's config each turn
+// Turn persona pins: the worker fetches the agent's config each turn
 // and leads the model call with the built system prompt, and a failed
 // fetch fails open — the turn still runs, persona-less.
 
@@ -90,9 +90,7 @@ func TestTurnLeadsModelCallWithPersona(t *testing.T) {
 
 	c, sc := wsPair(t)
 
-	ok := mgr.SubmitMsg(context.Background(), "agent-persona", "conn-1", sc,
-		agent.Message{ID: "msg-1", Content: "hi"})
-	require.True(t, ok)
+	submit(t, mgr, "agent-persona", "conn-1", sc, "hi")
 
 	_, p := readUntilMessage(t, c)
 	require.Equal(t, "hello from the model", p.Content)
@@ -118,9 +116,7 @@ func TestTurnConfigFetchFailureStillAnswers(t *testing.T) {
 
 	c, sc := wsPair(t)
 
-	ok := mgr.SubmitMsg(context.Background(), "agent-persona-less", "conn-1", sc,
-		agent.Message{ID: "msg-1", Content: "hi"})
-	require.True(t, ok)
+	submit(t, mgr, "agent-persona-less", "conn-1", sc, "hi")
 
 	_, p := readUntilMessage(t, c)
 	require.Equal(t, "still answering", p.Content)

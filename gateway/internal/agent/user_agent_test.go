@@ -2,109 +2,74 @@ package agent_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/rs/zerolog"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/radch-ai/ava/backend"
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/gateway/internal/agent"
 )
 
-func TestUserAgent_SubmitMsg_Success(t *testing.T) {
-	logger := zerolog.Nop()
-	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
+func TestUserAgent_SubmitAdmitsAndRunsWorker(t *testing.T) {
+	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+		&agent.UserAgentManagerOptions{
+			ResolveModel: func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
+				return backend.ResolvedModel{}, errors.New("no model in start test")
+			},
+		})
 
-	agentID := "agent-start-test"
+	id, err := mgr.Submit("agent-start-test", "conn-1", nil,
+		"test message", &apitypes.ModelEntry{ID: "gpt-4o"})
+	require.NoError(t, err)
+	require.NotEmpty(t, id, "admission returns the item's stable id")
 
-	ok := mgr.SubmitMsg(context.Background(), agentID, "conn-1", nil, agent.Message{
-		Content: "test message",
-		ID:      "msg-1",
-		Model:   &apitypes.ModelEntry{ID: "gpt-4o"},
-	})
-	require.True(t, ok)
-
-	// Verify agent was created
-	ag := mgr.Get(agentID)
-	require.NotNil(t, ag)
+	// The worker exists to run the queue.
+	require.NotNil(t, mgr.Get("agent-start-test"))
 }
 
 func TestUserAgent_ConcurrentSubmit(t *testing.T) {
-	logger := zerolog.Nop()
-	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
-
-	agentID := "agent-concurrent-test"
-
-	// Create agent first
-	ok := mgr.SubmitMsg(context.Background(), agentID, "conn-1", nil, agent.Message{
-		Content: "initial",
-		ID:      "msg-0",
-		Model:   &apitypes.ModelEntry{ID: "gpt-4o"},
-	})
-	require.True(t, ok)
+	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+		&agent.UserAgentManagerOptions{
+			ResolveModel: func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
+				return backend.ResolvedModel{}, errors.New("no model in concurrent test")
+			},
+		})
 
 	const numGoroutines = 10
 	const numMessagesPerGoroutine = 5
 
 	var wg sync.WaitGroup
 	wg.Add(numGoroutines)
-
-	for i := 0; i < numGoroutines; i++ {
-		go func(goroutineID int) {
+	for range numGoroutines {
+		go func() {
 			defer wg.Done()
-			for j := 0; j < numMessagesPerGoroutine; j++ {
-				mgr.SubmitMsg(context.Background(), agentID, "conn-concurrent", nil, agent.Message{
-					Content: "concurrent message",
-					ID:      "msg-concurrent",
-					Model:   &apitypes.ModelEntry{ID: "gpt-4o"},
-				})
+			for range numMessagesPerGoroutine {
+				_, _ = mgr.Submit("agent-concurrent-test",
+					"conn-concurrent", nil, "concurrent message", nil)
 			}
-		}(i)
+		}()
 	}
-
 	wg.Wait()
-	time.Sleep(200 * time.Millisecond)
 }
 
-func TestUserAgent_IdleTimeout_TriggersExit(t *testing.T) {
-	logger := zerolog.Nop()
-	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
+func TestUserAgent_StatusReportsQueue(t *testing.T) {
+	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+		&agent.UserAgentManagerOptions{})
 
-	agentID := "agent-idle-exit-test"
+	_, err := mgr.Submit("agent-status-test", "conn-1", nil,
+		"test", &apitypes.ModelEntry{ID: "gpt-4o"})
+	require.NoError(t, err)
 
-	// Create agent
-	ok := mgr.SubmitMsg(context.Background(), agentID, "conn-1", nil, agent.Message{
-		Content: "test",
-		ID:      "msg-1",
-		Model:   &apitypes.ModelEntry{ID: "gpt-4o"},
-	})
-	require.True(t, ok)
+	require.True(t, mgr.Status("agent-status-test").Active)
 
-	// Agent should exist
-	ag := mgr.Get(agentID)
-	require.NotNil(t, ag)
-}
-
-func TestUserAgent_GetStatus(t *testing.T) {
-	logger := zerolog.Nop()
-	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
-
-	agentID := "agent-status-test"
-
-	ok := mgr.SubmitMsg(context.Background(), agentID, "conn-1", nil, agent.Message{
-		Content: "test",
-		ID:      "msg-1",
-		Model:   &apitypes.ModelEntry{ID: "gpt-4o"},
-	})
-	require.True(t, ok)
-
-	ag := mgr.Get(agentID)
-	require.NotNil(t, ag)
-
-	status := ag.LaneStatus()
-	assert.Equal(t, true, status.Active)
-	assert.Equal(t, "gpt-4o", status.Model)
+	// The worker claims asynchronously: whatever raced, the queue
+	// ends up empty once the item runs.
+	require.Eventually(t, func() bool {
+		return mgr.Status("agent-status-test").QueueLen == 0
+	}, 5*time.Second, 10*time.Millisecond, "the submitted item never left the queue")
 }

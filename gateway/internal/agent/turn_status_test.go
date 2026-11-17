@@ -1,12 +1,12 @@
 package agent_test
 
-// Working-state pins: the lane brackets every turn with lane_status
-// events carrying working — true before anything the turn emits,
-// false after the final event — so the composer's stop control can
-// track it.
+// Working-state pins: the worker brackets every turn with
+// lane_status events carrying working — true before anything the
+// turn emits, false after the final event — so the composer's stop
+// control can track it. Queue snapshots may interleave; they are not
+// turn output.
 
 import (
-	"context"
 	"testing"
 
 	"github.com/rs/zerolog"
@@ -24,22 +24,21 @@ func TestTurnBroadcastsWorkingTransitions(t *testing.T) {
 
 	c, sc := wsPair(t)
 
-	ok := mgr.SubmitMsg(context.Background(), "agent-working", "conn-1", sc,
-		agent.Message{ID: "msg-1", Content: "hi"})
-	require.True(t, ok)
+	submit(t, mgr, "agent-working", "conn-1", sc, "hi")
 
-	// The turn announces itself before any turn output.
+	// The turn announces itself before any turn output; the
+	// admission snapshot may precede the announcement.
 	first := readEvent(t, c)
-	require.Equal(t, wstypes.EventTypeLaneStatus, first.Type)
-	started := eventPayload[wstypes.LaneStatus](t, first)
+	require.Contains(t,
+		[]wstypes.EventType{wstypes.EventTypeLaneStatus, wstypes.EventTypeQueueState},
+		first.Type, "unexpected leading event %v", first.Type)
+	started := nextLaneStatus(t, c)
 	require.True(t, started.Working)
 
 	_, p := readUntilMessage(t, c)
 	require.Equal(t, "working done", p.Content)
 
 	// And reports the turn ended after the final event.
-	last := readEvent(t, c)
-	require.Equal(t, wstypes.EventTypeLaneStatus, last.Type)
-	ended := eventPayload[wstypes.LaneStatus](t, last)
-	require.False(t, ended.Working)
+	last := nextLaneStatus(t, c)
+	require.False(t, last.Working)
 }

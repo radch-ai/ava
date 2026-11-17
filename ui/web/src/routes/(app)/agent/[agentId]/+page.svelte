@@ -17,9 +17,11 @@
 		type LaneStatus,
 		mergePastThread
 	} from '#lib/services/agent'
+	import type { QueueActiveItem, QueueItem } from '#lib/types/gen/wstypes.gen'
 	import { resolve } from '$app/paths'
 	import type { PageData } from './$types'
 	import AgentShell from './AgentShell.svelte'
+	import QueueList from './QueueList.svelte'
 	import TextArea from './TextArea.svelte'
 
 	let { data }: { data: PageData } = $props()
@@ -90,6 +92,34 @@
 	let laneStatus = $state<LaneStatus | null>(null)
 	const liveTurns = createLiveTurns()
 
+	// The gateway-owned queue projection: full-replacement snapshots
+	// only — the page never schedules or mutates the queue itself.
+	let queueItems = $state<QueueItem[]>([])
+	let queuePaused = $state(false)
+	let queueActiveItem = $state<QueueActiveItem | null>(null)
+	// The send-now reservation: claimed-but-not-started work, pinned
+	// above the waiting list until its claim snapshot lands.
+	let queueNextItem = $state<QueueItem | null>(null)
+	// Item ids the gateway has claimed: a stale pre-claim snapshot
+	// replayed on reconnect must not resurrect them as waiting.
+	const executedItemIds = new Set<string>()
+	let pendingSendNowId = $state<string | null>(null)
+	// The shell's forced scroll: a submit always drops the view to
+	// the newest content. A queued item claiming later must NOT —
+	// the reader may have gone up to check something.
+	let shell = $state<AgentShell>()
+
+	// Only genuinely waiting work renders above the composer; the
+	// running item lives in the transcript's user row.
+	const waitingItems = $derived(
+		queueItems.filter((item) => !executedItemIds.has(item.id))
+	)
+	// Busy is gateway truth: a turn in flight, or a claimed item —
+	// the claim snapshot can beat the lane's working broadcast.
+	const composerWorking = $derived(
+		(laneStatus?.working ?? false) || queueActiveItem !== null
+	)
+
 	async function loadMore() {
 		if (!thread?.nextCursor || isLoadingMore) return
 
@@ -133,14 +163,41 @@
 		activeTab = tab
 	}
 
-	function handleComposerSubmit(text: string) {
+	async function handleComposerSubmit(text: string): Promise<void> {
 		activeTab = 'conversation'
-		liveTurns.echoUser(text)
-		socket?.sendPrompt(text, selectedModel)
+		// A submit always drops the view to the newest content —
+		// before any ack or claim, wherever the reader was.
+		shell?.scrollToBottom()
+		const op = await socket?.sendPrompt(text, selectedModel)
+		if (!op) {
+			throw new Error('not connected')
+		}
+		if (!op.accepted) {
+			throw new Error(op.error || 'the gateway rejected the prompt')
+		}
+		// The user row appears when the queue snapshot shows the item
+		// running — never at submit time.
 	}
 
 	function handleInterrupt() {
 		socket?.sendInterrupt()
+	}
+
+	async function handleQueueSendNow(itemId: string) {
+		if (pendingSendNowId) {
+			return
+		}
+		pendingSendNowId = itemId
+		try {
+			// The current selection rides the frame: a paused queue
+			// rebinds its failed-model entries to it.
+			await socket?.sendNow(itemId, selectedModel)
+		} catch {
+			// Unconfirmed, not rejected: the next queue snapshot is
+			// the truth; nothing to resubmit.
+		} finally {
+			pendingSendNowId = null
+		}
 	}
 
 	// Connection state from the socket: live means the gateway greeted
@@ -156,23 +213,60 @@
 	}
 
 	// Turn events fold into the live conversation tail; lane state
-	// mirrors into the strip. A turn is over when its final message
-	// or its stored failure arrives — the sink wrote before the
-	// event, so a refetch replaces the newest window (keeping any
-	// loaded older pages) and the live copies it covers are dropped.
-	// Pages arrive oldest→newest; anything already loaded that the
-	// fresh window does not carry is strictly older, so the settled
-	// turn lands at the bottom. Refetches serialize — an older
-	// response can never overwrite a newer snapshot — and a stored
-	// error whose refetch failed retries on the next terminal event
+	// mirrors into the strip; queue snapshots replace the queue
+	// projection and echo the running item's user row under its
+	// server-minted id. A turn is over when its final message or its
+	// stored failure arrives — the sink wrote before the event, so a
+	// refetch replaces the newest window (keeping any loaded older
+	// pages) and the live copies it covers are dropped, reconciling
+	// by server ids so identical prompt texts never collide. Pages
+	// arrive oldest→newest; anything already loaded that the fresh
+	// window does not carry is strictly older, so the settled turn
+	// lands at the bottom. Refetches serialize — an older response
+	// can never overwrite a newer snapshot — and a stored error
+	// whose refetch failed retries on the next terminal event
 	// instead of lingering as a live copy forever.
 	let reconcileChain: Promise<void> = Promise.resolve()
 	const pendingErrorRows = new Set<string>()
 
 	function handleSocketEvent(event: AgentSocketEvent) {
 		liveTurns.applyEvent(event)
+		if (event.type === 'queue_state') {
+			queueItems = event.data.items
+			queuePaused = event.data.paused
+			queueActiveItem = event.data.active ?? null
+			queueNextItem = event.data.next ?? null
+			if (queueActiveItem) {
+				executedItemIds.add(queueActiveItem.id)
+			} else if (event.data.items.length === 0 && !event.data.paused) {
+				executedItemIds.clear()
+			}
+			// The strip's queue count rides the snapshot too —
+			// lane_status only fires on working transitions. Waiting
+			// rows are pending plus the pinned reservation, the
+			// server's own definition.
+			if (laneStatus) {
+				laneStatus = {
+					...laneStatus,
+					queue_len: event.data.items.length + (event.data.next ? 1 : 0)
+				}
+			}
+			// The claim's user row mints under its server id; beginUser
+			// is idempotent, so snapshot replays never duplicate it. No
+			// scroll here: a claimed item must not yank a reader who
+			// moved up while it waited — only submits scroll.
+			const active = event.data.active
+			if (active) {
+				liveTurns.beginUser(active.user_message_id, active.content)
+			}
+		}
 		if (event.type === 'lane_status') {
-			laneStatus = event.data
+			// The status reply can trail a fresher queue snapshot; the
+			// projection wins for the count, pending plus reservation.
+			laneStatus = {
+				...event.data,
+				queue_len: queueItems.length + (queueNextItem ? 1 : 0)
+			}
 		}
 		if (event.type === 'message') {
 			queueReconcile(event.data.id)
@@ -200,7 +294,7 @@
 			}
 			liveTurns.settleTurn(
 				id,
-				fresh.items.filter((m) => m.role === 'user').map((m) => m.content),
+				fresh.items.filter((m) => m.role === 'user').map((m) => m.id),
 				fresh.items.filter((m) => m.role === 'error').map((m) => m.id)
 			)
 			for (const errorId of settlingErrors) {
@@ -238,6 +332,7 @@
 </script>
 
 <AgentShell
+	bind:this={shell}
 	agent={data.agent}
 	{activeTab}
 	onTabChange={isSuperagent ? selectTab : undefined}
@@ -252,9 +347,23 @@
 	{activityError}
 	{isLoadingActivity}
 	onActivityLoadMore={handleActivityLoadMore}
+	queueRows={waitingItems.length + (queueNextItem ? 1 : 0)}
 >
 	{#if isSuperagent}
 		<div class="mx-auto w-full md:max-w-[calc(var(--content-max-width)+2rem)]">
+			<!-- The queue renders only with waiting work: an empty queue
+			hides the whole block, giving the thread its space back. -->
+			{#if waitingItems.length > 0 || queueNextItem}
+				<div class="mb-2">
+					<QueueList
+						items={waitingItems}
+						next={queueNextItem}
+						paused={queuePaused}
+						pendingId={pendingSendNowId}
+						onsendnow={handleQueueSendNow}
+					/>
+				</div>
+			{/if}
 			<div class="mr-3.25 mb-1 flex items-center justify-end gap-1">
 				<span class="text-muted-foreground text-sm">Model:</span>
 				<ModelSelector
@@ -265,7 +374,7 @@
 			</div>
 			<TextArea
 				onsubmit={handleComposerSubmit}
-				working={laneStatus?.working ?? false}
+				working={composerWorking}
 				oninterrupt={handleInterrupt}
 			/>
 		</div>

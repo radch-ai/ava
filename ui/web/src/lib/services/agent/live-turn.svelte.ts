@@ -1,7 +1,13 @@
 /**
  * Live turn state: the conversation tail assembled from gateway
- * events while a turn runs. Ephemeral by design — nothing here
+ * events while turns run. Ephemeral by design — nothing here
  * persists; reloading the page shows only the stored thread.
+ *
+ * Rows carry server ids: the user row the claim minted
+ * (user_message_id) and the queue item id that streams the answer,
+ * so turns reconcile by identity even when two prompts read alike.
+ * Tool rows key on turn + call: a provider may reuse a tool-call id
+ * across turns, and a late result must land on its own turn's row.
  */
 
 import type { AgentSocketEvent } from './ws'
@@ -12,23 +18,45 @@ export interface LiveMessage {
 	content: string
 	/** True while chunks are still arriving for an assistant message. */
 	pending?: boolean
+	/** Tool rows only: the invocation's turn (queue item) id. */
+	turnId?: string
 	name?: string
 	args?: string
 	result?: string
 	error?: string | null
 }
 
+/** The composite identity of one tool invocation. */
+function toolRowId(turnId: string, callId: string): string {
+	return `${turnId}:${callId}`
+}
+
 /** Creates the live-tail store for one conversation surface. */
 export function createLiveTurns() {
 	let messages = $state<LiveMessage[]>([])
 
-	/** Adds the user's own prompt optimistically, keyed locally. */
-	function echoUser(text: string) {
+	/** Adds a turn's user row under its server-minted id; repeats for
+	 * the same id (snapshot replays) never duplicate. */
+	function beginUser(id: string, text: string) {
+		if (messages.some((m) => m.id === id)) {
+			return
+		}
 		messages.push({
-			id: `local-${crypto.randomUUID()}`,
+			id,
 			role: 'user',
 			content: text
 		})
+		// The reasoning marker is the running turn's answer stand-in,
+		// so it trails the newest user row. A join can deliver the
+		// lane's reasoning signal before the snapshot that mints this
+		// row — relocate markers that landed above it.
+		const markers = messages.filter(
+			(m) => m.role === 'assistant' && !m.content && m.id.startsWith('local-')
+		)
+		if (markers.length > 0) {
+			messages = messages.filter((m) => !markers.includes(m))
+			messages.push(...markers)
+		}
 	}
 
 	/** Folds one gateway event into the tail; non-turn events are ignored. */
@@ -36,8 +64,9 @@ export function createLiveTurns() {
 		switch (event.type) {
 			case 'tool_call': {
 				messages.push({
-					id: event.data.id,
+					id: toolRowId(event.data.turn_id ?? '', event.data.id),
 					role: 'tool',
+					turnId: event.data.turn_id,
 					content: event.data.name,
 					name: event.data.name,
 					args: event.data.args,
@@ -46,7 +75,8 @@ export function createLiveTurns() {
 				break
 			}
 			case 'tool_result': {
-				const existing = messages.find((m) => m.id === event.data.id)
+				const rowId = toolRowId(event.data.turn_id ?? '', event.data.id)
+				const existing = messages.find((m) => m.id === rowId)
 				if (existing) {
 					existing.result = event.data.result
 					existing.error = event.data.error ?? null
@@ -129,24 +159,25 @@ export function createLiveTurns() {
 	}
 
 	/** Settles a finished turn: its rows are in the stored thread now,
-	 * so the live copies go — the settled assistant entry, the echoed
-	 * prompts the refetched page carries, the tool entries, whose
-	 * wire ids never match the sink-minted row ids, and error bubbles
-	 * the page carries by their stored id. Echoes the page does not
-	 * carry yet belong to turns still running; they stay. Transient
-	 * errors have no stored row and never retire here. */
+	 * so the live copies go — the settled assistant entry and the
+	 * user rows the refetched page carries, both by their server ids,
+	 * the tool rows of this turn, whose wire ids never match the
+	 * sink-minted row ids, and error bubbles the page carries by
+	 * their stored id. Rows the page does not carry yet belong to
+	 * turns still running; they stay. Transient errors have no stored
+	 * row and never retire here. */
 	function settleTurn(
 		id: string,
-		persistedPrompts: string[],
+		persistedUserIds: string[],
 		persistedErrors: string[] = []
 	) {
-		const prompts = new Set(persistedPrompts)
+		const users = new Set(persistedUserIds)
 		const errors = new Set(persistedErrors)
 		messages = messages.filter(
 			(m) =>
 				m.id !== id &&
-				m.role !== 'tool' &&
-				!(m.role === 'user' && prompts.has(m.content)) &&
+				!(m.role === 'tool' && (m.turnId ?? '') === id) &&
+				!(m.role === 'user' && users.has(m.id)) &&
 				!(m.role === 'error' && errors.has(m.id))
 		)
 	}
@@ -154,7 +185,7 @@ export function createLiveTurns() {
 		get messages() {
 			return messages
 		},
-		echoUser,
+		beginUser,
 		applyEvent,
 		settleTurn
 	}
