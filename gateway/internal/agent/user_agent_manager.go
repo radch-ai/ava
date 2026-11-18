@@ -1,9 +1,9 @@
 package agent
 
 // UserAgentManager owns one agentState per agent — the authoritative
-// queue and its subscribers — and spawns disposable runtime workers
-// on demand. A worker's idle exit releases the worker only; pending
-// work, pause state, and connections stay with the state.
+// queue and its subscribers — and the spawning of disposable runtime
+// workers on demand. A worker's exit releases the worker only;
+// pending work, pause state, and connections stay behind.
 
 import (
 	"context"
@@ -25,15 +25,16 @@ type UserAgentManagerOptions struct {
 	// PersistTurn appends turn messages to the thread for every
 	// lane; bound by the gateway at boot.
 	PersistTurn TurnSink
-	// IdleTimeout overrides the worker's idle eviction; zero keeps
-	// the default. It exists for tests to shrink the wait.
-	IdleTimeout time.Duration
 	// GetAgentConfig reads an agent's editable config — the prompt
 	// texts and tool list a turn needs; bound by the gateway at boot.
 	GetAgentConfig AgentConfigSource
 	// Tools fetches each lane's effective tools per turn —
 	// permissions applied; nil leaves lanes tool-less.
 	Tools AgentToolsFunc
+	// GetAgentThread reads an agent's thread as the turn's model
+	// input; bound by the gateway at boot. Required: an unbound
+	// source fails each turn at message level.
+	GetAgentThread AgentThreadSource
 }
 
 // UserAgentManager manages per-agent queue states with thread-safe
@@ -44,8 +45,8 @@ type UserAgentManager struct {
 	resolveModel   ModelResolver
 	persistTurn    TurnSink
 	getAgentConfig AgentConfigSource
-	idleTimeout    time.Duration
 	tools          AgentToolsFunc
+	getAgentThread AgentThreadSource
 
 	rootCtx    context.Context
 	rootCancel context.CancelFunc
@@ -61,7 +62,7 @@ func NewUserAgentManager(logger zerolog.Logger, opts *UserAgentManagerOptions) *
 		m.persistTurn = opts.PersistTurn
 		m.getAgentConfig = opts.GetAgentConfig
 		m.tools = opts.Tools
-		m.idleTimeout = opts.IdleTimeout
+		m.getAgentThread = opts.GetAgentThread
 	}
 	m.rootCtx, m.rootCancel = context.WithCancel(context.Background())
 	return m
@@ -74,15 +75,15 @@ func (m *UserAgentManager) state(agentID string) *agentState {
 	if v, ok := m.states.Load(agentID); ok {
 		return v.(*agentState)
 	}
-	s := newAgentState(agentID, m.logger)
+	s := newAgentState(agentID, m.rootCtx, m.logger)
 	s.ensureWorker = func() { m.ensureWorker(s) }
 	actual, _ := m.states.LoadOrStore(agentID, s)
 	return actual.(*agentState)
 }
 
 // ensureWorker installs exactly one live worker on the state; the
-// worker claims from the queue and exits on idle without touching
-// the state's lifetime.
+// worker claims from the queue and exits as soon as nothing may run,
+// without touching the state's lifetime.
 func (m *UserAgentManager) ensureWorker(s *agentState) {
 	s.workerMu.Lock()
 	defer s.workerMu.Unlock()
@@ -97,21 +98,26 @@ func (m *UserAgentManager) newWorker(s *agentState) *UserAgent {
 	return newUserAgent(m.rootCtx, UserAgentOptions{
 		AgentID:        s.agentID,
 		State:          s,
-		IdleTimeout:    m.idleTimeout,
 		ResolveModel:   m.resolveModel,
 		PersistTurn:    m.persistTurn,
 		GetAgentConfig: m.getAgentConfig,
 		Tools:          m.tools,
+		GetAgentThread: m.getAgentThread,
 		Logger:         m.logger,
 		OnExit:         func(w *UserAgent) { m.workerExited(s, w) },
 	})
 }
 
 // workerExited clears a worker that finished. Only the matching
-// generation clears; a replacement may already be installed. Work
-// that arrived while the worker was leaving spawns a replacement —
-// an accepted item is never stranded in a dead worker's wake — but a
-// draining queue ends for good: no replacement runs a gated claim.
+// generation clears; a replacement may already be installed. A
+// replacement spawns only when work can run right now — claim's own
+// predicate — so a paused queue never respawn-loops against a worker
+// that has nothing to do; its manager-owned state (items, pause,
+// subscribers) stays intact without a live worker and for the
+// process's lifetime. Work that arrived while the worker was leaving
+// still spawns one: an accepted item is never stranded in a dead
+// worker's wake. A draining queue ends for good: no replacement runs
+// a gated claim.
 func (m *UserAgentManager) workerExited(s *agentState, w *UserAgent) {
 	s.workerMu.Lock()
 	defer s.workerMu.Unlock()
@@ -119,12 +125,8 @@ func (m *UserAgentManager) workerExited(s *agentState, w *UserAgent) {
 		return
 	}
 	s.worker = nil
-	if s.hasWork() && !s.drainingNow() {
+	if s.canRunNow() && !s.drainingNow() {
 		s.worker = m.newWorker(s)
-		return
-	}
-	if s.conns.Count() == 0 {
-		m.states.Delete(s.agentID)
 	}
 }
 
@@ -218,17 +220,12 @@ func (m *UserAgentManager) Interrupt(agentID string) {
 }
 
 // RemoveConn drops a connection from the agent's subscribers, worker
-// or not. An empty, idle state is collected here too.
+// or not. States are per-agent and live for the process: collecting
+// them here could only race a concurrent Submit that already loaded
+// the state, orphaning its admitted work.
 func (m *UserAgentManager) RemoveConn(agentID, connID string) {
 	if v, ok := m.states.Load(agentID); ok {
-		s := v.(*agentState)
-		s.conns.Remove(connID)
-		s.workerMu.Lock()
-		idle := s.worker == nil
-		s.workerMu.Unlock()
-		if idle && !s.hasWork() && s.conns.Count() == 0 {
-			m.states.Delete(agentID)
-		}
+		v.(*agentState).conns.Remove(connID)
 	}
 }
 
@@ -236,9 +233,10 @@ func (m *UserAgentManager) RemoveConn(agentID, connID string) {
 // and claiming, each running item is interrupted — its partial
 // answer settles into the thread per the interrupt rules — and the
 // call waits, bounded by timeout, for the items to finish
-// persisting. Workers then wind down with the manager's context;
-// pending queue items are in-memory state and do not outlive the
-// process.
+// persisting. Workers then wind down with the manager's context.
+// Pending queue items are in-memory state and do not outlive the
+// process; transcript retention belongs to the backend and durable
+// storage rebuilds it.
 func (m *UserAgentManager) Drain(timeout time.Duration) {
 	m.states.Range(func(_, val any) bool {
 		s := val.(*agentState)

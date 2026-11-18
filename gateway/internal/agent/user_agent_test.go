@@ -18,6 +18,7 @@ import (
 func TestUserAgent_SubmitAdmitsAndRunsWorker(t *testing.T) {
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
+			GetAgentThread: emptyThread,
 			ResolveModel: func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
 				return backend.ResolvedModel{}, errors.New("no model in start test")
 			},
@@ -35,6 +36,7 @@ func TestUserAgent_SubmitAdmitsAndRunsWorker(t *testing.T) {
 func TestUserAgent_ConcurrentSubmit(t *testing.T) {
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
+			GetAgentThread: emptyThread,
 			ResolveModel: func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
 				return backend.ResolvedModel{}, errors.New("no model in concurrent test")
 			},
@@ -59,7 +61,7 @@ func TestUserAgent_ConcurrentSubmit(t *testing.T) {
 
 func TestUserAgent_StatusReportsQueue(t *testing.T) {
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
-		&agent.UserAgentManagerOptions{})
+		&agent.UserAgentManagerOptions{GetAgentThread: emptyThread})
 
 	_, err := mgr.Submit("agent-status-test", "conn-1", nil,
 		"test", &apitypes.ModelEntry{ID: "gpt-4o"})

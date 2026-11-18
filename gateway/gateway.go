@@ -56,6 +56,11 @@ type Config struct {
 	// to TurnService.AgentTools by the binary at boot. Zero keeps
 	// turns tool-less.
 	Tools agent.AgentToolsFunc
+	// GetAgentThread reads an agent's thread as the turn's model
+	// input — bound to TurnService.GetAgentThread by the binary at
+	// boot. Required: the working context is the committed user row,
+	// so an unbound source fails the turn.
+	GetAgentThread agent.AgentThreadSource
 }
 
 // New builds the gateway. The gateway is a single WebSocket endpoint:
@@ -67,6 +72,7 @@ func New(cfg *Config, logger zerolog.Logger) (*Gateway, error) {
 	var persist agent.TurnSink
 	var getConfig agent.AgentConfigSource
 	var toolsFn agent.AgentToolsFunc
+	var getThread agent.AgentThreadSource
 	if cfg != nil {
 		if cfg.PingInterval > 0 {
 			interval = cfg.PingInterval
@@ -75,12 +81,14 @@ func New(cfg *Config, logger zerolog.Logger) (*Gateway, error) {
 		persist = cfg.PersistTurn
 		getConfig = cfg.GetAgentConfig
 		toolsFn = cfg.Tools
+		getThread = cfg.GetAgentThread
 	}
 	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{
 		ResolveModel:   resolve,
 		PersistTurn:    persist,
 		GetAgentConfig: getConfig,
 		Tools:          toolsFn,
+		GetAgentThread: getThread,
 	})
 	return &Gateway{
 		handler: handleWS(interval, logger, mgr),
@@ -296,6 +304,12 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 				}
 				mgr.Join(env.AgentID, connID, conn)
 			case wstypes.EnvelopeTypeInterrupt:
+				// The stop frame binds like every other frame: a socket
+				// bound to one agent must not stop another agent's turn.
+				if !bindAgent(&joinedAgent, env.AgentID) {
+					logger.Warn().Str("agent_id", env.AgentID).Msg("connection already bound to another agent")
+					continue
+				}
 				mgr.Interrupt(env.AgentID)
 			default:
 				logger.Debug().Str("type", string(env.Type)).Msg("unknown message type")

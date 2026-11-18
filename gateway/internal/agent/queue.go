@@ -3,7 +3,7 @@ package agent
 // The authoritative per-agent queue: pending prompts, the reserved
 // next item, the active turn, and the pause gate. Manager-owned, so
 // the queue and its subscriptions outlive the disposable runtime
-// worker and its idle eviction.
+// worker.
 
 import (
 	"context"
@@ -71,9 +71,9 @@ type agentState struct {
 	pauseModel *apitypes.ModelEntry
 	cancel     context.CancelFunc // cancels the active item's turn ctx
 
-	// wake signals the worker that claiming may make progress. Cap 1
-	// and data-free: signals coalesce; the queue is the truth.
-	wake chan struct{}
+	// rootCtx parents every turn's context; the manager's root, set
+	// once when the state is created.
+	rootCtx context.Context
 
 	conns *wsconn.Broadcaster
 
@@ -84,10 +84,6 @@ type agentState struct {
 	// by the manager, nil in unit tests.
 	ensureWorker func()
 
-	// newTurnCtx mints the per-turn context; set by the manager so
-	// the worker's lane context parents the turn, nil in unit tests.
-	newTurnCtx func() (context.Context, context.CancelFunc)
-
 	drainMu  sync.Mutex
 	draining bool
 
@@ -97,10 +93,10 @@ type agentState struct {
 	worker   *UserAgent
 }
 
-func newAgentState(agentID string, logger zerolog.Logger) *agentState {
+func newAgentState(agentID string, rootCtx context.Context, logger zerolog.Logger) *agentState {
 	s := &agentState{
 		agentID: agentID,
-		wake:    make(chan struct{}, 1),
+		rootCtx: rootCtx,
 		conns:   wsconn.NewBroadcaster(logger),
 	}
 	s.publish = func(ev wstypes.QueueStateEvent) {
@@ -111,14 +107,6 @@ func newAgentState(agentID string, logger zerolog.Logger) *agentState {
 		})
 	}
 	return s
-}
-
-// signalWake nudges the worker without blocking.
-func (s *agentState) signalWake() {
-	select {
-	case s.wake <- struct{}{}:
-	default:
-	}
 }
 
 // drainingNow reports whether shutdown has gated the queue.
@@ -162,13 +150,12 @@ func (s *agentState) enqueue(content string, model *apitypes.ModelEntry) (*queue
 	s.publish(snapshot)
 	s.pubMu.Unlock()
 
-	// Spawning and waking the worker sit outside pubMu: the lock
-	// serializes mutate-then-publish, nothing else. Concurrent
-	// ensureWorker calls dedup under workerMu.
+	// Spawning the worker sits outside pubMu: the lock serializes
+	// mutate-then-publish, nothing else. Concurrent ensureWorker
+	// calls dedup under workerMu.
 	if !paused && s.ensureWorker != nil {
 		s.ensureWorker()
 	}
-	s.signalWake()
 	return item, nil
 }
 
@@ -178,15 +165,6 @@ func (s *agentState) nextSlotCount() int {
 		return 1
 	}
 	return 0
-}
-
-// setTurnCtxMint installs the per-turn context mint; the manager
-// calls it when a worker spawns. Under mu so a concurrent claim
-// cannot race the install.
-func (s *agentState) setTurnCtxMint(f func() (context.Context, context.CancelFunc)) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.newTurnCtx = f
 }
 
 // claim takes the next item to execute: the reserved item first —
@@ -234,13 +212,7 @@ func (s *agentState) claim() *turnClaim {
 // activateLocked installs the item as active with a fresh turn
 // context; caller holds mu.
 func (s *agentState) activateLocked(item *queuedItem) *turnClaim {
-	newCtx := s.newTurnCtx
-	if newCtx == nil {
-		newCtx = func() (context.Context, context.CancelFunc) {
-			return context.WithCancel(context.Background())
-		}
-	}
-	ctx, cancel := newCtx()
+	ctx, cancel := context.WithCancel(s.rootCtx)
 	s.active = item
 	s.cancel = cancel
 	s.userMsgID = uuid.NewString()
@@ -332,17 +304,15 @@ func (s *agentState) sendNow(itemID string, model *apitypes.ModelEntry) (*queued
 	s.publish(snapshot)
 	s.pubMu.Unlock()
 
-	// The interrupt, the spawn, and the wake sit outside pubMu: the
-	// reservation is already published, and the cancel was captured
-	// with it — it can only ever name the interrupted turn, never a
-	// later one.
+	// The interrupt and the spawn sit outside pubMu: the reservation
+	// is already published, and the cancel was captured with it — it
+	// can only ever name the interrupted turn, never a later one.
 	if cancel != nil {
 		cancel()
 	}
 	if s.ensureWorker != nil {
 		s.ensureWorker()
 	}
-	s.signalWake()
 	return item, nil
 }
 
@@ -469,11 +439,14 @@ func (s *agentState) queueLen() int {
 	return len(s.pending) + s.nextSlotCount()
 }
 
-// hasWork reports waiting items that could run once unpaused.
-func (s *agentState) hasWork() bool {
+// canRunNow reports whether claim() would return an item right now:
+// a reserved send-now, or FIFO head while not paused. The worker
+// exit path uses it to respawn only for work that can actually run,
+// so a paused queue keeps its state without a respawn loop.
+func (s *agentState) canRunNow() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.next != nil || len(s.pending) > 0
+	return s.next != nil || (!s.paused && len(s.pending) > 0)
 }
 
 // modelRefWire projects an entry onto the wire's public reference —

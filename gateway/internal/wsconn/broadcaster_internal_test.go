@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 )
@@ -163,4 +164,75 @@ func TestAddWithBacklogDoesNotWriteUnderMapLock(t *testing.T) {
 	require.NoError(t, b.WriteJSON(context.Background(), map[string]string{"type": "tick"}))
 	require.Less(t, time.Since(start), 2*time.Second,
 		"publish must not wait behind a slow joiner's backlog write")
+}
+
+// Re-adding a live connection is idempotent: the registered outbound
+// is reused and no second writer starts for one socket. Submit and
+// Join both re-register on every frame, so a replacing register would
+// leak one writer goroutine per prompt — and any frames still queued
+// on the abandoned outbound would race the new writer on the same
+// connection.
+func TestReAddSameConnectionReusesOutbound(t *testing.T) {
+	b := newBroadcaster(zerolog.Nop(), time.Second, 8)
+
+	// The broadcaster owns the server-side connection, as handleWS
+	// arranges in production; the dialed client is the reading peer.
+	serverConn := make(chan *websocket.Conn, 1)
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sc, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = sc.CloseNow() }()
+		serverConn <- sc
+		for {
+			if _, _, err := sc.Read(context.Background()); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(s.Close)
+	c := dial(t, s.URL)
+	defer func() { _ = c.CloseNow() }()
+	var sc *websocket.Conn
+	select {
+	case sc = <-serverConn:
+	case <-time.After(2 * time.Second):
+		t.Fatal("server never accepted the connection")
+	}
+
+	b.Add("conn", sc)
+
+	b.mu.Lock()
+	first := b.conns["conn"]
+	b.mu.Unlock()
+	require.NotNil(t, first)
+
+	b.Add("conn", sc)
+	b.AddWithBacklog("conn", sc, func() []any {
+		return []any{map[string]string{"type": "backlog"}}
+	})
+
+	b.mu.Lock()
+	second := b.conns["conn"]
+	b.mu.Unlock()
+	require.Same(t, first, second, "re-adding a live connection must reuse its outbound")
+
+	// The surviving outbound still delivers: the backlog frame and a
+	// later publish both reach the peer, in order.
+	require.NoError(t, b.WriteJSON(context.Background(), map[string]string{"type": "after"}))
+	readCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var got map[string]string
+	require.NoError(t, wsjson.Read(readCtx, c, &got))
+	require.Equal(t, "backlog", got["type"])
+	require.NoError(t, wsjson.Read(readCtx, c, &got))
+	require.Equal(t, "after", got["type"])
+
+	b.Remove("conn")
+	select {
+	case <-first.stop:
+	default:
+		t.Fatal("Remove must stop the surviving writer")
+	}
 }

@@ -18,7 +18,7 @@ import (
 )
 
 func newTestState() (*agentState, *[]wstypes.QueueStateEvent) {
-	s := newAgentState("agent-queue", zerolog.Nop())
+	s := newAgentState("agent-queue", context.Background(), zerolog.Nop())
 	recorded := &[]wstypes.QueueStateEvent{}
 	s.publish = func(ev wstypes.QueueStateEvent) {
 		*recorded = append(*recorded, ev)
@@ -413,23 +413,20 @@ func TestQueueDrainGatesAdmissionAndClaims(t *testing.T) {
 	require.Nil(t, claim)
 }
 
-func TestQueueNewTurnContextHonorsInjection(t *testing.T) {
-	s, _ := newTestState()
-	parent, parentCancel := context.WithCancel(context.Background())
-	s.newTurnCtx = func() (context.Context, context.CancelFunc) {
-		return context.WithCancel(parent)
-	}
+func TestQueueTurnContextDescendsFromRoot(t *testing.T) {
+	root, rootCancel := context.WithCancel(context.Background())
+	s := newAgentState("agent-root", root, zerolog.Nop())
 
 	_, err := s.enqueue("A", nil)
 	require.NoError(t, err)
 	claim := s.claim()
 	require.NotNil(t, claim)
 
-	parentCancel()
+	rootCancel()
 	select {
 	case <-claim.ctx.Done():
 	default:
-		t.Fatal("turn context must descend from the lane's context")
+		t.Fatal("turn context must descend from the manager's root")
 	}
 }
 

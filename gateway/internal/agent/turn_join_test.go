@@ -42,7 +42,8 @@ func TestJoinMidTurnReplaysQueueThenPrefix(t *testing.T) {
 	url, release := gatedStream(t)
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
-		&agent.UserAgentManagerOptions{ResolveModel: fixedResolver(url)})
+		&agent.UserAgentManagerOptions{
+			GetAgentThread: emptyThread, ResolveModel: fixedResolver(url)})
 
 	c1, sc1 := wsPair(t)
 	c2, sc2 := wsPair(t)
@@ -96,11 +97,12 @@ func TestJoinMidTurnReplaysQueueThenPrefix(t *testing.T) {
 
 // TestJoinWithoutWorkerSubscribesToQueue pins the subscribe-first
 // lifecycle: a joiner arriving before any prompt — or after the
-// worker's idle exit — attaches to the queue state and receives its
+// worker's exit — attaches to the queue state and receives its
 // snapshot without a worker ever running.
 func TestJoinWithoutWorkerSubscribesToQueue(t *testing.T) {
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
-		&agent.UserAgentManagerOptions{ResolveModel: fixedResolver("http://unused")})
+		&agent.UserAgentManagerOptions{
+			GetAgentThread: emptyThread, ResolveModel: fixedResolver("http://unused")})
 
 	c, sc := wsPair(t)
 	mgr.Join("agent-nolane", "conn-1", sc)

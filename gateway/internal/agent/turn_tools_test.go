@@ -174,8 +174,9 @@ func TestToolMetadataFailureFailsTurn(t *testing.T) {
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel: fixedResolver(llm.URL),
-			Tools:        fixedTools(broken),
+			GetAgentThread: emptyThread,
+			ResolveModel:   fixedResolver(llm.URL),
+			Tools:          fixedTools(broken),
 		})
 
 	c, sc := wsPair(t)
@@ -197,8 +198,9 @@ func TestToolRoundFeedsResultAndStreamsAnswer(t *testing.T) {
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel: fixedResolver(llm.URL),
-			Tools:        fixedTools(echo),
+			GetAgentThread: emptyThread,
+			ResolveModel:   fixedResolver(llm.URL),
+			Tools:          fixedTools(echo),
 		})
 
 	c, sc := wsPair(t)
@@ -236,8 +238,9 @@ func TestFetchedToolsAreAllOffered(t *testing.T) {
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel: fixedResolver(llm.URL),
-			Tools:        fixedTools(echo, weather),
+			GetAgentThread: emptyThread,
+			ResolveModel:   fixedResolver(llm.URL),
+			Tools:          fixedTools(echo, weather),
 		})
 
 	c, sc := wsPair(t)
@@ -259,8 +262,9 @@ func TestEmptyFetchAttachesNoTools(t *testing.T) {
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel: fixedResolver(llm.URL),
-			Tools:        fixedTools(),
+			GetAgentThread: emptyThread,
+			ResolveModel:   fixedResolver(llm.URL),
+			Tools:          fixedTools(),
 		})
 
 	c, sc := wsPair(t)
@@ -283,9 +287,10 @@ func TestToolFailureErrorsTurn(t *testing.T) {
 	sink := &recordingSink{}
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel: fixedResolver(llm.URL),
-			Tools:        fixedTools(echo),
-			PersistTurn:  sink.persist,
+			GetAgentThread: emptyThread,
+			ResolveModel:   fixedResolver(llm.URL),
+			Tools:          fixedTools(echo),
+			PersistTurn:    sink.persist,
 		})
 
 	c, sc := wsPair(t)
@@ -297,16 +302,20 @@ func TestToolFailureErrorsTurn(t *testing.T) {
 		eventPayload[wstypes.ErrorEvent](t, ev).Tool)
 
 	// A tool failure fails the whole turn: the claim-written user row
-	// stands with the failed invocation's tool row — its error kept
-	// in the envelope — and no assistant row joins them. The queue
-	// is not paused: a tool failure is not a message failure.
+	// stands with the native assistant group and the failed
+	// invocation's outcome row — its error kept in the envelope — and
+	// no terminal assistant row joins them. The queue is not paused: a
+	// tool failure is not a message failure.
 	calls := sink.recorded()
-	require.Len(t, calls, 2)
+	require.Len(t, calls, 3)
 	require.Equal(t, apitypes.ThreadRoleUser, calls[0][0].Role)
 	require.Equal(t, "search for otters", calls[0][0].Content)
-	require.Equal(t, apitypes.ThreadRoleTool, calls[1][0].Role)
-	require.JSONEq(t, `{"name":"echo_tool","args":{"query":"plush otters"},
-		"result":"","error":"search backend down"}`, calls[1][0].Content)
+	require.Len(t, calls[1], 1, "the round's assistant call group")
+	require.Equal(t, apitypes.ThreadRoleAssistant, calls[1][0].Role)
+	require.Len(t, calls[2], 1)
+	require.Equal(t, apitypes.ThreadRoleTool, calls[2][0].Role)
+	require.JSONEq(t, `{"name":"echo_tool","callId":"call-1","args":{"query":"plush otters"},
+		"result":"","error":"search backend down"}`, calls[2][0].Content)
 }
 
 // A failed fetch fails the turn outright — never a silent tool-less
@@ -316,7 +325,8 @@ func TestToolFetchFailureFailsTurn(t *testing.T) {
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel: fixedResolver(llm.URL),
+			GetAgentThread: emptyThread,
+			ResolveModel:   fixedResolver(llm.URL),
 			Tools: func(context.Context, string) ([]tool.InvokableTool, error) {
 				return nil, errors.New("tools store unreachable")
 			},
@@ -341,8 +351,9 @@ func TestInterruptDuringToolFetchEmitsNothing(t *testing.T) {
 	sink := &recordingSink{}
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel: fixedResolver(llm.URL),
-			PersistTurn:  sink.persist,
+			GetAgentThread: emptyThread,
+			ResolveModel:   fixedResolver(llm.URL),
+			PersistTurn:    sink.persist,
 			Tools: func(ctx context.Context, _ string) ([]tool.InvokableTool, error) {
 				close(entered)
 				<-ctx.Done()
@@ -360,9 +371,8 @@ func TestInterruptDuringToolFetchEmitsNothing(t *testing.T) {
 		t.Fatal("tools never fetched")
 	}
 
-	ag := mgr.Get("agent-toolstop")
-	require.NotNil(t, ag)
-	ag.Interrupt()
+	require.NotNil(t, mgr.Get("agent-toolstop"))
+	mgr.Interrupt("agent-toolstop")
 
 	for idle := false; !idle; {
 		ev := readEvent(t, c)

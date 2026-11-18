@@ -9,6 +9,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
+	"github.com/cloudwego/eino/schema"
 
 	"github.com/radch-ai/ava/backend"
 )
@@ -35,8 +36,10 @@ func createChatModel(ctx context.Context, cfg backend.ResolvedModel) (model.Tool
 // buildEinoAgent wraps a chat model in the agent runtime. The
 // instruction carries the agent's persona as the system prompt; an
 // empty one runs the submitted content alone. Non-empty tools arm
-// the ReAct loop; an empty list rides the plain answer path.
-func buildEinoAgent(ctx context.Context, agentID, instruction string, chatModel model.ToolCallingChatModel, tools []tool.BaseTool) (*adk.ChatModelAgent, error) {
+// the ReAct loop; an empty list rides the plain answer path. Handlers
+// ride the native model/tool lifecycle — the turn recorder's
+// assistant-group capture runs before tool dispatch.
+func buildEinoAgent(ctx context.Context, agentID, instruction string, chatModel model.ToolCallingChatModel, tools []tool.BaseTool, handlers []adk.TypedChatModelAgentMiddleware[*schema.Message]) (*adk.ChatModelAgent, error) {
 	if agentID == "" {
 		return nil, errors.New("agentID cannot be empty")
 	}
@@ -50,6 +53,7 @@ func buildEinoAgent(ctx context.Context, agentID, instruction string, chatModel 
 		Name:        agentID,
 		Instruction: instruction,
 		Model:       chatModel,
+		Handlers:    handlers,
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{
 				Tools: tools,

@@ -72,7 +72,8 @@ func TestTurnSignalsReasoningPhases(t *testing.T) {
 	defer llm.Close()
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
-		&agent.UserAgentManagerOptions{ResolveModel: fixedResolver(llm.URL)})
+		&agent.UserAgentManagerOptions{
+			GetAgentThread: emptyThread, ResolveModel: fixedResolver(llm.URL)})
 
 	c, sc := wsPair(t)
 
@@ -113,7 +114,8 @@ func TestReasoningSignalResetsWhenTheStreamEndsUnanswered(t *testing.T) {
 	defer llm.Close()
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
-		&agent.UserAgentManagerOptions{ResolveModel: fixedResolver(llm.URL)})
+		&agent.UserAgentManagerOptions{
+			GetAgentThread: emptyThread, ResolveModel: fixedResolver(llm.URL)})
 
 	c, sc := wsPair(t)
 

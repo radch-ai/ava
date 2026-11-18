@@ -4,7 +4,9 @@
 package backend
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -58,7 +60,20 @@ func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte) (http.Handler, 
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	turns := &TurnService{queries: queries, vaultStore: vaultStore, registry: registry}
+	// The writer's watermark starts at the highest stored timestamp:
+	// a restart into a backwards-corrected clock must never mint
+	// created_at values that sort before existing rows.
+	watermark, err := queries.MaxThreadCreatedAt(context.Background())
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("seed thread watermark: %w", err)
+	}
+	turns := &TurnService{
+		queries:         queries,
+		sqlDB:           sqlDB,
+		vaultStore:      vaultStore,
+		registry:        registry,
+		lastPersistedMs: watermark,
+	}
 	if err := syncToolCatalog(queries, registry.Catalog()); err != nil {
 		return nil, nil, nil, err
 	}

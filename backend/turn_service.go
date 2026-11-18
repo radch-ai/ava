@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"database/sql"
 	"sync"
 
 	"github.com/radch-ai/ava/backend/internal/db"
@@ -14,10 +15,12 @@ import (
 // store the routes use.
 type TurnService struct {
 	queries    *db.Queries
+	sqlDB      *sql.DB
 	vaultStore *vault.Store
 	registry   *tools.Registry
 
-	// Thread-sink writer state — see AppendThreadMessages.
+	// Thread-sink writer state — see AppendThreadMessages. The mutex
+	// serializes batches and owns the monotonic timestamp counter.
 	persistMu       sync.Mutex
 	lastPersistedMs int64
 }

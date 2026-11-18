@@ -35,13 +35,14 @@ func TestDrainInterruptsAndSettlesTurns(t *testing.T) {
 	sink := &recordingSink{}
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel: fixedResolver(llm.URL),
-			PersistTurn:  sink.persist,
+			GetAgentThread: emptyThread,
+			ResolveModel:   fixedResolver(llm.URL),
+			PersistTurn:    sink.persist,
 		})
 
 	c, sc := wsPair(t)
 
-	_, err := mgr.Submit("agent-drain", "conn-1", sc, "hi", nil)
+	itemID, err := mgr.Submit("agent-drain", "conn-1", sc, "hi", nil)
 	require.NoError(t, err)
 
 	// The turn is streaming its partial; wait for it to reach the
@@ -63,7 +64,8 @@ func TestDrainInterruptsAndSettlesTurns(t *testing.T) {
 	calls := sink.recorded()
 	require.Len(t, calls, 2)
 	require.Equal(t,
-		[]apitypes.ThreadMessageDraft{{Role: apitypes.ThreadRoleAssistant, Content: "par "}},
+		[]backend.ThreadMessageDraft{{Role: apitypes.ThreadRoleAssistant, Content: "par ",
+			TurnID: itemID}},
 		calls[1])
 
 	require.False(t, mgr.Status("agent-drain").Working)
@@ -77,7 +79,7 @@ func TestDrainStopsWorkersWithoutRespawn(t *testing.T) {
 		return backend.ResolvedModel{}, errors.New("no default model set")
 	}
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
-		&agent.UserAgentManagerOptions{ResolveModel: failing})
+		&agent.UserAgentManagerOptions{GetAgentThread: emptyThread, ResolveModel: failing})
 
 	c, sc := wsPair(t)
 
@@ -93,8 +95,11 @@ func TestDrainStopsWorkersWithoutRespawn(t *testing.T) {
 		}
 		settled = eventPayload[wstypes.QueueStateEvent](t, ev).Paused
 	}
-	require.NotNil(t, mgr.Get("agent-drainstop"),
-		"a paused queue with waiting work keeps its worker")
+	// The paused queue has already released its worker — nothing
+	// may run — and its state waits for Drain without a respawn
+	// loop.
+	require.Nil(t, mgr.Get("agent-drainstop"),
+		"a paused queue with waiting work holds no worker")
 
 	mgr.Drain(time.Second)
 

@@ -28,7 +28,7 @@ func submitConn(mgr *agent.UserAgentManager, agentID, connID string, conn *webso
 }
 
 func TestMultipleConnectionsAttach(t *testing.T) {
-	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{})
+	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{GetAgentThread: emptyThread})
 
 	s1 := newMockWSserver(t)
 	defer s1.Close()
@@ -57,7 +57,7 @@ func TestMultipleConnectionsAttach(t *testing.T) {
 }
 
 func TestRemoveConnectionDropsFromState(t *testing.T) {
-	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{})
+	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{GetAgentThread: emptyThread})
 
 	s1 := newMockWSserver(t)
 	defer s1.Close()
@@ -82,7 +82,7 @@ func TestRemoveConnectionDropsFromState(t *testing.T) {
 }
 
 func TestRemoveNonExistentConnectionIsSafe(t *testing.T) {
-	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{})
+	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{GetAgentThread: emptyThread})
 
 	s := newMockWSserver(t)
 	defer s.Close()
@@ -98,7 +98,7 @@ func TestRemoveNonExistentConnectionIsSafe(t *testing.T) {
 }
 
 func TestReplaceConnectionWithSameID(t *testing.T) {
-	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{})
+	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{GetAgentThread: emptyThread})
 
 	s1 := newMockWSserver(t)
 	defer s1.Close()
@@ -122,7 +122,7 @@ func TestReplaceConnectionWithSameID(t *testing.T) {
 }
 
 func TestConcurrentConnectionOps(t *testing.T) {
-	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{})
+	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{GetAgentThread: emptyThread})
 
 	agentID := "agent-concurrent"
 	submitConn(mgr, agentID, "conn-init", nil)

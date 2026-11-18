@@ -159,6 +159,7 @@ func serve(logger zerolog.Logger) {
 		PersistTurn:    turnSvc.AppendThreadMessages,
 		GetAgentConfig: turnSvc.GetAgentConfig,
 		Tools:          turnSvc.AgentTools,
+		GetAgentThread: turnSvc.GetAgentThread,
 	}, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Failed to create gateway handler")
@@ -174,6 +175,10 @@ func serve(logger zerolog.Logger) {
 	if err := utils.Serve(ctx, root, cfg.Addr, logger); err != nil {
 		logger.Fatal().Err(err).Msg("Server failed")
 	}
+	// Retire the signal handler now that Serve returned: a second
+	// Ctrl-C during the drain below otherwise lands in a channel
+	// nobody reads.
+	cancel()
 
 	// The server closed its connections; give running turns a
 	// bounded moment to settle their partial answers into the

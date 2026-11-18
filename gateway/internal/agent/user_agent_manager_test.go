@@ -12,7 +12,7 @@ import (
 
 func TestUserAgentManager_CreatesWithDefaults(t *testing.T) {
 	logger := zerolog.Nop()
-	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{})
+	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{GetAgentThread: emptyThread})
 
 	require.NotNil(t, mgr)
 }

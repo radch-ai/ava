@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,7 +27,7 @@ import (
 
 func dialGateway(t *testing.T) (*coderws.Conn, context.Context) {
 	t.Helper()
-	return dialConfig(t, &gateway.Config{})
+	return dialConfig(t, &gateway.Config{GetAgentThread: emptyThread})
 }
 
 // dialConfig dials a fresh server built from cfg and consumes the
@@ -122,11 +123,50 @@ func TestPromptWithoutResolverEmitsError(t *testing.T) {
 	}
 }
 
+// The thread source is required, like the resolver: with no
+// GetAgentThread bound there is no working context to run on, and
+// the turn fails at message level.
+func TestPromptWithoutThreadSourceFailsTurn(t *testing.T) {
+	conn, ctx := dialConfig(t, &gateway.Config{})
+
+	err := wsjson.Write(ctx, conn, map[string]any{
+		"type":     "prompt",
+		"agent_id": "_superagent",
+		"data": map[string]any{
+			"content": "hello",
+			"model":   map[string]string{"id": "gpt-4o", "provider_id": "p-1"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("writing prompt failed: %v", err)
+	}
+
+	var event map[string]any
+	for {
+		if err := wsjson.Read(ctx, conn, &event); err != nil {
+			t.Fatalf("reading turn outcome failed: %v", err)
+		}
+		switch event["type"] {
+		case "lane_status", "queue_result", "queue_state":
+			continue
+		}
+		break
+	}
+	if event["type"] != "error" {
+		t.Fatalf("expected error event, got %v", event["type"])
+	}
+	data, _ := event["data"].(map[string]any)
+	msg, _ := data["message"].(string)
+	if !strings.Contains(msg, "no thread source configured") {
+		t.Fatalf("error event should name the missing thread source, got %q", msg)
+	}
+}
+
 func TestPromptResolverErrorReachesWire(t *testing.T) {
 	resolve := func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
 		return backend.ResolvedModel{}, errors.New("read provider p-1: no rows in result set")
 	}
-	conn, ctx := dialConfig(t, &gateway.Config{ResolveModel: resolve})
+	conn, ctx := dialConfig(t, &gateway.Config{ResolveModel: resolve, GetAgentThread: emptyThread})
 
 	err := wsjson.Write(ctx, conn, map[string]any{
 		"type":     "prompt",
@@ -265,6 +305,97 @@ func TestStatusBindsAgentLikePrompt(t *testing.T) {
 	}
 }
 
+// The stop frame binds the socket to one agent like every other
+// frame: a connection joined to agent B must not stop agent A's
+// running turn. The pin holds the model mid-stream, sends the
+// cross-agent interrupt, and requires A's answer to settle normally.
+func TestInterruptBindsAgentLikePrompt(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	finishStream := func() { releaseOnce.Do(func() { close(release) }) }
+	defer finishStream()
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		close(started)
+		<-release
+		_, _ = w.Write([]byte("data: " + sseFrame("unstopped") + "\n\n"))
+		flusher.Flush()
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer llm.Close()
+
+	handler, err := gateway.New(&gateway.Config{
+		GetAgentThread: emptyThread,
+		ResolveModel: func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
+			return backend.ResolvedModel{BaseURL: llm.URL, APIKey: "sk-test", Model: "test-model"}, nil
+		},
+	}, zerolog.Nop())
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	// One gateway, two sockets: connA drives agent A's turn, connB is
+	// bound to agent B — the cross-agent frame travels one manager.
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	connA, ctxA := dialServer(t, server.URL)
+	connB, ctxB := dialServer(t, server.URL)
+
+	// Bind connB to agent B through a status join.
+	err = wsjson.Write(ctxB, connB, map[string]string{"type": "status", "agent_id": "agent-b"})
+	if err != nil {
+		t.Fatalf("writing status failed: %v", err)
+	}
+	var laneStatus map[string]any
+	if err := wsjson.Read(ctxB, connB, &laneStatus); err != nil {
+		t.Fatalf("reading lane_status failed: %v", err)
+	}
+
+	// Start agent A's turn on connA and wait for the model call.
+	err = wsjson.Write(ctxA, connA, map[string]any{
+		"type":     "prompt",
+		"agent_id": "agent-a",
+		"data":     map[string]any{"request_id": "r1", "content": "hi"},
+	})
+	if err != nil {
+		t.Fatalf("writing prompt failed: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("model call never started")
+	}
+
+	// connB is bound to agent B: its interrupt for agent A is a
+	// cross-agent frame and must be dropped, not forwarded.
+	err = wsjson.Write(ctxB, connB, map[string]string{"type": "interrupt", "agent_id": "agent-a"})
+	if err != nil {
+		t.Fatalf("writing cross-agent interrupt failed: %v", err)
+	}
+	finishStream()
+
+	// A's turn settles normally: the message event carries the reply.
+	for {
+		var event map[string]any
+		if err := wsjson.Read(ctxA, connA, &event); err != nil {
+			t.Fatalf("reading turn outcome failed: %v", err)
+		}
+		switch event["type"] {
+		case "lane_status", "queue_result", "queue_state", "message_chunk":
+			continue
+		case "error":
+			t.Fatalf("turn must not fail, got error event: %+v", event["data"])
+		case "message":
+			data, _ := event["data"].(map[string]any)
+			if data["content"] != "unstopped" {
+				t.Fatalf("expected the unstopped reply, got %+v", data)
+			}
+			return
+		}
+	}
+}
+
 // Prompt content is validated at admission: whitespace-only and
 // over-length prompts are rejected through queue_result with no queue
 // state change, and admitted content is trimmed.
@@ -377,6 +508,7 @@ func TestStatusJoinsLaneAndReplaysPrefix(t *testing.T) {
 	defer llm.Close()
 
 	handler, err := gateway.New(&gateway.Config{
+		GetAgentThread: emptyThread,
 		ResolveModel: func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
 			return backend.ResolvedModel{BaseURL: llm.URL, APIKey: "sk-test", Model: "test-model"}, nil
 		},
@@ -472,7 +604,7 @@ func TestStatusJoinsLaneAndReplaysPrefix(t *testing.T) {
 // The request context is cancelled mid-connection, exactly what a
 // draining server does to its long-lived handlers.
 func TestShutdownClosesConnectionsGoingAway(t *testing.T) {
-	gw, err := gateway.New(&gateway.Config{}, zerolog.Nop())
+	gw, err := gateway.New(&gateway.Config{GetAgentThread: emptyThread}, zerolog.Nop())
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
@@ -551,7 +683,7 @@ func TestStatusReflectsLiveLane(t *testing.T) {
 }
 
 func TestDisconnectDropsFromLane(t *testing.T) {
-	handler, err := gateway.New(&gateway.Config{}, zerolog.Nop())
+	handler, err := gateway.New(&gateway.Config{GetAgentThread: emptyThread}, zerolog.Nop())
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
@@ -613,7 +745,7 @@ func TestDisconnectDropsFromLane(t *testing.T) {
 // it the whole time (the client auto-pongs; a missed pong closes us).
 func TestIdleConnectionSurvivesKeepalive(t *testing.T) {
 	interval := 50 * time.Millisecond
-	conn, ctx := dialConfig(t, &gateway.Config{PingInterval: interval})
+	conn, ctx := dialConfig(t, &gateway.Config{PingInterval: interval, GetAgentThread: emptyThread})
 
 	// Idle for many ping cycles — hundreds of pings with no inbound
 	// frames from this side.
@@ -641,7 +773,7 @@ func TestIdleConnectionSurvivesKeepalive(t *testing.T) {
 // within one ping cycle + pong wait.
 func TestDeadPeerReaped(t *testing.T) {
 	interval := 50 * time.Millisecond
-	cfg := &gateway.Config{PingInterval: interval}
+	cfg := &gateway.Config{PingInterval: interval, GetAgentThread: emptyThread}
 	handler, err := gateway.New(cfg, zerolog.Nop())
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
@@ -712,4 +844,10 @@ func TestDeadPeerReaped(t *testing.T) {
 			break // close frame: reaped
 		}
 	}
+}
+
+// emptyThread is the thread seam for gateway-level tests that run
+// turns without a store: no history rides the model call.
+func emptyThread(context.Context, string) ([]backend.AgentThreadMessage, error) {
+	return nil, nil
 }

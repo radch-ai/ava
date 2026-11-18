@@ -126,6 +126,35 @@ describe('agent/thread service', () => {
 				'malformed message'
 			)
 		})
+
+		it('serves the page as received — visibility is decided before paging', async () => {
+			const thread = createThread({
+				items: [
+					createThreadMessage(),
+					createThreadMessage({
+						id: 'tool-row',
+						role: 'tool',
+						content: '{"name":"echo"}'
+					}),
+					createThreadMessage({
+						id: 'answer-row',
+						role: 'assistant',
+						content: 'final answer'
+					})
+				]
+			})
+
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => thread
+			} as ApiResponsePromise)
+
+			const result = await getAgentThread('_superagent')
+			expect(result.items.map((m) => m.id)).toEqual([
+				'msg-1',
+				'tool-row',
+				'answer-row'
+			])
+		})
 	})
 
 	describe('mergePastThread', () => {

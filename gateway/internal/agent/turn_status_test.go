@@ -20,7 +20,8 @@ func TestTurnBroadcastsWorkingTransitions(t *testing.T) {
 	llm := fakeOpenAI(t, "working done")
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
-		&agent.UserAgentManagerOptions{ResolveModel: fixedResolver(llm.URL)})
+		&agent.UserAgentManagerOptions{
+			GetAgentThread: emptyThread, ResolveModel: fixedResolver(llm.URL)})
 
 	c, sc := wsPair(t)
 

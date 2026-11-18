@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/radch-ai/ava/backend"
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/gateway/wstypes"
 )
@@ -57,8 +58,9 @@ func cleanToolError(err error) string {
 }
 
 // failTurn ends a failed turn. A turn-level failure (no tool
-// attribution) is persisted as an error row before its event — the
-// refetch a client makes on the event cannot outrun the write — and
+// attribution) is persisted as an error row — grouped under the
+// failed turn like every other row — before its event, so the
+// refetch a client makes on the event cannot outrun the write, and
 // the event then names the stored row, so live and reloaded state
 // converge on one id. A failed or missing sink leaves the row
 // unconfirmed: the event stays transient and carries the original
@@ -69,7 +71,7 @@ func (a *UserAgent) failTurn(ctx context.Context, msgID, message, toolName strin
 	if toolName == "" && a.persistTurn != nil {
 		rowID = uuid.NewString()
 		if err := a.persistTurn(ctx, a.agentID,
-			[]apitypes.ThreadMessageDraft{{ID: rowID, Role: apitypes.ThreadRoleError, Content: message}}); err != nil {
+			[]backend.ThreadMessageDraft{{ID: rowID, Role: apitypes.ThreadRoleError, Content: message, TurnID: msgID}}); err != nil {
 			a.logger.Warn().Err(err).Str("agent_id", a.agentID).Msg("persist error message")
 			rowID = ""
 		}

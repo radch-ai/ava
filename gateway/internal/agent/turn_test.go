@@ -184,7 +184,7 @@ func TestTurnStreamsChunks(t *testing.T) {
 	defer llm.Close()
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
-		&agent.UserAgentManagerOptions{ResolveModel: fixedResolver(llm.URL)})
+		&agent.UserAgentManagerOptions{GetAgentThread: emptyThread, ResolveModel: fixedResolver(llm.URL)})
 
 	c, sc := wsPair(t)
 
@@ -219,7 +219,7 @@ func TestTurnBroadcastsAnswer(t *testing.T) {
 	defer llm.Close()
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
-		&agent.UserAgentManagerOptions{ResolveModel: fixedResolver(llm.URL)})
+		&agent.UserAgentManagerOptions{GetAgentThread: emptyThread, ResolveModel: fixedResolver(llm.URL)})
 
 	c, sc := wsPair(t)
 
@@ -244,7 +244,7 @@ func TestTurnResolverErrorPausesUntilExplicitSelection(t *testing.T) {
 		return backend.ResolvedModel{BaseURL: llm.URL, APIKey: "sk-test", Model: "test-model"}, nil
 	}
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
-		&agent.UserAgentManagerOptions{ResolveModel: resolver})
+		&agent.UserAgentManagerOptions{GetAgentThread: emptyThread, ResolveModel: resolver})
 
 	c, sc := wsPair(t)
 
@@ -323,7 +323,7 @@ func TestTurnInterruptCancelsQuery(t *testing.T) {
 	defer close(release) // LIFO: runs before llm.Close()
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
-		&agent.UserAgentManagerOptions{ResolveModel: fixedResolver(llm.URL)})
+		&agent.UserAgentManagerOptions{GetAgentThread: emptyThread, ResolveModel: fixedResolver(llm.URL)})
 
 	c, sc := wsPair(t)
 
@@ -384,7 +384,7 @@ func TestTurnCanceledDuringResolveSettlesAsStop(t *testing.T) {
 
 	sink := &recordingSink{}
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
-		&agent.UserAgentManagerOptions{ResolveModel: resolver, PersistTurn: sink.persist})
+		&agent.UserAgentManagerOptions{GetAgentThread: emptyThread, ResolveModel: resolver, PersistTurn: sink.persist})
 
 	c, sc := wsPair(t)
 
@@ -431,7 +431,7 @@ func TestStreamCoalescesFastChunks(t *testing.T) {
 	defer llm.Close()
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
-		&agent.UserAgentManagerOptions{ResolveModel: fixedResolver(llm.URL)})
+		&agent.UserAgentManagerOptions{GetAgentThread: emptyThread, ResolveModel: fixedResolver(llm.URL)})
 
 	c, sc := wsPair(t)
 
@@ -485,8 +485,9 @@ func TestInterruptMidStreamSettlesPartial(t *testing.T) {
 	sink := &recordingSink{}
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel: fixedResolver(llm.URL),
-			PersistTurn:  sink.persist,
+			GetAgentThread: emptyThread,
+			ResolveModel:   fixedResolver(llm.URL),
+			PersistTurn:    sink.persist,
 		})
 
 	c, sc := wsPair(t)
@@ -540,7 +541,8 @@ func TestInterruptMidStreamSettlesPartial(t *testing.T) {
 	calls := sink.recorded()
 	require.Len(t, calls, 2)
 	require.Equal(t,
-		[]apitypes.ThreadMessageDraft{{Role: apitypes.ThreadRoleAssistant, Content: "partial answer"}},
+		[]backend.ThreadMessageDraft{{Role: apitypes.ThreadRoleAssistant, Content: "partial answer",
+			TurnID: itemID}},
 		calls[1])
 }
 
@@ -563,6 +565,7 @@ func TestInterruptBeforeOutputEmitsNothing(t *testing.T) {
 	sink := &recordingSink{}
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
+			GetAgentThread: emptyThread,
 			ResolveModel: func(_ context.Context, _ *apitypes.ModelEntry) (backend.ResolvedModel, error) {
 				return backend.ResolvedModel{BaseURL: target, APIKey: "sk-test", Model: "test-model"}, nil
 			},
@@ -621,8 +624,9 @@ func TestTurnSurvivesSubmittingConnectionLoss(t *testing.T) {
 	sink := &recordingSink{}
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel: fixedResolver(llm.URL),
-			PersistTurn:  sink.persist,
+			GetAgentThread: emptyThread,
+			ResolveModel:   fixedResolver(llm.URL),
+			PersistTurn:    sink.persist,
 		})
 
 	c, sc := wsPair(t)
@@ -639,7 +643,10 @@ func TestTurnSurvivesSubmittingConnectionLoss(t *testing.T) {
 		return len(calls) == 2 && calls[1][0].Content == "survivor"
 	}, 5*time.Second, 10*time.Millisecond, "the turn must settle despite the submitter's loss")
 
-	require.NotNil(t, mgr.Get("agent-outlive"))
+	require.Eventually(t, func() bool {
+		return mgr.Get("agent-outlive") == nil
+	}, 2*time.Second, 10*time.Millisecond,
+		"the settled, connection-less queue releases its worker cleanly")
 }
 
 // readEventMaybe reads one event, or reports false when the wait
@@ -663,18 +670,22 @@ func readEventMaybe(t *testing.T, c *websocket.Conn, wait time.Duration) (wstype
 // ordering; fail makes every write fail like a sick database.
 type recordingSink struct {
 	mu          sync.Mutex
-	calls       [][]apitypes.ThreadMessageDraft
+	calls       [][]backend.ThreadMessageDraft
 	fail        error
+	failRole    apitypes.ThreadRole // when set, only this role's writes fail
 	parked      bool
 	blocked     chan struct{} // closed when the assistant write starts
 	release     chan struct{} // closed by unblock to let the write finish
 	releaseOnce sync.Once
 }
 
-func (s *recordingSink) persist(ctx context.Context, agentID string, msgs []apitypes.ThreadMessageDraft) error {
+func (s *recordingSink) persist(ctx context.Context, agentID string, msgs []backend.ThreadMessageDraft) error {
 	s.mu.Lock()
 	s.calls = append(s.calls, msgs)
 	fail := s.fail
+	if s.failRole != "" && len(msgs) > 0 && msgs[0].Role == s.failRole {
+		fail = errSinkRoleFailure
+	}
 	// Park only the first assistant or error draft; later turns'
 	// drafts flow through.
 	park := s.blocked != nil && !s.parked &&
@@ -691,6 +702,9 @@ func (s *recordingSink) persist(ctx context.Context, agentID string, msgs []apit
 	return fail
 }
 
+// errSinkRoleFailure names the role-targeted sink failure in tests.
+var errSinkRoleFailure = errors.New("role write unavailable")
+
 // unblock lets a parked write finish; safe whether or not the write
 // ever parked, and safe to call twice.
 func (s *recordingSink) unblock() {
@@ -700,10 +714,10 @@ func (s *recordingSink) unblock() {
 	s.releaseOnce.Do(func() { close(s.release) })
 }
 
-func (s *recordingSink) recorded() [][]apitypes.ThreadMessageDraft {
+func (s *recordingSink) recorded() [][]backend.ThreadMessageDraft {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([][]apitypes.ThreadMessageDraft, len(s.calls))
+	out := make([][]backend.ThreadMessageDraft, len(s.calls))
 	copy(out, s.calls)
 	return out
 }
@@ -715,8 +729,9 @@ func TestQueuedPromptsRunOnePerTurn(t *testing.T) {
 	sink := &recordingSink{}
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel: fixedResolver(llm.URL),
-			PersistTurn:  sink.persist,
+			GetAgentThread: emptyThread,
+			ResolveModel:   fixedResolver(llm.URL),
+			PersistTurn:    sink.persist,
 		})
 
 	c, sc := wsPair(t)
@@ -750,8 +765,9 @@ func TestTurnPersistsAssistantBeforeFinalEvent(t *testing.T) {
 	defer sink.unblock() // a write parked past the body drains at teardown
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel: fixedResolver(llm.URL),
-			PersistTurn:  sink.persist,
+			GetAgentThread: emptyThread,
+			ResolveModel:   fixedResolver(llm.URL),
+			PersistTurn:    sink.persist,
 		})
 
 	c, sc := wsPair(t)
@@ -799,8 +815,9 @@ func TestTurnErrorPersistsUserThenErrorRow(t *testing.T) {
 	}
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel: resolver,
-			PersistTurn:  sink.persist,
+			GetAgentThread: emptyThread,
+			ResolveModel:   resolver,
+			PersistTurn:    sink.persist,
 		})
 
 	c, sc := wsPair(t)
@@ -820,6 +837,7 @@ func TestTurnErrorPersistsUserThenErrorRow(t *testing.T) {
 	require.Equal(t, "hello", calls[0][0].Content)
 	require.Len(t, calls[1], 1)
 	require.Equal(t, apitypes.ThreadRoleError, calls[1][0].Role)
+	require.Equal(t, itemID, calls[1][0].TurnID, "the error row names its turn like every other row")
 	require.Equal(t, "read provider p-1: no rows", calls[1][0].Content)
 	require.NotEmpty(t, p.ID)
 	require.Equal(t, p.ID, calls[1][0].ID)
@@ -833,8 +851,9 @@ func TestTurnErrorPersistsBeforeEvent(t *testing.T) {
 	}
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel: resolver,
-			PersistTurn:  sink.persist,
+			GetAgentThread: emptyThread,
+			ResolveModel:   resolver,
+			PersistTurn:    sink.persist,
 		})
 
 	c, sc := wsPair(t)
@@ -861,28 +880,31 @@ func TestTurnErrorPersistsBeforeEvent(t *testing.T) {
 }
 
 func TestTurnErrorSinkFailureStaysTransient(t *testing.T) {
-	sink := &recordingSink{fail: errors.New("db down")}
+	sink := &recordingSink{failRole: apitypes.ThreadRoleError}
 	resolver := func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
 		return backend.ResolvedModel{}, errors.New("read provider p-1: no rows")
 	}
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel: resolver,
-			PersistTurn:  sink.persist,
+			GetAgentThread: emptyThread,
+			ResolveModel:   resolver,
+			PersistTurn:    sink.persist,
 		})
 
 	c, sc := wsPair(t)
 
 	itemID := submit(t, mgr, "agent-errsink", "conn-1", sc, "hello")
 
-	// The row never confirmed: the event keeps the original failure,
-	// claims no stored id, and the write was still attempted.
+	// The durable user row landed; the error row's failed write
+	// leaves the failure transient: the event keeps the original
+	// cause, claims no stored id, and the write was still attempted.
 	p := eventPayload[wstypes.ErrorEvent](t, readUntilError(t, c))
 	require.Equal(t, "read provider p-1: no rows", p.Message)
 	require.Empty(t, p.ID)
 	require.Equal(t, itemID, p.TurnID)
 	calls := sink.recorded()
 	require.Len(t, calls, 2)
+	require.Equal(t, apitypes.ThreadRoleUser, calls[0][0].Role)
 	require.Equal(t, apitypes.ThreadRoleError, calls[1][0].Role)
 }
 
@@ -897,8 +919,9 @@ func TestTurnStreamErrorPersistsErrorRow(t *testing.T) {
 	sink := &recordingSink{}
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel: fixedResolver(llm.URL),
-			PersistTurn:  sink.persist,
+			GetAgentThread: emptyThread,
+			ResolveModel:   fixedResolver(llm.URL),
+			PersistTurn:    sink.persist,
 		})
 
 	c, sc := wsPair(t)
@@ -915,34 +938,32 @@ func TestTurnStreamErrorPersistsErrorRow(t *testing.T) {
 	require.Equal(t, p.ID, calls[1][0].ID)
 }
 
-func TestTurnSinkFailureDoesNotFailTurn(t *testing.T) {
-	llm := fakeOpenAI(t, "still answers")
-	defer llm.Close()
+func TestUserRowSinkFailureFailsTurnBeforeModel(t *testing.T) {
+	llm := newScriptedLLM(t, sseChunk("never reached"))
 
 	sink := &recordingSink{fail: errors.New("db down")}
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel: fixedResolver(llm.URL),
-			PersistTurn:  sink.persist,
+			GetAgentThread: emptyThread,
+			ResolveModel:   fixedResolver(llm.URL),
+			PersistTurn:    sink.persist,
 		})
 
 	c, sc := wsPair(t)
 
 	submit(t, mgr, "agent-sinkfail", "conn-1", sc, "hi")
 
-	_, p := readUntilMessage(t, c)
-	require.Equal(t, "still answers", p.Content)
+	// Required persistence: a prompt that is not durable never
+	// reaches the model. The turn fails at message level naming the
+	// write, and the model is never called.
+	p := eventPayload[wstypes.ErrorEvent](t, readUntilError(t, c))
+	require.Contains(t, p.Message, "persist user message")
+	require.Contains(t, p.Message, "db down")
+	require.Empty(t, llm.requests(), "the model must not be called")
 
-	// A sick sink stays a server-side log line, never a wire error.
-	// The turn's closing lane_status and queue traffic may still
-	// land; only an error fails the pin.
-	deadline := time.Now().Add(200 * time.Millisecond)
-	for {
-		ev, arrived := readEventMaybe(t, c, time.Until(deadline))
-		if !arrived {
-			break
-		}
-		require.NotEqual(t, wstypes.EventTypeError, ev.Type,
-			"sink failure must not emit a wire error")
-	}
+	// The user write and the error-row write were both attempted.
+	calls := sink.recorded()
+	require.Len(t, calls, 2)
+	require.Equal(t, apitypes.ThreadRoleUser, calls[0][0].Role)
+	require.Equal(t, apitypes.ThreadRoleError, calls[1][0].Role)
 }

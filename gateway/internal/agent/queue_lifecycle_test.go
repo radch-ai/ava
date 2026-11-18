@@ -1,11 +1,10 @@
 package agent_test
 
 // Lifecycle pins: the pause gate arms only while work waits — a
-// paused queue never drops or auto-runs pending work and keeps its
-// worker — while an empty-queue failure never pauses; the
-// manager-owned state (pause flag, subscribers) survives the
-// worker's idle eviction, with an explicit selection restarting
-// execution.
+// paused queue never drops or auto-runs pending work, and it
+// releases its worker — while an empty-queue failure never pauses;
+// the manager-owned state (pause flag, subscribers) survives the
+// worker's exit, with an explicit selection restarting execution.
 
 import (
 	"context"
@@ -50,8 +49,8 @@ func TestPausedPendingWorkStaysIntact(t *testing.T) {
 	r := &failThenQuick{url: quick.URL}
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{
-		ResolveModel: r.resolve,
-		IdleTimeout:  50 * time.Millisecond,
+		GetAgentThread: emptyThread,
+		ResolveModel:   r.resolve,
 	})
 
 	c, sc := wsPair(t)
@@ -68,9 +67,12 @@ func TestPausedPendingWorkStaysIntact(t *testing.T) {
 	require.Len(t, snapshot.Items, 1)
 	require.Equal(t, bID, snapshot.Items[0].ID, "B stays pending behind the gate")
 
-	// The waiting work keeps the worker, but nothing runs on its own.
-	time.Sleep(150 * time.Millisecond)
-	require.NotNil(t, mgr.Get("agent-paused"), "waiting work keeps the worker")
+	// The paused queue releases its worker — nothing may run — but
+	// the manager-owned state keeps the items and the pause intact,
+	// and no respawn loop spins against the gate.
+	require.Eventually(t, func() bool {
+		return mgr.Get("agent-paused") == nil
+	}, 2*time.Second, 5*time.Millisecond, "paused waiting work releases the worker")
 
 	// The explicit selection resumes: B runs.
 	r.quick.Store(true)
@@ -89,22 +91,24 @@ func TestEmptyQueueFailureNeverPausesAndStateSurvivesEviction(t *testing.T) {
 	}
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{
-		ResolveModel: resolver,
-		IdleTimeout:  50 * time.Millisecond,
+		GetAgentThread: emptyThread,
+		ResolveModel:   resolver,
 	})
 
 	c, sc := wsPair(t)
 
 	// A message-level failure with nothing waiting never arms the
-	// pause gate: the closing snapshot is unpaused, and the attached
-	// connection keeps the manager-owned state alive past the
-	// worker's idle exit.
+	// pause gate: the closing snapshot is unpaused.
 	submit(t, mgr, "agent-evict", "conn-1", sc, "fails")
 	readUntilError(t, c)
 	snapshot := readQueueState(t, c)
 	require.False(t, snapshot.Paused, "an empty queue never pauses")
-	time.Sleep(150 * time.Millisecond)
-	require.Nil(t, mgr.Get("agent-evict"), "the quiet queue lets the worker idle out")
+	// The worker exits as soon as the failed turn leaves nothing
+	// runnable; the attached connection keeps the manager-owned
+	// state alive past the exit.
+	require.Eventually(t, func() bool {
+		return mgr.Get("agent-evict") == nil
+	}, 2*time.Second, 5*time.Millisecond, "the quiet queue releases the worker")
 	require.Equal(t, 1, mgr.Status("agent-evict").ConnCount)
 
 	// A later prompt runs normally after the failure — no explicit
@@ -134,7 +138,7 @@ func TestStopInterruptsAndHoldsQueue(t *testing.T) {
 		return backend.ResolvedModel{BaseURL: parked.URL, APIKey: "sk-test", Model: "test-model"}, nil
 	}
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
-		&agent.UserAgentManagerOptions{ResolveModel: resolver})
+		&agent.UserAgentManagerOptions{GetAgentThread: emptyThread, ResolveModel: resolver})
 
 	c, sc := wsPair(t)
 
@@ -170,47 +174,4 @@ func TestStopInterruptsAndHoldsQueue(t *testing.T) {
 	_, resumed := readUntilMessage(t, c)
 	require.Equal(t, "quick answer", resumed.Content)
 	require.Equal(t, int32(1), quickHits.Load())
-}
-
-// slowSSE delays its first byte, making one turn outlast the idle
-// timeout.
-func slowSSE(t *testing.T, delay time.Duration, reply string) *httptest.Server {
-	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(delay)
-		w.Header().Set("Content-Type", "text/event-stream")
-		flusher := w.(http.Flusher)
-		_, _ = w.Write([]byte(sseChunk(reply)))
-		flusher.Flush()
-		_, _ = w.Write([]byte("data: [DONE]\n\n"))
-	}))
-}
-
-// A turn outlasting the idle timeout must not leave a stale timer
-// fire behind: the worker exits only after a full fresh idle interval
-// with no work, never immediately at the turn's end.
-func TestLongTurnDoesNotCauseImmediateIdleExit(t *testing.T) {
-	llm := slowSSE(t, 200*time.Millisecond, "slow reply")
-	defer llm.Close()
-
-	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{
-		ResolveModel: fixedResolver(llm.URL),
-		IdleTimeout:  60 * time.Millisecond,
-	})
-
-	c, sc := wsPair(t)
-
-	submit(t, mgr, "agent-long", "conn-1", sc, "slow")
-	_, p := readUntilMessage(t, c)
-	require.Equal(t, "slow reply", p.Content)
-
-	// The turn ran 200 ms against a 60 ms idle timer, so a fire was
-	// pending the whole time. The worker must still be here.
-	require.NotNil(t, mgr.Get("agent-long"),
-		"a stale idle fire must not evict the worker at turn end")
-
-	// And it exits only after a fresh idle interval with no work.
-	require.Eventually(t, func() bool {
-		return mgr.Get("agent-long") == nil
-	}, 2*time.Second, 10*time.Millisecond, "worker must exit after a fresh idle interval")
 }

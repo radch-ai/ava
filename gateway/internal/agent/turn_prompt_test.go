@@ -82,8 +82,11 @@ func TestTurnLeadsModelCallWithPersona(t *testing.T) {
 	}
 	llm := newRecordingLLM(t, "hello from the model")
 
+	th := &memThread{}
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
+			PersistTurn:    th.append,
+			GetAgentThread: th.load,
 			ResolveModel:   fixedResolver(llm.URL),
 			GetAgentConfig: fixedConfig(cfg),
 		})
@@ -108,7 +111,8 @@ func TestTurnConfigFetchFailureStillAnswers(t *testing.T) {
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel: fixedResolver(llm.URL),
+			GetAgentThread: emptyThread,
+			ResolveModel:   fixedResolver(llm.URL),
 			GetAgentConfig: func(ctx context.Context, agentID string) (*apitypes.AgentConfig, error) {
 				return nil, errors.New("db down")
 			},

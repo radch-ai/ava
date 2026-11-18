@@ -40,7 +40,7 @@ func TestSubmitRacingWorkerExitNeverStrandsAcceptedItems(t *testing.T) {
 
 	var sinkMu sync.Mutex
 	var persisted strings.Builder
-	sink := func(_ context.Context, _ string, msgs []apitypes.ThreadMessageDraft) error {
+	sink := func(_ context.Context, _ string, msgs []backend.ThreadMessageDraft) error {
 		sinkMu.Lock()
 		defer sinkMu.Unlock()
 		for _, m := range msgs {
@@ -49,12 +49,13 @@ func TestSubmitRacingWorkerExitNeverStrandsAcceptedItems(t *testing.T) {
 		return nil
 	}
 
-	// A nanosecond idle timeout makes the worker's exit race the
-	// senders the whole way through.
+	// No idle timer exists anymore: the worker exits whenever the
+	// queue has nothing runnable, so its exit races the senders the
+	// whole way through on its own.
 	m := NewUserAgentManager(zerolog.Nop(), &UserAgentManagerOptions{
-		ResolveModel: resolver,
-		PersistTurn:  sink,
-		IdleTimeout:  time.Nanosecond,
+		ResolveModel:   resolver,
+		PersistTurn:    sink,
+		GetAgentThread: func(context.Context, string) ([]backend.AgentThreadMessage, error) { return nil, nil },
 	})
 
 	s := m.state("agent-race")

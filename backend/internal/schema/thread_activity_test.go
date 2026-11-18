@@ -16,16 +16,16 @@ func TestThreadMessageRoleCheck(t *testing.T) {
 	// All four wire roles store; anything else fails the CHECK.
 	for _, role := range []string{"user", "assistant", "tool", "error"} {
 		if _, err := sqlDB.Exec(
-			`INSERT INTO thread_messages (id, agent_id, role, content)
-			 VALUES (?, '_superagent', ?, 'ok')`,
+			`INSERT INTO thread_messages (id, agent_id, role, content, turn_id)
+			 VALUES (?, '_superagent', ?, 'ok', '')`,
 			"role-"+role, role,
 		); err != nil {
 			t.Fatalf("insert role %q: %v", role, err)
 		}
 	}
 	_, err := sqlDB.Exec(
-		`INSERT INTO thread_messages (id, agent_id, role, content)
-		 VALUES ('bad', '_superagent', 'system', 'no')`)
+		`INSERT INTO thread_messages (id, agent_id, role, content, turn_id)
+		 VALUES ('bad', '_superagent', 'system', 'no', '')`)
 	if err == nil || !strings.Contains(err.Error(), "CHECK") {
 		t.Fatalf("bad role err = %v, want CHECK constraint failure", err)
 	}
@@ -84,8 +84,8 @@ func TestThreadAndActivityCascadeWithAgent(t *testing.T) {
 		t.Fatalf("seed agent: %v", err)
 	}
 	for _, insert := range []string{
-		`INSERT INTO thread_messages (id, agent_id, role, content)
-		 VALUES ('tm1', 'scratch', 'user', 'hello')`,
+		`INSERT INTO thread_messages (id, agent_id, role, content, turn_id)
+		 VALUES ('tm1', 'scratch', 'user', 'hello', '')`,
 		`INSERT INTO agent_activity (id, agent_id, triggered_by, action, status)
 		 VALUES ('aa1', 'scratch', 'cron', 'cron.run', 'completed')`,
 	} {
@@ -119,8 +119,8 @@ func TestThreadAndActivityCreatedAtDefault(t *testing.T) {
 
 	// Page order depends on every row carrying a DB-stamped created_at.
 	if _, err := sqlDB.Exec(
-		`INSERT INTO thread_messages (id, agent_id, role, content)
-		 VALUES ('tm2', '_superagent', 'user', 'hi')`,
+		`INSERT INTO thread_messages (id, agent_id, role, content, turn_id)
+		 VALUES ('tm2', '_superagent', 'user', 'hi', '')`,
 	); err != nil {
 		t.Fatalf("insert thread message: %v", err)
 	}

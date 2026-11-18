@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	"github.com/coder/websocket"
@@ -16,13 +17,6 @@ import (
 	"github.com/radch-ai/ava/backend"
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/gateway/wstypes"
-)
-
-const (
-	// defaultIdleTimeout is how long a worker survives its last turn
-	// before the goroutine exits. The queue and its subscribers are
-	// manager-owned and survive the exit.
-	defaultIdleTimeout = 15 * time.Minute
 )
 
 // streamCoalesceWindow and streamCoalesceBytes bound one answer-chunk
@@ -43,7 +37,7 @@ type ModelResolver = func(ctx context.Context, entry *apitypes.ModelEntry) (back
 // TurnSink appends a turn's messages to an agent's thread. An alias
 // of backend TurnService.AppendThreadMessages, so the bound method
 // value needs no adapter.
-type TurnSink = func(ctx context.Context, agentID string, msgs []apitypes.ThreadMessageDraft) error
+type TurnSink = func(ctx context.Context, agentID string, msgs []backend.ThreadMessageDraft) error
 
 // AgentConfigSource reads an agent's editable config — the prompt
 // texts and tool list a turn needs. An alias of backend
@@ -53,9 +47,14 @@ type AgentConfigSource = func(ctx context.Context, agentID string) (*apitypes.Ag
 
 // AgentToolsFunc fetches an agent's effective tools for a turn —
 // permissions applied, ready for the capture wrapper. An alias of
-// backend TurnService.AgentTools, so the bound method value needs
-// no adapter.
+// backend TurnService.AgentTools, so the bound method value needs no
+// adapter.
 type AgentToolsFunc = func(ctx context.Context, agentID string) ([]tool.InvokableTool, error)
+
+// AgentThreadSource reads an agent's thread as the turn's model
+// input. An alias of backend TurnService.GetAgentThread, so the bound
+// method value needs no adapter.
+type AgentThreadSource = func(ctx context.Context, agentID string) ([]backend.AgentThreadMessage, error)
 
 // turnOutcome classifies a settled turn for the queue: only
 // outcomeMessageFailed pauses automatic dispatch.
@@ -72,10 +71,9 @@ const (
 func (o turnOutcome) messageFailed() bool { return o == outcomeMessageFailed }
 
 type UserAgentOptions struct {
-	AgentID     string
-	State       *agentState
-	IdleTimeout time.Duration
-	OnExit      func(*UserAgent)
+	AgentID string
+	State   *agentState
+	OnExit  func(*UserAgent)
 	// ResolveModel maps a selection to a callable endpoint for
 	// every lane; bound by the gateway at boot.
 	ResolveModel ModelResolver
@@ -88,13 +86,18 @@ type UserAgentOptions struct {
 	// Tools fetches the agent's effective tools for each turn —
 	// permissions applied; bound by the gateway at boot. A failed
 	// read fails the turn; a user stop during it settles as a stop.
-	Tools  AgentToolsFunc
-	Logger zerolog.Logger
+	Tools AgentToolsFunc
+	// GetAgentThread reads the agent's thread as the turn's model
+	// input; bound by the gateway at boot.
+	GetAgentThread AgentThreadSource
+	Logger         zerolog.Logger
 }
 
 // UserAgent is one agent's disposable runtime worker: it executes
 // queue items one at a time and owns nothing the queue depends on.
-// Subscriptions and pending work live on the manager-owned state.
+// Subscriptions and pending work live on the manager-owned state. A
+// worker exits as soon as no runnable work remains — the transcript
+// lives in the backend's thread store, not a live worker.
 type UserAgent struct {
 	agentID string
 	ctx     context.Context
@@ -113,19 +116,18 @@ type UserAgent struct {
 	turnMsgID  string
 	turnPrefix strings.Builder
 
-	idleTimeout time.Duration
-	onExit      func(*UserAgent)
-	logger      zerolog.Logger
-
+	onExit         func(*UserAgent)
+	logger         zerolog.Logger
 	resolveModel   ModelResolver
 	persistTurn    TurnSink
 	getAgentConfig AgentConfigSource
 	tools          AgentToolsFunc
+	getAgentThread AgentThreadSource
 }
 
-// newUserAgent creates a worker and starts its claim loop. The
-// turn-context mint is wired to the worker's context so cancelling
-// the worker ends any turn still running.
+// newUserAgent creates a worker and starts its claim loop. The turn
+// context is minted from the manager's root context, so cancelling the
+// root ends any turn still running.
 func newUserAgent(ctx context.Context, opts UserAgentOptions) *UserAgent {
 	a := &UserAgent{
 		// The worker's context is the manager's root: cancelling it
@@ -134,22 +136,13 @@ func newUserAgent(ctx context.Context, opts UserAgentOptions) *UserAgent {
 		ctx:            ctx,
 		agentID:        opts.AgentID,
 		state:          opts.State,
-		idleTimeout:    opts.IdleTimeout,
 		logger:         opts.Logger,
 		resolveModel:   opts.ResolveModel,
 		persistTurn:    opts.PersistTurn,
 		getAgentConfig: opts.GetAgentConfig,
 		tools:          opts.Tools,
+		getAgentThread: opts.GetAgentThread,
 		onExit:         opts.OnExit,
-	}
-
-	if a.idleTimeout == 0 {
-		a.idleTimeout = defaultIdleTimeout
-	}
-	if a.state != nil {
-		a.state.setTurnCtxMint(func() (context.Context, context.CancelFunc) {
-			return context.WithCancel(a.ctx)
-		})
 	}
 
 	go a.loop()
@@ -190,47 +183,23 @@ func (a *UserAgent) Join(connID string, conn *websocket.Conn) {
 	})
 }
 
-// Interrupt is the Stop button: cancel the active item's turn and
-// hold the queue behind it. Send-now reservations and drain use the
-// bare interruptActive — they never arm the gate.
-func (a *UserAgent) Interrupt() {
-	a.state.stopNow()
-}
-
-// RemoveConn drops a connection from the shared subscriber set.
-func (a *UserAgent) RemoveConn(connID string) {
-	a.state.conns.Remove(connID)
-}
-
 func (a *UserAgent) loop() {
-	idleTimer := time.NewTimer(a.idleTimeout)
-	defer idleTimer.Stop()
-
 	for {
 		claim := a.state.claim()
-		if claim != nil {
-			a.setWorking(true)
-			outcome := a.processTurn(claim)
-			a.setWorking(false)
-			a.state.finish(outcome.messageFailed())
-			// Reset after the turn so a long query never races the
-			// idle timer.
-			idleTimer.Reset(a.idleTimeout)
-			continue
-		}
-
-		select {
-		case <-a.state.wake:
-		case <-idleTimer.C:
-			// Idle exit releases the worker only: pending work and
-			// subscribers stay with the manager-owned state.
-			if a.state.hasWork() {
-				idleTimer.Reset(a.idleTimeout)
-				continue
-			}
+		if claim == nil {
+			// Nothing may run now — paused, drained, or empty. Exit
+			// outright: the transcript lives in the backend's thread
+			// store, and runnable work respawns a worker on arrival.
 			a.exit()
 			return
-		case <-a.ctx.Done():
+		}
+		a.setWorking(true)
+		outcome := a.processTurn(claim)
+		a.setWorking(false)
+		// finish reports whether more work may run now; its false
+		// arm is claim's own nil predicate, so the worker retires
+		// here instead of paying another claim round to learn it.
+		if !a.state.finish(outcome.messageFailed()) {
 			a.exit()
 			return
 		}
@@ -244,14 +213,14 @@ func (a *UserAgent) exit() {
 	}
 }
 
-// processTurn runs exactly one claimed item: resolve its captured
-// model selection, query, and settle — assembled, or whatever
-// streamed when the item was stopped. The returned outcome drives
-// the queue's pause gate.
+// processTurn runs exactly one claimed item: persist its prompt, read
+// the conversation the backend owns, run the model, and settle —
+// assembled, or whatever streamed when the item was stopped. The
+// returned outcome drives the queue's pause gate.
 func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 	msgID := claim.item.id
 	entry := claim.item.model
-	input := claim.item.content
+	prompt := claim.item.content
 
 	// Events outlive the turn's context: an interrupted turn still
 	// reports why it ended.
@@ -262,16 +231,37 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 	a.beginTurn(msgID)
 
 	// The user's words persist before anything can fail: every
-	// failure mode below keeps the prompt in the thread — failures
-	// append their own error row, and a crash before either leaves
-	// the user row standing alone. The row carries the claim's user
-	// id, minted apart from the stream id.
+	// failure mode below keeps the prompt in the thread. The row
+	// carries the claim's user id, minted apart from the stream id,
+	// and the replay structure the working context records.
 	if a.persistTurn != nil {
 		if err := a.persistTurn(emitCtx, a.agentID,
-			[]apitypes.ThreadMessageDraft{{ID: claim.userMsgID, Role: apitypes.ThreadRoleUser, Content: input}}); err != nil {
-			a.logger.Warn().Err(err).Str("agent_id", a.agentID).Msg("persist user message")
+			[]backend.ThreadMessageDraft{{ID: claim.userMsgID, Role: apitypes.ThreadRoleUser,
+				Content: prompt, TurnID: msgID}}); err != nil {
+			// Required write: a prompt that is not durable never
+			// reaches the model.
+			a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("persist user message")
+			a.failTurn(emitCtx, msgID, "persist user message: "+err.Error(), "")
+			return outcomeMessageFailed
 		}
 	}
+
+	// The thread source is required, like the resolver: the working
+	// context is the committed user row.
+	if a.getAgentThread == nil {
+		a.logger.Error().Str("agent_id", a.agentID).Msg("lane has no thread source")
+		a.failTurn(emitCtx, msgID, "no thread source configured", "")
+		return outcomeMessageFailed
+	}
+	// The turn's input is the backend's read: it already includes the
+	// row just committed, so the prompt appears exactly once — the
+	// committed user row is the prompt, unconditionally. A failed load
+	// fails the turn; a stop during it settles as a quiet stop.
+	records, err := a.getAgentThread(claim.ctx, a.agentID)
+	if err != nil {
+		return a.setupFailure(emitCtx, claim, msgID, "load conversation history", err)
+	}
+	runInput := mapAgentThread(records)
 
 	// The resolver seam is immutable after construction, read
 	// directly like every other seam.
@@ -302,6 +292,9 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 			instruction = BuildSystemPrompt(cfg)
 		}
 	}
+	// The recorder owns this turn's replay rows: the native assistant
+	// hook writes call groups, the tool wrapper writes outcomes.
+	rec := newTurnRecorder(a, a.persistTurn, msgID, emitCtx)
 	// Tools arrive through their own seam — permissions and global
 	// switches already applied, ready to wrap. A failed read or an
 	// unreadable manifest fails the turn; an empty set is an honest
@@ -312,11 +305,12 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 		if err != nil {
 			return a.setupFailure(emitCtx, claim, msgID, "resolve tools", err)
 		}
-		if turnTools, err = a.wrapTools(claim.ctx, emitCtx, msgID, impls); err != nil {
+		if turnTools, err = a.wrapTools(claim.ctx, rec, impls); err != nil {
 			return a.setupFailure(emitCtx, claim, msgID, "wrap tools", err)
 		}
 	}
-	einoAgent, err := buildEinoAgent(claim.ctx, a.agentID, instruction, chatModel, turnTools)
+	handlers := []adk.TypedChatModelAgentMiddleware[*schema.Message]{rec}
+	einoAgent, err := buildEinoAgent(claim.ctx, a.agentID, instruction, chatModel, turnTools, handlers)
 	if err != nil {
 		return a.setupFailure(emitCtx, claim, msgID, "build agent", err)
 	}
@@ -326,38 +320,28 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 	}
 
 	var answer strings.Builder
-	iterator := runner.Query(claim.ctx, input)
+	// The model receives the conversation the backend returned — prior
+	// turns' replay-eligible history plus this prompt exactly once. The
+	// system instruction rides the agent, so stale personas never
+	// accumulate in the history itself.
+	iterator := runner.Run(claim.ctx, runInput)
 	for event, ok := iterator.Next(); ok; event, ok = iterator.Next() {
 		if event.Err != nil {
-			if turnStopped(claim.ctx) {
-				a.finishInterrupted(emitCtx, msgID, &answer)
-				return outcomeStopped
-			}
-			a.logger.Error().Err(event.Err).Str("agent_id", a.agentID).Msg("model query")
-			text, toolName := turnError(event.Err)
-			a.failTurn(emitCtx, msgID, text, toolName)
-			return a.failureOutcome(toolName)
+			return a.failEvent(emitCtx, claim, msgID, event.Err, &answer, rec)
 		}
 		if event.Output == nil || event.Output.MessageOutput == nil {
 			continue
 		}
 		// Tool rounds surface as Role=Tool outputs here and are
-		// skipped; wire events and thread rows for them come from the
-		// tool wrappers, not this loop.
+		// skipped; wire events and replay rows for them come from the
+		// recorder and its tool wrappers, which run beside this loop.
 		out := event.Output.MessageOutput
 		if out.Role != schema.Assistant {
 			continue
 		}
 		if out.MessageStream != nil {
 			if err := a.streamAnswer(emitCtx, out.MessageStream, msgID, &answer); err != nil {
-				if turnStopped(claim.ctx) {
-					a.finishInterrupted(emitCtx, msgID, &answer)
-					return outcomeStopped
-				}
-				a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("model stream")
-				text, toolName := turnError(err)
-				a.failTurn(emitCtx, msgID, text, toolName)
-				return a.failureOutcome(toolName)
+				return a.failEvent(emitCtx, claim, msgID, err, &answer, rec)
 			}
 			continue
 		}
@@ -365,12 +349,66 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 			answer.WriteString(out.Message.Content)
 		}
 	}
+	// Recording is over before settlement: a stale invocation may
+	// still report its wire event, but cannot add a durable row after
+	// this turn's closing row.
+	rec.close()
 	// The answer settles: persist first so the UI's refetch cannot
 	// outrun the write, then broadcast. A failed turn settles through
 	// failTurn instead; a crash between the two leaves the user row
-	// standing alone.
-	a.settleTurn(emitCtx, msgID, answer.String())
+	// standing alone. The terminal row carries only the terminal
+	// round's text — earlier rounds are their own recorded rows.
+	if !a.settleTurn(emitCtx, msgID, rec.terminalContent(answer.String())) {
+		return outcomeMessageFailed
+	}
 	return outcomeSucceeded
+}
+
+// failEvent classifies one turn error. A required-write failure wins
+// over the stop check: a write racing a user stop is still a message
+// failure. A stopped turn settles quietly; anything else fails the
+// turn (tool-attributed failures do not pause the queue).
+func (a *UserAgent) failEvent(emitCtx context.Context, claim *turnClaim, msgID string, err error, answer *strings.Builder, rec *turnRecorder) turnOutcome {
+	rec.close()
+	var rwe *requiredWriteError
+	if errors.As(err, &rwe) {
+		a.logger.Error().Err(rwe.err).Str("agent_id", a.agentID).Msg("persist turn message")
+		a.failTurn(emitCtx, msgID, "persist turn message: "+rwe.err.Error(), "")
+		return outcomeMessageFailed
+	}
+	if turnStopped(claim.ctx) {
+		return a.finishInterrupted(emitCtx, msgID, answer)
+	}
+	a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("model query")
+	text, toolName := turnError(err)
+	a.failTurn(emitCtx, msgID, text, toolName)
+	return a.failureOutcome(toolName)
+}
+
+// mapAgentThread converts thread records into model messages.
+// Arguments ride as the model-authored strings, unchanged. The system
+// prompt is deliberately absent: each turn's instruction supplies it
+// fresh, so stale personas never accumulate.
+func mapAgentThread(msgs []backend.AgentThreadMessage) []*schema.Message {
+	out := make([]*schema.Message, 0, len(msgs))
+	for _, m := range msgs {
+		switch m.Role {
+		case apitypes.ThreadRoleUser:
+			out = append(out, schema.UserMessage(m.Content))
+		case apitypes.ThreadRoleAssistant:
+			msg := schema.AssistantMessage(m.Content, nil)
+			for _, tc := range m.ToolCalls {
+				msg.ToolCalls = append(msg.ToolCalls, schema.ToolCall{
+					ID:       tc.ID,
+					Function: schema.FunctionCall{Name: tc.Name, Arguments: tc.Arguments},
+				})
+			}
+			out = append(out, msg)
+		default: // tool
+			out = append(out, schema.ToolMessage(m.Content, m.ToolCallID, schema.WithToolName(m.ToolName)))
+		}
+	}
+	return out
 }
 
 // setupFailure classifies a pre-stream failure: an intentional
@@ -378,8 +416,7 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 // stop, not a pause-worthy error; anything else fails the message.
 func (a *UserAgent) setupFailure(emitCtx context.Context, claim *turnClaim, msgID, site string, err error) turnOutcome {
 	if turnStopped(claim.ctx) {
-		a.finishInterrupted(emitCtx, msgID, &strings.Builder{})
-		return outcomeStopped
+		return a.finishInterrupted(emitCtx, msgID, &strings.Builder{})
 	}
 	a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg(site)
 	a.failTurn(emitCtx, msgID, err.Error(), "")
@@ -404,26 +441,35 @@ func turnStopped(queryCtx context.Context) bool {
 }
 
 // finishInterrupted ends a user-stopped turn. Whatever streamed
-// settles like a completed answer — history keeps it. An empty stop
-// emits nothing at all — no error, no draft row: a stop is not a
+// settles like a completed answer — the transcript keeps it. An empty
+// stop emits nothing at all — no error, no draft row: a stop is not a
 // failure, the user message already stands in the transcript, and
 // the next prompt is simply another user turn.
-func (a *UserAgent) finishInterrupted(emitCtx context.Context, msgID string, answer *strings.Builder) {
+func (a *UserAgent) finishInterrupted(emitCtx context.Context, msgID string, answer *strings.Builder) turnOutcome {
 	if answer.Len() > 0 {
-		a.settleTurn(emitCtx, msgID, answer.String())
+		if !a.settleTurn(emitCtx, msgID, answer.String()) {
+			return outcomeMessageFailed
+		}
+		return outcomeStopped
 	}
+	a.clearTurnPrefix()
+	return outcomeStopped
 }
 
 // settleTurn persists the assistant row, then broadcasts the final
 // message event — the persist-before-emit ordering is what keeps the
 // UI's settle refetch from racing the write. The replay prefix
-// retires first so a join racing the settle never replays a
-// finished turn.
-func (a *UserAgent) settleTurn(emitCtx context.Context, msgID, content string) {
+// retires first so a join racing the settle never replays a finished
+// turn. A failed persist fails the turn at message level: success is
+// never reported for a conversation that is not durable.
+func (a *UserAgent) settleTurn(emitCtx context.Context, msgID, content string) bool {
 	if a.persistTurn != nil {
 		if err := a.persistTurn(emitCtx, a.agentID,
-			[]apitypes.ThreadMessageDraft{{Role: apitypes.ThreadRoleAssistant, Content: content}}); err != nil {
-			a.logger.Warn().Err(err).Str("agent_id", a.agentID).Msg("persist assistant message")
+			[]backend.ThreadMessageDraft{{Role: apitypes.ThreadRoleAssistant,
+				Content: content, TurnID: msgID}}); err != nil {
+			a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("persist assistant message")
+			a.failTurn(emitCtx, msgID, "persist assistant message: "+err.Error(), "")
+			return false
 		}
 	}
 	a.clearTurnPrefix()
@@ -432,6 +478,7 @@ func (a *UserAgent) settleTurn(emitCtx context.Context, msgID, content string) {
 		AgentID: a.agentID,
 		Data:    wstypes.MessageEvent{ID: msgID, Content: content},
 	})
+	return true
 }
 
 // beginTurn resets the replay state for a new turn; joins during the

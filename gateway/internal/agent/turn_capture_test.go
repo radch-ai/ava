@@ -11,13 +11,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
 	"testing"
 
 	"github.com/coder/websocket"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
+	"github.com/radch-ai/ava/backend"
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/gateway/internal/agent"
 	"github.com/radch-ai/ava/gateway/wstypes"
@@ -40,14 +40,15 @@ func readAllUntilMessage(t *testing.T, c *websocket.Conn) []wstypes.Event {
 // toolRoundManager wires a lane whose one resolved tool reports to
 // both the wire and the given sink.
 func toolRoundManager(t *testing.T, echo *fakeTool, llmResponses []string,
-	persist func(context.Context, string, []apitypes.ThreadMessageDraft) error) *agent.UserAgentManager {
+	persist func(context.Context, string, []backend.ThreadMessageDraft) error) *agent.UserAgentManager {
 	t.Helper()
 	llm := newScriptedLLM(t, llmResponses...)
 	return agent.NewUserAgentManager(zerolog.Nop(),
 		&agent.UserAgentManagerOptions{
-			ResolveModel: fixedResolver(llm.URL),
-			Tools:        fixedTools(echo),
-			PersistTurn:  persist,
+			GetAgentThread: emptyThread,
+			ResolveModel:   fixedResolver(llm.URL),
+			Tools:          fixedTools(echo),
+			PersistTurn:    persist,
 		})
 }
 
@@ -95,62 +96,42 @@ func TestToolRowPersistsBetweenUserAndAssistant(t *testing.T) {
 	mgr := toolRoundManager(t, echo,
 		[]string{toolCallChunk("echo_tool") + toolCallDone(), sseChunk("final answer")}, sink.persist)
 	c, sc := wsPair(t)
-	submit(t, mgr, "agent-cappersist", "conn-1", sc, "search for otters")
+	itemID := submit(t, mgr, "agent-cappersist", "conn-1", sc, "search for otters")
 	_, p := readUntilMessage(t, c)
 	require.Equal(t, "final answer", p.Content)
 
-	// Drain, tool row, settle — in that order, the envelope between
-	// the speaking rows.
+	// User row, the native assistant group, its outcome, then the
+	// settled answer — each a separate required write.
 	calls := sink.recorded()
-	require.Len(t, calls, 3)
+	require.Len(t, calls, 4)
 	require.Equal(t, apitypes.ThreadRoleUser, calls[0][0].Role)
-	require.Equal(t, apitypes.ThreadRoleTool, calls[1][0].Role)
-	require.Equal(t, apitypes.ThreadRoleAssistant, calls[2][0].Role)
 
-	var env apitypes.ToolEnvelope
-	require.NoError(t, json.Unmarshal([]byte(calls[1][0].Content), &env))
+	require.Len(t, calls[1], 1)
+	require.Equal(t, apitypes.ThreadRoleAssistant, calls[1][0].Role)
+	require.Equal(t, itemID, calls[1][0].TurnID)
+	var group []backend.AgentThreadCall
+	require.NoError(t, json.Unmarshal(calls[1][0].ToolCalls, &group))
+	require.Len(t, group, 1)
+	require.Equal(t, "echo_tool", group[0].Name)
+	require.Equal(t, `{"query":"plush otters"}`, group[0].Arguments,
+		"arguments ride verbatim as the model-authored string")
+
+	require.Len(t, calls[2], 1)
+	require.Equal(t, apitypes.ThreadRoleTool, calls[2][0].Role)
+	require.Equal(t, itemID, calls[2][0].TurnID)
+	var env backend.ToolEnvelope
+	require.NoError(t, json.Unmarshal([]byte(calls[2][0].Content), &env))
 	require.Equal(t, "echo_tool", env.Name)
+	require.Equal(t, group[0].ID, env.CallID, "the envelope pairs with its assistant call")
 	require.JSONEq(t, `{"query":"plush otters"}`, string(env.Args))
-	// A plain-text result rides as a quoted JSON string.
-	require.Equal(t, `"tool says hi"`, string(env.Result))
+	// The result rides as the exact model-facing string.
+	require.Equal(t, "tool says hi", env.Result)
 	require.Nil(t, env.Error)
-}
 
-// toolFailingSink fails exactly the writes whose first draft carries
-// the given role; everything else lands.
-type toolFailingSink struct {
-	mu      sync.Mutex
-	calls   [][]apitypes.ThreadMessageDraft
-	failFor apitypes.ThreadRole
-}
-
-func (s *toolFailingSink) persist(_ context.Context, _ string, msgs []apitypes.ThreadMessageDraft) error {
-	s.mu.Lock()
-	s.calls = append(s.calls, msgs)
-	fail := len(msgs) > 0 && msgs[0].Role == s.failFor
-	s.mu.Unlock()
-	if fail {
-		return errors.New("sink unavailable")
-	}
-	return nil
-}
-
-func TestMidTurnSinkFailureStillCompletesTurn(t *testing.T) {
-	echo := &fakeTool{name: "echo_tool", result: "tool says hi"}
-	sink := &toolFailingSink{failFor: apitypes.ThreadRoleTool}
-	mgr := toolRoundManager(t, echo,
-		[]string{toolCallChunk("echo_tool") + toolCallDone(), sseChunk("final answer")}, sink.persist)
-	c, sc := wsPair(t)
-	submit(t, mgr, "agent-capsink", "conn-1", sc, "search for otters")
-
-	// The tool row's failed write costs nothing: no error event, the
-	// answer arrives, and every write was still attempted.
-	_, p := readUntilMessage(t, c)
-	require.Equal(t, "final answer", p.Content)
-
-	sink.mu.Lock()
-	defer sink.mu.Unlock()
-	require.Len(t, sink.calls, 3)
+	require.Len(t, calls[3], 1)
+	require.Equal(t, apitypes.ThreadRoleAssistant, calls[3][0].Role)
+	require.Equal(t, "final answer", calls[3][0].Content,
+		"the terminal row carries only the terminal round's text")
 }
 
 // The wire's failure text and the persisted row's text come from one
@@ -177,13 +158,78 @@ func TestToolFailureTextMatchesPersistedRow(t *testing.T) {
 			require.Equal(t, "search backend down: timeout", *resultErr)
 
 			calls := sink.recorded()
-			require.Len(t, calls, 2)
-			require.Equal(t, apitypes.ThreadRoleTool, calls[1][0].Role)
-			var env apitypes.ToolEnvelope
-			require.NoError(t, json.Unmarshal([]byte(calls[1][0].Content), &env))
+			require.Len(t, calls, 3)
+			require.Equal(t, apitypes.ThreadRoleAssistant, calls[1][0].Role,
+				"the failed round still carries its assistant call")
+			require.Equal(t, apitypes.ThreadRoleTool, calls[2][0].Role)
+			var env backend.ToolEnvelope
+			require.NoError(t, json.Unmarshal([]byte(calls[2][0].Content), &env))
 			require.NotNil(t, env.Error)
 			require.Equal(t, *resultErr, *env.Error)
 			return
 		}
 	}
+}
+
+// twoCallChunk renders one SSE frame carrying two complete tool calls
+// in a single assistant message.
+func twoCallChunk(name string) string {
+	payload := map[string]any{
+		"id": "chatcmpl-test", "object": "chat.completion.chunk", "created": 0,
+		"model": "test-model",
+		"choices": []any{map[string]any{
+			"index": 0, "finish_reason": nil,
+			"delta": map[string]any{
+				"role": "assistant",
+				"tool_calls": []any{
+					map[string]any{
+						"index": 0, "id": "call-1", "type": "function",
+						"function": map[string]any{"name": name, "arguments": `{"query":"one"}`},
+					},
+					map[string]any{
+						"index": 1, "id": "call-2", "type": "function",
+						"function": map[string]any{"name": name, "arguments": `{"query":"two"}`},
+					},
+				},
+			},
+		}},
+	}
+	raw, _ := json.Marshal(payload)
+	return "data: " + string(raw) + "\n\n"
+}
+
+// One native assistant message with two calls is one recorded group:
+// the model's declared order and arguments survive, and each outcome
+// pairs with its own call.
+func TestToolGroupPreservesDeclaredOrder(t *testing.T) {
+	echo := &fakeTool{name: "echo_tool", result: "tool says hi"}
+	sink := &recordingSink{}
+	mgr := toolRoundManager(t, echo,
+		[]string{twoCallChunk("echo_tool") + toolCallDone(), sseChunk("done")}, sink.persist)
+
+	c, sc := wsPair(t)
+	submit(t, mgr, "agent-two", "conn-1", sc, "search twice")
+	_, p := readUntilMessage(t, c)
+	require.Equal(t, "done", p.Content)
+
+	calls := sink.recorded()
+	require.Len(t, calls, 5, "user, group, two outcomes, terminal")
+	var group []backend.AgentThreadCall
+	require.NoError(t, json.Unmarshal(calls[1][0].ToolCalls, &group))
+	require.Len(t, group, 2)
+	require.Equal(t, "call-1", group[0].ID)
+	require.Equal(t, "call-2", group[1].ID)
+	require.Equal(t, `{"query":"one"}`, group[0].Arguments)
+	require.Equal(t, `{"query":"two"}`, group[1].Arguments)
+
+	pairs := map[string]string{}
+	for _, batch := range calls[2:4] {
+		var env backend.ToolEnvelope
+		require.NoError(t, json.Unmarshal([]byte(batch[0].Content), &env))
+		pairs[env.CallID] = string(env.Result)
+	}
+	require.Equal(t, map[string]string{
+		"call-1": "tool says hi",
+		"call-2": "tool says hi",
+	}, pairs)
 }

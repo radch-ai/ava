@@ -78,8 +78,16 @@ func newBroadcaster(logger zerolog.Logger, writeTimeout time.Duration, capacity 
 }
 
 // registerLocked installs a connection's outbound and starts its
-// writer; caller holds mu.
+// writer — unless the very same connection is already registered,
+// when it is reused as-is. A repeat Add or Join on a live connection
+// must never start a second writer for one socket: the orphaned
+// writer's stop channel would never close (a leaked goroutine), and
+// any frames still queued on it would race the new writer on the
+// same connection. Caller holds mu.
 func (b *Broadcaster) registerLocked(connID string, conn *websocket.Conn) *outbound {
+	if o, ok := b.conns[connID]; ok && o.conn == conn {
+		return o
+	}
 	o := &outbound{
 		conn: conn,
 		out:  make(chan []byte, b.capacity),
@@ -90,7 +98,8 @@ func (b *Broadcaster) registerLocked(connID string, conn *websocket.Conn) *outbo
 	return o
 }
 
-// replaceLocked shuts down a same-id predecessor; caller holds mu.
+// replaceLocked shuts down a same-id predecessor carrying a
+// different connection; caller holds mu.
 func (b *Broadcaster) replaceLocked(connID string, conn *websocket.Conn) {
 	if old, exists := b.conns[connID]; exists && old.conn != conn {
 		_ = old.conn.Close(websocket.StatusNormalClosure, "replaced by new connection")
@@ -98,9 +107,9 @@ func (b *Broadcaster) replaceLocked(connID string, conn *websocket.Conn) {
 	}
 }
 
-// Add adds a connection to the broadcast list.
-// If connID already exists, the old connection is replaced.
-// Nil connections are ignored.
+// Add adds a connection to the broadcast list. Re-adding a live
+// connection is idempotent; a connID that arrives on a different
+// connection replaces it. Nil connections are ignored.
 func (b *Broadcaster) Add(connID string, conn *websocket.Conn) {
 	if conn == nil {
 		return

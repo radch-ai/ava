@@ -7,6 +7,7 @@ package agent
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -38,8 +39,8 @@ func seedMessages(t *testing.T, sqlDB *sql.DB, agentID string, ids ...string) {
 	t.Helper()
 	for i, id := range ids {
 		if _, err := sqlDB.Exec(
-			`INSERT INTO thread_messages (id, agent_id, role, content, created_at)
-			 VALUES (?, ?, 'user', ?, ?)`,
+			`INSERT INTO thread_messages (id, agent_id, role, content, created_at, turn_id)
+			 VALUES (?, ?, 'user', ?, ?, '')`,
 			id, agentID, id, pageBase+int64(i)*1000,
 		); err != nil {
 			t.Fatalf("seed message %s: %v", id, err)
@@ -123,8 +124,8 @@ func TestGetThreadCarriesErrorRows(t *testing.T) {
 		{"m2", "error", "no default model set"},
 	} {
 		if _, err := sqlDB.Exec(
-			`INSERT INTO thread_messages (id, agent_id, role, content, created_at)
-			 VALUES (?, 'research', ?, ?, ?)`,
+			`INSERT INTO thread_messages (id, agent_id, role, content, created_at, turn_id)
+			 VALUES (?, 'research', ?, ?, ?, '')`,
 			seed.id, seed.role, seed.content, pageBase+int64(i)*1000,
 		); err != nil {
 			t.Fatalf("seed %s: %v", seed.id, err)
@@ -237,5 +238,65 @@ func TestGetThreadLimitRules(t *testing.T) {
 		if len(page.Items) != wantCount {
 			t.Errorf("%s items = %d, want %d", path, len(page.Items), wantCount)
 		}
+	}
+}
+
+// seedStructureRow writes a structure-only assistant record:
+// tool-call structure with no text, never rendered.
+func seedStructureRow(t *testing.T, sqlDB *sql.DB, id string, createdAt int64) {
+	t.Helper()
+	if _, err := sqlDB.Exec(
+		`INSERT INTO thread_messages (id, agent_id, role, content, created_at, turn_id, tool_calls)
+		 VALUES (?, 'research', 'assistant', '', ?, 't1', '[{"id":"c","name":"t","arguments":"{}"}]')`,
+		id, createdAt,
+	); err != nil {
+		t.Fatalf("seed structure row %s: %v", id, err)
+	}
+}
+
+// A page of hidden structure rows must neither consume the limit nor
+// conceal older visible history.
+func TestGetThreadFiltersStructureRowsBeforeLimit(t *testing.T) {
+	sqlDB, queries := threadStore(t)
+	seedMessages(t, sqlDB, "research", "m1")
+	for i := 0; i < 25; i++ {
+		seedStructureRow(t, sqlDB, fmt.Sprintf("h%02d", i), pageBase+int64(i+1))
+	}
+	seedMessagesAgain := func(id string, createdAt int64) {
+		if _, err := sqlDB.Exec(
+			`INSERT INTO thread_messages (id, agent_id, role, content, created_at, turn_id)
+			 VALUES (?, 'research', 'user', ?, ?, '')`, id, id, createdAt); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	seedMessagesAgain("m2", pageBase+100)
+
+	code, page := getThreadPage(t, queries, "/agent/research/thread?limit=2")
+	if code != http.StatusOK {
+		t.Fatalf("code = %d, want 200", code)
+	}
+	if len(page.Items) != 2 || page.Items[0].ID != "m1" || page.Items[1].ID != "m2" {
+		t.Fatalf("items = %+v, want the two visible rows oldest first", page.Items)
+	}
+	if page.NextCursor != nil {
+		t.Errorf("nextCursor = %v, want null (no older visible rows)", *page.NextCursor)
+	}
+}
+
+// A cursor may name any stored row; the page still walks visible rows
+// strictly older than it.
+func TestGetThreadCursorNamingHiddenRowPagesOlderVisible(t *testing.T) {
+	sqlDB, queries := threadStore(t)
+	seedMessages(t, sqlDB, "research", "m1")
+	for i := 0; i < 3; i++ {
+		seedStructureRow(t, sqlDB, fmt.Sprintf("h%02d", i), pageBase+int64(i+1))
+	}
+
+	code, page := getThreadPage(t, queries, "/agent/research/thread?cursor=h01")
+	if code != http.StatusOK {
+		t.Fatalf("code = %d, want 200", code)
+	}
+	if len(page.Items) != 1 || page.Items[0].ID != "m1" {
+		t.Fatalf("items = %+v, want only m1", page.Items)
 	}
 }

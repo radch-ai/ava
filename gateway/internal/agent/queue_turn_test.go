@@ -56,7 +56,8 @@ func TestClaimSnapshotPrecedesFirstChunk(t *testing.T) {
 	defer quick.Close()
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
-		&agent.UserAgentManagerOptions{ResolveModel: fixedResolver(quick.URL)})
+		&agent.UserAgentManagerOptions{
+			GetAgentThread: emptyThread, ResolveModel: fixedResolver(quick.URL)})
 
 	c, sc := wsPair(t)
 	itemID := submit(t, mgr, "agent-claim-order", "conn-1", sc, "visible early")
@@ -96,7 +97,8 @@ func TestSendNowInterruptsActiveAndRunsSelectedNext(t *testing.T) {
 	}
 
 	mgr := agent.NewUserAgentManager(zerolog.Nop(),
-		&agent.UserAgentManagerOptions{ResolveModel: resolver})
+		&agent.UserAgentManagerOptions{
+			GetAgentThread: emptyThread, ResolveModel: resolver})
 
 	c, sc := wsPair(t)
 
