@@ -40,7 +40,7 @@ func acceptAndStall(t *testing.T) (*httptest.Server, <-chan struct{}) {
 			return
 		}
 		defer close(closed)
-		defer c.CloseNow()
+		defer func() { _ = c.CloseNow() }()
 		_, _, _ = c.Read(context.Background())
 	}))
 	t.Cleanup(s.Close)
@@ -93,7 +93,7 @@ func TestRemoveStopsWriter(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer c.CloseNow()
+		defer func() { _ = c.CloseNow() }()
 		for {
 			if _, _, err := c.Read(context.Background()); err != nil {
 				return
@@ -102,7 +102,7 @@ func TestRemoveStopsWriter(t *testing.T) {
 	}))
 	t.Cleanup(s.Close)
 	c := dial(t, s.URL)
-	defer c.CloseNow()
+	defer func() { _ = c.CloseNow() }()
 
 	b := newBroadcaster(zerolog.Nop(), time.Second, 8)
 	b.Add("gone", c)

@@ -103,10 +103,11 @@ migrate-cli direction n="":
 
 ## --- validate ---
 
-# go mod tidy → golangci-lint --fix → go fmt → goimports.
+# sqlc-generate → go mod tidy → golangci-lint --fix → go fmt → goimports.
 validate:
     @just require_tool golangci-lint
     @just require_tool goimports
+    @just sqlc-generate
     go mod tidy
     golangci-lint run --fix ./...
     go fmt ./...

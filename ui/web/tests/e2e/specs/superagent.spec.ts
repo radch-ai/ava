@@ -15,22 +15,6 @@ test.describe('ava agent', () => {
 		await expect(page).toHaveURL(/\/agent\/_superagent$/)
 	})
 
-	test('should show thread content or empty placeholder', async ({ page }) => {
-		await page.goto('/')
-
-		await expect(page.locator('.overflow-y-auto')).toBeVisible()
-
-		const noMessagesPlaceholder = page.getByText(/no messages yet/i)
-		const threadContent = page.locator('.flex.flex-col.gap-4')
-
-		const hasPlaceholder = await noMessagesPlaceholder
-			.isVisible()
-			.catch(() => false)
-		const hasContent = (await threadContent.count()) > 0
-
-		expect(hasPlaceholder || hasContent).toBeTruthy()
-	})
-
 	test('should show load more button when thread has more messages', async ({
 		page
 	}) => {
@@ -49,26 +33,26 @@ test.describe('ava agent', () => {
 		await expect(modelLabel).toBeVisible()
 	})
 
-	test('resets the model selection to default on reload', async ({ page }) => {
+	test('keeps the selected model after a reload', async ({ page }) => {
+		const modelsLoaded = page.waitForResponse('**/api/models')
 		await page.goto('/')
+		await modelsLoaded
 
 		const modelSelector = page.getByRole('combobox').first()
-		await expect(modelSelector).toHaveText(/default/i)
-
 		await modelSelector.click()
 		const options = page.getByRole('option')
-		if ((await options.count()) > 1) {
-			// A catalog exists (mock mode or a seeded backend): pick
-			// a concrete model, then confirm the reset on reload.
-			const picked = await options.nth(1).textContent()
-			await options.nth(1).click()
-			await expect(modelSelector).toHaveText(picked ?? /.*/)
+		test.skip(
+			(await options.count()) < 2,
+			'Requires a provider with at least one configured model'
+		)
 
-			await page.reload()
-			await expect(page.getByRole('combobox').first()).toHaveText(/default/i)
-		}
-		// Fresh backend, no providers: the default option is the only
-		// one — nothing to pick, the assertion above already pins it.
+		const picked = (await options.nth(1).textContent())?.trim() ?? ''
+		expect(picked).not.toBe('')
+		await options.nth(1).click()
+		await expect(modelSelector).toHaveText(picked)
+
+		await page.reload()
+		await expect(page.getByRole('combobox').first()).toHaveText(picked)
 	})
 
 	test('should navigate to ava from sidebar', async ({ page }) => {

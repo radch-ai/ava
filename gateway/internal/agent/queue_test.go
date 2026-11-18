@@ -10,10 +10,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/radch-ai/ava/backend/apitypes"
-	"github.com/radch-ai/ava/gateway/wstypes"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
+
+	"github.com/radch-ai/ava/backend/apitypes"
+	"github.com/radch-ai/ava/gateway/wstypes"
 )
 
 func newTestState() (*agentState, *[]wstypes.QueueStateEvent) {

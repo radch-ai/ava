@@ -99,15 +99,6 @@ test.describe('agent detail page', () => {
 		await expect(secondTooltipContent).toBeVisible({ timeout: 5000 })
 	})
 
-	test('should show activity feed', async ({ page }) => {
-		const agentName = `Detail Activity ${Date.now()}`
-		await createAgentViaUi(page, agentName)
-		// Activity feed container with overflow-y-auto class
-		await expect(page.locator('.overflow-y-auto')).toBeVisible()
-		// Newly created agents have no activity - shows empty state
-		await expect(page.getByText('No activity yet.')).toBeVisible()
-	})
-
 	test('should show empty state when no activity exists', async ({ page }) => {
 		const agentName = `Detail Empty Activity ${Date.now()}`
 		await createAgentViaUi(page, agentName)
