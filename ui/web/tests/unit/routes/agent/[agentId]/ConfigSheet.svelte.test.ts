@@ -71,7 +71,8 @@ vi.mock('#lib/services/agent/config', () => ({
 	deleteCronJob: vi.fn(),
 	// The Tools panel fetches on open
 	getAgentTools: vi.fn().mockResolvedValue([]),
-	toggleAgentTool: vi.fn()
+	toggleAgentTool: vi.fn(),
+	toggleAgentMcp: vi.fn()
 }))
 
 import { updateAgentConfig, updateHeartbeat } from '#lib/services/agent'

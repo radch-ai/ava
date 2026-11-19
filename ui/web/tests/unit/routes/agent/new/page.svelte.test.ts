@@ -27,6 +27,7 @@ vi.mock('#lib/services/agent/config', () => ({
 	deleteCronJob: vi.fn(),
 	// The Tools panel fetches only once the agent exists
 	getAgentTools: vi.fn(),
+	toggleAgentMcp: vi.fn(),
 	toggleAgentTool: vi.fn()
 }))
 

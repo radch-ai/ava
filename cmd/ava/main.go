@@ -184,4 +184,8 @@ func serve(logger zerolog.Logger) {
 	// bounded moment to settle their partial answers into the
 	// thread before the process exits.
 	gw.Drain(10 * time.Second)
+
+	// stdio MCP servers are our children: kill their process groups
+	// before exit instead of orphaning them.
+	turnSvc.CloseTools()
 }

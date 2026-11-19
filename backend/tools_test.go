@@ -194,12 +194,12 @@ func TestSyncDoesNotRestoreDeletedGrant(t *testing.T) {
 		t.Fatalf("second boot: %v", err)
 	}
 	queries = db.New(sqlDB)
-	if ids, err := queries.ResolveAgentTools(t.Context(), "research"); err != nil {
+	if ids, err := queries.ResolveAgentTools(t.Context(), db.ResolveAgentToolsParams{AgentID: "research", AgentID_2: "research"}); err != nil {
 		t.Fatal(err)
 	} else if len(ids) != 0 {
 		t.Errorf("research tools after reboot = %v, want none — the opt-out survives", ids)
 	}
-	if ids, err := queries.ResolveAgentTools(t.Context(), "_superagent"); err != nil {
+	if ids, err := queries.ResolveAgentTools(t.Context(), db.ResolveAgentToolsParams{AgentID: "_superagent", AgentID_2: "_superagent"}); err != nil {
 		t.Fatal(err)
 	} else if len(ids) != 1 || ids[0] != id {
 		t.Errorf("superagent tools after reboot = %v, want [%s]", ids, id)

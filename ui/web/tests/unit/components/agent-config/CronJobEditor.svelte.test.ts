@@ -15,7 +15,8 @@ vi.mock('#lib/services/agent/config', () => ({
 	getCronJobs: vi.fn(),
 	createCronJob: vi.fn(),
 	updateCronJob: vi.fn(),
-	deleteCronJob: vi.fn()
+	deleteCronJob: vi.fn(),
+	toggleAgentMcp: vi.fn()
 }))
 
 const job: CronJob = {

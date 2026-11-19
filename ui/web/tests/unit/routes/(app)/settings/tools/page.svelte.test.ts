@@ -1,14 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
+import * as mcpService from '#lib/services/mcp'
 import * as toolsService from '#lib/services/tools'
+import type { McpServer } from '#lib/types/mcp'
 import type { Tool } from '#lib/types/tool'
 import ToolsPage from '#routes/settings/tools/+page.svelte'
 
-// Mock the tool catalog service — the page never hits the network.
+// Mock the tool catalog + MCP server services — the page never hits
+// the network.
 vi.mock('#lib/services/tools', () => ({
 	getTools: vi.fn(),
 	toggleTool: vi.fn()
+}))
+
+vi.mock('#lib/services/mcp', () => ({
+	getMcpServers: vi.fn(),
+	createMcpServer: vi.fn(),
+	updateMcpServer: vi.fn(),
+	deleteMcpServer: vi.fn(),
+	refreshMcpServer: vi.fn(),
+	setMcpServerEnabled: vi.fn()
+}))
+
+// Mock SvelteKit navigation: the page invalidates after every mutation.
+vi.mock('$app/navigation', () => ({
+	invalidateAll: vi.fn()
 }))
 
 const ddg: Tool = {
@@ -16,15 +33,27 @@ const ddg: Tool = {
 	name: 'DuckDuckGo Search',
 	description: 'Searches the web and returns the top results.',
 	builtin: true,
-	enabled: true
+	enabled: true,
+	kind: 'builtin'
 }
 
 // PageData folds in the (app) layout's load — agents fields arrive
 // from there; this page never reads them, but the prop type needs
 // them present.
-function renderPage(tools: Tool[], toolsError: string | null = null): void {
+function renderPage(
+	tools: Tool[],
+	toolsError: string | null = null,
+	servers: McpServer[] = []
+): void {
 	render(ToolsPage, {
-		data: { agents: [], agentsError: null, tools, toolsError }
+		data: {
+			agents: [],
+			agentsError: null,
+			tools,
+			toolsError,
+			servers,
+			serversError: null
+		}
 	})
 }
 
@@ -43,13 +72,15 @@ describe('MCP & Tools page', () => {
 		await expect
 			.element(page.getByRole('heading', { name: 'DuckDuckGo Search' }))
 			.toBeVisible()
-		await expect.element(page.getByText('Built-in')).toBeVisible()
+		await expect
+			.element(page.getByText('Built-in', { exact: true }))
+			.toBeVisible()
 		await expect
 			.element(page.getByText('Searches the web and returns the top results.'))
 			.toBeVisible()
 	})
 
-	it('explains the global-disable semantics and placeholder management', async () => {
+	it('offers MCP server management with the built-ins-only note', async () => {
 		renderPage([ddg])
 
 		// Whitespace-tolerant: the copy wraps in the source template.
@@ -61,15 +92,98 @@ describe('MCP & Tools page', () => {
 			)
 			.toBeVisible()
 		await expect
-			.element(page.getByRole('button', { name: 'Add tool' }))
-			.toBeDisabled()
+			.element(page.getByRole('button', { name: 'Add MCP server' }))
+			.toBeEnabled()
+		// The default-grant copy names built-ins only, covering wasm and
+		// every future kind.
 		await expect
 			.element(
 				page.getByText(
-					"Adding, editing, and removing custom tools and MCP connections isn't available yet."
+					/Only built-in tools are granted to agents by default — enable others per\s+agent/
 				)
 			)
 			.toBeVisible()
+	})
+
+	const notesServer: McpServer = {
+		id: 'notes-mcp',
+		name: 'Notes MCP',
+		transport: 'stdio',
+		command: 'notes-mcp',
+		args: ['--stdio'],
+		envKeys: ['NOTES_TOKEN'],
+		headerKeys: [],
+		enabled: true,
+		toolCount: 1,
+		lastError: 'mcp server notes-mcp: initialize: connection refused'
+	}
+
+	const notesTool: Tool = {
+		id: 'notes-mcp:search',
+		name: 'search',
+		description: 'Searches the notes server.',
+		builtin: false,
+		enabled: true,
+		kind: 'mcp',
+		serverId: 'notes-mcp'
+	}
+
+	it('renders a server as a collapsible row with transport, count, and diagnostics', async () => {
+		renderPage([ddg, notesTool], null, [notesServer])
+
+		await expect
+			.element(page.getByRole('heading', { name: 'Notes MCP' }))
+			.toBeVisible()
+		await expect.element(page.getByText('MCP · stdio')).toBeVisible()
+		await expect.element(page.getByText('1 tool')).toBeVisible()
+		await expect.element(page.getByText(/connection refused/)).toBeVisible()
+		await expect
+			.element(page.getByRole('button', { name: 'Refresh tools' }))
+			.toBeEnabled()
+		// The MCP tool is nested, not a sibling flat row.
+		await expect
+			.element(page.getByRole('switch', { name: 'Enable search globally' }))
+			.not.toBeInTheDocument()
+	})
+
+	it('expands a server to its nested tool switches', async () => {
+		renderPage([ddg, notesTool], null, [notesServer])
+
+		await page.getByRole('button', { name: 'Notes MCP' }).click()
+
+		await expect
+			.element(page.getByRole('switch', { name: 'Enable search globally' }))
+			.toBeVisible()
+	})
+
+	it('saves the server switch through the service', async () => {
+		vi.mocked(mcpService.setMcpServerEnabled).mockResolvedValue({
+			server: { ...notesServer, enabled: false },
+			tools: []
+		})
+		renderPage([ddg], null, [notesServer])
+
+		await page
+			.getByRole('switch', { name: 'Enable Notes MCP globally' })
+			.click()
+
+		await vi.waitFor(() => {
+			expect(mcpService.setMcpServerEnabled).toHaveBeenCalledWith(
+				'notes-mcp',
+				false
+			)
+		})
+	})
+
+	it("hides a disabled server's nested rows but keeps its trigger", async () => {
+		renderPage([ddg, notesTool], null, [{ ...notesServer, enabled: false }])
+
+		await expect
+			.element(page.getByRole('button', { name: 'Notes MCP' }))
+			.toBeVisible()
+		await expect
+			.element(page.getByRole('switch', { name: 'Enable search globally' }))
+			.not.toBeInTheDocument()
 	})
 
 	it('saves a toggle through the service', async () => {

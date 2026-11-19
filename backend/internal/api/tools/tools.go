@@ -78,5 +78,15 @@ func toolFromRow(row db.Tool) apitypes.Tool {
 		Description: row.Description,
 		Builtin:     row.Builtin != 0,
 		Enabled:     row.Enabled != 0,
+		Kind:        row.Kind,
+		ServerID:    serverIDPtr(row.ServerID),
 	}
+}
+
+// serverIDPtr maps the nullable server_id column to its wire pointer.
+func serverIDPtr(v interface{}) *string {
+	if s, ok := v.(string); ok {
+		return &s
+	}
+	return nil
 }

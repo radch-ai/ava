@@ -63,7 +63,7 @@ func TestGetToolsListsCatalog(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	want := `{"tools":[{"id":"ddg","name":"ddg name","description":"ddg does things","builtin":true,"enabled":false},{"id":"notes","name":"notes name","description":"notes does things","builtin":true,"enabled":true}]}`
+	want := `{"tools":[{"id":"ddg","name":"ddg name","description":"ddg does things","builtin":true,"enabled":false,"kind":"builtin"},{"id":"notes","name":"notes name","description":"notes does things","builtin":true,"enabled":true,"kind":"builtin"}]}`
 	if got := strings.TrimSpace(rec.Body.String()); got != want {
 		t.Errorf("body = %s, want %s", got, want)
 	}
@@ -73,11 +73,11 @@ func TestToggleToolFlipsGlobalSwitch(t *testing.T) {
 	queries := toolStore(t)
 
 	rec := serve(t, "PATCH /tools/{id}", tools.ToggleTool(api.NewThrottle(0), queries),
-		http.MethodPatch, "/tools/ddg", `{"enabled":true}`)
+		http.MethodPatch, "/tools/ddg", `{"enabled":true,"kind":"builtin"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	want := `{"id":"ddg","name":"ddg name","description":"ddg does things","builtin":true,"enabled":true}`
+	want := `{"id":"ddg","name":"ddg name","description":"ddg does things","builtin":true,"enabled":true,"kind":"builtin"}`
 	if got := strings.TrimSpace(rec.Body.String()); got != want {
 		t.Errorf("body = %s, want %s", got, want)
 	}
@@ -94,7 +94,7 @@ func TestToggleToolUnknownTool(t *testing.T) {
 	queries := toolStore(t)
 
 	rec := serve(t, "PATCH /tools/{id}", tools.ToggleTool(api.NewThrottle(0), queries),
-		http.MethodPatch, "/tools/ghost", `{"enabled":true}`)
+		http.MethodPatch, "/tools/ghost", `{"enabled":true,"kind":"builtin"}`)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}
@@ -151,7 +151,7 @@ func TestToggleToolThrottlesBursts(t *testing.T) {
 	throttle := api.NewThrottle(50 * time.Millisecond)
 
 	rec := serve(t, "PATCH /tools/{id}", tools.ToggleTool(throttle, queries),
-		http.MethodPatch, "/tools/ddg", `{"enabled":true}`)
+		http.MethodPatch, "/tools/ddg", `{"enabled":true,"kind":"builtin"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("first toggle: status = %d, want 200", rec.Code)
 	}

@@ -7,34 +7,16 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/backend/internal/api"
 	"github.com/radch-ai/ava/backend/internal/db"
+	"github.com/radch-ai/ava/backend/internal/names"
 )
 
-// Agent identity rules, ported from the UI (mocks/agent-id.ts) so
-// backend and mock server answer identically. The
-// client never derives ids — it sends a name, the server owns the
-// mapping.
-
-// validAgentNameRE: ASCII letters, digits and single spaces between
-// words, tested on the trimmed name.
-var validAgentNameRE = regexp.MustCompile(`^[A-Za-z0-9]+(?: [A-Za-z0-9]+)*$`)
-
-func isValidAgentName(name string) bool {
-	return validAgentNameRE.MatchString(strings.TrimSpace(name))
-}
-
-// deriveAgentID maps a validated name to its id: lowercase, spaces as
-// hyphens. Only the shapes isValidAgentName admits reach here, so no
-// further normalization applies — and ids can never start with "_",
-// the system-reserved prefix.
-func deriveAgentID(name string) string {
-	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(name)), " ", "-")
-}
+// Identity follows internal/names (the UI mock mirrors it): the client
+// never derives ids — it sends a name, the server owns the mapping.
 
 // CreateAgent answers the UI's createAgent(): derive the id from the
 // display name, reject invalid names (400) and colliding ids (409) —
@@ -48,11 +30,11 @@ func CreateAgent(sqlDB *sql.DB, queries *db.Queries) api.Handler {
 			return api.WriteError(w, http.StatusBadRequest, "Invalid request body")
 		}
 
-		if !isValidAgentName(req.Name) {
+		if !names.Valid(req.Name) {
 			return api.WriteError(w, http.StatusBadRequest,
 				"Invalid agent name: use letters, digits and single spaces only")
 		}
-		id := deriveAgentID(req.Name)
+		id := names.Slug(req.Name)
 
 		if _, err := queries.GetAgentID(r.Context(), id); err == nil {
 			return api.WriteError(w, http.StatusConflict,

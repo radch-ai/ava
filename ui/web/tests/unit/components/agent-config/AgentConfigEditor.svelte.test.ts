@@ -14,7 +14,8 @@ vi.mock('#lib/services/agent/config', () => ({
 	// The Tools panel fetches on open; empty catalog keeps the
 	// textarea tests free of tool rows.
 	getAgentTools: vi.fn().mockResolvedValue([]),
-	toggleAgentTool: vi.fn()
+	toggleAgentTool: vi.fn(),
+	toggleAgentMcp: vi.fn()
 }))
 
 // Helper to create default superagent configuration

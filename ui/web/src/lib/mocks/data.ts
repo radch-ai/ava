@@ -19,13 +19,15 @@ export interface ProviderRow {
 	models: string[]
 }
 
-/** A tool row as the mock stores it — the backend's tools table. */
+/** A tool row as the mock stores it — the backend's tools table.
+ * kind is "builtin" or "mcp"; serverId names the owning MCP server. */
 export interface ToolRow {
 	id: string
 	name: string
 	description: string
-	builtin: boolean
 	enabled: boolean
+	kind: 'builtin' | 'mcp'
+	serverId?: string
 }
 
 /** One conversation boundary as the mock stores it. */
@@ -51,9 +53,15 @@ export interface MockStore {
 	providers: ProviderRow[]
 	/** The installed tool catalog — built-ins default ON. */
 	tools: ToolRow[]
+	/** The MCP server rows; their tools live in tools by serverId. */
+	mcpServers: McpServerRow[]
 	/** Granted tool ids per agent — presence is the whole meaning,
 	 * seeded for built-ins like the database's insert rules. */
 	toolGrants: Map<string, Set<string>>
+	/** Per-agent MCP gate per server — present = configured, value =
+	 * enabled. Absent = never approved (default-deny), matching
+	 * agent_mcp_preferences' tri-state. */
+	agentMcpGates: Map<string, Map<string, boolean>>
 	/**
 	 * Threads per agent id, newest (active) last. Each holds its own
 	 * messages newest-first, like the server's page read, and the
@@ -143,21 +151,70 @@ export const PROVIDER_SEED_DATA: Array<{
 	}
 ]
 
-/** The installed catalog: the built-in search tool, default ON. */
+/** The installed catalog: the built-in search tool, default ON, plus
+ * the seeded MCP server's tools — granted to no agent by default. */
 const TOOL_SEEDS: ToolRow[] = [
 	{
 		id: 'duckduckgo_search',
 		name: 'DuckDuckGo Search',
 		description: 'Searches the web and returns the top results.',
-		builtin: true,
-		enabled: true
+		enabled: true,
+		kind: 'builtin'
+	},
+	{
+		id: 'notes-mcp:search_notes',
+		name: 'search_notes',
+		description: 'Full-text search across the local notes store.',
+		enabled: true,
+		kind: 'mcp',
+		serverId: 'notes-mcp'
+	},
+	{
+		id: 'notes-mcp:fetch_note',
+		name: 'fetch_note',
+		description: 'Reads one note by id.',
+		enabled: true,
+		kind: 'mcp',
+		serverId: 'notes-mcp'
 	}
 ]
 
 /** Built-in ids — the default grant every agent starts with. */
-export const BUILTIN_TOOL_IDS = TOOL_SEEDS.filter((tool) => tool.builtin).map(
-	(tool) => tool.id
-)
+export const BUILTIN_TOOL_IDS = TOOL_SEEDS.filter(
+	(tool) => tool.kind === 'builtin'
+).map((tool) => tool.id)
+
+/** An MCP server row as the mock stores it — the backend's
+ * mcp_servers table. Secret values are never stored here either:
+ * envKeys/headerKeys are names only. */
+export interface McpServerRow {
+	id: string
+	name: string
+	transport: 'stdio' | 'http'
+	command?: string
+	args: string[]
+	url?: string
+	envKeys: string[]
+	headerKeys: string[]
+	timeoutMs?: number
+	enabled: boolean
+	lastError?: string
+	refreshedAt?: number
+}
+
+const MCP_SERVER_SEEDS: McpServerRow[] = [
+	{
+		id: 'notes-mcp',
+		name: 'Notes MCP',
+		transport: 'stdio',
+		command: 'notes-mcp',
+		args: ['--stdio'],
+		envKeys: ['NOTES_TOKEN'],
+		headerKeys: [],
+		enabled: true,
+		refreshedAt: ANCHOR
+	}
+]
 /** The seeded rows: keyless, no custom models — mirroring a store
  * the user created them against. */
 const PROVIDER_SEEDS: ProviderRow[] = PROVIDER_SEED_DATA.map((row) => ({
@@ -366,10 +423,17 @@ export function createSeedData(): MockStore {
 		cronJobs: new Map(Object.entries(CRON_JOBS)),
 		providers: structuredClone(PROVIDER_SEEDS),
 		tools: structuredClone(TOOL_SEEDS),
+		mcpServers: structuredClone(MCP_SERVER_SEEDS),
 		toolGrants: new Map(
 			[SUPERAGENT_AGENT_ID, ...AGENT_SEEDS.map((agent) => agent.id)].map(
 				(id) => [id, new Set(BUILTIN_TOOL_IDS)]
 			)
+		),
+		agentMcpGates: new Map(
+			[...AGENT_SEEDS.map((agent) => agent.id)].map((id) => [
+				id,
+				new Map<string, boolean>()
+			])
 		),
 		threads,
 		activity: seedActivity(),

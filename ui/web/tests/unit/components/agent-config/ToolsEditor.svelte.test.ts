@@ -2,13 +2,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
 import ToolsEditor from '#components/agent-config/ToolsEditor.svelte'
-import { getAgentTools, toggleAgentTool } from '#lib/services/agent/config'
+import {
+	getAgentTools,
+	toggleAgentMcp,
+	toggleAgentTool
+} from '#lib/services/agent/config'
+import { getMcpServers } from '#lib/services/mcp'
+import type { McpServer } from '#lib/types/mcp'
 import type { AgentTool } from '#lib/types/tool'
 
-// Mock the agent config service — the panel never hits the network.
+// Mock the agent config + MCP services — the panel never hits the
+// network.
 vi.mock('#lib/services/agent/config', () => ({
 	getAgentTools: vi.fn(),
-	toggleAgentTool: vi.fn()
+	toggleAgentTool: vi.fn(),
+	toggleAgentMcp: vi.fn()
+}))
+
+vi.mock('#lib/services/mcp', () => ({
+	getMcpServers: vi.fn()
 }))
 
 const enabled: AgentTool = {
@@ -16,7 +28,8 @@ const enabled: AgentTool = {
 	name: 'DuckDuckGo Search',
 	description: 'Searches the web and returns the top results.',
 	globalEnabled: true,
-	agentEnabled: true
+	agentEnabled: true,
+	kind: 'builtin'
 }
 
 const blocked: AgentTool = {
@@ -24,16 +37,45 @@ const blocked: AgentTool = {
 	id: 'ghost_tool',
 	name: 'Ghost Tool',
 	globalEnabled: false,
-	agentEnabled: true
+	agentEnabled: true,
+	kind: 'builtin'
 }
 
 // Mocks are set before render — the fetch effect runs on mount.
-function renderEditor(tools: AgentTool[] = [enabled], agentId = 'research') {
-	vi.mocked(getAgentTools).mockResolvedValue(tools)
+function renderEditor(
+	tools: AgentTool[] = [enabled],
+	agentId = 'research',
+	servers: McpServer[] = [],
+	gates: { serverId: string; agentEnabled: boolean }[] = []
+) {
+	vi.mocked(getAgentTools).mockResolvedValue({ tools, servers: gates })
+	vi.mocked(getMcpServers).mockResolvedValue(servers)
 	render(ToolsEditor, { agentId, value: '', onchange: () => {} })
 	return page.getByRole('switch', {
 		name: 'Enable DuckDuckGo Search for this agent'
 	})
+}
+
+const notesServer: McpServer = {
+	id: 'notes-mcp',
+	name: 'Notes MCP',
+	transport: 'stdio',
+	command: 'notes-mcp',
+	args: [],
+	envKeys: [],
+	headerKeys: [],
+	enabled: true,
+	toolCount: 1
+}
+
+const notesTool: AgentTool = {
+	id: 'notes-mcp:search',
+	name: 'search',
+	description: 'Searches the notes server.',
+	globalEnabled: true,
+	agentEnabled: true,
+	kind: 'mcp',
+	serverId: 'notes-mcp'
 }
 
 describe('ToolsEditor', () => {
@@ -84,7 +126,8 @@ describe('ToolsEditor', () => {
 		const sw = renderEditor()
 		vi.mocked(toggleAgentTool).mockResolvedValue({
 			...enabled,
-			agentEnabled: false
+			agentEnabled: false,
+			kind: 'builtin'
 		})
 
 		await sw.click()
@@ -124,7 +167,8 @@ describe('ToolsEditor', () => {
 			await vi.advanceTimersByTimeAsync(0)
 			vi.mocked(toggleAgentTool).mockResolvedValue({
 				...enabled,
-				agentEnabled: false
+				agentEnabled: false,
+				kind: 'builtin'
 			})
 
 			const handle = await sw.element()
@@ -180,5 +224,89 @@ describe('ToolsEditor', () => {
 		} finally {
 			vi.useRealTimers()
 		}
+	})
+
+	it('renders a server gate with nested tools and no manage buttons', async () => {
+		renderEditor(
+			[enabled, notesTool],
+			'research',
+			[notesServer],
+			[{ serverId: 'notes-mcp', agentEnabled: true }]
+		)
+
+		await expect
+			.element(page.getByRole('heading', { name: 'Notes MCP' }))
+			.toBeVisible()
+		const gate = page.getByRole('switch', {
+			name: 'Enable Notes MCP for this agent'
+		})
+		await expect.element(gate).toHaveAttribute('aria-checked', 'true')
+		await expect
+			.element(page.getByRole('button', { name: 'Refresh tools' }))
+			.not.toBeInTheDocument()
+		await expect
+			.element(page.getByRole('button', { name: 'Delete server' }))
+			.not.toBeInTheDocument()
+	})
+
+	it("hides a gate-off server's nested rows but keeps its trigger", async () => {
+		renderEditor([enabled, notesTool], 'research', [notesServer], [])
+
+		await expect
+			.element(page.getByRole('button', { name: 'Notes MCP' }))
+			.toBeVisible()
+		await expect
+			.element(
+				page.getByRole('switch', { name: 'Enable search for this agent' })
+			)
+			.not.toBeInTheDocument()
+	})
+
+	it('first enable approves the server tools through the bulk gate', async () => {
+		vi.mocked(toggleAgentMcp).mockResolvedValue({
+			tools: [enabled, { ...notesTool }],
+			servers: [{ serverId: 'notes-mcp', agentEnabled: true }]
+		})
+		renderEditor([enabled, { ...notesTool, agentEnabled: false }], 'research', [
+			notesServer
+		])
+
+		await page
+			.getByRole('switch', { name: 'Enable Notes MCP for this agent' })
+			.click()
+
+		await vi.waitFor(() => {
+			expect(toggleAgentMcp).toHaveBeenCalledWith('research', 'notes-mcp', {
+				enabled: true
+			})
+		})
+		// The response listing re-seeds the per-tool switches.
+		await page.getByRole('button', { name: 'Notes MCP' }).click()
+		await expect
+			.element(
+				page.getByRole('switch', { name: 'Enable search for this agent' })
+			)
+			.toHaveAttribute('aria-checked', 'true')
+	})
+
+	it('renders a globally disabled server inert even with the gate on', async () => {
+		renderEditor(
+			[enabled, notesTool],
+			'research',
+			[{ ...notesServer, enabled: false }],
+			[{ serverId: 'notes-mcp', agentEnabled: true }]
+		)
+
+		const gate = page.getByRole('switch', {
+			name: 'Enable Notes MCP for this agent'
+		})
+		await expect.element(gate).toHaveAttribute('aria-checked', 'false')
+		await expect.element(gate).toBeDisabled()
+		await expect.element(page.getByText('Disabled globally')).toBeVisible()
+		// Nothing to expand while the server is dead globally; the
+		// trigger itself stays mounted.
+		await expect
+			.element(page.getByRole('button', { name: 'Notes MCP' }))
+			.toBeVisible()
 	})
 })

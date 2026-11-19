@@ -56,9 +56,9 @@ func TestGetAgentToolsShowsBothSwitches(t *testing.T) {
 	// tools — the globally disabled one included; its switch, not
 	// its grants, gates use.
 	want := `{"tools":[` +
-		`{"id":"ddg","name":"ddg name","description":"","globalEnabled":true,"agentEnabled":true},` +
-		`{"id":"notes","name":"notes name","description":"","globalEnabled":false,"agentEnabled":true}` +
-		`]}`
+		`{"id":"ddg","name":"ddg name","description":"","globalEnabled":true,"agentEnabled":true,"kind":"builtin"},` +
+		`{"id":"notes","name":"notes name","description":"","globalEnabled":false,"agentEnabled":true,"kind":"builtin"}` +
+		`],"servers":[]}`
 	if got := strings.TrimSpace(rec.Body.String()); got != want {
 		t.Errorf("body = %s, want %s", got, want)
 	}
@@ -91,11 +91,13 @@ func TestSetAgentToolAddsAndRemovesRow(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	want := `{"id":"ddg","name":"ddg name","description":"","globalEnabled":true,"agentEnabled":true}`
+	want := `{"id":"ddg","name":"ddg name","description":"","globalEnabled":true,"agentEnabled":true,"kind":"builtin"}`
 	if got := strings.TrimSpace(rec.Body.String()); got != want {
 		t.Errorf("body = %s, want %s", got, want)
 	}
-	ids, err := queries.ResolveAgentTools(t.Context(), "research")
+	ids, err := queries.ResolveAgentTools(t.Context(), db.ResolveAgentToolsParams{
+		AgentID: "research", AgentID_2: "research",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,11 +113,13 @@ func TestSetAgentToolAddsAndRemovesRow(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	want = `{"id":"ddg","name":"ddg name","description":"","globalEnabled":true,"agentEnabled":false}`
+	want = `{"id":"ddg","name":"ddg name","description":"","globalEnabled":true,"agentEnabled":false,"kind":"builtin"}`
 	if got := strings.TrimSpace(rec.Body.String()); got != want {
 		t.Errorf("body = %s, want %s", got, want)
 	}
-	ids, err = queries.ResolveAgentTools(t.Context(), "research")
+	ids, err = queries.ResolveAgentTools(t.Context(), db.ResolveAgentToolsParams{
+		AgentID: "research", AgentID_2: "research",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

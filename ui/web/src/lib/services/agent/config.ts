@@ -10,6 +10,7 @@ import type {
 import type {
 	AgentTool,
 	GetAgentToolsResponse,
+	ToggleAgentMcpRequest,
 	ToggleAgentToolRequest
 } from '#lib/types/tool'
 import { api } from '../api'
@@ -78,11 +79,10 @@ export async function deleteCronJob(agentId: string, jobId: string) {
 /** The agent's tool view — the whole catalog, each row with its
  * global switch and this agent's preference. Only the Tools panel
  * calls this; it refetches per open so global changes show. */
-export async function getAgentTools(agentId: string): Promise<AgentTool[]> {
-	const { tools } = await api
-		.get(`agent/${agentId}/tools`)
-		.json<GetAgentToolsResponse>()
-	return tools
+export async function getAgentTools(
+	agentId: string
+): Promise<GetAgentToolsResponse> {
+	return api.get(`agent/${agentId}/tools`).json<GetAgentToolsResponse>()
 }
 
 /** Flip one tool's agent preference; answers the saved view row. */
@@ -94,6 +94,18 @@ export async function toggleAgentTool(
 	return api
 		.patch(`agent/${agentId}/tools/${toolId}`, { json: body })
 		.json<AgentTool>()
+}
+
+/** Flip the agent's parent gate over one MCP server; first enable
+ * approves the server's current tools, later toggles keep choices. */
+export async function toggleAgentMcp(
+	agentId: string,
+	serverId: string,
+	body: ToggleAgentMcpRequest
+): Promise<GetAgentToolsResponse> {
+	return api
+		.patch(`agent/${agentId}/mcp/${serverId}`, { json: body })
+		.json<GetAgentToolsResponse>()
 }
 
 /**

@@ -16,10 +16,12 @@ import (
 	"github.com/radch-ai/ava/backend/internal/api"
 	"github.com/radch-ai/ava/backend/internal/api/agent"
 	"github.com/radch-ai/ava/backend/internal/api/agents"
+	mcpservers "github.com/radch-ai/ava/backend/internal/api/mcpservers"
 	"github.com/radch-ai/ava/backend/internal/api/providers"
 	"github.com/radch-ai/ava/backend/internal/api/tools"
 	"github.com/radch-ai/ava/backend/internal/api/vaults"
 	"github.com/radch-ai/ava/backend/internal/db"
+	mcpserver "github.com/radch-ai/ava/backend/internal/mcpserver"
 	toolreg "github.com/radch-ai/ava/backend/internal/tools"
 	"github.com/radch-ai/ava/backend/internal/vault"
 )
@@ -31,7 +33,10 @@ import (
 // New builds the registry's built-ins and syncs them into the tools
 // table: missing entries are created with their defaults, code-owned
 // metadata is refreshed, and saved global switches are never
-// overwritten. A tool that fails to construct fails here, at boot.
+// overwritten. A built-in that fails to construct fails here, at boot;
+// MCP server discovery is best-effort per server — a down server
+// degrades to inert listings with its diagnostics recorded, never a
+// boot failure.
 //
 // It also returns the vault-backed session store (auth.NewVaultSessions)
 // the binary's auth layer consumes, and the TurnService whose method
@@ -88,6 +93,11 @@ func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte) (http.Handler, 
 	if err := syncToolCatalog(queries, registry.Catalog()); err != nil {
 		return nil, nil, nil, err
 	}
+// MCP discovery is best-effort per server: a down server's tools stay
+// listed but inert; boot never fails on it.
+	if err := mcpserver.SyncEnabled(context.Background(), sqlDB, queries, registry.MCP(), vaultStore, logger); err != nil {
+		return nil, nil, nil, err
+	}
 	// Toggle endpoints absorb bursts: one accepted write per target
 	// per window — human pace never trips it.
 	toggleThrottle := api.NewThrottle(200 * time.Millisecond)
@@ -114,12 +124,25 @@ func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte) (http.Handler, 
 
 	// Per-agent tool preferences — live toggles, like cron jobs.
 	mux.Handle("GET /agent/{id}/tools", api.Log(logger, agent.GetAgentTools(queries)))
+	mux.Handle("PATCH /agent/{id}/mcp/{serverId}",
+		api.Log(logger, agent.ToggleAgentMcp(toggleThrottle, sqlDB, queries)))
 	mux.Handle("PATCH /agent/{id}/tools/{toolId}",
 		api.Log(logger, agent.ToggleAgentTool(toggleThrottle, queries)))
 
 	// Tool catalog.
 	mux.Handle("GET /tools", api.Log(logger, tools.GetTools(queries)))
 	mux.Handle("PATCH /tools/{id}", api.Log(logger, tools.ToggleTool(toggleThrottle, queries)))
+
+	// MCP servers: CRUD + refresh; writes throttled per server.
+	mcpThrottle := api.NewThrottle(500 * time.Millisecond)
+	mux.Handle("GET /mcp/servers", api.Log(logger, mcpservers.List(queries)))
+	mux.Handle("POST /mcp/servers", api.Log(logger, mcpservers.Create(registry.MCP(), sqlDB, queries, vaultStore)))
+	mux.Handle("PATCH /mcp/servers/{id}",
+		api.Log(logger, mcpservers.Update(mcpThrottle, registry.MCP(), sqlDB, queries, vaultStore)))
+	mux.Handle("DELETE /mcp/servers/{id}",
+		api.Log(logger, mcpservers.Delete(mcpThrottle, registry.MCP(), queries, vaultStore)))
+	mux.Handle("POST /mcp/servers/{id}/refresh",
+		api.Log(logger, mcpservers.Refresh(mcpThrottle, registry.MCP(), sqlDB, queries, vaultStore)))
 
 	// Providers.
 	mux.Handle("GET /providers", api.Log(logger, providers.GetProviders(queries, vaultStore)))

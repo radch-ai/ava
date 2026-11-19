@@ -22,6 +22,12 @@ import {
 	SUPERAGENT_AGENT
 } from '../types/agent.ts'
 import type {
+	CreateMcpServerRequest,
+	McpDiscoveredTool,
+	McpServer,
+	UpdateMcpServerRequest
+} from '../types/mcp.ts'
+import type {
 	AgentTool,
 	GetToolsResponse,
 	ToggleAgentToolRequest,
@@ -30,6 +36,7 @@ import type {
 import { deriveAgentId, isValidAgentName } from './agent-id.ts'
 import {
 	BUILTIN_TOOL_IDS,
+	type McpServerRow,
 	type MockStore,
 	PROVIDER_SEED_DATA,
 	type ProviderRow
@@ -120,6 +127,116 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 					{ status: 400 }
 				)
 			: null
+
+	// --- MCP servers ----------------------------------------------
+
+	// Wire view of one server row: key names only, the tool count
+	// derived from the catalog.
+	const serverView = (row: McpServerRow): McpServer => ({
+		id: row.id,
+		name: row.name,
+		transport: row.transport,
+		...(row.command ? { command: row.command } : {}),
+		args: row.args,
+		...(row.url ? { url: row.url } : {}),
+		envKeys: row.envKeys,
+		headerKeys: row.headerKeys,
+		...(row.timeoutMs ? { timeoutMs: row.timeoutMs } : {}),
+		enabled: row.enabled,
+		toolCount: store.tools.filter((tool) => tool.serverId === row.id).length,
+		...(row.lastError ? { lastError: row.lastError } : {}),
+		...(row.refreshedAt ? { refreshedAt: row.refreshedAt } : {})
+	})
+
+	const discoveredFor = (slug: string): McpDiscoveredTool[] =>
+		store.tools
+			.filter((tool) => tool.serverId === slug)
+			.map((tool) => ({
+				id: tool.id,
+				name: tool.name,
+				description: tool.description
+			}))
+
+	// The save-time connection check, deterministic in mock mode: a
+	// stdio command pointing at nothing, or a non-http(s) url, fails
+	// like the backend's real dial.
+	const serverConnectionCheck = (
+		transport: string,
+		command: string,
+		url: string
+	) => {
+		if (transport === 'stdio' && command.includes('nonexistent')) {
+			return HttpResponse.json(
+				{
+					message:
+						'Connection check failed: mcp server: initialize: command not found'
+				},
+				{ status: 400 }
+			)
+		}
+		if (transport === 'http' && !/^https?:\/\/.+/.test(url)) {
+			return HttpResponse.json(
+				{
+					message:
+						'Connection check failed: mcp server: initialize: connection refused'
+				},
+				{ status: 400 }
+			)
+		}
+		return null
+	}
+
+	const serverConfigProblem = (
+		transport: unknown,
+		command: string,
+		url: string
+	): string | null => {
+		if (transport !== 'stdio' && transport !== 'http')
+			return 'transport must be "stdio" or "http"'
+		if (transport === 'stdio' && command.trim() === '')
+			return 'stdio transport needs a command'
+		if (transport === 'http' && !/^https?:\/\/.+/.test(url))
+			return 'http transport needs an http(s) url'
+		return null
+	}
+
+	// A created mock server deterministically reports one echo tool;
+	// a re-verified server re-reports it.
+	const seedServerTools = (slug: string): void => {
+		store.tools.push({
+			id: `${slug}:echo`,
+			name: 'echo',
+			description: 'Echoes its input text.',
+			enabled: true,
+			kind: 'mcp',
+			serverId: slug
+		})
+	}
+
+	// Deleting a server's tools cascades their grants.
+	const dropServerTools = (slug: string): void => {
+		const dropped = store.tools
+			.filter((tool) => tool.serverId === slug)
+			.map((tool) => tool.id)
+		store.tools = store.tools.filter((tool) => tool.serverId !== slug)
+		for (const grants of store.toolGrants.values())
+			for (const id of dropped) grants.delete(id)
+	}
+
+	// A re-sync keeps still-reported tools and their grants: the mock's
+	// healthy listing is the fixed "echo" set, so reconcile upserts it and
+	// prunes only rows the listing omits — the backend's UpsertMcpTool
+	// ON CONFLICT / DeleteVanishedMcpTools semantics.
+	const reconcileServerTools = (slug: string): void => {
+		const kept = `${slug}:echo`
+		const dropped = store.tools
+			.filter((tool) => tool.serverId === slug && tool.id !== kept)
+			.map((tool) => tool.id)
+		store.tools = store.tools.filter((tool) => !dropped.includes(tool.id))
+		for (const grants of store.toolGrants.values())
+			for (const id of dropped) grants.delete(id)
+		if (!store.tools.some((tool) => tool.id === kept)) seedServerTools(slug)
+	}
 
 	return [
 		// The list mirrors the backend query: it never includes the system
@@ -537,9 +654,15 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			return HttpResponse.json({ systemModels: systemModelsFor(row) })
 		}),
 
-		// The tool catalog: the whole list, then the global switch.
+		// The tool catalog: the whole list, then the global switch. The
+		// wire's `builtin` derives from kind — one stored fact.
 		http.get('*/api/tools', () =>
-			HttpResponse.json<GetToolsResponse>({ tools: [...store.tools] })
+			HttpResponse.json<GetToolsResponse>({
+				tools: store.tools.map((tool) => ({
+					...tool,
+					builtin: tool.kind === 'builtin'
+				}))
+			})
 		),
 
 		http.patch('*/api/tools/:id', async ({ params, request }) => {
@@ -562,6 +685,212 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			return HttpResponse.json({ ...row })
 		}),
 
+		http.get('*/api/mcp/servers', () =>
+			HttpResponse.json({ servers: store.mcpServers.map(serverView) })
+		),
+
+		http.post('*/api/mcp/servers', async ({ request }) => {
+			const body = (await request.json()) as CreateMcpServerRequest
+			if (!isValidAgentName(body.name ?? '')) {
+				return HttpResponse.json(
+					{
+						message:
+							'Invalid server name: use letters, digits and single spaces only'
+					},
+					{ status: 400 }
+				)
+			}
+			const rawTransport = body.transport ?? ''
+			const problem = serverConfigProblem(
+				rawTransport,
+				body.command ?? '',
+				body.url ?? ''
+			)
+			if (problem)
+				return HttpResponse.json({ message: problem }, { status: 400 })
+			const transport = rawTransport as McpServerRow['transport']
+			if (
+				body.timeoutMs !== undefined &&
+				(body.timeoutMs <= 0 || body.timeoutMs > 600_000)
+			) {
+				return HttpResponse.json(
+					{ message: 'timeoutMs must be between 1 and 600000' },
+					{ status: 400 }
+				)
+			}
+			const slug = deriveAgentId(body.name)
+			if (store.mcpServers.some((row) => row.id === slug)) {
+				return HttpResponse.json(
+					{ message: `An MCP server named "${body.name}" already exists` },
+					{ status: 409 }
+				)
+			}
+			const failed = serverConnectionCheck(
+				transport,
+				body.command ?? '',
+				body.url ?? ''
+			)
+			if (failed) return failed
+
+			const row: McpServerRow = {
+				id: slug,
+				name: body.name.trim(),
+				transport,
+				...(transport === 'stdio' ? { command: body.command ?? '' } : {}),
+				args: body.args ?? [],
+				...(transport === 'http' ? { url: body.url ?? '' } : {}),
+				envKeys: Object.keys(body.env ?? {}),
+				headerKeys: Object.keys(body.headers ?? {}),
+				...(body.timeoutMs !== undefined ? { timeoutMs: body.timeoutMs } : {}),
+				enabled: true,
+				refreshedAt: Date.now()
+			}
+			store.mcpServers.push(row)
+			seedServerTools(slug)
+			return HttpResponse.json(
+				{ server: serverView(row), tools: discoveredFor(slug) },
+				{ status: 201 }
+			)
+		}),
+
+		http.patch('*/api/mcp/servers/:id', async ({ params, request }) => {
+			const id = String(params.id)
+			const row = store.mcpServers.find((server) => server.id === id)
+			if (!row) {
+				return HttpResponse.json(
+					{ message: `MCP server "${id}" not found` },
+					{ status: 404 }
+				)
+			}
+			const body = (await request.json()) as UpdateMcpServerRequest
+			// The global switch is a pure state flip: no connection
+			// check, no config rewrite (mirrors the backend).
+			if (body.enabled !== undefined) {
+				row.enabled = body.enabled
+				if (!row.enabled) row.lastError = undefined
+			}
+			if (body.name !== undefined && !isValidAgentName(body.name)) {
+				return HttpResponse.json(
+					{
+						message:
+							'Invalid server name: use letters, digits and single spaces only'
+					},
+					{ status: 400 }
+				)
+			}
+			if (
+				body.timeoutMs !== undefined &&
+				(body.timeoutMs <= 0 || body.timeoutMs > 600_000)
+			) {
+				return HttpResponse.json(
+					{ message: 'timeoutMs must be between 1 and 600000' },
+					{ status: 400 }
+				)
+			}
+			const rawTransport = body.transport ?? row.transport
+			const command =
+				body.command !== undefined ? body.command : (row.command ?? '')
+			const url = body.url !== undefined ? body.url : (row.url ?? '')
+			const problem = serverConfigProblem(rawTransport, command, url)
+			if (problem)
+				return HttpResponse.json({ message: problem }, { status: 400 })
+			const transport = rawTransport as McpServerRow['transport']
+			const connectionChanged =
+				body.transport !== undefined ||
+				body.command !== undefined ||
+				body.args !== undefined ||
+				body.url !== undefined ||
+				body.timeoutMs !== undefined ||
+				body.env !== undefined ||
+				body.headers !== undefined
+			if (connectionChanged) {
+				const failed = serverConnectionCheck(transport, command, url)
+				if (failed) return failed
+			}
+
+			row.name = body.name !== undefined ? body.name.trim() : row.name
+			row.transport = transport
+			if (transport === 'stdio') {
+				row.command = command
+				delete row.url
+				row.args = body.args ?? row.args
+			} else {
+				row.url = url
+				delete row.command
+				row.args = [] // stdio argv does not ride along an http row
+			}
+			row.timeoutMs =
+				body.timeoutMs !== undefined ? body.timeoutMs : row.timeoutMs
+			if (body.clearTimeoutMs) delete row.timeoutMs
+			row.envKeys = body.env !== undefined ? Object.keys(body.env) : row.envKeys
+			row.headerKeys =
+				body.headers !== undefined ? Object.keys(body.headers) : row.headerKeys
+			if (connectionChanged) {
+				reconcileServerTools(id)
+				row.lastError = undefined
+				row.refreshedAt = Date.now()
+			}
+			return HttpResponse.json({
+				server: serverView(row),
+				tools: discoveredFor(id)
+			})
+		}),
+
+		http.delete('*/api/mcp/servers/:id', ({ params }) => {
+			const id = String(params.id)
+			const index = store.mcpServers.findIndex((server) => server.id === id)
+			if (index === -1) {
+				return HttpResponse.json(
+					{ message: `MCP server "${id}" not found` },
+					{ status: 404 }
+				)
+			}
+			store.mcpServers.splice(index, 1)
+			dropServerTools(id)
+			return HttpResponse.json({ message: 'MCP server deleted' })
+		}),
+
+		http.post('*/api/mcp/servers/:id/refresh', ({ params }) => {
+			const id = String(params.id)
+			const row = store.mcpServers.find((server) => server.id === id)
+			if (!row) {
+				return HttpResponse.json(
+					{ message: `MCP server "${id}" not found` },
+					{ status: 404 }
+				)
+			}
+			if (!row.enabled) {
+				return HttpResponse.json(
+					{ message: 'Server is disabled — enable it before refreshing' },
+					{ status: 400 }
+				)
+			}
+			const failed = serverConnectionCheck(
+				row.transport,
+				row.command ?? '',
+				row.url ?? ''
+			)
+			// "flaky" simulates a server that verifies at install but is
+			// down at refresh: the one path that exercises lastError and
+			// the 502 branch in the UI. Validation never blocks it —
+			// serverConnectionCheck only rejects the "nonexistent" shape.
+			const flaky = `${row.command ?? ''} ${row.url ?? ''}`.includes('flaky')
+			if (failed || flaky) {
+				row.lastError = `mcp server ${id}: initialize: connection refused`
+				row.refreshedAt = Date.now()
+				return HttpResponse.json(
+					{ message: `Connection check failed: ${row.lastError}` },
+					{ status: 502 }
+				)
+			}
+			row.lastError = undefined
+			row.refreshedAt = Date.now()
+			return HttpResponse.json({
+				server: serverView(row),
+				tools: discoveredFor(id)
+			})
+		}),
+
 		// The agent's tool view, then its live preference toggle. A
 		// globally disabled tool keeps its grant — the switch, not the
 		// grant, gates use.
@@ -574,6 +903,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				)
 			}
 			const grants = store.toolGrants.get(id) ?? new Set<string>()
+			const gates = store.agentMcpGates.get(id) ?? new Map<string, boolean>()
 			return HttpResponse.json({
 				tools: store.tools.map(
 					(tool): AgentTool => ({
@@ -581,9 +911,73 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 						name: tool.name,
 						description: tool.description,
 						globalEnabled: tool.enabled,
-						agentEnabled: grants.has(tool.id)
+						agentEnabled: grants.has(tool.id),
+						kind: tool.kind,
+						serverId: tool.serverId
 					})
+				),
+				servers: [...gates.entries()].map(([serverId, agentEnabled]) => ({
+					serverId,
+					agentEnabled
+				}))
+			})
+		}),
+
+		// The agent's MCP gate: first enable approves the server's
+		// current tools; later toggles flip only the gate.
+		http.patch('*/api/agent/:id/mcp/:serverId', async ({ params, request }) => {
+			const id = String(params.id)
+			if (!store.configurations.has(id)) {
+				return HttpResponse.json<ErrorResponse>(
+					{ message: `Agent "${id}" not found` },
+					{ status: 404 }
 				)
+			}
+			const serverId = String(params.serverId)
+			if (!store.mcpServers.some((server) => server.id === serverId)) {
+				return HttpResponse.json<ErrorResponse>(
+					{ message: `MCP server "${serverId}" not found` },
+					{ status: 404 }
+				)
+			}
+			const body = (await request.json()) as { enabled?: boolean }
+			if (typeof body.enabled !== 'boolean') {
+				return HttpResponse.json<ErrorResponse>(
+					{ message: 'enabled is required' },
+					{ status: 400 }
+				)
+			}
+			const gates = store.agentMcpGates.get(id) ?? new Map<string, boolean>()
+			const neverApproved = !gates.has(serverId)
+			if (body.enabled && neverApproved) {
+				const grants = store.toolGrants.get(id) ?? new Set<string>()
+				for (const tool of store.tools) {
+					if (tool.serverId === serverId) grants.add(tool.id)
+				}
+				store.toolGrants.set(id, grants)
+			}
+			gates.set(serverId, body.enabled)
+			store.agentMcpGates.set(id, gates)
+
+			const updatedTools = store.tools.map(
+				(tool): AgentTool => ({
+					id: tool.id,
+					name: tool.name,
+					description: tool.description,
+					globalEnabled: tool.enabled,
+					agentEnabled: (store.toolGrants.get(id) ?? new Set<string>()).has(
+						tool.id
+					),
+					kind: tool.kind,
+					serverId: tool.serverId
+				})
+			)
+			return HttpResponse.json({
+				tools: updatedTools,
+				servers: [...gates.entries()].map(([sid, agentEnabled]) => ({
+					serverId: sid,
+					agentEnabled
+				}))
 			})
 		}),
 
@@ -619,7 +1013,9 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				name: tool.name,
 				description: tool.description,
 				globalEnabled: tool.enabled,
-				agentEnabled: grants.has(toolId)
+				agentEnabled: grants.has(toolId),
+				kind: tool.kind,
+				serverId: tool.serverId
 			})
 		}),
 

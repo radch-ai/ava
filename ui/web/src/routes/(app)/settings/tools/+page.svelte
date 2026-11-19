@@ -1,97 +1,181 @@
 <script lang="ts">
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity'
+	import ToolViewer from '#components/tools/ToolViewer.svelte'
+	import type {
+		ViewerEntry,
+		ViewerServerEntry,
+		ViewerToolEntry
+	} from '#components/tools/viewer-types'
+	import { groupTools } from '#components/tools/viewer-types'
+	import * as AlertDialog from '#components/ui/alert-dialog'
 	import { Button } from '#components/ui/button'
-	import { Switch } from '#components/ui/switch'
+	import {
+		deleteMcpServer,
+		refreshMcpServer,
+		setMcpServerEnabled
+	} from '#lib/services/mcp'
 	import { toggleTool } from '#lib/services/tools'
+	import type { McpServer } from '#lib/types/mcp'
 	import type { Tool } from '#lib/types/tool'
+	import { errorMessage } from '#lib/utils/errors'
+	import { createToggleQueue } from '#lib/utils/toggle-queue.svelte'
+	import { invalidateAll } from '$app/navigation'
 	import type { PageData } from './$types'
+	import McpServerForm from './McpServerForm.svelte'
 
 	let { data }: { data: PageData } = $props()
 
-	// Saved holds each row's confirmed state — written only by a
-	// successful save. Target holds a desired flip while its request
-	// is debounced or in flight; the switch renders target when set,
-	// so rapid clicking feels instant.
 	let saved = new SvelteMap<string, boolean>()
-	let target = new SvelteMap<string, boolean>()
-	let flushing = new SvelteSet<string>()
 	let saveError = $state<string | null>(null)
-	// Bursts collapse into one request per row: the dispatch waits out
-	// the debounce, and a click that lands mid-flight re-schedules
-	// with the latest target instead of being dropped.
-	const DEBOUNCE_MS = 250
-	const timers = new Map<string, ReturnType<typeof setTimeout>>()
 
-	// Timer teardown on unmount: a pending target flushes instead of
-	// dying with its timer, so a click right before navigating away
-	// still saves.
-	$effect(() => {
-		return () => {
-			for (const timer of timers.values()) clearTimeout(timer)
-			timers.clear()
-			for (const [id, want] of target) {
-				if (want === persisted(id)) continue
-				void flush(id)
-			}
-		}
+	// Tool switches: queued per row through the shared queue; the saved
+	// map holds each row's confirmed value until fresh data wins.
+	const queue = createToggleQueue<Tool>({
+		apply: async (tool, enabled) => {
+			const confirmed = await toggleTool(tool.id, { enabled })
+			saved.set(tool.id, confirmed.enabled)
+			return confirmed.enabled
+		},
+		persisted: (tool) => saved.get(tool.id) ?? tool.enabled,
+		rowFor: (id) => data.tools.find((tool) => tool.id === id),
+		onError: (message) => (saveError = message)
 	})
 
-	// persisted is the row's last confirmed state: the load's own
-	// value until a save confirms a new one, so a burst that returns
-	// to the server's state is a no-op at every stage.
-	function persisted(id: string): boolean {
-		const confirmed = saved.get(id)
-		if (confirmed !== undefined) return confirmed
-		return data.tools.find((tool) => tool.id === id)?.enabled ?? false
-	}
-
-	function displayed(tool: Tool): boolean {
-		return target.get(tool.id) ?? persisted(tool.id)
-	}
-
-	function toggle(tool: Tool) {
-		target.set(tool.id, !displayed(tool))
-		if (!timers.has(tool.id)) {
-			timers.set(
-				tool.id,
-				setTimeout(() => {
-					timers.delete(tool.id)
-					void flush(tool.id)
-				}, DEBOUNCE_MS)
+	// Server switches: the global kill switch, one queue over servers.
+	let savedServers = new SvelteMap<string, boolean>()
+	let serverError = $state<string | null>(null)
+	const serverQueue = createToggleQueue<McpServer>({
+		apply: async (server, enabled) => {
+			const { server: confirmed } = await setMcpServerEnabled(
+				server.id,
+				enabled
 			)
+			savedServers.set(server.id, confirmed.enabled)
+			return confirmed.enabled
+		},
+		persisted: (server) => savedServers.get(server.id) ?? server.enabled,
+		rowFor: (id) => data.servers.find((server) => server.id === id),
+		onError: (message) => (serverError = message)
+	})
+
+	// A pending target flushes on unmount instead of dying with its
+	// timer, so a click right before navigating away still saves.
+	$effect(() => () => queue.teardown())
+	$effect(() => () => serverQueue.teardown())
+
+	// Fresh data prunes confirmed rows that no longer exist — a deleted
+	// tool cannot leave a stale override behind. Queued targets for
+	// vanished rows are dropped by the queue itself (no row resolves).
+	$effect(() => {
+		const liveTools = new Set(data.tools.map((tool) => tool.id))
+		for (const id of [...saved.keys()]) if (!liveTools.has(id)) saved.delete(id)
+		queue.prune((id) => liveTools.has(id))
+		const liveServers = new Set(data.servers.map((server) => server.id))
+		for (const id of [...savedServers.keys()])
+			if (!liveServers.has(id)) savedServers.delete(id)
+		serverQueue.prune((id) => liveServers.has(id))
+	})
+
+	// One server form open at a time: null = list only, 'new' = blank
+	// form, otherwise the server id being edited.
+	let editing = $state<'new' | string | null>(null)
+	let actionError = $state<string | null>(null)
+	let refreshing = new SvelteSet<string>()
+	// Deleting holds the server awaiting confirmation; the dialog's
+	// open state is separate so Cancel/overlay close both clear.
+	let deleting = $state<McpServer | null>(null)
+	let confirmDelete = $state(false)
+
+	function onsaved(): void {
+		editing = null
+		void invalidateAll()
+	}
+
+	async function refresh(server: McpServer): Promise<void> {
+		actionError = null
+		refreshing.add(server.id)
+		try {
+			await refreshMcpServer(server.id)
+			void invalidateAll()
+		} catch (e) {
+			actionError = errorMessage(e, 'Failed to refresh server')
+		} finally {
+			refreshing.delete(server.id)
 		}
 	}
 
-	async function flush(id: string) {
-		if (flushing.has(id)) return
-		const want = target.get(id)
-		if (want === undefined || want === persisted(id)) {
-			target.delete(id)
-			return
-		}
-		flushing.add(id)
+	async function remove(server: McpServer): Promise<void> {
+		actionError = null
 		try {
-			const tool = await toggleTool(id, { enabled: want })
-			saved.set(id, tool.enabled)
-			if (target.get(id) === tool.enabled) target.delete(id)
-			saveError = null
+			await deleteMcpServer(server.id)
+			deleting = null
+			confirmDelete = false
+			void invalidateAll()
 		} catch (e) {
-			// Back to the saved state; only the failure surfaces.
-			target.delete(id)
-			saveError = e instanceof Error ? e.message : 'Failed to update tool'
-		} finally {
-			flushing.delete(id)
-			if (target.has(id)) {
-				timers.set(
-					id,
-					setTimeout(() => {
-						timers.delete(id)
-						void flush(id)
-					}, DEBOUNCE_MS)
-				)
-			}
+			actionError = errorMessage(e, 'Failed to delete server')
 		}
 	}
+
+	function toolEntry(tool: Tool, dimmed = false): ViewerToolEntry {
+		return {
+			row: {
+				id: tool.id,
+				name: tool.name,
+				description: tool.description,
+				badges: tool.kind === 'mcp' ? [] : ['Built-in']
+			},
+			state: {
+				checked: queue.displayed(tool),
+				// A server switched off blocks its tools' global switches.
+				disabled: dimmed || queue.flushing.has(tool.id),
+				dimmed
+			},
+			label: `Enable ${tool.name} globally`,
+			ontoggle: () => queue.toggle(tool)
+		}
+	}
+
+	// One unified list: builtins flat, then every server (its tools
+	// nested) in creation order. A server switch off dims and blocks its
+	// tools; the manage buttons live on the server header.
+	const entries = $derived.by((): ViewerEntry[] => {
+		const { builtins, byServer } = groupTools(data.tools)
+
+		const rows: ViewerEntry[] = builtins.map((tool) => ({
+			kind: 'tool',
+			entry: toolEntry(tool)
+		}))
+
+		for (const server of data.servers) {
+			const on = serverQueue.displayed(server)
+			const entry: ViewerServerEntry = {
+				row: { id: server.id, name: server.name },
+				transport: server.transport,
+				toolCount: server.toolCount,
+				lastError: server.lastError,
+				state: {
+					checked: on,
+					disabled: serverQueue.flushing.has(server.id)
+				},
+				label: `Enable ${server.name} globally`,
+				ontoggle: () => serverQueue.toggle(server),
+				tools: (byServer.get(server.id) ?? []).map((tool) =>
+					toolEntry(tool, !on)
+				),
+				manage: {
+					refreshing: refreshing.has(server.id),
+					onrefresh: () => void refresh(server),
+					onedit: () => (editing = server.id),
+					ondelete: () => {
+						deleting = server
+						confirmDelete = true
+					}
+				}
+			}
+			rows.push({ kind: 'server', entry })
+		}
+		return rows
+	})
 </script>
 
 <svelte:head>
@@ -107,17 +191,45 @@
 		</p>
 		<div class="flex items-center justify-between gap-4">
 			<p class="text-muted-foreground text-xs">
-				Adding, editing, and removing custom tools and MCP connections isn't
-				available yet.
+				Only built-in tools are granted to agents by default — enable others per
+				agent in its Tools panel.
 			</p>
-			<Button disabled title="Adding tools isn't available yet"
-				>Add tool</Button
-			>
+			{#if editing !== 'new'}
+				<Button onclick={() => (editing = 'new')}>Add MCP server</Button>
+			{/if}
 		</div>
 	</header>
 
 	{#if saveError}
 		<p class="bg-destructive/10 text-destructive rounded-lg p-4">{saveError}</p>
+	{/if}
+	{#if serverError}
+		<p class="bg-destructive/10 text-destructive rounded-lg p-4">
+			{serverError}
+		</p>
+	{/if}
+	{#if actionError}
+		<p class="bg-destructive/10 text-destructive rounded-lg p-4">
+			{actionError}
+		</p>
+	{/if}
+
+	{#if editing === 'new'}
+		<McpServerForm {onsaved} oncancel={() => (editing = null)} />
+	{/if}
+
+	{#if data.serversError}
+		<p class="bg-destructive/10 text-destructive rounded-lg p-4">
+			{data.serversError}
+		</p>
+	{:else}
+		{#each data.servers as server (server.id)}
+			{#if editing === server.id}
+				<div class="rounded-lg border p-4">
+					<McpServerForm {server} {onsaved} oncancel={() => (editing = null)} />
+				</div>
+			{/if}
+		{/each}
 	{/if}
 
 	{#if data.toolsError}
@@ -125,39 +237,26 @@
 			{data.toolsError}
 		</p>
 	{:else}
-		<section class="divide-y rounded-lg border">
-			{#each data.tools as tool (tool.id)}
-				<div
-					class="hover:bg-muted/40 flex items-center justify-between gap-4 p-4 transition-colors"
-				>
-					<div class="min-w-0 flex-1 space-y-1.5">
-						<div class="flex items-center gap-2">
-							<h3 class="font-semibold">{tool.name}</h3>
-							{#if tool.builtin}
-								<span
-									class="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs font-medium"
-								>
-									Built-in
-								</span>
-							{/if}
-						</div>
-						{#if tool.description}
-							<p class="text-muted-foreground truncate text-sm">
-								{tool.description}
-							</p>
-						{/if}
-					</div>
-					<Switch
-						id="tool-{tool.id}"
-						checked={displayed(tool)}
-						disabled={flushing.has(tool.id)}
-						onCheckedChange={() => toggle(tool)}
-						aria-label="Enable {tool.name} globally"
-					/>
-				</div>
-			{:else}
-				<p class="text-muted-foreground p-4 text-sm">No tools available.</p>
-			{/each}
-		</section>
+		<ToolViewer {entries} />
 	{/if}
 </div>
+
+<AlertDialog.Root bind:open={confirmDelete}>
+	<AlertDialog.Content>
+		<AlertDialog.Header>
+			<AlertDialog.Title>Delete {deleting?.name}?</AlertDialog.Title>
+			<AlertDialog.Description>
+				Its tools and every agent's grants for them are removed with it. This
+				cannot be undone.
+			</AlertDialog.Description>
+		</AlertDialog.Header>
+		<AlertDialog.Footer>
+			<AlertDialog.Cancel onclick={() => (deleting = null)}
+				>Cancel</AlertDialog.Cancel
+			>
+			<AlertDialog.Action onclick={() => deleting && void remove(deleting)}>
+				Delete server
+			</AlertDialog.Action>
+		</AlertDialog.Footer>
+	</AlertDialog.Content>
+</AlertDialog.Root>

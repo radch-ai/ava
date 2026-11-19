@@ -15,7 +15,10 @@ import (
 // registry's executables, ready for the lane's capture wrapper. An
 // error fails the turn; an empty set is the honest no-tools turn.
 func (s *TurnService) AgentTools(ctx context.Context, agentID string) ([]tool.InvokableTool, error) {
-	ids, err := s.queries.ResolveAgentTools(ctx, agentID)
+	ids, err := s.queries.ResolveAgentTools(ctx, db.ResolveAgentToolsParams{
+		AgentID:   agentID,
+		AgentID_2: agentID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("resolve tools for %q: %w", agentID, err)
 	}
@@ -35,6 +38,12 @@ func (s *TurnService) AgentTools(ctx context.Context, agentID string) ([]tool.In
 		return nil, nil
 	}
 	return impls, nil
+}
+
+// CloseTools tears down the MCP client manager — stdio servers'
+// process groups included — on shutdown.
+func (s *TurnService) CloseTools() {
+	s.registry.MCP().CloseAll()
 }
 
 // syncToolCatalog upserts the registered built-ins at boot: missing

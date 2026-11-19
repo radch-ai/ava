@@ -13,6 +13,7 @@ export type {
 	AgentTool,
 	GetAgentToolsResponse,
 	GetToolsResponse,
+	ToggleAgentMcpRequest,
 	ToggleAgentToolRequest,
 	ToggleToolRequest,
 	Tool

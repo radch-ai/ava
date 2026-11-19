@@ -1,9 +1,23 @@
 <script lang="ts">
-	import { SvelteMap, SvelteSet } from 'svelte/reactivity'
-	import { Switch } from '#components/ui/switch'
-	import { getAgentTools, toggleAgentTool } from '#lib/services/agent/config'
+	import { SvelteMap } from 'svelte/reactivity'
+	import ToolViewer from '#components/tools/ToolViewer.svelte'
+	import type {
+		ViewerEntry,
+		ViewerServerEntry,
+		ViewerToolEntry
+	} from '#components/tools/viewer-types'
+	import { groupTools } from '#components/tools/viewer-types'
+	import {
+		getAgentTools,
+		toggleAgentMcp,
+		toggleAgentTool
+	} from '#lib/services/agent/config'
+	import { getMcpServers } from '#lib/services/mcp'
 	import { FIELD_CONFIGS } from '#lib/types/agent'
+	import type { McpServer } from '#lib/types/mcp'
 	import type { AgentTool } from '#lib/types/tool'
+	import { errorMessage } from '#lib/utils/errors'
+	import { createToggleQueue } from '#lib/utils/toggle-queue.svelte'
 	import { resolve } from '$app/paths'
 	import ConfigTextField from './ConfigTextField.svelte'
 
@@ -21,113 +35,166 @@
 	// change on the MCP & Tools page, so a cache would need
 	// invalidation from there for a handful of rows.
 	let tools = $state<AgentTool[]>([])
+	let servers = $state<McpServer[]>([])
+	let gates = new SvelteMap<string, boolean>()
 	let isLoading = $state(false)
 	let loadError = $state<string | null>(null)
 	let fetchAgent: string | undefined
+
+	function adoptListing(
+		rows: AgentTool[],
+		gateRows: { serverId: string; agentEnabled: boolean }[]
+	): void {
+		tools = rows
+		saved = new SvelteMap(rows.map((row) => [row.id, row.agentEnabled]))
+		gates = new SvelteMap(
+			gateRows.map((gate) => [gate.serverId, gate.agentEnabled])
+		)
+		queue.prune((rowId) => rows.some((row) => row.id === rowId))
+		serverQueue.prune((serverId) =>
+			servers.some((server) => server.id === serverId)
+		)
+	}
 
 	$effect(() => {
 		const id = agentId
 		fetchAgent = id
 		tools = []
+		servers = []
+		gates = new SvelteMap()
 		loadError = null
 		if (!id) return
 		isLoading = true
-		getAgentTools(id)
-			.then((rows) => {
+		Promise.all([
+			getAgentTools(id),
+			getMcpServers().catch(() => [] as McpServer[])
+		])
+			.then(([listing, serverRows]) => {
 				if (fetchAgent !== id) return
-				tools = rows
-				saved = new SvelteMap(rows.map((row) => [row.id, row.agentEnabled]))
+				servers = serverRows
+				adoptListing(listing.tools, listing.servers)
 			})
 			.catch((error: unknown) => {
 				if (fetchAgent !== id) return
-				loadError =
-					error instanceof Error ? error.message : 'Failed to load tools'
+				loadError = errorMessage(error, 'Failed to load tools')
 			})
 			.finally(() => {
 				if (fetchAgent === id) isLoading = false
 			})
 	})
 
-	// Saved is the persisted grant per row; target holds a desired
-	// flip while its request is debounced or in flight. The switch
-	// renders target when set, so rapid clicking feels instant.
+	// Saved is the persisted grant per row; the shared queue holds a
+	// desired flip while its request is debounced or in flight.
 	let saved = new SvelteMap<string, boolean>()
-	let target = new SvelteMap<string, boolean>()
-	let flushing = new SvelteSet<string>()
 	let actionError = $state<string | null>(null)
-	// Bursts collapse into one request per row: the dispatch waits out
-	// the debounce, and a click that lands mid-flight re-schedules
-	// with the latest target instead of being dropped.
-	const DEBOUNCE_MS = 250
-	const timers = new SvelteMap<string, ReturnType<typeof setTimeout>>()
 
-	// Timer teardown on unmount: a pending target flushes instead of
-	// dying with its timer, so a click right before the panel closes
-	// still saves.
-	$effect(() => {
-		return () => {
-			for (const timer of timers.values()) clearTimeout(timer)
-			timers.clear()
-			for (const [id, want] of target) {
-				if (want === saved.get(id)) continue
-				const tool = tools.find((row) => row.id === id)
-				if (tool) void flush(tool)
-			}
-		}
+	const queue = createToggleQueue<AgentTool>({
+		apply: async (tool, enabled) => {
+			if (!agentId) return tool.agentEnabled
+			const id = agentId
+			const row = await toggleAgentTool(id, tool.id, { enabled })
+			if (fetchAgent === id) saved.set(tool.id, row.agentEnabled)
+			return row.agentEnabled
+		},
+		persisted: (tool) => saved.get(tool.id) ?? tool.agentEnabled,
+		rowFor: (rowId) => tools.find((row) => row.id === rowId),
+		onError: (message) => (actionError = message)
 	})
 
-	function displayed(tool: AgentTool): boolean {
-		return target.get(tool.id) ?? saved.get(tool.id) ?? tool.agentEnabled
-	}
-
-	function toggle(tool: AgentTool) {
-		target.set(tool.id, !displayed(tool))
-		if (!timers.has(tool.id)) {
-			timers.set(
-				tool.id,
-				setTimeout(() => {
-					timers.delete(tool.id)
-					void flush(tool)
-				}, DEBOUNCE_MS)
+	// Server gates: the first enable approves the server's current
+	// tools; later toggles keep every per-tool choice. The response is
+	// the refreshed listing, so one round-trip re-renders everything.
+	const serverQueue = createToggleQueue<McpServer>({
+		apply: async (server, enabled) => {
+			if (!agentId) return false
+			const id = agentId
+			const listing = await toggleAgentMcp(id, server.id, { enabled })
+			if (fetchAgent !== id) return enabled
+			adoptListing(listing.tools, listing.servers)
+			const confirmed = listing.servers.find(
+				(gate) => gate.serverId === server.id
 			)
+			return confirmed?.agentEnabled ?? enabled
+		},
+		persisted: (server) => gates.get(server.id) ?? false,
+		rowFor: (serverId) => servers.find((server) => server.id === serverId),
+		onError: (message) => (actionError = message)
+	})
+
+	// A pending target flushes when the panel closes instead of dying
+	// with its timer.
+	$effect(() => () => queue.teardown())
+	$effect(() => () => serverQueue.teardown())
+
+	function toolEntry(
+		tool: AgentTool,
+		dimmed: boolean,
+		disabled: boolean
+	): ViewerToolEntry {
+		return {
+			row: {
+				id: tool.id,
+				name: tool.name,
+				description: tool.description,
+				badges: tool.globalEnabled ? [] : ['Disabled globally']
+			},
+			state: {
+				// A globally disabled tool renders off regardless of the
+				// grant; the switch, not the grant, gates use.
+				checked: tool.globalEnabled ? queue.displayed(tool) : false,
+				disabled: disabled || queue.flushing.has(tool.id),
+				dimmed
+			},
+			label: `Enable ${tool.name} for this agent`,
+			ontoggle: () => queue.toggle(tool)
 		}
 	}
 
-	async function flush(tool: AgentTool) {
-		if (flushing.has(tool.id) || !agentId) return
-		const want = target.get(tool.id)
-		if (want === undefined || want === saved.get(tool.id)) {
-			target.delete(tool.id)
-			return
-		}
-		const id = agentId
-		flushing.add(tool.id)
-		try {
-			const row = await toggleAgentTool(id, tool.id, { enabled: want })
-			if (fetchAgent === id) {
-				saved.set(tool.id, row.agentEnabled)
-				if (target.get(tool.id) === row.agentEnabled) target.delete(tool.id)
-				actionError = null
-			}
-		} catch (e) {
-			// Back to the saved state; only the failure surfaces.
-			if (fetchAgent === id) {
-				target.delete(tool.id)
-				actionError = e instanceof Error ? e.message : 'Failed to update tool'
-			}
-		} finally {
-			flushing.delete(tool.id)
-			if (target.has(tool.id)) {
-				timers.set(
-					tool.id,
-					setTimeout(() => {
-						timers.delete(tool.id)
-						void flush(tool)
-					}, DEBOUNCE_MS)
+	// Same list as the MCP & Tools page, compact: builtins flat, then
+	// servers with their tools nested. No manage buttons here — a
+	// server's connection is edited globally, not per agent.
+	const entries = $derived.by((): ViewerEntry[] => {
+		const { builtins, byServer } = groupTools(tools)
+
+		const rows: ViewerEntry[] = builtins.map((tool) => ({
+			kind: 'tool',
+			entry: toolEntry(tool, !tool.globalEnabled, !tool.globalEnabled)
+		}))
+
+		for (const server of servers) {
+			const gateOn = serverQueue.displayed(server)
+			// A server disabled globally is inert here too — the gate
+			// renders off and inert (its saved state is untouched), so
+			// the agent page can never show a dead server as active.
+			const serverGloballyOn = server.enabled
+			const entry: ViewerServerEntry = {
+				row: {
+					id: server.id,
+					name: server.name,
+					badges: serverGloballyOn ? [] : ['Disabled globally']
+				},
+				transport: server.transport,
+				toolCount: server.toolCount,
+				lastError: server.lastError,
+				state: {
+					checked: gateOn && serverGloballyOn,
+					disabled: !serverGloballyOn || serverQueue.flushing.has(server.id),
+					dimmed: !serverGloballyOn
+				},
+				label: `Enable ${server.name} for this agent`,
+				ontoggle: () => serverQueue.toggle(server),
+				tools: (byServer.get(server.id) ?? []).map((tool) =>
+					toolEntry(
+						tool,
+						!gateOn || !tool.globalEnabled || !serverGloballyOn,
+						!gateOn || !tool.globalEnabled || !serverGloballyOn
+					)
 				)
 			}
+			rows.push({ kind: 'server', entry })
 		}
-	}
+		return rows
+	})
 </script>
 
 <div class="space-y-6">
@@ -157,46 +224,7 @@
 			{#if actionError}
 				<p class="text-destructive text-sm">{actionError}</p>
 			{/if}
-			<div class="divide-y rounded-lg border">
-				{#each tools as tool (tool.id)}
-					<div
-						class="hover:bg-muted/40 flex items-center justify-between gap-4 p-4 transition-colors {tool.globalEnabled
-							? ''
-							: 'opacity-60'}"
-					>
-						<div
-							class="min-w-0 flex-1 space-y-1.5 {tool.globalEnabled
-								? ''
-								: 'blur-[0.6px]'}"
-						>
-							<div class="flex items-center gap-2">
-								<h4 class="text-sm font-semibold">{tool.name}</h4>
-								{#if !tool.globalEnabled}
-									<span
-										class="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs font-medium"
-									>
-										Disabled globally
-									</span>
-								{/if}
-							</div>
-							{#if tool.description}
-								<p class="text-muted-foreground truncate text-sm">
-									{tool.description}
-								</p>
-							{/if}
-						</div>
-						<Switch
-							id="agent-tool-{tool.id}"
-							checked={tool.globalEnabled ? displayed(tool) : false}
-							disabled={!tool.globalEnabled || flushing.has(tool.id)}
-							onCheckedChange={() => toggle(tool)}
-							aria-label="Enable {tool.name} for this agent"
-						/>
-					</div>
-				{:else}
-					<p class="text-muted-foreground p-4 text-sm">No tools available.</p>
-				{/each}
-			</div>
+			<ToolViewer {entries} compact />
 		</section>
 	{/if}
 </div>

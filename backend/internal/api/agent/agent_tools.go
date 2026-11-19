@@ -20,21 +20,41 @@ import (
 func GetAgentTools(queries *db.Queries) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		id := r.PathValue("id")
-
 		if _, err := queries.GetAgentConfig(r.Context(), id); err != nil {
 			return agentLookupErr(w, id, err)
 		}
-		rows, err := queries.ListAgentTools(r.Context(), id)
-		if err != nil {
-			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-			return fmt.Errorf("list agent tools for %q: %w", id, err)
-		}
-		out := apitypes.GetAgentToolsResponse{Tools: make([]apitypes.AgentTool, 0, len(rows))}
-		for _, row := range rows {
-			out.Tools = append(out.Tools, agentToolFromRow(row))
-		}
-		return api.WriteJSON(w, http.StatusOK, out)
+		return writeAgentTools(w, r, queries, id)
 	}
+}
+
+// writeAgentTools answers the agent's tool listing plus its MCP gate
+// state -- the one shape every tool-mutating endpoint returns, so the
+// editor re-renders from a single source of truth.
+func writeAgentTools(w http.ResponseWriter, r *http.Request, queries *db.Queries, id string) error {
+	rows, err := queries.ListAgentTools(r.Context(), id)
+	if err != nil {
+		_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+		return fmt.Errorf("list agent tools for %q: %w", id, err)
+	}
+	gates, err := queries.ListAgentMcps(r.Context(), id)
+	if err != nil {
+		_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+		return fmt.Errorf("list agent mcp gates for %q: %w", id, err)
+	}
+	out := apitypes.GetAgentToolsResponse{
+		Tools:   make([]apitypes.AgentTool, 0, len(rows)),
+		Servers: make([]apitypes.AgentMcpPreference, 0, len(gates)),
+	}
+	for _, row := range rows {
+		out.Tools = append(out.Tools, agentToolFromRow(row))
+	}
+	for _, gate := range gates {
+		out.Servers = append(out.Servers, apitypes.AgentMcpPreference{
+			ServerID:     gate.ServerID,
+			AgentEnabled: gate.Enabled != 0,
+		})
+	}
+	return api.WriteJSON(w, http.StatusOK, out)
 }
 
 // ToggleAgentTool toggles one agent's preference for one tool and
@@ -109,6 +129,8 @@ func agentToolFromRow(row db.ListAgentToolsRow) apitypes.AgentTool {
 		Description:   row.Description,
 		GlobalEnabled: row.GloballyEnabled != 0,
 		AgentEnabled:  row.AgentEnabled != 0,
+		Kind:          row.Kind,
+		ServerID:      serverIDPtr(row.ServerID),
 	}
 }
 
@@ -119,5 +141,15 @@ func agentToolFromOne(row db.GetAgentToolRow) apitypes.AgentTool {
 		Description:   row.Description,
 		GlobalEnabled: row.GloballyEnabled != 0,
 		AgentEnabled:  row.AgentEnabled != 0,
+		Kind:          row.Kind,
+		ServerID:      serverIDPtr(row.ServerID),
 	}
+}
+
+// serverIDPtr maps the nullable server_id column to its wire pointer.
+func serverIDPtr(v interface{}) *string {
+	if s, ok := v.(string); ok {
+		return &s
+	}
+	return nil
 }

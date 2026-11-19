@@ -718,6 +718,8 @@ describe('mock API handlers', () => {
 			}
 			// The view row carries display fields too; the switches are
 			// the contract under test.
+			// Built-ins arrive granted (the seed rule); the seeded MCP
+			// server's tools arrive un-granted — default-deny.
 			expect(
 				body.tools.map(({ id, globalEnabled, agentEnabled }) => ({
 					id,
@@ -729,6 +731,16 @@ describe('mock API handlers', () => {
 					id: 'duckduckgo_search',
 					globalEnabled: true,
 					agentEnabled: true
+				},
+				{
+					id: 'notes-mcp:search_notes',
+					globalEnabled: true,
+					agentEnabled: false
+				},
+				{
+					id: 'notes-mcp:fetch_note',
+					globalEnabled: true,
+					agentEnabled: false
 				}
 			])
 
@@ -793,6 +805,78 @@ describe('mock API handlers', () => {
 				await fetch(`${BASE}/agent/toolcheck/tools`)
 			).json()) as { tools: Array<{ agentEnabled: boolean }> }
 			expect(body.tools[0].agentEnabled).toBe(true)
+		})
+	})
+
+	describe('mock agent MCP gate', () => {
+		it('first enable grants the server tools, later toggles preserve choices', async () => {
+			const listing = async () =>
+				(await (await fetch(`${BASE}/agent/research/tools`)).json()) as {
+					tools: Array<{ id: string; agentEnabled: boolean }>
+					servers: Array<{ serverId: string; agentEnabled: boolean }>
+				}
+			const gate = (enabled: boolean) =>
+				fetch(`${BASE}/agent/research/mcp/notes-mcp`, {
+					method: 'PATCH',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ enabled })
+				})
+
+			const before = await listing()
+			expect(
+				before.servers.find((row) => row.serverId === 'notes-mcp')
+			).toBeUndefined()
+
+			// First enable: every current tool of the server grants.
+			const first = await gate(true)
+			expect(first.status).toBe(200)
+			const after = await listing()
+			expect(
+				after.servers.find((row) => row.serverId === 'notes-mcp')?.agentEnabled
+			).toBe(true)
+			for (const id of ['notes-mcp:search_notes', 'notes-mcp:fetch_note']) {
+				expect(after.tools.find((tool) => tool.id === id)?.agentEnabled).toBe(
+					true
+				)
+			}
+
+			// Revoke one, off -> on: the revoke survives.
+			const revoke = await fetch(
+				`${BASE}/agent/research/tools/notes-mcp:fetch_note`,
+				{
+					method: 'PATCH',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ enabled: false })
+				}
+			)
+			expect(revoke.status).toBe(200)
+			expect((await gate(false)).status).toBe(200)
+			expect((await gate(true)).status).toBe(200)
+			const preserved = await listing()
+			expect(
+				preserved.tools.find((tool) => tool.id === 'notes-mcp:fetch_note')
+					?.agentEnabled
+			).toBe(false)
+			expect(
+				preserved.tools.find((tool) => tool.id === 'notes-mcp:search_notes')
+					?.agentEnabled
+			).toBe(true)
+		})
+
+		it('rejects an unknown server and a missing switch', async () => {
+			const unknown = await fetch(`${BASE}/agent/research/mcp/ghost`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ enabled: true })
+			})
+			expect(unknown.status).toBe(404)
+
+			const missing = await fetch(`${BASE}/agent/research/mcp/notes-mcp`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({})
+			})
+			expect(missing.status).toBe(400)
 		})
 	})
 })
