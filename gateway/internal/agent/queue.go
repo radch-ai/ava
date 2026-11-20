@@ -33,10 +33,12 @@ var (
 
 // queuedItem is one admitted prompt. Content is immutable after
 // admission; the model selection rides the item from submission and
-// moves only through a paused send_now's recovery rebind.
+// moves only through a paused send_now's recovery rebind. kind is the
+// admission classification: a command executes without a model.
 type queuedItem struct {
 	id      string
 	content string
+	kind    string
 	model   *apitypes.ModelEntry
 }
 
@@ -127,7 +129,7 @@ func (s *agentState) beginDrain() {
 // enqueue admits one prompt, publishing the new snapshot. Rejected
 // when draining or at capacity; a paused queue stays paused —
 // enqueueing is not a resume.
-func (s *agentState) enqueue(content string, model *apitypes.ModelEntry) (*queuedItem, error) {
+func (s *agentState) enqueue(content string, model *apitypes.ModelEntry, kind string) (*queuedItem, error) {
 	s.pubMu.Lock()
 
 	if s.drainingNow() {
@@ -141,7 +143,7 @@ func (s *agentState) enqueue(content string, model *apitypes.ModelEntry) (*queue
 		s.pubMu.Unlock()
 		return nil, errQueueFull
 	}
-	item := &queuedItem{id: uuid.NewString(), content: content, model: model}
+	item := &queuedItem{id: uuid.NewString(), content: content, kind: kind, model: model}
 	s.pending = append(s.pending, item)
 	paused := s.paused
 	snapshot := s.snapshotLocked()
@@ -215,7 +217,12 @@ func (s *agentState) activateLocked(item *queuedItem) *turnClaim {
 	ctx, cancel := context.WithCancel(s.rootCtx)
 	s.active = item
 	s.cancel = cancel
-	s.userMsgID = uuid.NewString()
+	// Commands persist no user row: their work is the thread switch,
+	// not a prompt in the transcript.
+	s.userMsgID = ""
+	if item.kind == wstypes.QueueItemKindPrompt {
+		s.userMsgID = uuid.NewString()
+	}
 	return &turnClaim{item: item, userMsgID: s.userMsgID, ctx: ctx}
 }
 
@@ -413,6 +420,7 @@ func (s *agentState) snapshotLocked() wstypes.QueueStateEvent {
 		ev.Active = &wstypes.QueueActiveItem{
 			ID:            s.active.id,
 			Content:       s.active.content,
+			Kind:          s.active.kind,
 			UserMessageID: s.userMsgID,
 		}
 		if s.active.model != nil {
@@ -457,7 +465,7 @@ func modelRefWire(e *apitypes.ModelEntry) wstypes.ModelRef {
 
 // queueItemWire renders one waiting item for a snapshot.
 func queueItemWire(it *queuedItem) wstypes.QueueItem {
-	q := wstypes.QueueItem{ID: it.id, Content: it.content}
+	q := wstypes.QueueItem{ID: it.id, Content: it.content, Kind: it.kind}
 	if it.model != nil {
 		m := modelRefWire(it.model)
 		q.Model = &m

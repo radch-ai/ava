@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/backend/internal/api"
 	"github.com/radch-ai/ava/backend/internal/db"
@@ -42,11 +44,7 @@ func CreateProvider(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 				"Connection check failed: "+err.Error())
 		}
 
-		id, err := newUUID()
-		if err != nil {
-			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-			return fmt.Errorf("mint provider id: %w", err)
-		}
+		id := uuid.NewString()
 
 		if err := queries.CreateProvider(r.Context(), db.CreateProviderParams{
 			ID:      id,

@@ -24,6 +24,7 @@
 
 import type { ModelSelection } from '#lib/models'
 import type {
+	CommandCompletedEvent,
 	ConnectedEvent,
 	Envelope,
 	ErrorEvent,
@@ -53,6 +54,7 @@ export type AgentSocketEvent =
 	| (Event & { type: 'error'; data: ErrorEvent })
 	| (Event & { type: 'queue_result'; data: QueueResultEvent })
 	| (Event & { type: 'queue_state'; data: QueueStateEvent })
+	| (Event & { type: 'command_completed'; data: CommandCompletedEvent })
 
 /** Client wire frames: the envelope head plus the per-kind payload
  * (gateway/wstypes → wstypes.gen). */
@@ -163,6 +165,12 @@ function decodeEvent(frame: unknown): AgentSocketEvent | undefined {
 				type: 'queue_state',
 				agent_id: typed.agent_id as string,
 				data: typed.data as QueueStateEvent
+			}
+		case 'command_completed':
+			return {
+				type: 'command_completed',
+				agent_id: typed.agent_id as string,
+				data: typed.data as CommandCompletedEvent
 			}
 		default:
 			console.debug('agent socket: untyped event', frame)

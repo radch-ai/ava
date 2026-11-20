@@ -4,11 +4,28 @@ package schema_test
 // and created_at stamping. Raw SQL — the schema rules are under test.
 
 import (
+	"database/sql"
 	"strings"
 	"testing"
 
+	"github.com/radch-ai/ava/backend/internal/db"
 	"github.com/radch-ai/ava/backend/internal/testdb"
 )
+
+// seedAgentRow inserts an agent and its initial thread through the
+// shared fixture; the assertions in each test stay raw SQL.
+func seedAgentRow(t *testing.T, sqlDB *sql.DB, id string) {
+	t.Helper()
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
+		ID:                    id,
+		Name:                  id,
+		Icon:                  "globe",
+		SoulPersonality:       "p",
+		SoulIdentity:          "i",
+		OperatingInstructions: "o",
+		ToolsContext:          "t",
+	})
+}
 
 func TestThreadMessageRoleCheck(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
@@ -16,16 +33,16 @@ func TestThreadMessageRoleCheck(t *testing.T) {
 	// All four wire roles store; anything else fails the CHECK.
 	for _, role := range []string{"user", "assistant", "tool", "error"} {
 		if _, err := sqlDB.Exec(
-			`INSERT INTO thread_messages (id, agent_id, role, content, turn_id)
-			 VALUES (?, '_superagent', ?, 'ok', '')`,
+			`INSERT INTO thread_messages (id, agent_id, role, content, turn_id, thread_id)
+			 VALUES (?, '_superagent', ?, 'ok', '', '_superagent-thread-1')`,
 			"role-"+role, role,
 		); err != nil {
 			t.Fatalf("insert role %q: %v", role, err)
 		}
 	}
 	_, err := sqlDB.Exec(
-		`INSERT INTO thread_messages (id, agent_id, role, content, turn_id)
-		 VALUES ('bad', '_superagent', 'system', 'no', '')`)
+		`INSERT INTO thread_messages (id, agent_id, role, content, turn_id, thread_id)
+		 VALUES ('bad', '_superagent', 'system', 'no', '', '_superagent-thread-1')`)
 	if err == nil || !strings.Contains(err.Error(), "CHECK") {
 		t.Fatalf("bad role err = %v, want CHECK constraint failure", err)
 	}
@@ -76,16 +93,10 @@ func TestAgentActivityStatusCheck(t *testing.T) {
 func TestThreadAndActivityCascadeWithAgent(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
 
-	if _, err := sqlDB.Exec(
-		`INSERT INTO agents (id, name, icon, soul_personality, soul_identity,
-		                     operating_instructions, tools_context)
-		 VALUES ('scratch', 'Scratch', 'globe', 'p', 'i', 'o', 't')`,
-	); err != nil {
-		t.Fatalf("seed agent: %v", err)
-	}
+	seedAgentRow(t, sqlDB, "scratch")
 	for _, insert := range []string{
-		`INSERT INTO thread_messages (id, agent_id, role, content, turn_id)
-		 VALUES ('tm1', 'scratch', 'user', 'hello', '')`,
+		`INSERT INTO thread_messages (id, agent_id, role, content, turn_id, thread_id)
+		 VALUES ('tm1', 'scratch', 'user', 'hello', '', 'scratch-t1')`,
 		`INSERT INTO agent_activity (id, agent_id, triggered_by, action, status)
 		 VALUES ('aa1', 'scratch', 'cron', 'cron.run', 'completed')`,
 	} {
@@ -119,8 +130,8 @@ func TestThreadAndActivityCreatedAtDefault(t *testing.T) {
 
 	// Page order depends on every row carrying a DB-stamped created_at.
 	if _, err := sqlDB.Exec(
-		`INSERT INTO thread_messages (id, agent_id, role, content, turn_id)
-		 VALUES ('tm2', '_superagent', 'user', 'hi', '')`,
+		`INSERT INTO thread_messages (id, agent_id, role, content, turn_id, thread_id)
+		 VALUES ('tm2', '_superagent', 'user', 'hi', '', '_superagent-thread-1')`,
 	); err != nil {
 		t.Fatalf("insert thread message: %v", err)
 	}

@@ -65,7 +65,6 @@ func TestSeedSuperagent(t *testing.T) {
 
 func TestSystemAgentsCannotBeDeleted(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
-	queries := db.New(sqlDB)
 
 	// The trigger aborts deletes of "_"-prefixed ids — every code
 	// path, not just endpoints.
@@ -75,11 +74,9 @@ func TestSystemAgentsCannotBeDeleted(t *testing.T) {
 	}
 
 	// Non-system rows delete normally.
-	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
 		ID: "research", Name: "Research", Icon: "globe",
-	}); err != nil {
-		t.Fatalf("insert research: %v", err)
-	}
+	})
 	if _, err := sqlDB.Exec(`DELETE FROM agents WHERE id = 'research'`); err != nil {
 		t.Fatalf("delete research: %v", err)
 	}
@@ -87,7 +84,6 @@ func TestSystemAgentsCannotBeDeleted(t *testing.T) {
 
 func TestSystemAgentIdentityCannotBeChanged(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
-	queries := db.New(sqlDB)
 
 	// The trigger aborts id/name/icon rewrites of "_"-prefixed rows —
 	// every code path, not just endpoints.
@@ -121,11 +117,9 @@ func TestSystemAgentIdentityCannotBeChanged(t *testing.T) {
 	}
 
 	// Non-system rows rename freely.
-	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
 		ID: "research", Name: "Research", Icon: "globe",
-	}); err != nil {
-		t.Fatalf("insert research: %v", err)
-	}
+	})
 	if _, err := sqlDB.Exec(
 		`UPDATE agents SET name = 'Research II', icon = 'search' WHERE id = 'research'`); err != nil {
 		t.Fatalf("rename research: %v", err)

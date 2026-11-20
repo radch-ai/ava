@@ -29,11 +29,11 @@ func newTestState() (*agentState, *[]wstypes.QueueStateEvent) {
 func TestQueueClaimsFIFOOneAtATime(t *testing.T) {
 	s, published := newTestState()
 
-	a, err := s.enqueue("A", nil)
+	a, err := s.enqueue("A", nil, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
-	b, err := s.enqueue("B", nil)
+	b, err := s.enqueue("B", nil, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
-	c, err := s.enqueue("C", nil)
+	c, err := s.enqueue("C", nil, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
 	require.NotSame(t, a, b)
 	require.NotEqual(t, a.id, c.id)
@@ -70,7 +70,7 @@ func TestQueueClaimsFIFOOneAtATime(t *testing.T) {
 
 func TestClaimPublishesOneActiveSnapshot(t *testing.T) {
 	s, published := newTestState()
-	item, err := s.enqueue("A", nil)
+	item, err := s.enqueue("A", nil, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
 
 	before := len(*published)
@@ -91,13 +91,13 @@ func TestQueueCapacityRejectsWithoutMutation(t *testing.T) {
 	s, published := newTestState()
 
 	for range queueCapacity {
-		_, err := s.enqueue("msg", nil)
+		_, err := s.enqueue("msg", nil, wstypes.QueueItemKindPrompt)
 		require.NoError(t, err)
 	}
 	before := len(*published)
 	snapshot := s.stateSnapshot()
 
-	_, err := s.enqueue("overflow", nil)
+	_, err := s.enqueue("overflow", nil, wstypes.QueueItemKindPrompt)
 	require.ErrorIs(t, err, errQueueFull)
 	require.Len(t, *published, before, "a rejection publishes nothing")
 	require.Equal(t, snapshot, s.stateSnapshot(), "state unchanged by rejection")
@@ -106,9 +106,9 @@ func TestQueueCapacityRejectsWithoutMutation(t *testing.T) {
 func TestQueuePauseOnMessageFailureOnly(t *testing.T) {
 	s, _ := newTestState()
 
-	_, err := s.enqueue("A", nil)
+	_, err := s.enqueue("A", nil, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
-	b, err := s.enqueue("B", nil)
+	b, err := s.enqueue("B", nil, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
 
 	claim := s.claim()
@@ -124,7 +124,7 @@ func TestQueuePauseOnMessageFailureOnly(t *testing.T) {
 	require.Nil(t, s.claim(), "paused queue does not claim FIFO")
 
 	// Enqueue while paused appends without resuming.
-	_, err = s.enqueue("C", nil)
+	_, err = s.enqueue("C", nil, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
 	require.Nil(t, s.claim())
 
@@ -148,14 +148,14 @@ func TestQueuePauseArmsOnlyWithWaitingWork(t *testing.T) {
 	// A failure with nothing waiting never arms the gate: dispatch
 	// stays open and the next prompt runs on its own, fixed model
 	// selection or not.
-	_, err := s.enqueue("A", nil)
+	_, err := s.enqueue("A", nil, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
 	claim := s.claim()
 	require.NotNil(t, claim)
 	require.False(t, s.finish(true), "nothing waits — finish reports no runnable work, but not via the gate")
 	require.False(t, s.stateSnapshot().Paused, "an empty queue never arms the pause")
 
-	_, err = s.enqueue("B", nil)
+	_, err = s.enqueue("B", nil, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
 	next := s.claim()
 	require.NotNil(t, next, "a prompt after an empty-queue failure runs normally")
@@ -169,11 +169,11 @@ func TestQueueSendNowRebindsPausedFailedModelEntries(t *testing.T) {
 	m2 := &apitypes.ModelEntry{ID: "m2", ProviderID: "p"}
 	m3 := &apitypes.ModelEntry{ID: "m3", ProviderID: "p"}
 
-	a, err := s.enqueue("A", m1)
+	a, err := s.enqueue("A", m1, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
-	b, err := s.enqueue("B", m1)
+	b, err := s.enqueue("B", m1, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
-	_, err = s.enqueue("C", m2)
+	_, err = s.enqueue("C", m2, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
 
 	claim := s.claim()
@@ -210,9 +210,9 @@ func TestQueueSendNowOnHealthyQueueKeepsAdmissionModels(t *testing.T) {
 	m1 := &apitypes.ModelEntry{ID: "m1", ProviderID: "p"}
 	m2 := &apitypes.ModelEntry{ID: "m2", ProviderID: "p"}
 
-	_, err := s.enqueue("A", m1)
+	_, err := s.enqueue("A", m1, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
-	b, err := s.enqueue("B", m2)
+	b, err := s.enqueue("B", m2, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
 
 	claim := s.claim()
@@ -232,9 +232,9 @@ func TestQueueStopHoldsWaitingWork(t *testing.T) {
 	s, _ := newTestState()
 	m1 := &apitypes.ModelEntry{ID: "m1", ProviderID: "p"}
 
-	_, err := s.enqueue("A", m1)
+	_, err := s.enqueue("A", m1, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
-	_, err = s.enqueue("B", m1)
+	_, err = s.enqueue("B", m1, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
 	claim := s.claim()
 	require.NotNil(t, claim)
@@ -268,11 +268,11 @@ func TestQueueStopHoldsWaitingWork(t *testing.T) {
 func TestQueueSendNowReservesAndInterruptsActive(t *testing.T) {
 	s, published := newTestState()
 
-	_, err := s.enqueue("A", nil)
+	_, err := s.enqueue("A", nil, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
-	_, err = s.enqueue("B", nil)
+	_, err = s.enqueue("B", nil, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
-	c, err := s.enqueue("C", nil)
+	c, err := s.enqueue("C", nil, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
 
 	active := s.claim()
@@ -314,11 +314,11 @@ func TestQueueSendNowReservesAndInterruptsActive(t *testing.T) {
 func TestQueueSendNowRepeatAndConflicts(t *testing.T) {
 	s, _ := newTestState()
 
-	_, err := s.enqueue("A", nil)
+	_, err := s.enqueue("A", nil, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
-	b, err := s.enqueue("B", nil)
+	b, err := s.enqueue("B", nil, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
-	c, err := s.enqueue("C", nil)
+	c, err := s.enqueue("C", nil, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
 
 	first, err := s.sendNow(c.id, nil)
@@ -343,9 +343,9 @@ func TestQueueSendNowRepeatAndConflicts(t *testing.T) {
 func TestQueueReservedClaimClearsPause(t *testing.T) {
 	s, published := newTestState()
 
-	_, err := s.enqueue("A", nil)
+	_, err := s.enqueue("A", nil, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
-	b, err := s.enqueue("B", nil)
+	b, err := s.enqueue("B", nil, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
 
 	claim := s.claim()
@@ -369,11 +369,11 @@ func TestQueueStopKeepsArmedGateModel(t *testing.T) {
 	m2 := &apitypes.ModelEntry{ID: "m2", ProviderID: "p"}
 	m3 := &apitypes.ModelEntry{ID: "m3", ProviderID: "p"}
 
-	_, err := s.enqueue("A", m1)
+	_, err := s.enqueue("A", m1, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
-	b, err := s.enqueue("B", m1)
+	b, err := s.enqueue("B", m1, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
-	_, err = s.enqueue("C", m2)
+	_, err = s.enqueue("C", m2, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
 
 	require.NotNil(t, s.claim())
@@ -397,13 +397,13 @@ func TestQueueStopKeepsArmedGateModel(t *testing.T) {
 func TestQueueDrainGatesAdmissionAndClaims(t *testing.T) {
 	s, _ := newTestState()
 
-	_, err := s.enqueue("A", nil)
+	_, err := s.enqueue("A", nil, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
-	b, err := s.enqueue("B", nil)
+	b, err := s.enqueue("B", nil, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
 
 	s.beginDrain()
-	_, err = s.enqueue("C", nil)
+	_, err = s.enqueue("C", nil, wstypes.QueueItemKindPrompt)
 	require.ErrorIs(t, err, errQueueDraining)
 	_, err = s.sendNow(b.id, nil)
 	require.ErrorIs(t, err, errQueueDraining)
@@ -417,7 +417,7 @@ func TestQueueTurnContextDescendsFromRoot(t *testing.T) {
 	root, rootCancel := context.WithCancel(context.Background())
 	s := newAgentState("agent-root", root, zerolog.Nop())
 
-	_, err := s.enqueue("A", nil)
+	_, err := s.enqueue("A", nil, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)
 	claim := s.claim()
 	require.NotNil(t, claim)

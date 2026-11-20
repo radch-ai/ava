@@ -45,7 +45,12 @@ const socketMock = {
 			data: {
 				items: [],
 				paused: false,
-				active: { id: 'q-test', content, user_message_id: 'stored-u' }
+				active: {
+					id: 'q-test',
+					content,
+					kind: 'prompt',
+					user_message_id: 'stored-u'
+				}
 			}
 		})
 		return Promise.resolve(acceptedOp)
@@ -77,8 +82,12 @@ vi.mock('#lib/services/agent/ws', () => ({
 import { type ApiResponsePromise, api } from '#lib/services/api'
 
 function createThread(
-	items: Array<{ id: string; role: 'user' | 'assistant'; content: string }>,
-	opts: { nextCursor?: string | null } = {}
+	items: Array<{
+		id: string
+		role: 'user' | 'assistant' | 'divider'
+		content: string
+	}>,
+	opts: { nextCursor?: string | null; threadId?: string } = {}
 ): AgentThread {
 	return {
 		items: items.map((item, index) => ({
@@ -90,7 +99,8 @@ function createThread(
 				Date.now() - (items.length - 1 - index) * 60_000
 			).toISOString()
 		})),
-		nextCursor: opts.nextCursor ?? null
+		nextCursor: opts.nextCursor ?? null,
+		threadId: opts.threadId ?? 'thread-1'
 	}
 }
 
@@ -115,6 +125,13 @@ function createActivityFeed(
 		})),
 		nextCursor: opts.nextCursor ?? null
 	}
+}
+
+/** The transcript's top-level rows, in display order. */
+function rowTexts(container: HTMLElement): string[] {
+	return Array.from(
+		container.querySelectorAll('div.flex.flex-col.gap-4 > *')
+	).map((el) => (el.textContent ?? '').trim())
 }
 
 function createMockData(overrides: Record<string, unknown> = {}) {
@@ -393,6 +410,45 @@ describe('AgentPage (superagent branch)', () => {
 					'Newest reply'
 				])
 			})
+		})
+
+		it('keeps the displayed copy when a load-more page repeats it', async () => {
+			// A thread already on screen must keep its own row: the
+			// incoming page's copy of the same key never renders.
+			const olderPage = createThread(
+				[
+					{ id: '2', role: 'user', content: 'Oldest message' },
+					{ id: '3', role: 'user', content: 'server copy of the newer row' }
+				],
+				{ nextCursor: null }
+			)
+
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => olderPage
+			} as ApiResponsePromise)
+
+			const threadPage = createThread(
+				[{ id: '3', role: 'user', content: 'Newer message' }],
+				{ nextCursor: 'thread-1:3' }
+			)
+
+			const { container } = render(AgentPageTestWrapper, {
+				data: createMockData({ thread: threadPage })
+			})
+
+			await expect.element(page.getByText('Newer message')).toBeVisible()
+
+			await page.getByRole('button', { name: /load more/i }).click()
+
+			await vi.waitFor(() => {
+				const texts = Array.from(
+					container.querySelectorAll('div.flex.flex-col.gap-4 > *')
+				).map((el) => (el.textContent ?? '').trim())
+				expect(texts).toEqual(['Oldest message', 'Newer message'])
+			})
+			await expect
+				.element(page.getByText('server copy of the newer row'))
+				.not.toBeInTheDocument()
 		})
 	})
 
@@ -676,6 +732,7 @@ describe('AgentPage (superagent branch)', () => {
 					active: {
 						id: 'q-2',
 						content: 'second waiting',
+						kind: 'prompt',
 						user_message_id: 'u-2'
 					},
 					paused: false
@@ -767,7 +824,8 @@ describe('AgentPage (superagent branch)', () => {
 							createdAt: '2026-01-01T00:00:01.000Z'
 						}
 					],
-					nextCursor: null
+					nextCursor: null,
+					threadId: 'thread-1'
 				})
 			} as ApiResponsePromise)
 
@@ -835,7 +893,8 @@ describe('AgentPage (superagent branch)', () => {
 							createdAt: '2026-01-01T00:00:02.000Z'
 						}
 					],
-					nextCursor: null
+					nextCursor: null,
+					threadId: 'thread-1'
 				})
 			} as ApiResponsePromise)
 
@@ -890,7 +949,8 @@ describe('AgentPage (superagent branch)', () => {
 							createdAt: '2026-01-01T00:00:01.000Z'
 						}
 					],
-					nextCursor: null
+					nextCursor: null,
+					threadId: 'thread-1'
 				})
 			} as ApiResponsePromise)
 			render(AgentPageTestWrapper, { data: createMockData() })
@@ -948,7 +1008,8 @@ describe('AgentPage (superagent branch)', () => {
 							createdAt: '2026-01-01T00:00:02.000Z'
 						}
 					],
-					nextCursor: null
+					nextCursor: null,
+					threadId: 'thread-1'
 				})
 			} as ApiResponsePromise
 
@@ -1010,7 +1071,8 @@ describe('AgentPage (superagent branch)', () => {
 							createdAt: '2026-01-01T00:00:02.000Z'
 						}
 					],
-					nextCursor: null
+					nextCursor: null,
+					threadId: 'thread-1'
 				})
 			} as ApiResponsePromise)
 			render(AgentPageTestWrapper, { data: createMockData() })
@@ -1249,7 +1311,12 @@ describe('AgentPage (superagent branch)', () => {
 				data: {
 					items: [],
 					paused: false,
-					active: { id: 'q-1', content: 'about to run', user_message_id: 'u-1' }
+					active: {
+						id: 'q-1',
+						content: 'about to run',
+						kind: 'prompt',
+						user_message_id: 'u-1'
+					}
 				}
 			})
 			await vi.waitFor(() => {
@@ -1258,6 +1325,15 @@ describe('AgentPage (superagent branch)', () => {
 		})
 
 		it('never re-flashes an executed item as waiting (stale snapshot replay)', async () => {
+			// The transition away from the claimed item schedules a
+			// settle refetch; an empty page keeps the live row standing.
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => ({
+					items: [],
+					nextCursor: null,
+					threadId: 'thread-1'
+				})
+			} as ApiResponsePromise)
 			render(AgentPageTestWrapper, { data: createMockData() })
 			capturedOnEvent?.({
 				type: 'queue_state',
@@ -1280,6 +1356,7 @@ describe('AgentPage (superagent branch)', () => {
 					active: {
 						id: 'q-1',
 						content: 'claimed already',
+						kind: 'prompt',
 						user_message_id: 'u-1'
 					}
 				}
@@ -1334,6 +1411,7 @@ describe('AgentPage (superagent branch)', () => {
 					active: {
 						id: 'n-1',
 						content: 'chosen next',
+						kind: 'prompt',
 						user_message_id: 'u-next'
 					},
 					paused: false
@@ -1370,6 +1448,7 @@ describe('AgentPage (superagent branch)', () => {
 					active: {
 						id: 'q-1',
 						content: 'running',
+						kind: 'prompt',
 						user_message_id: 'u-1'
 					}
 				}
@@ -1403,6 +1482,1106 @@ describe('AgentPage (superagent branch)', () => {
 		})
 	})
 
+	describe('session commands', () => {
+		it('renders the divider and follows the committed thread', async () => {
+			const threadPage = createThread(
+				[
+					{ id: 'thread-1', role: 'divider', content: 'New session' },
+					{ id: 'msg-1', role: 'user', content: 'first session' }
+				],
+				{ threadId: 'thread-1' }
+			)
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => ({
+					items: [
+						{
+							id: 'thread-2',
+							role: 'divider',
+							content: 'New session',
+							createdAt: '2026-11-19T00:00:00.000Z'
+						},
+						{
+							id: 'u-2',
+							role: 'user',
+							content: 'second session',
+							createdAt: '2026-11-19T00:00:01.000Z'
+						}
+					],
+					nextCursor: 'thread-1:',
+					threadId: 'thread-2'
+				})
+			} as ApiResponsePromise)
+
+			render(AgentPageTestWrapper, {
+				data: createMockData({ thread: threadPage })
+			})
+			await expect.element(page.getByText('first session')).toBeVisible()
+
+			// /new commits: the divider lands in the live tail at once.
+			capturedOnEvent?.({
+				type: 'command_completed',
+				agent_id: '_superagent',
+				data: {
+					item_id: 'cmd-1',
+					thread_id: 'thread-2',
+					previous_thread_id: 'thread-1',
+					divider: {
+						id: 'thread-2',
+						content: 'New session',
+						created_at: '2026-11-19T00:00:00.000Z'
+					}
+				}
+			})
+			await vi.waitFor(() => {
+				expect(page.getByText('New session').elements()).toHaveLength(2)
+			})
+
+			// The next turn pins its refresh to the new thread, and the
+			// stored divider replaces the live copy instead of stacking.
+			capturedOnEvent?.({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'turn-2', content: 'answer' }
+			})
+			await vi.waitFor(() => {
+				const urls = vi
+					.mocked(api.get)
+					.mock.calls.map(([url]) => decodeURIComponent(String(url)))
+				expect(urls.some((url) => url.includes('cursor=thread-2'))).toBe(true)
+			})
+			await vi.waitFor(() => {
+				expect(page.getByText('second session').elements()).toHaveLength(1)
+				expect(page.getByText('New session').elements()).toHaveLength(2)
+			})
+		})
+
+		it('keeps a delayed old-thread refresh above the newer divider', async () => {
+			const threadPage = createThread(
+				[
+					{ id: 'm-1', role: 'user', content: 'old prompt' },
+					{ id: 'm-2', role: 'assistant', content: 'old answer' }
+				],
+				{ threadId: 'thread-1' }
+			)
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => ({
+					items: [
+						{
+							id: 'm-1',
+							role: 'user',
+							content: 'old prompt',
+							createdAt: '2026-01-01T00:00:00.000Z'
+						},
+						{
+							id: 'm-2',
+							role: 'assistant',
+							content: 'old answer',
+							createdAt: '2026-01-01T00:00:01.000Z'
+						}
+					],
+					nextCursor: null,
+					threadId: 'thread-1'
+				})
+			} as ApiResponsePromise)
+
+			const { container } = render(AgentPageTestWrapper, {
+				data: createMockData({ thread: threadPage })
+			})
+			await expect.element(page.getByText('old answer')).toBeVisible()
+
+			// The old turn claims in thread-1, then /new commits while
+			// it runs, then its settle event lands late.
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [],
+					paused: false,
+					active: {
+						id: 'turn-1',
+						content: 'old prompt',
+						kind: 'prompt',
+						user_message_id: 'm-1'
+					}
+				}
+			})
+			capturedOnEvent?.({
+				type: 'command_completed',
+				agent_id: '_superagent',
+				data: {
+					item_id: 'cmd-1',
+					thread_id: 'thread-2',
+					previous_thread_id: 'thread-1',
+					divider: {
+						id: 'thread-2',
+						content: 'New session',
+						created_at: '2026-11-19T00:00:00.000Z'
+					}
+				}
+			})
+			capturedOnEvent?.({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'turn-1', content: 'old answer' }
+			})
+
+			await vi.waitFor(() => {
+				const texts = Array.from(
+					container.querySelectorAll('div.flex.flex-col.gap-4 > *')
+				).map((el) => (el.textContent ?? '').trim())
+				const dividerIdx = texts.findIndex((t) => t.includes('New session'))
+				const oldIdx = texts.findIndex((t) => t.includes('old answer'))
+				expect(oldIdx).toBeGreaterThanOrEqual(0)
+				expect(dividerIdx).toBeGreaterThan(oldIdx)
+			})
+			// The refresh stayed pinned to the thread the turn ran in.
+			const urls = vi.mocked(api.get).mock.calls.map(([url]) => String(url))
+			expect(urls.some((url) => url.includes('cursor=thread-1'))).toBe(true)
+			expect(page.getByText('New session').elements()).toHaveLength(1)
+			expect(page.getByText('old answer').elements()).toHaveLength(1)
+		})
+
+		it('mints no user row for a queued command and stays busy', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [],
+					paused: false,
+					active: { id: 'cmd-1', content: '/new', kind: 'new_thread' }
+				}
+			})
+
+			await vi.waitFor(() => {
+				// The command renders as a queue row, never as a prompt
+				// in the transcript.
+				expect(page.getByText('/new').elements()).toHaveLength(0)
+			})
+			await expect
+				.element(page.getByRole('button', { name: 'Stop' }))
+				.toBeVisible()
+		})
+
+		it('keeps the load-more cursor when a settle refresh lands', async () => {
+			const threadPage = createThread(
+				[
+					{ id: 'msg-1', role: 'user', content: 'older prompt' },
+					{ id: 'msg-2', role: 'assistant', content: 'older answer' }
+				],
+				{ nextCursor: 'thread-2:msg-1' }
+			)
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => ({
+					items: [
+						{
+							id: 'msg-3',
+							role: 'user',
+							content: 'newer prompt',
+							createdAt: '2026-01-01T00:00:00.000Z'
+						},
+						{
+							id: 'msg-4',
+							role: 'assistant',
+							content: 'newer answer',
+							createdAt: '2026-01-01T00:00:01.000Z'
+						}
+					],
+					nextCursor: 'thread-2:msg-3',
+					threadId: 'thread-2'
+				})
+			} as ApiResponsePromise)
+
+			render(AgentPageTestWrapper, {
+				data: createMockData({ thread: threadPage })
+			})
+			await expect.element(page.getByText('older prompt')).toBeVisible()
+			await expect
+				.element(page.getByRole('button', { name: /load more/i }))
+				.toBeVisible()
+
+			capturedOnEvent?.({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'turn-2', content: 'newer answer' }
+			})
+
+			await vi.waitFor(() => {
+				expect(page.getByText('newer answer').elements()).toHaveLength(1)
+			})
+			// The reader's loaded depth survives the refresh: the button
+			// still offers the older page the display started with.
+			await expect
+				.element(page.getByRole('button', { name: /load more/i }))
+				.toBeVisible()
+			expect(page.getByText('older prompt').elements()).toHaveLength(1)
+		})
+
+		it('refreshes once per settlement, even when the queue transition follows', async () => {
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => ({
+					items: [
+						{
+							id: 'u-1',
+							role: 'user',
+							content: 'one prompt',
+							createdAt: '2026-01-01T00:00:00.000Z'
+						},
+						{
+							id: 'a-1',
+							role: 'assistant',
+							content: 'one answer',
+							createdAt: '2026-01-01T00:00:01.000Z'
+						}
+					],
+					nextCursor: null,
+					threadId: 'thread-1'
+				})
+			} as ApiResponsePromise)
+
+			render(AgentPageTestWrapper, { data: createMockData() })
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [],
+					paused: false,
+					active: {
+						id: 'turn-1',
+						content: 'one prompt',
+						kind: 'prompt',
+						user_message_id: 'u-1'
+					}
+				}
+			})
+			capturedOnEvent?.({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'turn-1', content: 'one answer' }
+			})
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: { items: [], paused: false }
+			})
+
+			await vi.waitFor(() => {
+				expect(page.getByText('one answer').elements()).toHaveLength(1)
+			})
+			await vi.waitFor(() => {
+				expect(vi.mocked(api.get).mock.calls).toHaveLength(1)
+			})
+		})
+
+		it('keeps the divider above the new thread’s settled rows', async () => {
+			const threadPage = createThread(
+				[
+					{ id: 'm-1', role: 'user', content: 'old prompt' },
+					{ id: 'm-2', role: 'assistant', content: 'old answer' }
+				],
+				{ threadId: 'thread-1' }
+			)
+			// The new thread's page: its own rows, no divider — the
+			// divider belongs to the boundary the command event carries.
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => ({
+					items: [
+						{
+							id: 'u-2',
+							role: 'user',
+							content: 'new prompt',
+							createdAt: '2026-11-19T00:00:01.000Z'
+						},
+						{
+							id: 'a-2',
+							role: 'assistant',
+							content: 'new answer',
+							createdAt: '2026-11-19T00:00:02.000Z'
+						}
+					],
+					nextCursor: null,
+					threadId: 'thread-2'
+				})
+			} as ApiResponsePromise)
+
+			const { container } = render(AgentPageTestWrapper, {
+				data: createMockData({ thread: threadPage })
+			})
+			await expect.element(page.getByText('old answer')).toBeVisible()
+
+			capturedOnEvent?.({
+				type: 'command_completed',
+				agent_id: '_superagent',
+				data: {
+					item_id: 'cmd-1',
+					thread_id: 'thread-2',
+					previous_thread_id: 'thread-1',
+					divider: {
+						id: 'thread-2',
+						content: 'New session',
+						created_at: '2026-11-19T00:00:00.000Z'
+					}
+				}
+			})
+			// The new thread's turn settles into the stored page.
+			capturedOnEvent?.({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'turn-2', content: 'new answer' }
+			})
+
+			await vi.waitFor(() => {
+				const texts = Array.from(
+					container.querySelectorAll('div.flex.flex-col.gap-4 > *')
+				).map((el) => (el.textContent ?? '').trim())
+				expect(texts.map((t) => t.split('\n')[0])).toEqual([
+					'old prompt',
+					'old answer',
+					'New session',
+					'new prompt',
+					'new answer'
+				])
+			})
+			expect(page.getByText('New session').elements()).toHaveLength(1)
+		})
+
+		it('keeps consecutive dividers in order above the newest thread’s rows', async () => {
+			const threadPage = createThread(
+				[
+					{ id: 'm-1', role: 'user', content: 'old prompt' },
+					{ id: 'm-2', role: 'assistant', content: 'old answer' }
+				],
+				{ threadId: 'thread-1' }
+			)
+			// The newest thread's exhausted page, server shape: its own
+			// divider at the head, rows behind it, and a predecessor
+			// cursor — not null. Both boundaries arrived as command
+			// events — repeated empty sessions — so the merge must place
+			// the window below both.
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => ({
+					items: [
+						{
+							id: 'thread-3',
+							role: 'divider',
+							content: 'New session',
+							createdAt: '2026-11-19T00:00:02.000Z'
+						},
+						{
+							id: 'u-3',
+							role: 'user',
+							content: 'newest prompt',
+							createdAt: '2026-11-19T00:00:03.000Z'
+						},
+						{
+							id: 'a-3',
+							role: 'assistant',
+							content: 'newest answer',
+							createdAt: '2026-11-19T00:00:04.000Z'
+						}
+					],
+					nextCursor: 'thread-2:',
+					threadId: 'thread-3'
+				})
+			} as ApiResponsePromise)
+
+			const { container } = render(AgentPageTestWrapper, {
+				data: createMockData({ thread: threadPage })
+			})
+			await expect.element(page.getByText('old answer')).toBeVisible()
+
+			capturedOnEvent?.({
+				type: 'command_completed',
+				agent_id: '_superagent',
+				data: {
+					item_id: 'cmd-1',
+					thread_id: 'thread-2',
+					previous_thread_id: 'thread-1',
+					divider: {
+						id: 'thread-2',
+						content: 'New session',
+						created_at: '2026-11-19T00:00:01.000Z'
+					}
+				}
+			})
+			capturedOnEvent?.({
+				type: 'command_completed',
+				agent_id: '_superagent',
+				data: {
+					item_id: 'cmd-2',
+					thread_id: 'thread-3',
+					previous_thread_id: 'thread-2',
+					divider: {
+						id: 'thread-3',
+						content: 'New session',
+						created_at: '2026-11-19T00:00:02.000Z'
+					}
+				}
+			})
+			// A prompt in the newest thread settles: its stored page
+			// lands below both boundaries, which keep their order.
+			capturedOnEvent?.({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'turn-3', content: 'newest answer' }
+			})
+
+			await vi.waitFor(() => {
+				const texts = Array.from(
+					container.querySelectorAll('div.flex.flex-col.gap-4 > *')
+				).map((el) => (el.textContent ?? '').trim())
+				expect(texts.map((t) => t.split('\n')[0])).toEqual([
+					'old prompt',
+					'old answer',
+					'New session',
+					'New session',
+					'newest prompt',
+					'newest answer'
+				])
+			})
+			expect(page.getByText('New session').elements()).toHaveLength(2)
+		})
+
+		it('keeps the loaded cursor when a refresh adopts a new thread', async () => {
+			const threadPage = createThread(
+				[
+					{ id: 'm-1', role: 'user', content: 'old prompt' },
+					{ id: 'm-2', role: 'assistant', content: 'old answer' }
+				],
+				{ nextCursor: 'thread-1:m-1', threadId: 'thread-1' }
+			)
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => ({
+					items: [
+						{
+							id: 'u-2',
+							role: 'user',
+							content: 'new prompt',
+							createdAt: '2026-11-19T00:00:01.000Z'
+						}
+					],
+					nextCursor: 'thread-1:',
+					threadId: 'thread-2'
+				})
+			} as ApiResponsePromise)
+
+			render(AgentPageTestWrapper, {
+				data: createMockData({ thread: threadPage })
+			})
+			await expect.element(page.getByText('old answer')).toBeVisible()
+
+			capturedOnEvent?.({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'turn-2', content: 'new prompt' }
+			})
+			await vi.waitFor(() => {
+				expect(vi.mocked(api.get).mock.calls).toHaveLength(1)
+			})
+
+			// The reader was mid-pagination: adoption must not rewind
+			// the position to the new thread's own continuation.
+			await page.getByRole('button', { name: /load more/i }).click()
+			await vi.waitFor(() => {
+				const urls = vi
+					.mocked(api.get)
+					.mock.calls.map(([url]) => decodeURIComponent(String(url)))
+				expect(urls.at(-1)).toContain('cursor=thread-1:m-1')
+			})
+		})
+
+		it('schedules no refresh for a command transition', async () => {
+			const threadPage = createThread(
+				[{ id: 'm-1', role: 'user', content: 'old prompt' }],
+				{ threadId: 'thread-1' }
+			)
+			render(AgentPageTestWrapper, {
+				data: createMockData({ thread: threadPage })
+			})
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [],
+					paused: false,
+					active: { id: 'cmd-1', content: '/new', kind: 'new_thread' }
+				}
+			})
+			capturedOnEvent?.({
+				type: 'command_completed',
+				agent_id: '_superagent',
+				data: {
+					item_id: 'cmd-1',
+					thread_id: 'thread-2',
+					previous_thread_id: 'thread-1',
+					divider: {
+						id: 'thread-2',
+						content: 'New session',
+						created_at: '2026-11-19T00:00:00.000Z'
+					}
+				}
+			})
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: { items: [], paused: false }
+			})
+
+			// The command's artifact is the divider event; only the
+			// model selector's catalog request ever hits the API.
+			await vi.waitFor(() => {
+				const urls = vi.mocked(api.get).mock.calls.map(([url]) => String(url))
+				expect(urls.filter((url) => url.includes('thread?'))).toEqual([])
+			})
+			expect(page.getByText('New session').elements()).toHaveLength(1)
+		})
+
+		it('does not rewind the followed thread when a delayed refresh lands after two switches', async () => {
+			const seed = createThread(
+				[{ id: 'm-1', role: 'user', content: 'old prompt' }],
+				{ threadId: 'thread-1' }
+			)
+			let releaseLate: (() => void) | undefined
+			vi.mocked(api.get).mockImplementation((input) => {
+				const url = String(input)
+				if (url.includes('thread-1')) {
+					// The turn's own thread, answered only when the test
+					// releases it — two switches land in the meantime.
+					return {
+						json: () => {
+							const { promise, resolve } = Promise.withResolvers<unknown>()
+							releaseLate = () =>
+								resolve({
+									items: [
+										{
+											id: 'm-2',
+											role: 'assistant',
+											content: 'late answer',
+											createdAt: '2026-11-19T00:00:05.000Z'
+										}
+									],
+									nextCursor: null,
+									threadId: 'thread-1'
+								})
+							return promise
+						}
+					} as ApiResponsePromise
+				}
+				return {
+					json: async () => ({
+						items: [],
+						nextCursor: null,
+						threadId: 'thread-3'
+					})
+				} as ApiResponsePromise
+			})
+
+			const { container } = render(AgentPageTestWrapper, {
+				data: createMockData({ thread: seed })
+			})
+			await expect.element(page.getByText('old prompt')).toBeVisible()
+
+			// The turn claims in thread-1 …
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [],
+					paused: false,
+					active: {
+						id: 'turn-1',
+						content: 'old prompt',
+						kind: 'prompt',
+						user_message_id: 'm-1'
+					}
+				}
+			})
+			// … two switches commit, then its settle event lands late.
+			for (const [from, to] of [
+				['thread-1', 'thread-2'],
+				['thread-2', 'thread-3']
+			] as const) {
+				capturedOnEvent?.({
+					type: 'command_completed',
+					agent_id: '_superagent',
+					data: {
+						item_id: `cmd-${to}`,
+						thread_id: to,
+						previous_thread_id: from,
+						divider: {
+							id: to,
+							content: 'New session',
+							created_at: '2026-11-19T00:00:00.000Z'
+						}
+					}
+				})
+			}
+			capturedOnEvent?.({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'turn-1', content: 'late answer' }
+			})
+			await vi.waitFor(() => expect(releaseLate).toBeTypeOf('function'))
+			releaseLate?.()
+
+			// The late rows land inside thread-1's position — above both
+			// boundaries — and the boundaries keep their chain order.
+			await vi.waitFor(() => {
+				expect(rowTexts(container)).toEqual([
+					'old prompt',
+					'late answer',
+					'New session',
+					'New session'
+				])
+			})
+			expect(page.getByText('late answer').elements()).toHaveLength(1)
+
+			// The next prompt claims in the thread the reader follows.
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [],
+					paused: false,
+					active: {
+						id: 'turn-2',
+						content: 'next prompt',
+						kind: 'prompt',
+						user_message_id: 'u-9'
+					}
+				}
+			})
+			capturedOnEvent?.({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'turn-2', content: 'next answer' }
+			})
+			await vi.waitFor(() => {
+				const urls = vi
+					.mocked(api.get)
+					.mock.calls.map(([url]) => decodeURIComponent(String(url)))
+				expect(urls.some((url) => url.includes('cursor=thread-3'))).toBe(true)
+			})
+		})
+
+		it('lands a delayed middle-thread refresh between its boundaries', async () => {
+			const seed = createThread(
+				[{ id: 'm-1', role: 'user', content: 'old prompt' }],
+				{ threadId: 'thread-1' }
+			)
+			let releaseLate: (() => void) | undefined
+			vi.mocked(api.get).mockImplementation((input) => {
+				const url = String(input)
+				if (url.includes('thread-2')) {
+					// The turn ran in thread-2; its refresh answers
+					// only when the test releases it — after the
+					// switch to thread-3 commits.
+					return {
+						json: () => {
+							const { promise, resolve } = Promise.withResolvers<unknown>()
+							releaseLate = () =>
+								resolve({
+									items: [
+										{
+											id: 'm-2',
+											role: 'user',
+											content: 'ask T2',
+											createdAt: '2026-11-19T00:00:04.000Z'
+										},
+										{
+											id: 'm-3',
+											role: 'assistant',
+											content: 'late T2 answer',
+											createdAt: '2026-11-19T00:00:05.000Z'
+										}
+									],
+									nextCursor: null,
+									threadId: 'thread-2'
+								})
+							return promise
+						}
+					} as ApiResponsePromise
+				}
+				return {
+					json: async () => ({
+						items: [],
+						nextCursor: null,
+						threadId: 'thread-3'
+					})
+				} as ApiResponsePromise
+			})
+
+			const { container } = render(AgentPageTestWrapper, {
+				data: createMockData({ thread: seed })
+			})
+			await expect.element(page.getByText('old prompt')).toBeVisible()
+
+			// The switch into thread-2 commits, then the turn claims
+			// there …
+			capturedOnEvent?.({
+				type: 'command_completed',
+				agent_id: '_superagent',
+				data: {
+					item_id: 'cmd-thread-2',
+					thread_id: 'thread-2',
+					previous_thread_id: 'thread-1',
+					divider: {
+						id: 'thread-2',
+						content: 'New session',
+						created_at: '2026-11-19T00:00:00.000Z'
+					}
+				}
+			})
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [],
+					paused: false,
+					active: {
+						id: 'turn-1',
+						content: 'ask T2',
+						kind: 'prompt',
+						user_message_id: 'm-2'
+					}
+				}
+			})
+			// … and the surface moves on to thread-3 before the turn
+			// settles.
+			capturedOnEvent?.({
+				type: 'command_completed',
+				agent_id: '_superagent',
+				data: {
+					item_id: 'cmd-thread-3',
+					thread_id: 'thread-3',
+					previous_thread_id: 'thread-2',
+					divider: {
+						id: 'thread-3',
+						content: 'New session',
+						created_at: '2026-11-19T00:00:01.000Z'
+					}
+				}
+			})
+			capturedOnEvent?.({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'turn-1', content: 'late T2 answer' }
+			})
+			await vi.waitFor(() => expect(releaseLate).toBeTypeOf('function'))
+			releaseLate?.()
+
+			// The late rows land inside thread-2's position — above the
+			// thread-3 boundary, below thread-2's own.
+			await vi.waitFor(() => {
+				expect(rowTexts(container)).toEqual([
+					'old prompt',
+					'New session',
+					'ask T2',
+					'late T2 answer',
+					'New session'
+				])
+			})
+			expect(page.getByText('late T2 answer').elements()).toHaveLength(1)
+
+			// The next prompt claims in the thread the reader follows.
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [],
+					paused: false,
+					active: {
+						id: 'turn-2',
+						content: 'next prompt',
+						kind: 'prompt',
+						user_message_id: 'u-9'
+					}
+				}
+			})
+			capturedOnEvent?.({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'turn-2', content: 'next answer' }
+			})
+			await vi.waitFor(() => {
+				const urls = vi
+					.mocked(api.get)
+					.mock.calls.map(([url]) => decodeURIComponent(String(url)))
+				expect(urls.some((url) => url.includes('cursor=thread-3'))).toBe(true)
+			})
+		})
+
+		it('keeps an exhausted oldest cursor exhausted across refreshes and commands', async () => {
+			const seed = createThread(
+				[{ id: 'm-1', role: 'user', content: 'only prompt' }],
+				{ nextCursor: null, threadId: 'thread-1' }
+			)
+			// The fresh page offers a continuation the reader never had:
+			// a refresh must not resurrect an exhausted cursor.
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => ({
+					items: [
+						{
+							id: 'm-1',
+							role: 'user',
+							content: 'only prompt',
+							createdAt: '2026-11-19T00:00:00.000Z'
+						},
+						{
+							id: 'a-1',
+							role: 'assistant',
+							content: 'only answer',
+							createdAt: '2026-11-19T00:00:01.000Z'
+						}
+					],
+					nextCursor: 'thread-1:m-1',
+					threadId: 'thread-1'
+				})
+			} as ApiResponsePromise)
+
+			render(AgentPageTestWrapper, {
+				data: createMockData({ thread: seed })
+			})
+			await expect.element(page.getByText('only prompt')).toBeVisible()
+
+			capturedOnEvent?.({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'turn-1', content: 'only answer' }
+			})
+			await vi.waitFor(() => {
+				expect(page.getByText('only answer').elements()).toHaveLength(1)
+			})
+			await expect
+				.element(page.getByRole('button', { name: /load more/i }))
+				.not.toBeInTheDocument()
+
+			capturedOnEvent?.({
+				type: 'command_completed',
+				agent_id: '_superagent',
+				data: {
+					item_id: 'cmd-1',
+					thread_id: 'thread-2',
+					previous_thread_id: 'thread-1',
+					divider: {
+						id: 'thread-2',
+						content: 'New session',
+						created_at: '2026-11-19T00:00:02.000Z'
+					}
+				}
+			})
+
+			// Still exhausted: the command adds a boundary, not history.
+			await expect.element(page.getByText('New session')).toBeVisible()
+			await expect
+				.element(page.getByRole('button', { name: /load more/i }))
+				.not.toBeInTheDocument()
+		})
+
+		it('orders equal-timestamp boundaries by chain, not createdAt', async () => {
+			const seed = createThread(
+				[{ id: 'm-1', role: 'user', content: 'old prompt' }],
+				{ threadId: 'thread-1' }
+			)
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => ({
+					items: [
+						{
+							id: 'a-1',
+							role: 'assistant',
+							content: 'old answer',
+							createdAt: '2026-11-19T00:00:00.000Z'
+						}
+					],
+					nextCursor: null,
+					threadId: 'thread-1'
+				})
+			} as ApiResponsePromise)
+
+			const { container } = render(AgentPageTestWrapper, {
+				data: createMockData({ thread: seed })
+			})
+			await expect.element(page.getByText('old prompt')).toBeVisible()
+
+			capturedOnEvent?.({
+				type: 'queue_state',
+				agent_id: '_superagent',
+				data: {
+					items: [],
+					paused: false,
+					active: {
+						id: 'turn-1',
+						content: 'old prompt',
+						kind: 'prompt',
+						user_message_id: 'm-1'
+					}
+				}
+			})
+			// Two switches whose boundaries carry the SAME timestamp: the
+			// chain order is the only truth.
+			for (const [from, to] of [
+				['thread-1', 'thread-2'],
+				['thread-2', 'thread-3']
+			] as const) {
+				capturedOnEvent?.({
+					type: 'command_completed',
+					agent_id: '_superagent',
+					data: {
+						item_id: `cmd-${to}`,
+						thread_id: to,
+						previous_thread_id: from,
+						divider: {
+							id: to,
+							content: 'New session',
+							created_at: '2026-11-19T00:00:00.000Z'
+						}
+					}
+				})
+			}
+			// The older thread's settle refresh lands afterwards.
+			capturedOnEvent?.({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'turn-1', content: 'old answer' }
+			})
+
+			await vi.waitFor(() => {
+				expect(rowTexts(container)).toEqual([
+					'old prompt',
+					'old answer',
+					'New session',
+					'New session'
+				])
+			})
+			expect(page.getByText('old answer').elements()).toHaveLength(1)
+		})
+
+		it('freezes live rows above the boundary while their refresh is pending', async () => {
+			const seed = createThread(
+				[{ id: 'm-1', role: 'user', content: 'old prompt' }],
+				{ threadId: 'thread-1' }
+			)
+			let releaseRefresh: (() => void) | undefined
+			vi.mocked(api.get).mockImplementation((input) => {
+				if (String(input).includes('thread-1')) {
+					return {
+						json: () => {
+							const { promise, resolve } = Promise.withResolvers<unknown>()
+							// The stored copy of the turn that ran in
+							// thread-1: user row, tool row, answer.
+							releaseRefresh = () =>
+								resolve({
+									items: [
+										{
+											id: 'stored-u',
+											role: 'user',
+											content: 'ask A',
+											createdAt: '2026-11-19T00:00:00.000Z'
+										},
+										{
+											id: 'stored-t',
+											role: 'tool',
+											content:
+												'{"name":"search","args":{"q":"x"},"result":"hit"}',
+											createdAt: '2026-11-19T00:00:01.000Z'
+										},
+										{
+											id: 'stored-a',
+											role: 'assistant',
+											content: 'answer A',
+											createdAt: '2026-11-19T00:00:02.000Z'
+										}
+									],
+									nextCursor: null,
+									threadId: 'thread-1'
+								})
+							return promise
+						}
+					} as ApiResponsePromise
+				}
+				return {
+					json: async () => ({
+						items: [],
+						nextCursor: null,
+						threadId: 'thread-1'
+					})
+				} as ApiResponsePromise
+			})
+
+			const { container } = render(AgentPageTestWrapper, {
+				data: createMockData({ thread: seed })
+			})
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, 'ask A{Enter}')
+
+			// The turn streams a tool call and an answer in thread-1.
+			capturedOnEvent?.({
+				type: 'tool_call',
+				agent_id: '_superagent',
+				data: {
+					id: 'call-1',
+					turn_id: 'q-test',
+					name: 'search',
+					args: '{"q":"x"}'
+				}
+			})
+			capturedOnEvent?.({
+				type: 'message_chunk',
+				agent_id: '_superagent',
+				data: { id: 'q-test', delta: 'answer ' }
+			})
+			capturedOnEvent?.({
+				type: 'message',
+				agent_id: '_superagent',
+				data: { id: 'q-test', content: 'answer A' }
+			})
+			// /new commits before the turn's refresh resolves.
+			capturedOnEvent?.({
+				type: 'command_completed',
+				agent_id: '_superagent',
+				data: {
+					item_id: 'cmd-1',
+					thread_id: 'thread-2',
+					previous_thread_id: 'thread-1',
+					divider: {
+						id: 'thread-2',
+						content: 'New session',
+						created_at: '2026-11-19T00:00:03.000Z'
+					}
+				}
+			})
+
+			// The tail is frozen above the boundary at once: one user row,
+			// one tool line, one answer, then the boundary.
+			await vi.waitFor(() => {
+				expect(rowTexts(container)).toHaveLength(5)
+			})
+			expect(rowTexts(container)[0]).toBe('old prompt')
+			expect(rowTexts(container)[1]).toContain('ask A')
+			expect(rowTexts(container)[2]).toContain('search')
+			expect(rowTexts(container)[3]).toContain('answer A')
+			expect(rowTexts(container)[4]).toBe('New session')
+			expect(page.getByText('ask A').elements()).toHaveLength(1)
+			expect(page.getByText(/search/).elements()).toHaveLength(1)
+			expect(page.getByText('answer A').elements()).toHaveLength(1)
+
+			// The stored copy replaces the frozen one — still once each,
+			// the wire-id namespace mismatch notwithstanding.
+			await vi.waitFor(() => expect(releaseRefresh).toBeTypeOf('function'))
+			releaseRefresh?.()
+			await vi.waitFor(() => {
+				expect(rowTexts(container)[1]).toContain('ask A')
+				expect(rowTexts(container)[4]).toBe('New session')
+			})
+			expect(rowTexts(container)).toHaveLength(5)
+			expect(page.getByText('ask A').elements()).toHaveLength(1)
+			expect(page.getByText(/search/).elements()).toHaveLength(1)
+			expect(page.getByText('answer A').elements()).toHaveLength(1)
+		})
+	})
+
 	describe('model selector browser persistence', () => {
 		const storageKey = 'ava.model._superagent'
 
@@ -1417,6 +2596,25 @@ describe('AgentPage (superagent branch)', () => {
 			await expect
 				.element(page.getByRole('combobox'))
 				.toHaveTextContent('gpt-4o')
+		})
+
+		it('forgets a stored selection the catalog no longer carries', async () => {
+			localStorage.setItem(
+				storageKey,
+				JSON.stringify({ id: 'gone-model', providerId: 'nope' })
+			)
+
+			render(AgentPageTestWrapper, { data: createMockData() })
+
+			// The phantom cannot be displayed or submitted: the
+			// catalog check reverts the lane to default routing and
+			// drops the stored pair.
+			await vi.waitFor(() => {
+				expect(localStorage.getItem(storageKey)).toBeNull()
+			})
+			await expect
+				.element(page.getByRole('combobox'))
+				.toHaveTextContent('Default')
 		})
 
 		it('persists the picked model', async () => {

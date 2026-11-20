@@ -7,6 +7,7 @@ package schema_test
 import (
 	"testing"
 
+	"github.com/radch-ai/ava/backend/internal/db"
 	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
@@ -60,11 +61,9 @@ func TestProviderModelsDefaultsEmpty(t *testing.T) {
 // verbatim — uncataloged ids persist, staleness caught at call time.
 func TestDeleteProviderNullsModelOwner(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
-	if _, err := sqlDB.Exec(
-		`INSERT INTO agents (id, name, icon, soul_personality, soul_identity, operating_instructions, tools_context)
-		 VALUES ('a1', 'A1', 'globe', '', '', '', '')`); err != nil {
-		t.Fatalf("seed agent: %v", err)
-	}
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
+		ID: "a1", Name: "A1", Icon: "globe",
+	})
 	if _, err := sqlDB.Exec(
 		`INSERT INTO providers (id, name, base_url) VALUES ('p1', 'P1', 'https://p1.dev/v1')`,
 	); err != nil {
@@ -102,11 +101,9 @@ func TestDeleteProviderNullsModelOwner(t *testing.T) {
 // is DB-enforced, unlike the free-form id string.
 func TestModelOwnerMustReferenceProvider(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
-	if _, err := sqlDB.Exec(
-		`INSERT INTO agents (id, name, icon, soul_personality, soul_identity, operating_instructions, tools_context)
-		 VALUES ('a1', 'A1', 'globe', '', '', '', '')`); err != nil {
-		t.Fatalf("seed agent: %v", err)
-	}
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
+		ID: "a1", Name: "A1", Icon: "globe",
+	})
 	if _, err := sqlDB.Exec(
 		`INSERT INTO heartbeat (agent_id, model, provider_id, enabled, duration, content)
 		 VALUES ('a1', 'ghost/m1', 'missing', 1, '30m', 'x')`,

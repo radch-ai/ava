@@ -39,15 +39,13 @@ func serve(t *testing.T, pattern string, h api.Handler, method, path, body strin
 // configStore opens a fresh store holding one regular agent.
 func configStore(t *testing.T) *db.Queries {
 	t.Helper()
-	queries := db.New(testdb.Open(t, true))
-	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
+	sqlDB := testdb.Open(t, true)
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
 		ID: "research", Name: "Research", Icon: "globe",
 		SoulPersonality: "curious", SoulIdentity: "verifies claims",
 		OperatingInstructions: "cite everything", ToolsContext: "",
-	}); err != nil {
-		t.Fatalf("seed agent: %v", err)
-	}
-	return queries
+	})
+	return db.New(sqlDB)
 }
 
 func TestGetAgentConfigSeededSuperagent(t *testing.T) {

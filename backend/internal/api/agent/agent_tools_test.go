@@ -18,12 +18,11 @@ import (
 // and notes (globally off).
 func agentToolsStore(t *testing.T) *db.Queries {
 	t.Helper()
-	queries := db.New(testdb.Open(t, true))
-	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
+	sqlDB := testdb.Open(t, true)
+	queries := db.New(sqlDB)
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
 		ID: "research", Name: "Research", Icon: "globe",
-	}); err != nil {
-		t.Fatalf("seed agent: %v", err)
-	}
+	})
 	for _, seed := range []struct {
 		id      string
 		enabled int64

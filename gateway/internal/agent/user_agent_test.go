@@ -25,7 +25,7 @@ func TestUserAgent_SubmitAdmitsAndRunsWorker(t *testing.T) {
 		})
 
 	id, err := mgr.Submit("agent-start-test", "conn-1", nil,
-		"test message", &apitypes.ModelEntry{ID: "gpt-4o"})
+		"test message", &apitypes.ModelEntry{ID: "gpt-4o"}, "")
 	require.NoError(t, err)
 	require.NotEmpty(t, id, "admission returns the item's stable id")
 
@@ -52,7 +52,7 @@ func TestUserAgent_ConcurrentSubmit(t *testing.T) {
 			defer wg.Done()
 			for range numMessagesPerGoroutine {
 				_, _ = mgr.Submit("agent-concurrent-test",
-					"conn-concurrent", nil, "concurrent message", nil)
+					"conn-concurrent", nil, "concurrent message", nil, "")
 			}
 		}()
 	}
@@ -64,7 +64,7 @@ func TestUserAgent_StatusReportsQueue(t *testing.T) {
 		&agent.UserAgentManagerOptions{GetAgentThread: emptyThread})
 
 	_, err := mgr.Submit("agent-status-test", "conn-1", nil,
-		"test", &apitypes.ModelEntry{ID: "gpt-4o"})
+		"test", &apitypes.ModelEntry{ID: "gpt-4o"}, "")
 	require.NoError(t, err)
 
 	require.True(t, mgr.Status("agent-status-test").Active)

@@ -5,6 +5,7 @@ package agents
 // tests.
 
 import (
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,13 +17,11 @@ import (
 )
 
 // seedAgent inserts a row; insertion order is creation order.
-func seedAgent(t *testing.T, queries *db.Queries, id, name, icon string) {
+func seedAgent(t *testing.T, sqlDB *sql.DB, id, name, icon string) {
 	t.Helper()
-	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
 		ID: id, Name: name, Icon: icon,
-	}); err != nil {
-		t.Fatalf("seed agent %s: %v", id, err)
-	}
+	})
 }
 
 // getAgents runs the handler and returns status, raw body, and the
@@ -47,13 +46,14 @@ func TestGetAgentsEmpty(t *testing.T) {
 }
 
 func TestGetAgentsContract(t *testing.T) {
-	queries := db.New(testdb.Open(t, true))
+	sqlDB := testdb.Open(t, true)
+	queries := db.New(sqlDB)
 	// "research" sorts before "scribe", but scribe was created first:
 	// listing scribe first pins created_at ordering, not id ordering.
 	// Stamps are coarse, so the seeds sit 2ms apart.
-	seedAgent(t, queries, "scribe", "Scribe", "pencil")
+	seedAgent(t, sqlDB, "scribe", "Scribe", "pencil")
 	time.Sleep(2 * time.Millisecond)
-	seedAgent(t, queries, "research", "Research", "globe")
+	seedAgent(t, sqlDB, "research", "Research", "globe")
 
 	want := `{"agents":[{"id":"scribe","name":"Scribe","icon":"pencil"},{"id":"research","name":"Research","icon":"globe"}]}`
 	if _, body, err := getAgents(t, queries); err != nil || body != want {

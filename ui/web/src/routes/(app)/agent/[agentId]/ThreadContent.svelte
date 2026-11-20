@@ -1,19 +1,10 @@
 <script lang="ts">
 	import { BrainCircuit } from '@lucide/svelte'
+	import { Separator } from '#components/ui/separator'
 	import { renderMarkdown } from '#lib/services/agent/markdown'
+	import { threadRowKey } from '#lib/services/agent/thread'
+	import type { ThreadItem } from '#lib/types/agent'
 	import ToolLine from './ToolLine.svelte'
-
-	interface ThreadItem {
-		id: string
-		role: 'user' | 'assistant' | 'tool' | 'error'
-		content: string
-		pending?: boolean
-		/** Tool rows only: the persisted invocation envelope. */
-		name?: string
-		args?: string
-		result?: string
-		error?: string | null
-	}
 
 	interface Props {
 		threadItems: ThreadItem[]
@@ -58,12 +49,22 @@
 </script>
 
 {#if threadItems.length > 0}
-	{#each threadItems as message (message.id)}
+	<!-- A divider's id is its thread id: the row key keeps the two id
+	namespaces apart. -->
+	{#each threadItems as message (threadRowKey(message))}
 		{#if message.role === 'user'}
 			<div
 				class="bg-overlay-dark/70 text-foreground/90 hover:bg-overlay-dark/90 hover:text-foreground ml-auto w-fit max-w-[75%] rounded-2xl rounded-br-[4px] px-5 py-3 text-[15px] leading-relaxed shadow-sm"
 			>
 				{message.content}
+			</div>
+		{:else if message.role === 'divider'}
+			<div class="my-6 flex w-full items-center gap-3">
+				<Separator class="flex-1" />
+				<span class="text-muted-foreground text-xs tracking-wide uppercase">
+					{message.content}
+				</span>
+				<Separator class="flex-1" />
 			</div>
 		{:else if message.role === 'error'}
 			<p

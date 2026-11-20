@@ -101,10 +101,16 @@ func contextBackend(t *testing.T, agentID string) (*sql.DB, *backend.TurnService
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x43}, 32))
 	require.NoError(t, err)
-	_, err = sqlDB.Exec(
-		`INSERT INTO agents (id, name, icon, soul_personality, soul_identity, operating_instructions, tools_context)
-		 VALUES (?, 'Context', 'globe', '', '', '', '')`, agentID)
+	threadID := agentID + "-t1"
+	tx, err := sqlDB.Begin()
 	require.NoError(t, err)
+	_, err = tx.Exec(
+		`INSERT INTO agents (id, name, icon, soul_personality, soul_identity, operating_instructions, tools_context, active_thread_id)
+		 VALUES (?, 'Context', 'globe', '', '', '', '', ?)`, agentID, threadID)
+	require.NoError(t, err)
+	_, err = tx.Exec(`INSERT INTO threads (id, agent_id) VALUES (?, ?)`, threadID, agentID)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
 	return sqlDB, svc
 }
 
@@ -155,19 +161,20 @@ type rawThreadRow struct {
 	CreatedAt int64
 	TurnID    string
 	ToolCalls string
+	ThreadID  string
 }
 
 func threadRows(t *testing.T, sqlDB *sql.DB, agentID string) []rawThreadRow {
 	t.Helper()
 	rows, err := sqlDB.Query(
-		`SELECT id, role, content, created_at, turn_id, COALESCE(tool_calls, '')
+		`SELECT id, role, content, created_at, turn_id, COALESCE(tool_calls, ''), thread_id
 		 FROM thread_messages WHERE agent_id = ? ORDER BY created_at ASC, id ASC`, agentID)
 	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
 	var out []rawThreadRow
 	for rows.Next() {
 		var r rawThreadRow
-		require.NoError(t, rows.Scan(&r.ID, &r.Role, &r.Content, &r.CreatedAt, &r.TurnID, &r.ToolCalls))
+		require.NoError(t, rows.Scan(&r.ID, &r.Role, &r.Content, &r.CreatedAt, &r.TurnID, &r.ToolCalls, &r.ThreadID))
 		out = append(out, r)
 	}
 	require.NoError(t, rows.Err())
@@ -216,7 +223,7 @@ func TestQueuedSubmissionsShareContext(t *testing.T) {
 
 	c, sc := wsPair(t)
 	submit(t, mgr, "agent-q", "conn-1", sc, "queued first")
-	_, err := mgr.Submit("agent-q", "conn-1", sc, "queued second", nil)
+	_, err := mgr.Submit("agent-q", "conn-1", sc, "queued second", nil, "")
 	require.NoError(t, err)
 	for range 2 {
 		_, p := readUntilMessage(t, c)
@@ -235,7 +242,7 @@ func TestToolContextReplayedWithCallIDs(t *testing.T) {
 	echo := &fakeTool{name: "echo_tool", result: "tool says hi"}
 	llm := newContextLLM(t,
 		toolCallChunk("echo_tool")+toolCallDone(), sseChunk("after tool"), sseChunk("done"))
-	_, svc := contextBackend(t, "agent-tctx")
+	sqlDB, svc := contextBackend(t, "agent-tctx")
 	mgr := contextManager(t, llm, svc, nil, echo)
 
 	c, sc := wsPair(t)
@@ -276,6 +283,17 @@ func TestToolContextReplayedWithCallIDs(t *testing.T) {
 	require.Equal(t, "after tool", second[3].Content)
 	require.Equal(t, "user", second[4].Role)
 	require.Equal(t, "what did it say", second[4].Content)
+
+	// The durable rows — the tool outcome included — belong to the
+	// thread the turn wrote in, resolved by the sink at write time.
+	toolRows := 0
+	for _, row := range threadRows(t, sqlDB, "agent-tctx") {
+		require.Equal(t, "agent-tctx-t1", row.ThreadID)
+		if row.Role == apitypes.ThreadRoleTool {
+			toolRows++
+		}
+	}
+	require.Equal(t, 1, toolRows, "one durable tool outcome row")
 }
 
 func TestColdRestartRebuildsContextFromReplay(t *testing.T) {
@@ -364,9 +382,9 @@ func TestToolRowPersistFailureFailsTurn(t *testing.T) {
 	mgr := contextManager(t, llm, svc, sink, echo)
 
 	c, sc := wsPair(t)
-	_, err := mgr.Submit("agent-tsink", "conn-1", sc, "search", nil)
+	_, err := mgr.Submit("agent-tsink", "conn-1", sc, "search", nil, "")
 	require.NoError(t, err)
-	_, err = mgr.Submit("agent-tsink", "conn-1", sc, "waits behind", nil)
+	_, err = mgr.Submit("agent-tsink", "conn-1", sc, "waits behind", nil, "")
 	require.NoError(t, err)
 
 	p := eventPayload[wstypes.ErrorEvent](t, readUntilError(t, c))
@@ -390,10 +408,83 @@ func TestToolRowPersistFailureFailsTurn(t *testing.T) {
 	var roles []apitypes.ThreadRole
 	for _, row := range threadRows(t, sqlDB, "agent-tsink") {
 		roles = append(roles, row.Role)
+		// Every row — tool group and terminal error included — belongs
+		// to the thread the turn ran in.
+		require.Equal(t, "agent-tsink-t1", row.ThreadID)
 	}
 	require.Equal(t, []apitypes.ThreadRole{
 		apitypes.ThreadRoleUser, apitypes.ThreadRoleAssistant, apitypes.ThreadRoleError,
 	}, roles)
+}
+
+// One turn executes per agent at a time, so a switch happens only
+// between settled turns. B enters the queue while A still executes
+// under T1; a stop settles A quietly and holds B behind the pause
+// gate; the switch lands at that settled boundary; send-now releases
+// B, whose rows and model input resolve to the new thread — thread
+// selection is execution-time, never admission-time.
+func TestThreadSwitchIsolatesModelContext(t *testing.T) {
+	llm := newContextLLM(t, sseChunk("answer B"))
+	sqlDB, svc := contextBackend(t, "agent-switch")
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	threads := func(ctx context.Context, agentID string) ([]backend.AgentThreadMessage, error) {
+		blocked := false
+		once.Do(func() { close(started); blocked = true })
+		if blocked {
+			<-release
+			return nil, ctx.Err()
+		}
+		return svc.GetAgentThread(ctx, agentID)
+	}
+	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{
+		ResolveModel:   fixedResolver(llm.URL),
+		PersistTurn:    svc.AppendThreadMessages,
+		GetAgentThread: threads,
+	})
+
+	c, sc := wsPair(t)
+	submit(t, mgr, "agent-switch", "conn-1", sc, "prompt A")
+	<-started
+	bID, err := mgr.Submit("agent-switch", "conn-1", sc, "prompt B", nil, "")
+	require.NoError(t, err)
+	mgr.Interrupt("agent-switch")
+	close(release)
+
+	// A settles as a quiet stop; the stop arms the hold gate with B
+	// waiting — the settled boundary the switch needs.
+	queueStateUntil(t, c, func(p wstypes.QueueStateEvent) bool {
+		return p.Active == nil && p.Paused && len(p.Items) == 1
+	})
+
+	freshRes, err := svc.CreateAndActivateThread(t.Context(), "agent-switch")
+	require.NoError(t, err)
+	fresh := freshRes.ID
+
+	_, err = mgr.SendNow("agent-switch", bID, nil)
+	require.NoError(t, err)
+	_, p := readUntilMessage(t, c)
+	require.Equal(t, "answer B", p.Content)
+
+	// The new thread's first model request carries its own prompt
+	// alone — A's T1 rows never reach it, and the model was never
+	// called for the stopped turn at all.
+	reqs := llm.requests()
+	require.Len(t, reqs, 1)
+	require.Len(t, reqs[0].Messages, 1)
+	require.Equal(t, "user", reqs[0].Messages[0].Role)
+	require.Equal(t, "prompt B", reqs[0].Messages[0].Content)
+
+	rows := threadRows(t, sqlDB, "agent-switch")
+	require.Len(t, rows, 3)
+	require.Equal(t, "prompt A", rows[0].Content)
+	require.Equal(t, "agent-switch-t1", rows[0].ThreadID)
+	require.Equal(t, "prompt B", rows[1].Content)
+	require.Equal(t, fresh, rows[1].ThreadID)
+	require.Equal(t, "answer B", rows[2].Content)
+	require.Equal(t, fresh, rows[2].ThreadID)
 }
 
 func TestAssistantSettleFailureFailsTurn(t *testing.T) {
@@ -445,7 +536,7 @@ func TestPersistFailureRacingStopIsMessageFailure(t *testing.T) {
 	mgr = contextManager(t, llm, svc, sink, echo)
 
 	c, sc := wsPair(t)
-	_, err := mgr.Submit("agent-race", "conn-1", sc, "search", nil)
+	_, err := mgr.Submit("agent-race", "conn-1", sc, "search", nil, "")
 	require.NoError(t, err)
 
 	p := eventPayload[wstypes.ErrorEvent](t, readUntilError(t, c))

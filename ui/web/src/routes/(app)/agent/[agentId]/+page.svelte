@@ -5,18 +5,21 @@
 	import { Button } from '#components/ui/button'
 	import { SUPERAGENT_AGENT_ID, SUPERAGENT_NAME } from '#lib/config'
 	import type { ModelSelection } from '#lib/models'
+	import { modelsStore } from '#lib/models'
 	import {
 		type ActivityFeed,
 		type AgentSocket,
 		type AgentSocketEvent,
 		type AgentSocketState,
+		type AgentThread,
 		createAgentSocket,
 		createLiveTurns,
 		getAgentActivityFeed,
 		getAgentThread,
 		type LaneStatus,
-		mergePastThread
+		threadRowKey
 	} from '#lib/services/agent'
+	import type { ThreadItem } from '#lib/types/agent'
 	import type { QueueActiveItem, QueueItem } from '#lib/types/gen/wstypes.gen'
 	import { resolve } from '$app/paths'
 	import type { PageData } from './$types'
@@ -31,8 +34,64 @@
 	const isSuperagent = $derived(data.agent.id === SUPERAGENT_AGENT_ID)
 
 	let activeTab = $state<'conversation' | 'activity'>('conversation')
-	let thread = $state<PageData['thread'] | undefined>(undefined)
 	let threadError = $state<string | null | undefined>(undefined)
+
+	/** The boundary label of a segment; undefined when the segment
+	 * starts the display. */
+	interface ThreadSegment {
+		threadId: string
+		items: ThreadItem[]
+		dividerContent: string | undefined
+	}
+
+	// The display is a chain of thread segments, oldest first. Order is
+	// arrival order, never a timestamp comparison: a thread's created_at
+	// is DB wall-clock with no strict-order guarantee, so it cannot say
+	// which boundary came first.
+	let segments = $state<ThreadSegment[]>([])
+	// The oldest-loaded continuation. Seeded from the first page and
+	// written by Load more only: a refresh must never move the reader's
+	// pagination depth, nor turn an exhausted cursor back into one.
+	let historyCursor = $state<string | null | undefined>(undefined)
+	// The thread the surface follows: refreshes pin to it, so a turn
+	// that ran in a thread the reader has since left stays out.
+	let activeThreadId = $state<string | undefined>(undefined)
+	// previous thread id -> the thread that replaced it, from
+	// command_completed: a delayed refresh for a thread the display has
+	// not seen yet slots in above its successor.
+	const successorThread = new Map<string, string>()
+
+	// The flat projection the shell renders: each segment's boundary
+	// row above its own rows.
+	const threadItems = $derived(
+		segments.flatMap((segment): ThreadItem[] =>
+			segment.dividerContent === undefined
+				? segment.items
+				: [
+						{
+							id: segment.threadId,
+							role: 'divider',
+							content: segment.dividerContent
+						},
+						...segment.items
+					]
+		)
+	)
+	const threadNextCursor = $derived(historyCursor ?? null)
+
+	/** Splits a page's own head boundary off its rows: a page that
+	 * exhausts a thread carries its divider at the head, and segment
+	 * order already says where that boundary sits. */
+	function readPage(page: AgentThread): {
+		rows: ThreadItem[]
+		divider: string | undefined
+	} {
+		const head = page.items[0]
+		if (head?.role === 'divider' && head.id === page.threadId) {
+			return { rows: page.items.slice(1), divider: head.content }
+		}
+		return { rows: page.items, divider: undefined }
+	}
 
 	let isLoadingMore = $state(false)
 	let loadMoreError = $state<string | null>(null)
@@ -41,8 +100,27 @@
 	let activityError = $state<string | null>(null)
 	let isLoadingActivity = $state(false)
 
+	// The id whose load last seeded the surface: a load invalidation
+	// mid-session must not wipe loaded pages or the followed thread,
+	// so only an agent switch (or an empty surface) re-seeds state.
+	let loadedAgentId: string | undefined
+	let seeded = false
+
 	$effect(() => {
-		thread = data.thread
+		if (loadedAgentId === data.agent.id && seeded) return
+		loadedAgentId = data.agent.id
+		seeded = true
+		const page = data.thread
+		if (page) {
+			const { rows, divider } = readPage(page)
+			segments = [
+				{ threadId: page.threadId, items: rows, dividerContent: divider }
+			]
+		} else {
+			segments = []
+		}
+		historyCursor = page?.nextCursor ?? null
+		activeThreadId = page?.threadId
 		threadError = data.threadError
 		if (!isSuperagent) {
 			activityFeed = data.activityFeed
@@ -81,6 +159,23 @@
 			// Storage unavailable: the selection lives for this session.
 		}
 	}
+
+	$effect(() => {
+		// A selection must name a catalog entry: providers change, and
+		// a stored pair the selector cannot display would still ride
+		// every prompt frame as a phantom. Once the catalog has
+		// loaded, an unknown selection reverts to default routing and
+		// is forgotten; a failed catalog load clears nothing.
+		if (!modelsStore.loaded) return
+		const selection = selectedModel
+		if (selection === null) return
+		const known = modelsStore.groups.some((g) =>
+			g.models.some(
+				(m) => m.id === selection.id && m.providerId === selection.providerId
+			)
+		)
+		if (!known) handleModelChange(null)
+	})
 
 	// One socket per conversation surface, opened eagerly on mount: a
 	// page (re)loaded mid-turn asks for lane status on connect, which
@@ -121,18 +216,40 @@
 	)
 
 	async function loadMore() {
-		if (!thread?.nextCursor || isLoadingMore) return
+		const cursor = historyCursor
+		if (cursor == null || isLoadingMore) return
 
 		isLoadingMore = true
 		loadMoreError = null
 
 		try {
-			const olderPage = await getAgentThread(
-				data.agent.id,
-				20,
-				thread.nextCursor
-			)
-			thread = mergePastThread(thread, olderPage)
+			const olderPage = await getAgentThread(data.agent.id, 20, cursor)
+			const { rows, divider } = readPage(olderPage)
+			// A thread owns exactly one segment: a page for a thread the
+			// display already carries merges there (older rows above it,
+			// the boundary arriving with the page that reaches its
+			// start); an unknown thread's page prepends as its own.
+			const existing = segments.find((s) => s.threadId === olderPage.threadId)
+			if (existing) {
+				const known = new Set(existing.items.map(threadRowKey))
+				const above = rows.filter((m) => !known.has(threadRowKey(m)))
+				const merged = {
+					...existing,
+					items: [...above, ...existing.items],
+					dividerContent: divider ?? existing.dividerContent
+				}
+				segments = segments.map((s) => (s === existing ? merged : s))
+			} else {
+				segments = [
+					{
+						threadId: olderPage.threadId,
+						items: rows,
+						dividerContent: divider
+					},
+					...segments
+				]
+			}
+			historyCursor = olderPage.nextCursor
 		} catch (e) {
 			loadMoreError =
 				e instanceof Error ? e.message : 'Failed to load more messages'
@@ -217,17 +334,27 @@
 	// projection and echo the running item's user row under its
 	// server-minted id. A turn is over when its final message or its
 	// stored failure arrives — the sink wrote before the event, so a
-	// refetch replaces the newest window (keeping any loaded older
-	// pages) and the live copies it covers are dropped, reconciling
-	// by server ids so identical prompt texts never collide. Pages
-	// arrive oldest→newest; anything already loaded that the fresh
-	// window does not carry is strictly older, so the settled turn
-	// lands at the bottom. Refetches serialize — an older response
-	// can never overwrite a newer snapshot — and a stored error
-	// whose refetch failed retries on the next terminal event
+	// refetch of the thread the turn ran in replaces that segment's
+	// window (keeping its loaded older rows) and the frozen copies it
+	// covers are dropped, reconciling by server ids so identical
+	// prompt texts never collide. Refetches serialize — an older
+	// response can never overwrite a newer snapshot — and a stored
+	// error whose refetch failed retries on the next terminal event
 	// instead of lingering as a live copy forever.
 	let reconcileChain: Promise<void> = Promise.resolve()
 	const pendingErrorRows = new Set<string>()
+	// Reconciles already scheduled per turn: a message event and the
+	// queue transition that follows it are one settlement, not two.
+	const settledItemIds = new Set<string>()
+	// The queue item currently claimed, tracked to detect the
+	// transition that ends it, and the thread each item claimed in —
+	// /new can switch the live thread while an older turn still runs,
+	// and that turn's refresh must read the thread it ran in.
+	let claimedItemId: string | null = null
+	// The claimed item's kind: a command's artifact is its completion
+	// event, so its transition schedules no refresh.
+	let claimedItemKind: string | null = null
+	const itemThreads = new Map<string, string | undefined>()
 
 	function handleSocketEvent(event: AgentSocketEvent) {
 		liveTurns.applyEvent(event)
@@ -255,9 +382,25 @@
 			// is idempotent, so snapshot replays never duplicate it. No
 			// scroll here: a claimed item must not yank a reader who
 			// moved up while it waited — only submits scroll.
+			// A command mints no user row: its work is the thread
+			// switch, which arrives as command_completed.
 			const active = event.data.active
-			if (active) {
-				liveTurns.beginUser(active.user_message_id, active.content)
+			if (active && active.kind === 'prompt') {
+				itemThreads.set(active.id, activeThreadId ?? segments.at(-1)?.threadId)
+				if (active.user_message_id) {
+					liveTurns.beginUser(active.user_message_id, active.content)
+				}
+			}
+			// A turn that ends without a message or error — a quiet
+			// stop — still needs its reconcile: the transition away
+			// from the claimed item is the only signal. A command has
+			// no stored rows: its artifact is the completion event.
+			const previous = claimedItemId
+			const previousKind = claimedItemKind
+			claimedItemId = active?.id ?? null
+			claimedItemKind = active?.kind ?? null
+			if (previous && previous !== claimedItemId && previousKind === 'prompt') {
+				queueReconcile(previous)
 			}
 		}
 		if (event.type === 'lane_status') {
@@ -267,6 +410,42 @@
 				...event.data,
 				queue_len: queueItems.length + (queueNextItem ? 1 : 0)
 			}
+		}
+		if (event.type === 'command_completed') {
+			// The durable switch committed: the boundary takes its place
+			// at the bottom of the display, and the live tail's rows
+			// freeze into the thread they ran in — above it. Commands are
+			// serialized behind the turn that was running, so every live
+			// row predates this boundary, and no chunk can arrive for a
+			// frozen row afterwards.
+			activeThreadId = event.data.thread_id
+			successorThread.set(event.data.previous_thread_id, event.data.thread_id)
+			// Nothing displayed yet: the first page supplies its own
+			// boundary.
+			if (segments.length === 0) return
+			const last = segments[segments.length - 1]
+			// A replayed event: the boundary is already in place.
+			if (last.threadId === event.data.thread_id) return
+			// Freeze the tail into the thread its rows belong to. A row
+			// the segment already carries by key stays as it is: the
+			// stored copy and the live copy are the same row, and the
+			// settle refresh reconciles the content.
+			const known = new Set(last.items.map(threadRowKey))
+			const frozen = liveTurns.takeRows().filter((m) => {
+				const key = threadRowKey(m)
+				if (known.has(key)) return false
+				known.add(key)
+				return true
+			})
+			segments = [
+				...segments.slice(0, -1),
+				{ ...last, items: [...last.items, ...frozen] },
+				{
+					threadId: event.data.thread_id,
+					items: [],
+					dividerContent: event.data.divider.content
+				}
+			]
 		}
 		if (event.type === 'message') {
 			queueReconcile(event.data.id)
@@ -278,19 +457,65 @@
 
 	function queueReconcile(turnId: string, errorRowId?: string) {
 		if (errorRowId) pendingErrorRows.add(errorRowId)
-		reconcileChain = reconcileChain.then(() => reconcileTurn(turnId))
+		if (settledItemIds.has(turnId)) {
+			return
+		}
+		settledItemIds.add(turnId)
+		// The thread is captured when the reconcile is scheduled: a
+		// later /new switches the live thread, and this turn's rows
+		// still belong to the one it ran in.
+		const turnThread =
+			itemThreads.get(turnId) ?? activeThreadId ?? segments.at(-1)?.threadId
+		reconcileChain = reconcileChain.then(() =>
+			reconcileTurn(turnId, turnThread)
+		)
 	}
 
-	async function reconcileTurn(id: string) {
+	async function reconcileTurn(id: string, turnThread?: string) {
 		// The stored errors this pass may settle; the rest retry.
 		const settlingErrors = [...pendingErrorRows]
 		try {
-			const fresh = await getAgentThread(data.agent.id, 20)
-			const loaded = thread?.items ?? []
-			const freshIds = new Set(fresh.items.map((m) => m.id))
-			thread = {
-				items: [...loaded.filter((m) => !freshIds.has(m.id)), ...fresh.items],
-				nextCursor: fresh.nextCursor
+			const fresh = await getAgentThread(
+				data.agent.id,
+				20,
+				turnThread ? `${turnThread}:` : undefined
+			)
+			const { rows, divider } = readPage(fresh)
+			const freshKeys = new Set(fresh.items.map(threadRowKey))
+			const target = segments.find((s) => s.threadId === fresh.threadId)
+			if (target) {
+				// Loaded older rows stay; this turn's frozen live copies
+				// go — the answer keys on the turn id and tool rows on the
+				// turn that ran them, while the stored rows carry ids in
+				// their own namespace — and the fresh copies replace their
+				// stale versions by key.
+				target.items = [
+					...target.items.filter(
+						(m) =>
+							m.id !== id && m.turnId !== id && !freshKeys.has(threadRowKey(m))
+					),
+					...rows
+				]
+				// The page that reaches a thread's start proves it has a
+				// predecessor: its boundary belongs above the segment.
+				target.dividerContent = target.dividerContent ?? divider
+				segments = [...segments]
+			} else {
+				// A thread the display has not seen: slot it above its
+				// successor when a command event named one, else at the
+				// bottom — it is the newest thread the turn ran in.
+				const segment: ThreadSegment = {
+					threadId: fresh.threadId,
+					items: rows,
+					dividerContent: divider ?? 'New session'
+				}
+				const at = segments.findIndex(
+					(s) => s.threadId === successorThread.get(fresh.threadId)
+				)
+				segments =
+					at >= 0
+						? [...segments.slice(0, at), segment, ...segments.slice(at)]
+						: [...segments, segment]
 			}
 			liveTurns.settleTurn(
 				id,
@@ -298,11 +523,16 @@
 				fresh.items.filter((m) => m.role === 'error').map((m) => m.id)
 			)
 			for (const errorId of settlingErrors) {
-				if (freshIds.has(errorId)) pendingErrorRows.delete(errorId)
+				if (freshKeys.has(`msg:${errorId}`)) pendingErrorRows.delete(errorId)
 			}
 		} catch {
-			// Refetch failed: the live tail stays the truth until the
+			// Refetch failed: displayed content stays the truth, and the
 			// next terminal event retries the pending stored errors.
+		} finally {
+			// Retire this turn's bookkeeping: neither the settled set nor
+			// the thread map may grow for the life of the page.
+			settledItemIds.delete(id)
+			itemThreads.delete(id)
 		}
 	}
 
@@ -336,10 +566,10 @@
 	agent={data.agent}
 	{activeTab}
 	onTabChange={isSuperagent ? selectTab : undefined}
-	threadItems={thread?.items}
+	{threadItems}
 	liveItems={liveTurns.messages}
 	{threadError}
-	threadNextCursor={thread?.nextCursor}
+	{threadNextCursor}
 	threadIsLoadingMore={isLoadingMore}
 	threadLoadMoreError={loadMoreError}
 	onThreadLoadMore={loadMore}

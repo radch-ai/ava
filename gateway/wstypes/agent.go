@@ -1,5 +1,13 @@
 package wstypes
 
+// Queue item kinds. QueueItemKindPrompt is an ordinary Eino turn;
+// QueueItemKindNewThread is a /new or /reset command. Every item
+// carries one of these — there is no zero-value spelling.
+const (
+	QueueItemKindPrompt    = "prompt"
+	QueueItemKindNewThread = "new_thread"
+)
+
 // ModelRef is a prompt's model selection: the model id plus the
 // provider row that owns it.
 type ModelRef struct {
@@ -42,21 +50,46 @@ type LaneStatus struct {
 }
 
 // QueueItem is one queued prompt: the model selection captured at
-// submission (nil = default routing) rides the item.
+// submission (nil = default routing) rides the item. Kind is always
+// set — a command or an ordinary prompt.
 type QueueItem struct {
 	ID      string    `json:"id"`
 	Content string    `json:"content"`
+	Kind    string    `json:"kind,omitempty"`
 	Model   *ModelRef `json:"model,omitempty"`
 }
 
 // QueueActiveItem is the executing item. UserMessageID names the
 // started turn's persisted user row — distinct from the stream ID,
-// which stays the item ID.
+// which stays the item ID. Commands persist no user row, so they omit
+// it. Kind is always set, like the queued item's.
 type QueueActiveItem struct {
 	ID            string    `json:"id"`
 	Content       string    `json:"content"`
+	Kind          string    `json:"kind,omitempty"`
 	Model         *ModelRef `json:"model,omitempty"`
-	UserMessageID string    `json:"user_message_id"`
+	UserMessageID string    `json:"user_message_id,omitempty"`
+}
+
+// CommandCompletedEvent is the payload of a command_completed event:
+// the durable thread switch committed. Divider is the display record
+// the UI appends; PreviousThreadID names the thread the new one
+// replaced.
+type CommandCompletedEvent struct {
+	ItemID           string        `json:"item_id"`
+	ThreadID         string        `json:"thread_id"`
+	PreviousThreadID string        `json:"previous_thread_id"`
+	Divider          ThreadDivider `json:"divider"`
+}
+
+// ThreadDivider is one thread boundary's display record: the thread
+// id as its id, the boundary label, and the thread's creation time.
+// It mirrors the display endpoint's generated divider row, in the
+// wire's snake_case.
+type ThreadDivider struct {
+	ID        string `json:"id"`
+	Content   string `json:"content"`
+	CreatedAt string `json:"created_at"`
 }
 
 // QueueResultEvent is the payload of a queue_result event: the reply

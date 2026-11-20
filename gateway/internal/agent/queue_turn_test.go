@@ -105,10 +105,10 @@ func TestSendNowInterruptsActiveAndRunsSelectedNext(t *testing.T) {
 	// A parks mid-stream; B and C wait behind it, both quick.
 	submit(t, mgr, "agent-sendnow", "conn-1", sc, "slow question")
 	_, err := mgr.Submit("agent-sendnow", "conn-1", sc,
-		"b waits", &apitypes.ModelEntry{ID: "quick"})
+		"b waits", &apitypes.ModelEntry{ID: "quick"}, "")
 	require.NoError(t, err)
 	cID, err := mgr.Submit("agent-sendnow", "conn-1", sc,
-		"c chosen", &apitypes.ModelEntry{ID: "quick"})
+		"c chosen", &apitypes.ModelEntry{ID: "quick"}, "")
 	require.NoError(t, err)
 
 	// The parked turn's first chunk is on the wire.

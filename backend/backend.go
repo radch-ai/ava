@@ -84,7 +84,7 @@ func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte) (http.Handler, 
 
 	// Agents.
 	mux.Handle("GET /agents", api.Log(logger, agents.GetAgents(queries)))
-	mux.Handle("POST /agent", api.Log(logger, agent.CreateAgent(queries)))
+	mux.Handle("POST /agent", api.Log(logger, agent.CreateAgent(sqlDB, queries)))
 	mux.Handle("GET /agent/{id}/config", api.Log(logger, agent.GetAgentConfig(queries)))
 	mux.Handle("PATCH /agent/{id}/config", api.Log(logger, agent.UpdateAgentConfig(queries)))
 

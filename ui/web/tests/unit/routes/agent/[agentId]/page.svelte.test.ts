@@ -12,7 +12,6 @@ vi.mock('#lib/services/agent', async (importOriginal) => {
 		getAgentActivityFeed: vi.fn(),
 		mergePastFeed: vi.fn(),
 		getAgentThread: vi.fn(),
-		mergePastThread: vi.fn(),
 		getAgentConfig: vi.fn(),
 		updateAgentConfig: vi.fn(),
 		updateHeartbeat: vi.fn(),

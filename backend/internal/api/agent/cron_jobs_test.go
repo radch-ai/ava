@@ -27,13 +27,11 @@ func cronStore(t *testing.T) *db.Queries {
 		t.Fatalf("seed provider: %v", err)
 	}
 	queries := db.New(sqlDB)
-	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
 		ID: "research", Name: "Research", Icon: "globe",
 		SoulPersonality: "curious", SoulIdentity: "verifies claims",
 		OperatingInstructions: "cite everything", ToolsContext: "",
-	}); err != nil {
-		t.Fatalf("seed agent: %v", err)
-	}
+	})
 	return queries
 }
 

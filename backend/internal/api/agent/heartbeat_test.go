@@ -28,11 +28,9 @@ func TestUpdateHeartbeatUnknownAgent(t *testing.T) {
 func TestUpdateHeartbeatUpsertsSingleRow(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
 	queries := db.New(sqlDB)
-	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
 		ID: "research", Name: "Research", Icon: "globe",
-	}); err != nil {
-		t.Fatalf("seed agent: %v", err)
-	}
+	})
 
 	patch := `{"model":null,"enabled":true,"duration":"30m","content":"first"}`
 	for _, body := range []string{patch,
@@ -70,11 +68,9 @@ func TestUpdateHeartbeatUpsertsSingleRow(t *testing.T) {
 func TestUpdateHeartbeatModelPair(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
 	queries := db.New(sqlDB)
-	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
 		ID: "research", Name: "Research", Icon: "globe",
-	}); err != nil {
-		t.Fatalf("seed agent: %v", err)
-	}
+	})
 	if _, err := sqlDB.Exec(
 		`INSERT INTO providers (id, name, base_url) VALUES ('p-1', 'P1', 'https://p1.dev/v1')`,
 	); err != nil {

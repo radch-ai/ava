@@ -19,6 +19,11 @@ import (
 	"github.com/radch-ai/ava/backend/internal/db"
 )
 
+// ErrUnknownAgent is the pointer resolve's answer for an agent that
+// does not exist — surfaced verbatim so callers can tell a missing
+// agent from a storage failure.
+var ErrUnknownAgent = errors.New("agent not found")
+
 // AgentThreadCall is one model-authored call inside an assistant
 // message's tool-call group. Arguments is the model's JSON text,
 // stored and returned verbatim.
@@ -70,14 +75,15 @@ type ThreadMessageDraft struct {
 	ToolCalls []byte
 }
 
-// AppendThreadMessages writes drafts to an agent's thread in one
-// transaction: either every row becomes visible or none does. A draft
-// may carry its own id (terminal error rows name theirs on the wire);
-// otherwise one is minted. Each row gets a millisecond timestamp,
+// AppendThreadMessages writes drafts to the agent's active thread in
+// one transaction: either every row becomes visible or none does. The
+// active pointer is resolved inside the transaction, so a batch can
+// never straddle a pointer swap. Each row gets a millisecond timestamp,
 // strictly rising within the call and across calls — the assistant row
 // a turn appends after its user row always sorts after it. A rolled-back
-// batch leaves nothing visible. Unknown agents fail on the
-// foreign key; the caller decides whether that matters.
+// batch leaves nothing visible. A non-empty batch for an unknown
+// agent fails on the pointer resolve; an empty batch writes nothing
+// and resolves nothing.
 func (s *TurnService) AppendThreadMessages(ctx context.Context, agentID string, msgs []ThreadMessageDraft) error {
 	if len(msgs) == 0 {
 		return nil
@@ -88,6 +94,18 @@ func (s *TurnService) AppendThreadMessages(ctx context.Context, agentID string, 
 		if err := validateDraft(m); err != nil {
 			return fmt.Errorf("append thread message: draft %d: %w", i, err)
 		}
+	}
+	// Supplied ids are the caller's claim about stored rows; a batch
+	// repeating one would collide inside its own transaction.
+	seen := make(map[string]struct{}, len(msgs))
+	for i, m := range msgs {
+		if m.ID == "" {
+			continue
+		}
+		if _, dup := seen[m.ID]; dup {
+			return fmt.Errorf("append thread message: draft %d: duplicate row id %q", i, m.ID)
+		}
+		seen[m.ID] = struct{}{}
 	}
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
@@ -102,6 +120,14 @@ func (s *TurnService) AppendThreadMessages(ctx context.Context, agentID string, 
 		return fmt.Errorf("append thread message: %w", err)
 	}
 	qtx := s.queries.WithTx(tx)
+	threadID, err := qtx.GetActiveThreadID(ctx, agentID)
+	if err != nil {
+		_ = tx.Rollback()
+		if errors.Is(err, sql.ErrNoRows) {
+			err = ErrUnknownAgent
+		}
+		return fmt.Errorf("append thread message: resolve active thread: %w", err)
+	}
 	for i, m := range msgs {
 		id := m.ID
 		if id == "" {
@@ -119,12 +145,19 @@ func (s *TurnService) AppendThreadMessages(ctx context.Context, agentID string, 
 			CreatedAt: now + int64(i),
 			TurnID:    m.TurnID,
 			ToolCalls: toolCalls,
+			ThreadID:  threadID,
 		}); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("append thread message: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
+		// A commit the store applied but reported failed must not
+		// leave later batches minting timestamps at or below rows it
+		// committed: resync the watermark from storage.
+		if max, rerr := s.queries.MaxThreadCreatedAt(context.Background()); rerr == nil && max > s.lastPersistedMs {
+			s.lastPersistedMs = max
+		}
 		return fmt.Errorf("append thread message: %w", err)
 	}
 	s.lastPersistedMs = now + int64(len(msgs)) - 1
@@ -135,7 +168,9 @@ func (s *TurnService) AppendThreadMessages(ctx context.Context, agentID string, 
 // corruption, so the write path can never poison a thread: a tool
 // row's content must decode as an envelope naming its call (Result's
 // string type enforces the JSON-string form), and an assistant call
-// group must be well-formed JSON with unique, fully-named calls.
+// group must be well-formed JSON with unique, fully-named calls. Tool
+// calls attached to any other role are rejected: replay only reads
+// them off assistant rows.
 func validateDraft(m ThreadMessageDraft) error {
 	if m.Role == apitypes.ThreadRoleTool {
 		var env ToolEnvelope
@@ -147,6 +182,9 @@ func validateDraft(m ThreadMessageDraft) error {
 		}
 	}
 	if len(m.ToolCalls) > 0 {
+		if m.Role != apitypes.ThreadRoleAssistant {
+			return errors.New("tool calls on non-assistant row")
+		}
 		var calls []AgentThreadCall
 		if err := json.Unmarshal(m.ToolCalls, &calls); err != nil {
 			return fmt.Errorf("tool calls: %w", err)
@@ -165,10 +203,11 @@ func validateDraft(m ThreadMessageDraft) error {
 	return nil
 }
 
-// GetAgentThread reads the agent's conversation as model input,
-// oldest first, projected from the raw rows ListThreadRows returns —
-// the naming family of GetAgentConfig. Error rows are display-only
-// and excluded. Each complete native
+// GetAgentThread reads the agent's active thread as model input,
+// oldest first, projected from the raw rows ListActiveThreadRows
+// returns — the naming family of GetAgentConfig. The display page
+// reads one thread per request instead (ListThreadPageRows). Error
+// rows are display-only and excluded. Each complete native
 // assistant call group keeps its text, call ids, names, arguments, and
 // declared order; its outcomes are emitted in that declared order. An
 // interrupted or crashed group is projected to the calls with actual
@@ -177,7 +216,17 @@ func validateDraft(m ThreadMessageDraft) error {
 // duplicate id within one group is an error:
 // the model must never see a silently corrupt history.
 func (s *TurnService) GetAgentThread(ctx context.Context, agentID string) ([]AgentThreadMessage, error) {
-	rows, err := s.queries.ListThreadRows(ctx, agentID)
+	threadID, err := s.queries.GetActiveThreadID(ctx, agentID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			err = ErrUnknownAgent
+		}
+		return nil, fmt.Errorf("resolve active thread: %w", err)
+	}
+	rows, err := s.queries.ListActiveThreadRows(ctx, db.ListActiveThreadRowsParams{
+		AgentID:  agentID,
+		ThreadID: threadID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("load thread rows: %w", err)
 	}
@@ -202,10 +251,10 @@ type threadGroup struct {
 // row order, each preceded only by its own rows; a group whose outcome
 // rows arrive after a later row of the same turn still emits them in
 // declared order, keeping the projection protocol-valid.
-func projectThread(rows []db.ListThreadRowsRow) ([]AgentThreadMessage, error) {
+func projectThread(rows []db.ListActiveThreadRowsRow) ([]AgentThreadMessage, error) {
 	msgs := make([]AgentThreadMessage, 0, len(rows))
 	var groups []*threadGroup
-	var pending []db.ListThreadRowsRow // rows of the current turn
+	var pending []db.ListActiveThreadRowsRow // rows of the current turn
 
 	flush := func() error {
 		out, err := projectTurn(pending, groups)
@@ -260,7 +309,7 @@ func projectThread(rows []db.ListThreadRowsRow) ([]AgentThreadMessage, error) {
 // projectTurn projects one turn's rows in order. Each assistant call
 // group is emitted with the outcomes actually recorded for it, so a
 // late-arriving outcome still lands beside its originating calls.
-func projectTurn(rows []db.ListThreadRowsRow, groups []*threadGroup) ([]AgentThreadMessage, error) {
+func projectTurn(rows []db.ListActiveThreadRowsRow, groups []*threadGroup) ([]AgentThreadMessage, error) {
 	out := make([]AgentThreadMessage, 0, len(rows))
 	groupAt := make(map[int]*threadGroup, len(groups))
 	for _, g := range groups {

@@ -27,11 +27,9 @@ func toolsDB(t *testing.T, ephemeral bool) (*sql.DB, *db.Queries, *backend.TurnS
 		t.Fatalf("backend.New: %v", err)
 	}
 	queries := db.New(sqlDB)
-	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
 		ID: "research", Name: "Research", Icon: "globe",
-	}); err != nil {
-		t.Fatalf("seed agent: %v", err)
-	}
+	})
 	return sqlDB, queries, svc
 }
 

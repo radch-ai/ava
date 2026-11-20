@@ -1,11 +1,20 @@
-// The thread endpoint: GET /agent/{id}/thread — the agent's
-// conversation in display order. The page and the gateway's replay
-// projection read the same raw-row query (ListThreadRows), so the
+// The thread endpoint: GET /agent/{id}/thread — one thread's
+// conversation in display order. A page is thread-scoped: the
+// no-cursor read starts at the agent's active thread, and each page
+// names the next one through an opaque cursor. The page reads
+// ListThreadPageRows; the gateway's replay projection reads the
+// active thread (ListActiveThreadRows via the resolved pointer). The
 // limit applies to visible rows: structure-only rows (empty assistant
 // records that carry only tool-call structure) never consume a page
-// slot or hide older visible history. Each page is answered
-// oldest-to-newest; the cursor names the answered page's oldest
-// message, and the next page is strictly older.
+// slot or hide older visible history.
+//
+// Each page is answered oldest-to-newest. The cursor names a position
+// inside one thread — `<thread_id>:<message_id>` for a message
+// anchor, `<thread_id>:` for that thread's newest page. Walking past
+// a thread's oldest visible row crosses into its predecessor: the
+// page that exhausts a thread carries the "New session" divider,
+// generated from the thread record whose previous_thread_id names the
+// thread before it.
 package agent
 
 import (
@@ -13,14 +22,17 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/backend/internal/api"
 	"github.com/radch-ai/ava/backend/internal/db"
 )
+
+// dividerText is the label a thread boundary renders.
+const dividerText = "New session"
 
 // parseLimit reads ?limit: garbage falls back to the default, the
 // floor is 1, the cap 100.
@@ -45,85 +57,190 @@ func isoTime(ms int64) string {
 	return time.UnixMilli(ms).UTC().Format("2006-01-02T15:04:05.000Z")
 }
 
-// threadMessage assembles one wire message from a row's columns.
-func threadMessage(row db.ListThreadRowsRow) apitypes.ThreadMessage {
+// divider is the display record of one thread boundary: the thread's
+// own id keys it, its creation time dates it.
+func divider(threadID string, createdAt int64, text string) apitypes.ThreadMessage {
 	return apitypes.ThreadMessage{
-		ID:        row.ID,
-		Role:      apitypes.ThreadRole(row.Role),
-		Content:   row.Content,
-		CreatedAt: isoTime(row.CreatedAt),
+		ID:        threadID,
+		Role:      apitypes.ThreadRoleDivider,
+		Content:   text,
+		CreatedAt: isoTime(createdAt),
 	}
 }
 
-// visible reports whether a row renders: an assistant record with no
-// text is working-context structure (a tool-call group's record or an
-// empty settle), already shown by its adjacent rows.
-func visible(row db.ListThreadRowsRow) bool {
-	return apitypes.ThreadRole(row.Role) != apitypes.ThreadRoleAssistant || row.Content != ""
+// threadCursor is a parsed page anchor: the thread to read and, when
+// messageID is non-empty, the message inside it to read strictly
+// older than.
+type threadCursor struct {
+	threadID  string
+	messageID string
 }
 
-// GetThread answers one page of the agent's conversation.
+// parseThreadCursor splits an opaque cursor into its two halves. The
+// colon is required — an empty thread id is invalid.
+func parseThreadCursor(raw string) (threadCursor, bool) {
+	threadID, messageID, ok := strings.Cut(raw, ":")
+	if !ok || threadID == "" {
+		return threadCursor{}, false
+	}
+	return threadCursor{threadID: threadID, messageID: messageID}, true
+}
+
+// GetThread answers one page of one thread.
 func GetThread(queries *db.Queries) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		id := r.PathValue("id")
+		ctx := r.Context()
 
-		if _, err := queries.GetAgentID(r.Context(), id); errors.Is(err, sql.ErrNoRows) {
-			return api.WriteError(w, http.StatusNotFound, fmt.Sprintf("Agent %q not found", id))
-		} else if err != nil {
-			return fmt.Errorf("get agent %q: %w", id, err)
-		}
+		threadID := ""
+		previous := ""
+		threadCreatedAt := int64(0)
+		beforeCreatedAt := int64(0)
+		beforeMessageID := sql.NullString{}
 
-		rows, err := queries.ListThreadRows(r.Context(), id)
-		if err != nil {
-			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-			return fmt.Errorf("load thread for %q: %w", id, err)
-		}
-
-		// The cursor must name one of this agent's rows — the read
-		// is agent-scoped, so a foreign cursor is invalid by
-		// construction.
-		end := len(rows)
-		cursor := r.URL.Query().Get("cursor")
-		if cursor != "" {
-			anchor := -1
-			for i := len(rows) - 1; i >= 0; i-- {
-				if rows[i].ID == cursor {
-					anchor = i
-					break
-				}
+		raw := r.URL.Query().Get("cursor")
+		if raw == "" {
+			// Every agent has an active thread (create-agent seeds it
+			// transactionally), so the pointer read answers both
+			// existence and the entry thread in one round trip.
+			meta, err := queries.GetActiveThreadMeta(ctx, id)
+			if errors.Is(err, sql.ErrNoRows) {
+				return api.WriteError(w, http.StatusNotFound, fmt.Sprintf("Agent %q not found", id))
+			} else if err != nil {
+				return fmt.Errorf("resolve active thread for %q: %w", id, err)
 			}
-			if anchor < 0 {
+			threadID = meta.ID
+			previous = meta.PreviousThreadID.String
+			threadCreatedAt = meta.CreatedAt
+		} else {
+			// The cursor path distinguishes an unknown agent (404)
+			// from a foreign thread or message (400).
+			if _, err := queries.GetAgentID(ctx, id); errors.Is(err, sql.ErrNoRows) {
+				return api.WriteError(w, http.StatusNotFound, fmt.Sprintf("Agent %q not found", id))
+			} else if err != nil {
+				return fmt.Errorf("get agent %q: %w", id, err)
+			}
+			cursor, ok := parseThreadCursor(raw)
+			if !ok {
 				return api.WriteError(w, http.StatusBadRequest, "Invalid cursor")
 			}
-			end = anchor
+			meta, err := queries.GetThreadMeta(ctx, db.GetThreadMetaParams{
+				AgentID: id, ID: cursor.threadID,
+			})
+			if errors.Is(err, sql.ErrNoRows) {
+				return api.WriteError(w, http.StatusBadRequest, "Invalid cursor")
+			} else if err != nil {
+				return fmt.Errorf("resolve thread for %q: %w", id, err)
+			}
+			threadID = cursor.threadID
+			previous = meta.PreviousThreadID.String
+			threadCreatedAt = meta.CreatedAt
+			if cursor.messageID != "" {
+				// The anchor must be a visible row of this thread:
+				// a foreign id is an invalid cursor, not an empty page.
+				anchor, err := queries.GetThreadMessageMeta(ctx, db.GetThreadMessageMetaParams{
+					AgentID: id, ThreadID: threadID, ID: cursor.messageID,
+				})
+				if errors.Is(err, sql.ErrNoRows) {
+					return api.WriteError(w, http.StatusBadRequest, "Invalid cursor")
+				} else if err != nil {
+					return fmt.Errorf("resolve cursor for %q: %w", id, err)
+				}
+				beforeCreatedAt = anchor.CreatedAt
+				beforeMessageID = sql.NullString{String: anchor.ID, Valid: true}
+			}
 		}
 
-		// Take up to limit visible rows ending at `end`: the page is
-		// the newest visible window older than the cursor (or the
-		// newest window of all).
+		// One row beyond the limit proves older visible rows exist —
+		// the visibility filter runs in SQL, so hidden structure rows
+		// never consume a slot or fake a continuation.
 		limit := parseLimit(r)
-		start := end
-		count := int64(0)
-		for start > 0 && count < limit {
-			start--
-			if visible(rows[start]) {
-				count++
+		var items []apitypes.ThreadMessage
+		var oldestRowID string
+		hasOlder := false
+		if beforeMessageID.Valid {
+			anchored, err := queries.ListThreadPageRowsBefore(ctx, db.ListThreadPageRowsBeforeParams{
+				AgentID:         id,
+				ThreadID:        threadID,
+				BeforeCreatedAt: beforeCreatedAt,
+				BeforeID:        beforeMessageID.String,
+				Limit:           limit + 1,
+			})
+			if err != nil {
+				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+				return fmt.Errorf("load thread for %q: %w", id, err)
+			}
+			if int64(len(anchored)) > limit {
+				anchored = anchored[:limit]
+				hasOlder = true
+			}
+			items = make([]apitypes.ThreadMessage, 0, len(anchored)+1)
+			// The read is newest-first; the page answers oldest-first.
+			// The boundary sits above the thread's oldest rows.
+			if !hasOlder && previous != "" {
+				items = append(items, divider(threadID, threadCreatedAt, dividerText))
+			}
+			for i := len(anchored) - 1; i >= 0; i-- {
+				items = append(items, apitypes.ThreadMessage{
+					ID:        anchored[i].ID,
+					Role:      apitypes.ThreadRole(anchored[i].Role),
+					Content:   anchored[i].Content,
+					CreatedAt: isoTime(anchored[i].CreatedAt),
+				})
+			}
+			if len(anchored) > 0 {
+				oldestRowID = anchored[len(anchored)-1].ID
+			}
+		} else {
+			newest, err := queries.ListThreadPageRows(ctx, db.ListThreadPageRowsParams{
+				AgentID:  id,
+				ThreadID: threadID,
+				Limit:    limit + 1,
+			})
+			if err != nil {
+				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+				return fmt.Errorf("load thread for %q: %w", id, err)
+			}
+			if int64(len(newest)) > limit {
+				newest = newest[:limit]
+				hasOlder = true
+			}
+			items = make([]apitypes.ThreadMessage, 0, len(newest)+1)
+			if !hasOlder && previous != "" {
+				items = append(items, divider(threadID, threadCreatedAt, dividerText))
+			}
+			for i := len(newest) - 1; i >= 0; i-- {
+				items = append(items, apitypes.ThreadMessage{
+					ID:        newest[i].ID,
+					Role:      apitypes.ThreadRole(newest[i].Role),
+					Content:   newest[i].Content,
+					CreatedAt: isoTime(newest[i].CreatedAt),
+				})
+			}
+			if len(newest) > 0 {
+				oldestRowID = newest[len(newest)-1].ID
 			}
 		}
 
-		items := make([]apitypes.ThreadMessage, 0, count)
-		for _, row := range rows[start:end] {
-			if !visible(row) {
-				continue
-			}
-			items = append(items, threadMessage(row))
-		}
-		// A cursor exists only when an older visible row does.
 		var next *string
-		if len(items) > 0 && start > 0 && slices.ContainsFunc(rows[:start], visible) {
-			oldest := items[0].ID
-			next = &oldest
+		switch {
+		case hasOlder:
+			// Continue inside this thread, strictly older than the
+			// oldest row answered.
+			older := threadID + ":" + oldestRowID
+			next = &older
+		case previous != "":
+			// The thread is exhausted: its boundary is already at the
+			// bottom of what the reader has, and the predecessor's
+			// newest page follows.
+			older := previous + ":"
+			next = &older
 		}
-		return api.WriteJSON(w, http.StatusOK, apitypes.ThreadPage{Items: items, NextCursor: next})
+
+		return api.WriteJSON(w, http.StatusOK, apitypes.ThreadPage{
+			Items:      items,
+			NextCursor: next,
+			ThreadID:   threadID,
+		})
 	}
 }

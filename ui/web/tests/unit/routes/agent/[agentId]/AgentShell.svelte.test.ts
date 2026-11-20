@@ -5,11 +5,11 @@ import type { ActivityFeed, AgentActivityItem } from '#lib/services/agent'
 import type { AgentIdentity } from '#lib/types/agent'
 import TestWrapper from './TestWrapper.svelte'
 
-vi.mock('#lib/services/agent', () => ({
+vi.mock('#lib/services/agent', async (importOriginal) => ({
+	...((await importOriginal()) as Record<string, unknown>),
 	getAgentActivityFeed: vi.fn(),
 	mergePastFeed: vi.fn(),
 	getAgentThread: vi.fn(),
-	mergePastThread: vi.fn(),
 	getAgentConfig: vi.fn(),
 	updateAgentConfig: vi.fn(),
 	updateHeartbeat: vi.fn(),
@@ -30,7 +30,7 @@ const mockGetAgentConfig = vi.mocked(getAgentConfig)
 
 interface ThreadItem {
 	id: string
-	role: 'user' | 'assistant'
+	role: 'user' | 'assistant' | 'divider'
 	content: string
 }
 

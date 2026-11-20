@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -17,20 +18,15 @@ import (
 	"github.com/radch-ai/ava/backend"
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/backend/internal/db"
+	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
-func seedThreadAgent(t *testing.T, sqlDB *sql.DB, id string) {
+func readThread(t *testing.T, sqlDB *sql.DB, agentID string) []db.ListActiveThreadRowsRow {
 	t.Helper()
-	if _, err := sqlDB.ExecContext(context.Background(),
-		`INSERT INTO agents (id, name, icon, soul_personality, soul_identity, operating_instructions, tools_context)
-		 VALUES (?, 'Thread', 'globe', '', '', '', '')`, id); err != nil {
-		t.Fatalf("seed agent: %v", err)
-	}
-}
-
-func readThread(t *testing.T, sqlDB *sql.DB, agentID string) []db.ListThreadRowsRow {
-	t.Helper()
-	rows, err := db.New(sqlDB).ListThreadRows(context.Background(), agentID)
+	rows, err := db.New(sqlDB).ListActiveThreadRows(context.Background(), db.ListActiveThreadRowsParams{
+		AgentID:  agentID,
+		ThreadID: testdb.ThreadID(agentID),
+	})
 	if err != nil {
 		t.Fatalf("read thread: %v", err)
 	}
@@ -39,7 +35,7 @@ func readThread(t *testing.T, sqlDB *sql.DB, agentID string) []db.ListThreadRows
 
 func TestAppendThreadMessagesMintsOrderedRows(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
-	seedThreadAgent(t, sqlDB, "a1")
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "a1", Name: "Thread", Icon: "globe"})
 
 	err := svc.AppendThreadMessages(context.Background(), "a1",
 		[]backend.ThreadMessageDraft{
@@ -73,7 +69,7 @@ func TestAppendThreadMessagesMintsOrderedRows(t *testing.T) {
 
 func TestAppendThreadMessagesToolDraftRoundTrip(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
-	seedThreadAgent(t, sqlDB, "a2")
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "a2", Name: "Thread", Icon: "globe"})
 
 	// One turn's rows: prompt, a tool invocation, the answer — the
 	// envelope verbatim as content.
@@ -119,7 +115,7 @@ func TestAppendThreadMessagesToolDraftRoundTrip(t *testing.T) {
 
 func TestAppendThreadMessagesTimestampsRiseAcrossCalls(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
-	seedThreadAgent(t, sqlDB, "a1")
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "a1", Name: "Thread", Icon: "globe"})
 
 	ctx := context.Background()
 	// Two turns can complete within one millisecond; the sink owns
@@ -147,14 +143,14 @@ func TestAppendThreadMessagesRejectsUnknownAgent(t *testing.T) {
 	_, svc := resolverDB(t)
 	err := svc.AppendThreadMessages(context.Background(), "ghost",
 		[]backend.ThreadMessageDraft{{Role: apitypes.ThreadRoleUser, Content: "hello"}})
-	if err == nil {
-		t.Fatal("append for unknown agent succeeded, want the FK to reject it")
+	if !errors.Is(err, backend.ErrUnknownAgent) {
+		t.Fatalf("append error = %v, want ErrUnknownAgent", err)
 	}
 }
 
 func TestAppendThreadMessagesUsesSuppliedID(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
-	seedThreadAgent(t, sqlDB, "a3")
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "a3", Name: "Thread", Icon: "globe"})
 
 	// Terminal error rows name themselves on the wire; the sink must
 	// store that exact id, not mint a fresh one.
@@ -180,12 +176,12 @@ func TestAppendThreadMessagesUsesSuppliedID(t *testing.T) {
 // visible, and the next read returns only what committed.
 func TestAppendThreadMessagesBatchIsAtomic(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
-	seedThreadAgent(t, sqlDB, "atomic")
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "atomic", Name: "Thread", Icon: "globe"})
 
 	// A pre-existing id makes the batch's second row fail.
 	if _, err := sqlDB.Exec(
-		`INSERT INTO thread_messages (id, agent_id, role, content, created_at, turn_id)
-		 VALUES ('taken', 'atomic', 'error', 'existing', 1, '')`); err != nil {
+		`INSERT INTO thread_messages (id, agent_id, role, content, created_at, turn_id, thread_id)
+		 VALUES ('taken', 'atomic', 'error', 'existing', 1, '', ?)`, testdb.ThreadID("atomic")); err != nil {
 		t.Fatalf("seed row: %v", err)
 	}
 
@@ -214,7 +210,7 @@ func TestAppendThreadMessagesBatchIsAtomic(t *testing.T) {
 
 func TestAppendThreadMessagesRejectsCorruptDrafts(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
-	seedThreadAgent(t, sqlDB, "guard")
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "guard", Name: "Thread", Icon: "globe"})
 
 	// A call group with a nameless call and one with a repeated id —
 	// both fail the read path's structure contract at write time.
@@ -253,6 +249,17 @@ func TestAppendThreadMessagesRejectsCorruptDrafts(t *testing.T) {
 			name:   "group with repeated call ids",
 			drafts: []backend.ThreadMessageDraft{{Role: apitypes.ThreadRoleAssistant, ToolCalls: dupGroup, TurnID: "t1"}},
 		},
+		{
+			name: "batch repeating a supplied row id",
+			drafts: []backend.ThreadMessageDraft{
+				{ID: "dup", Role: apitypes.ThreadRoleUser, Content: "one", TurnID: "t1"},
+				{ID: "dup", Role: apitypes.ThreadRoleAssistant, Content: "two", TurnID: "t1"},
+			},
+		},
+		{
+			name:   "tool calls on a user row",
+			drafts: []backend.ThreadMessageDraft{{Role: apitypes.ThreadRoleUser, ToolCalls: []byte("[]"), TurnID: "t1"}},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -268,14 +275,14 @@ func TestAppendThreadMessagesRejectsCorruptDrafts(t *testing.T) {
 
 func TestAppendThreadMessagesWatermarkSeededFromStore(t *testing.T) {
 	sqlDB, _ := resolverDB(t)
-	seedThreadAgent(t, sqlDB, "future")
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "future", Name: "Thread", Icon: "globe"})
 
 	// A row minted an hour ahead — a restart into a corrected clock
 	// must never append behind it.
 	ahead := time.Now().Add(time.Hour).UnixMilli()
 	if _, err := sqlDB.Exec(
-		`INSERT INTO thread_messages (id, agent_id, role, content, created_at, turn_id)
-		 VALUES ('ahead', 'future', 'user', 'from the future', ?, 't0')`, ahead); err != nil {
+		`INSERT INTO thread_messages (id, agent_id, role, content, created_at, turn_id, thread_id)
+		 VALUES ('ahead', 'future', 'user', 'from the future', ?, 't0', ?)`, ahead, testdb.ThreadID("future")); err != nil {
 		t.Fatalf("seed future row: %v", err)
 	}
 

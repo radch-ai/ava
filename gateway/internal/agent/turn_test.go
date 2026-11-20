@@ -91,7 +91,7 @@ func readQueueState(t *testing.T, c *websocket.Conn) wstypes.QueueStateEvent {
 // id — the turn's stream id on the wire.
 func submit(t *testing.T, mgr *agent.UserAgentManager, agentID, connID string, conn *websocket.Conn, content string) string {
 	t.Helper()
-	id, err := mgr.Submit(agentID, connID, conn, content, nil)
+	id, err := mgr.Submit(agentID, connID, conn, content, nil, "")
 	require.NoError(t, err)
 	return id
 }
@@ -787,7 +787,7 @@ func TestTurnPersistsAssistantBeforeFinalEvent(t *testing.T) {
 	// probe conn is disposable on purpose; the submitting conn is
 	// never touched.)
 	_, probe := wsPair(t)
-	_, err := mgr.Submit("agent-order", "conn-2", probe, "queued", nil)
+	_, err := mgr.Submit("agent-order", "conn-2", probe, "queued", nil, "")
 	require.NoError(t, err)
 
 	deadline := time.Now().Add(150 * time.Millisecond)

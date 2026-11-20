@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/radch-ai/ava/backend/internal/db"
 	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
@@ -56,12 +57,9 @@ func TestDeleteProviderNotFound(t *testing.T) {
 // stay verbatim.
 func TestDeleteProviderNullsModelOwner(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
-	if _, err := sqlDB.Exec(
-		`INSERT INTO agents (id, name, icon, soul_personality, soul_identity, operating_instructions, tools_context)
-		 VALUES ('d1', 'Del', 'globe', '', '', '', '')`,
-	); err != nil {
-		t.Fatalf("insert agent: %v", err)
-	}
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
+		ID: "d1", Name: "Del", Icon: "globe",
+	})
 	created := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Mistral","baseUrl":"`+noAuthURL(t)+`"}`)
 	id := createdID(t, created)

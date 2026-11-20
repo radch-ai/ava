@@ -7,7 +7,7 @@
 
 	interface ThreadItem {
 		id: string
-		role: 'user' | 'assistant'
+		role: 'user' | 'assistant' | 'divider'
 		content: string
 	}
 

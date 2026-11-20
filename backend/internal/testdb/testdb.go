@@ -7,6 +7,7 @@
 package testdb
 
 import (
+	"context"
 	"database/sql"
 	"path/filepath"
 	"sync"
@@ -14,6 +15,7 @@ import (
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver (pure Go)
 
+	"github.com/radch-ai/ava/backend/internal/db"
 	"github.com/radch-ai/ava/backend/internal/schema"
 )
 
@@ -59,4 +61,39 @@ func Open(t *testing.T, ephemeral bool) *sql.DB {
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	return sqlDB
+}
+
+// ThreadID is the id of the thread SeedAgent creates — the fixture
+// convention every test that seeds a thread reuses.
+func ThreadID(agentID string) string { return agentID + "-t1" }
+
+// SeedAgent inserts an agent and its initial thread in one
+// transaction, the agent row first (the active pointer's foreign key
+// is deferred). ActiveThreadID is filled from ThreadID, so callers
+// seed identity and conversation together and no fixture can leave an
+// agent without a thread.
+func SeedAgent(t *testing.T, sqlDB *sql.DB, arg db.CreateAgentParams) {
+	t.Helper()
+	threadID := ThreadID(arg.ID)
+	arg.ActiveThreadID = threadID
+	tx, err := sqlDB.Begin()
+	if err != nil {
+		t.Fatalf("seed agent: begin: %v", err)
+	}
+	q := db.New(sqlDB).WithTx(tx)
+	if err := q.CreateAgent(context.Background(), arg); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("seed agent: insert agent: %v", err)
+	}
+	if err := q.InsertThread(context.Background(), db.InsertThreadParams{
+		ID:               threadID,
+		AgentID:          arg.ID,
+		PreviousThreadID: sql.NullString{},
+	}); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("seed agent: insert thread: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("seed agent: commit: %v", err)
+	}
 }

@@ -56,11 +56,15 @@ type Config struct {
 	// to TurnService.AgentTools by the binary at boot. Zero keeps
 	// turns tool-less.
 	Tools agent.AgentToolsFunc
-	// GetAgentThread reads an agent's thread as the turn's model
-	// input — bound to TurnService.GetAgentThread by the binary at
-	// boot. Required: the working context is the committed user row,
-	// so an unbound source fails the turn.
+	// GetAgentThread reads the agent's active thread as the turn's
+	// model input — bound to TurnService.GetAgentThread by the binary
+	// at boot. Required: the working context is the committed user
+	// row, so an unbound source fails the turn.
 	GetAgentThread agent.AgentThreadSource
+	// CreateThread runs /new and /reset — bound to
+	// TurnService.CreateAndActivateThread by the binary at boot. Zero
+	// fails commands closed.
+	CreateThread agent.ThreadActivator
 }
 
 // New builds the gateway. The gateway is a single WebSocket endpoint:
@@ -73,6 +77,7 @@ func New(cfg *Config, logger zerolog.Logger) (*Gateway, error) {
 	var getConfig agent.AgentConfigSource
 	var toolsFn agent.AgentToolsFunc
 	var getThread agent.AgentThreadSource
+	var createThread agent.ThreadActivator
 	if cfg != nil {
 		if cfg.PingInterval > 0 {
 			interval = cfg.PingInterval
@@ -82,6 +87,7 @@ func New(cfg *Config, logger zerolog.Logger) (*Gateway, error) {
 		getConfig = cfg.GetAgentConfig
 		toolsFn = cfg.Tools
 		getThread = cfg.GetAgentThread
+		createThread = cfg.CreateThread
 	}
 	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{
 		ResolveModel:   resolve,
@@ -89,6 +95,7 @@ func New(cfg *Config, logger zerolog.Logger) (*Gateway, error) {
 		GetAgentConfig: getConfig,
 		Tools:          toolsFn,
 		GetAgentThread: getThread,
+		CreateThread:   createThread,
 	})
 	return &Gateway{
 		handler: handleWS(interval, logger, mgr),
@@ -229,6 +236,18 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 					}
 					continue
 				}
+				// A command is a queue item like any other, so it is
+				// admitted behind existing work and reported the same
+				// way; only its execution differs.
+				kind, reject := classifySubmission(content)
+				if reject != nil {
+					logger.Warn().Err(reject).Str("agent_id", env.AgentID).Msg("command rejected")
+					if rerr := replyQueueResult(ctx, conn, env.AgentID, msg.RequestID, "", reject); rerr != nil {
+						logger.Warn().Err(rerr).Msg("failed to send queue_result event")
+						return
+					}
+					continue
+				}
 				if !bindAgent(&joinedAgent, env.AgentID) {
 					logger.Warn().Str("agent_id", env.AgentID).Msg("connection already bound to another agent")
 					continue
@@ -248,7 +267,7 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 					Str("provider_id", providerID).
 					Int("content_len", len(content)).
 					Msg("prompt received over ws")
-				itemID, err := mgr.Submit(env.AgentID, connID, conn, content, entry)
+				itemID, err := mgr.Submit(env.AgentID, connID, conn, content, entry, kind)
 				if rerr := replyQueueResult(ctx, conn, env.AgentID, msg.RequestID, itemID, err); rerr != nil {
 					logger.Warn().Err(rerr).Msg("failed to send queue_result event")
 					return
@@ -365,7 +384,34 @@ const maxPromptBytes = 64 << 10
 var (
 	errPromptEmpty   = errors.New("prompt is empty")
 	errPromptTooLong = errors.New("prompt is too long")
+	// errCommandArguments rejects a recognized command carrying extra
+	// text: /new is the whole submission or it is an ordinary prompt.
+	errCommandArguments = errors.New("/new takes no arguments; submit /new alone")
 )
+
+// classifySubmission splits a trimmed submission into its queue kind:
+// a recognized command, an argument rejection, or an ordinary prompt —
+// including slash text that names no command.
+func classifySubmission(trimmed string) (kind string, reject error) {
+	if !strings.HasPrefix(trimmed, "/") {
+		return wstypes.QueueItemKindPrompt, nil
+	}
+	cmd := trimmed
+	if i := strings.IndexAny(cmd, " \t\n\r"); i >= 0 {
+		cmd = cmd[:i]
+	}
+	switch cmd {
+	case "/new", "/reset":
+		if cmd != trimmed {
+			// The kind is unused when reject != nil; the prompt
+			// spelling keeps one encoding in the package.
+			return wstypes.QueueItemKindPrompt, errCommandArguments
+		}
+		return wstypes.QueueItemKindNewThread, nil
+	default:
+		return wstypes.QueueItemKindPrompt, nil
+	}
+}
 
 // validatePromptContent classifies raw and trimmed prompt content:
 // raw length is bounded, trimmed emptiness rejected.

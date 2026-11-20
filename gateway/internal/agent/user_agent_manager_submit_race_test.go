@@ -53,9 +53,11 @@ func TestSubmitRacingWorkerExitNeverStrandsAcceptedItems(t *testing.T) {
 	// queue has nothing runnable, so its exit races the senders the
 	// whole way through on its own.
 	m := NewUserAgentManager(zerolog.Nop(), &UserAgentManagerOptions{
-		ResolveModel:   resolver,
-		PersistTurn:    sink,
-		GetAgentThread: func(context.Context, string) ([]backend.AgentThreadMessage, error) { return nil, nil },
+		ResolveModel: resolver,
+		PersistTurn:  sink,
+		GetAgentThread: func(context.Context, string) ([]backend.AgentThreadMessage, error) {
+			return nil, nil
+		},
 	})
 
 	s := m.state("agent-race")
@@ -71,7 +73,7 @@ func TestSubmitRacingWorkerExitNeverStrandsAcceptedItems(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			_, err := m.Submit("agent-race", "conn-1", nil,
-				fmt.Sprintf("hi-%d", i), nil)
+				fmt.Sprintf("hi-%d", i), nil, "")
 			accepted[i] = err == nil
 		}()
 	}

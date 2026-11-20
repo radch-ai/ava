@@ -21,11 +21,9 @@ func seedBuiltinAndAgent(t *testing.T, sqlDB *sql.DB, toolID, agentID string) {
 	}); err != nil {
 		t.Fatalf("seed tool: %v", err)
 	}
-	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
 		ID: agentID, Name: "Agent", Icon: "globe",
-	}); err != nil {
-		t.Fatalf("seed agent: %v", err)
-	}
+	})
 }
 
 func countAgentGrants(t *testing.T, sqlDB *sql.DB, agentID string) int {
@@ -67,11 +65,9 @@ func TestToolIDDuplicateInsertRejected(t *testing.T) {
 func TestBuiltinInsertGrantsExistingAgents(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
 	queries := db.New(sqlDB)
-	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
 		ID: "research", Name: "Research", Icon: "globe",
-	}); err != nil {
-		t.Fatalf("seed agent: %v", err)
-	}
+	})
 	if err := queries.UpsertTool(t.Context(), db.UpsertToolParams{
 		ID: "ddg", Name: "DuckDuckGo Search", Builtin: 1,
 	}); err != nil {
@@ -116,11 +112,9 @@ func TestAgentInsertGrantsInstalledBuiltins(t *testing.T) {
 	if _, err := queries.ToggleToolEnabled(t.Context(), db.ToggleToolEnabledParams{Enabled: 0, ID: "dark"}); err != nil {
 		t.Fatalf("disable dark: %v", err)
 	}
-	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
 		ID: "research", Name: "Research", Icon: "globe",
-	}); err != nil {
-		t.Fatalf("seed agent: %v", err)
-	}
+	})
 
 	rows, err := sqlDB.QueryContext(t.Context(),
 		`SELECT tool_id FROM agent_tool_preferences WHERE agent_id = 'research' ORDER BY tool_id`)

@@ -25,6 +25,23 @@ import (
 	"github.com/radch-ai/ava/gateway"
 )
 
+// readTurnOutcome reads past the turn's admission and lane brackets
+// and returns the first event that is not bookkeeping.
+func readTurnOutcome(t *testing.T, ctx context.Context, conn *coderws.Conn) map[string]any {
+	t.Helper()
+	var event map[string]any
+	for {
+		if err := wsjson.Read(ctx, conn, &event); err != nil {
+			t.Fatalf("reading turn outcome failed: %v", err)
+		}
+		switch event["type"] {
+		case "lane_status", "queue_result", "queue_state":
+			continue
+		}
+		return event
+	}
+}
+
 func dialGateway(t *testing.T) (*coderws.Conn, context.Context) {
 	t.Helper()
 	return dialConfig(t, &gateway.Config{GetAgentThread: emptyThread})
@@ -99,17 +116,7 @@ func TestPromptWithoutResolverEmitsError(t *testing.T) {
 	// The lane runs the turn; with no model resolver bound, the turn
 	// fails and the failure reaches the wire. Queue admission and the
 	// turn's lane_status bracket come first; read past them.
-	var event map[string]any
-	for {
-		if err := wsjson.Read(ctx, conn, &event); err != nil {
-			t.Fatalf("reading turn outcome failed: %v", err)
-		}
-		switch event["type"] {
-		case "lane_status", "queue_result", "queue_state":
-			continue
-		}
-		break
-	}
+	event := readTurnOutcome(t, ctx, conn)
 	if event["type"] != "error" {
 		t.Fatalf("expected error event, got %v", event["type"])
 	}
@@ -141,17 +148,7 @@ func TestPromptWithoutThreadSourceFailsTurn(t *testing.T) {
 		t.Fatalf("writing prompt failed: %v", err)
 	}
 
-	var event map[string]any
-	for {
-		if err := wsjson.Read(ctx, conn, &event); err != nil {
-			t.Fatalf("reading turn outcome failed: %v", err)
-		}
-		switch event["type"] {
-		case "lane_status", "queue_result", "queue_state":
-			continue
-		}
-		break
-	}
+	event := readTurnOutcome(t, ctx, conn)
 	if event["type"] != "error" {
 		t.Fatalf("expected error event, got %v", event["type"])
 	}
@@ -183,17 +180,7 @@ func TestPromptResolverErrorReachesWire(t *testing.T) {
 	// A resolver failure — provider missing from the store — reaches
 	// the submitting connection verbatim, past the queue admission
 	// ack and the turn's lane_status bracket.
-	var event map[string]any
-	for {
-		if err := wsjson.Read(ctx, conn, &event); err != nil {
-			t.Fatalf("reading turn outcome failed: %v", err)
-		}
-		switch event["type"] {
-		case "lane_status", "queue_result", "queue_state":
-			continue
-		}
-		break
-	}
+	event := readTurnOutcome(t, ctx, conn)
 	if event["type"] != "error" {
 		t.Fatalf("expected error event, got %v", event["type"])
 	}
@@ -412,12 +399,15 @@ func TestPromptContentValidated(t *testing.T) {
 			t.Fatalf("writing prompt %s failed: %v", requestID, err)
 		}
 	}
-	// readResult waits for the named reply. A rejected prompt must not
-	// mutate the queue, so any queue_state seen while waiting for a
-	// rejection's reply fails the test; the accepted prompt's state
-	// is expected only after its reply.
-	readResult := func(requestID string, allowQueueState bool) map[string]any {
+	// readResult answers the named reply, collecting the queue
+	// snapshots it passes on the way: the pending-rows snapshot is
+	// published by the broadcast pump and can precede the direct
+	// reply, and the claim snapshot that follows carries the item as
+	// active rather than pending — either may be the only one that
+	// ever names it.
+	readResult := func(requestID string, allowQueueState bool) (map[string]any, []map[string]any) {
 		t.Helper()
+		var snapshots []map[string]any
 		for {
 			var event map[string]any
 			if err := wsjson.Read(ctx, conn, &event); err != nil {
@@ -427,6 +417,9 @@ func TestPromptContentValidated(t *testing.T) {
 				if !allowQueueState {
 					t.Fatalf("rejected prompt %s changed queue state: %+v", requestID, event["data"])
 				}
+				if data, ok := event["data"].(map[string]any); ok {
+					snapshots = append(snapshots, data)
+				}
 				continue
 			}
 			if event["type"] != "queue_result" {
@@ -434,28 +427,50 @@ func TestPromptContentValidated(t *testing.T) {
 			}
 			data := event["data"].(map[string]any)
 			if data["request_id"] == requestID {
-				return data
+				return data, snapshots
 			}
 		}
 	}
 
 	write("ws", "   ")
-	if data := readResult("ws", false); data["accepted"] != false {
+	if data, _ := readResult("ws", false); data["accepted"] != false {
 		t.Fatalf("whitespace prompt must be rejected, got %+v", data)
 	} else if msg, _ := data["error"].(string); msg == "" {
 		t.Fatal("rejection must carry a reason")
 	}
 
 	write("long", strings.Repeat("x", 64<<10+1))
-	if data := readResult("long", false); data["accepted"] != false {
+	if data, _ := readResult("long", false); data["accepted"] != false {
 		t.Fatalf("over-length prompt must be rejected, got %+v", data)
 	}
 
 	write("trim", "  hi  ")
-	if data := readResult("trim", true); data["accepted"] != true {
+	data, snapshots := readResult("trim", true)
+	if data["accepted"] != true {
 		t.Fatalf("trimmable prompt must be accepted, got %+v", data)
 	}
+	// The admitted item may surface in a snapshot on either side of
+	// the reply or only as the active item once claimed; matching by
+	// the trimmed content proves admission trimmed it.
+	itemNamed := func(snapshot map[string]any) bool {
+		if active, ok := snapshot["active"].(map[string]any); ok && active["content"] == "hi" {
+			return true
+		}
+		items, _ := snapshot["items"].([]any)
+		for _, raw := range items {
+			if item, ok := raw.(map[string]any); ok && item["content"] == "hi" {
+				return true
+			}
+		}
+		return false
+	}
 	for {
+		for _, snapshot := range snapshots {
+			if itemNamed(snapshot) {
+				return
+			}
+		}
+		snapshots = nil
 		var event map[string]any
 		if err := wsjson.Read(ctx, conn, &event); err != nil {
 			t.Fatalf("reading queue snapshot failed: %v", err)
@@ -463,16 +478,9 @@ func TestPromptContentValidated(t *testing.T) {
 		if event["type"] != "queue_state" {
 			continue
 		}
-		snapshot := event["data"].(map[string]any)
-		items, _ := snapshot["items"].([]any)
-		if len(items) == 0 {
-			t.Fatalf("expected the admitted item in the snapshot, got %+v", snapshot)
+		if data, ok := event["data"].(map[string]any); ok {
+			snapshots = append(snapshots, data)
 		}
-		first := items[0].(map[string]any)
-		if first["content"] != "hi" {
-			t.Fatalf("admitted content must be trimmed, got %q", first["content"])
-		}
-		break
 	}
 }
 
@@ -850,4 +858,133 @@ func TestDeadPeerReaped(t *testing.T) {
 // turns without a store: no history rides the model call.
 func emptyThread(context.Context, string) ([]backend.AgentThreadMessage, error) {
 	return nil, nil
+}
+
+// Submission classification at the wire boundary: a recognized
+// command with arguments is rejected and changes no queue state,
+// while slash text that names no command is an ordinary prompt.
+func TestCommandAdmission(t *testing.T) {
+	conn, ctx := dialGateway(t)
+
+	write := func(requestID, content string) {
+		t.Helper()
+		err := wsjson.Write(ctx, conn, map[string]any{
+			"type": "prompt", "agent_id": "_superagent",
+			"data": map[string]any{"request_id": requestID, "content": content},
+		})
+		if err != nil {
+			t.Fatalf("writing prompt %s failed: %v", requestID, err)
+		}
+	}
+	// readResult answers the named reply, collecting the queue
+	// snapshots it passes on the way: the pending-rows snapshot is
+	// published by the broadcast pump and can precede the direct
+	// reply, and the claim snapshot that follows carries the item as
+	// active rather than pending — either may be the only one that
+	// ever names it.
+	readResult := func(requestID string, allowQueueState bool) (map[string]any, []map[string]any) {
+		t.Helper()
+		var snapshots []map[string]any
+		for {
+			var event map[string]any
+			if err := wsjson.Read(ctx, conn, &event); err != nil {
+				t.Fatalf("reading events failed: %v", err)
+			}
+			if event["type"] == "queue_state" {
+				if !allowQueueState {
+					t.Fatalf("rejected prompt %s changed queue state: %+v", requestID, event["data"])
+				}
+				if data, ok := event["data"].(map[string]any); ok {
+					snapshots = append(snapshots, data)
+				}
+				continue
+			}
+			if event["type"] != "queue_result" {
+				continue
+			}
+			data := event["data"].(map[string]any)
+			if data["request_id"] == requestID {
+				return data, snapshots
+			}
+		}
+	}
+	// kindOf reports the kind of the item carrying content in one
+	// queue snapshot: it is either still pending or already claimed.
+	kindOf := func(snapshot map[string]any, content string) (string, bool) {
+		if active, ok := snapshot["active"].(map[string]any); ok && active["content"] == content {
+			kind, _ := active["kind"].(string)
+			return kind, true
+		}
+		items, _ := snapshot["items"].([]any)
+		for _, raw := range items {
+			item, ok := raw.(map[string]any)
+			if !ok || item["content"] != content {
+				continue
+			}
+			kind, _ := item["kind"].(string)
+			return kind, true
+		}
+		return "", false
+	}
+	// admittedKind admits one prompt and reads its snapshot kind.
+	// Every item carries one — there is no zero-value spelling.
+	admittedKind := func(requestID, content string) string {
+		t.Helper()
+		data, snapshots := readResult(requestID, true)
+		if data["accepted"] != true {
+			t.Fatalf("prompt %s must be accepted, got %+v", requestID, data)
+		}
+		for {
+			for _, snapshot := range snapshots {
+				kind, found := kindOf(snapshot, content)
+				if !found {
+					continue
+				}
+				if kind == "" {
+					t.Fatalf("item %q carries no kind", content)
+				}
+				return kind
+			}
+			snapshots = nil
+			var event map[string]any
+			if err := wsjson.Read(ctx, conn, &event); err != nil {
+				t.Fatalf("reading queue snapshot failed: %v", err)
+			}
+			if event["type"] != "queue_state" {
+				continue
+			}
+			if data, ok := event["data"].(map[string]any); ok {
+				snapshots = append(snapshots, data)
+			}
+		}
+	}
+
+	// Arguments — after a space or a newline — reject the command: it
+	// is a bare switch, never a switch with a prompt.
+	for requestID, content := range map[string]string{
+		"args":    "/new now",
+		"reset":   "/reset extra",
+		"newline": "/new\nnow",
+	} {
+		write(requestID, content)
+		if data, _ := readResult(requestID, false); data["accepted"] != false {
+			t.Fatalf("%q must be rejected, got %+v", content, data)
+		} else if msg, _ := data["error"].(string); msg != "/new takes no arguments; submit /new alone" {
+			t.Fatalf("%q rejection reason = %q, want the command-argument message", content, msg)
+		}
+	}
+
+	// Only the exact spellings are commands: unknown slash text, a
+	// case variant, a longer word, and embedded text are prompts.
+	for requestID, content := range map[string]string{
+		"near":     "/n",
+		"case":     "/New",
+		"longer":   "/newer",
+		"embedded": "hi I want /new",
+	} {
+		write(requestID, content)
+		if kind := admittedKind(requestID, content); kind != "prompt" {
+			t.Fatalf("%q kind = %q, want prompt", content, kind)
+		}
+	}
 }

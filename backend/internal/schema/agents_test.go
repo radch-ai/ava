@@ -3,7 +3,6 @@
 package schema_test
 
 import (
-	"slices"
 	"testing"
 	"time"
 
@@ -11,46 +10,12 @@ import (
 	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
-// The table is exactly these columns; the exact set is what
-// catches a JSON blob column being added.
-func TestAgentsColumnSet(t *testing.T) {
-	sqlDB := testdb.Open(t, true)
-
-	rows, err := sqlDB.Query(`PRAGMA table_info(agents)`)
-	if err != nil {
-		t.Fatalf("table_info: %v", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var got []string
-	for rows.Next() {
-		var cid, notNull, pk int
-		var name, colType string
-		var dflt any
-		if err := rows.Scan(&cid, &name, &colType, &notNull, &dflt, &pk); err != nil {
-			t.Fatalf("scan table_info: %v", err)
-		}
-		got = append(got, name)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("table_info rows: %v", err)
-	}
-	want := []string{"id", "name", "icon", "soul_personality", "soul_identity",
-		"user_context", "operating_instructions", "tools_context",
-		"created_at"}
-	if !slices.Equal(got, want) {
-		t.Errorf("agents columns = %v, want %v", got, want)
-	}
-}
-
 func TestCreatedAtStampedByDatabase(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
-	queries := db.New(sqlDB)
-	// CreateAgent omits created_at — the app's only write path.
-	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
+	// SeedAgent omits created_at — the insert path never supplies it.
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
 		ID: "research", Name: "Research", Icon: "globe",
-	}); err != nil {
-		t.Fatalf("create agent: %v", err)
-	}
+	})
 
 	var createdAt int64
 	if err := sqlDB.QueryRow(

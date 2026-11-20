@@ -5,7 +5,7 @@ import ThreadContent from '#routes/agent/[agentId]/ThreadContent.svelte'
 
 interface ThreadItem {
 	id: string
-	role: 'user' | 'assistant' | 'tool' | 'error'
+	role: 'user' | 'assistant' | 'tool' | 'error' | 'divider'
 	content: string
 	pending?: boolean
 	name?: string
@@ -468,6 +468,34 @@ describe('ThreadContent', () => {
 
 			expect(page.getByText('Thinking').elements()).toHaveLength(0)
 			await expect.element(page.getByText('the answer')).toBeVisible()
+		})
+	})
+
+	describe('Session dividers', () => {
+		it('renders the boundary label between messages', async () => {
+			render(ThreadContent, {
+				threadItems: [
+					{ id: '1', role: 'user', content: 'before' },
+					{ id: 'thread-2', role: 'divider', content: 'New session' },
+					{ id: '2', role: 'assistant', content: 'after' }
+				]
+			})
+
+			await expect.element(page.getByText('New session')).toBeVisible()
+			await expect.element(page.getByText('before')).toBeVisible()
+			await expect.element(page.getByText('after')).toBeVisible()
+		})
+
+		it('keeps the divider keyed apart from a message with the same id', async () => {
+			render(ThreadContent, {
+				threadItems: [
+					{ id: 'thread-2', role: 'user', content: 'same id row' },
+					{ id: 'thread-2', role: 'divider', content: 'New session' }
+				]
+			})
+
+			await expect.element(page.getByText('same id row')).toBeVisible()
+			await expect.element(page.getByText('New session')).toBeVisible()
 		})
 	})
 })

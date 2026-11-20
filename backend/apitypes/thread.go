@@ -8,9 +8,14 @@ const (
 	ThreadRoleAssistant ThreadRole = "assistant"
 	ThreadRoleTool      ThreadRole = "tool"
 	ThreadRoleError     ThreadRole = "error"
+	// ThreadRoleDivider is display-only: generated from thread
+	// records, never stored.
+	ThreadRoleDivider ThreadRole = "divider"
 )
 
-// ThreadMessage is one message in the agent's conversation.
+// ThreadMessage is one message in the agent's conversation. A
+// divider's ID is its thread id — a different namespace from message
+// ids, so display keys never collide.
 type ThreadMessage struct {
 	ID        string     `json:"id"`
 	Role      ThreadRole `json:"role"`
@@ -18,11 +23,13 @@ type ThreadMessage struct {
 	CreatedAt string     `json:"createdAt"`
 }
 
-// ThreadPage is one page of the thread, its items ordered
-// oldest→newest — the display order. NextCursor names the page's
-// oldest item and is null on the last page; the page it names is
-// strictly older.
+// ThreadPage is one page of one thread, its items ordered
+// oldest→newest — the display order. NextCursor is opaque to
+// clients and is null on the last page: the first thread of the
+// chain, whose page it never names. ThreadID names the thread these
+// items belong to.
 type ThreadPage struct {
 	Items      []ThreadMessage `json:"items"`
 	NextCursor *string         `json:"nextCursor"`
+	ThreadID   string          `json:"threadId"`
 }

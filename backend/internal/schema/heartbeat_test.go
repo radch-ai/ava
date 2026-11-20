@@ -6,6 +6,7 @@ package schema_test
 import (
 	"testing"
 
+	"github.com/radch-ai/ava/backend/internal/db"
 	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
@@ -62,11 +63,9 @@ func TestHeartbeatSingletonPerAgent(t *testing.T) {
 func TestAgentDeleteCascades(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
 
-	if _, err := sqlDB.Exec(
-		`INSERT INTO agents (id, name, icon, soul_personality, soul_identity, operating_instructions, tools_context)
-		 VALUES ('temp', 'Temp', 'globe', '', '', '', '')`); err != nil {
-		t.Fatalf("insert agent: %v", err)
-	}
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
+		ID: "temp", Name: "Temp", Icon: "globe",
+	})
 	if _, err := sqlDB.Exec(
 		`INSERT INTO heartbeat (agent_id, model, enabled, duration, content)
 		 VALUES ('temp', NULL, 1, '30m', 'x')`); err != nil {

@@ -34,9 +34,10 @@ const (
 // no adapter.
 type ModelResolver = func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error)
 
-// TurnSink appends a turn's messages to an agent's thread. An alias
-// of backend TurnService.AppendThreadMessages, so the bound method
-// value needs no adapter.
+// TurnSink appends a turn's messages to the agent's active thread. An
+// alias of backend TurnService.AppendThreadMessages, so the bound
+// method value needs no adapter. The backend resolves the active
+// thread; the gateway never learns thread identities.
 type TurnSink = func(ctx context.Context, agentID string, msgs []backend.ThreadMessageDraft) error
 
 // AgentConfigSource reads an agent's editable config — the prompt
@@ -51,10 +52,15 @@ type AgentConfigSource = func(ctx context.Context, agentID string) (*apitypes.Ag
 // adapter.
 type AgentToolsFunc = func(ctx context.Context, agentID string) ([]tool.InvokableTool, error)
 
-// AgentThreadSource reads an agent's thread as the turn's model
-// input. An alias of backend TurnService.GetAgentThread, so the bound
-// method value needs no adapter.
+// AgentThreadSource reads the agent's active thread as the turn's
+// model input. An alias of backend TurnService.GetAgentThread, so the
+// bound method value needs no adapter.
 type AgentThreadSource = func(ctx context.Context, agentID string) ([]backend.AgentThreadMessage, error)
+
+// ThreadActivator runs the backend's durable create-and-activate
+// operation for a command item, returning the committed thread
+// switch. An alias of backend TurnService.CreateAndActivateThread.
+type ThreadActivator = func(ctx context.Context, agentID string) (*backend.ActivatedThread, error)
 
 // turnOutcome classifies a settled turn for the queue: only
 // outcomeMessageFailed pauses automatic dispatch.
@@ -87,10 +93,13 @@ type UserAgentOptions struct {
 	// permissions applied; bound by the gateway at boot. A failed
 	// read fails the turn; a user stop during it settles as a stop.
 	Tools AgentToolsFunc
-	// GetAgentThread reads the agent's thread as the turn's model
-	// input; bound by the gateway at boot.
+	// GetAgentThread reads one thread as the turn's model input;
+	// bound by the gateway at boot.
 	GetAgentThread AgentThreadSource
-	Logger         zerolog.Logger
+	// CreateThread runs a command item's durable thread switch; bound
+	// by the gateway at boot. An unbound seam fails commands closed.
+	CreateThread ThreadActivator
+	Logger       zerolog.Logger
 }
 
 // UserAgent is one agent's disposable runtime worker: it executes
@@ -123,6 +132,7 @@ type UserAgent struct {
 	getAgentConfig AgentConfigSource
 	tools          AgentToolsFunc
 	getAgentThread AgentThreadSource
+	createThread   ThreadActivator
 }
 
 // newUserAgent creates a worker and starts its claim loop. The turn
@@ -142,6 +152,7 @@ func newUserAgent(ctx context.Context, opts UserAgentOptions) *UserAgent {
 		getAgentConfig: opts.GetAgentConfig,
 		tools:          opts.Tools,
 		getAgentThread: opts.GetAgentThread,
+		createThread:   opts.CreateThread,
 		onExit:         opts.OnExit,
 	}
 
@@ -206,8 +217,20 @@ func (a *UserAgent) loop() {
 	}
 }
 
-// exit runs the worker's exit hook exactly once.
+// exit tells the lane's connections the worker is gone, then runs
+// the exit hook exactly once. The final turn bracket leaves active
+// true while the worker lives; without this broadcast the strip
+// shows a live lane until the next status reply. The broadcast
+// precedes the hook so a respawned worker's own events can never be
+// overtaken by this one.
 func (a *UserAgent) exit() {
+	status := a.LaneStatus()
+	status.Active = false
+	_ = a.state.conns.WriteJSON(a.ctx, wstypes.Event{
+		Type:    wstypes.EventTypeLaneStatus,
+		AgentID: a.agentID,
+		Data:    status,
+	})
 	if a.onExit != nil {
 		a.onExit(a)
 	}
@@ -229,6 +252,12 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 	// The turn's replay state starts now: joins during this turn
 	// replay whatever streams from here on.
 	a.beginTurn(msgID)
+
+	// A command item is the whole turn: the durable thread switch and
+	// its completion event, never a model call or a user row.
+	if claim.item.kind == wstypes.QueueItemKindNewThread {
+		return a.processCommand(claim, emitCtx, msgID)
+	}
 
 	// The user's words persist before anything can fail: every
 	// failure mode below keeps the prompt in the thread. The row

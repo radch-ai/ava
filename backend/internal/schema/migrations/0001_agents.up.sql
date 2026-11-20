@@ -6,6 +6,10 @@
 --     ids are system-reserved and underivable from names
 --   - timestamps are BIGINT micros since epoch, stamped by the
 --     database on insert
+--   - active_thread_id names the thread the sink resolves when
+--     writing and replay resolves when reading for the next
+--     executing prompt; the deferred FK lets agent + initial thread
+--     land in one transaction, agent first
 CREATE TABLE IF NOT EXISTS agents (
     id                     TEXT NOT NULL PRIMARY KEY,
     name                   TEXT NOT NULL,
@@ -16,7 +20,35 @@ CREATE TABLE IF NOT EXISTS agents (
     operating_instructions TEXT NOT NULL,
     tools_context          TEXT NOT NULL,
     created_at             BIGINT NOT NULL
-        DEFAULT (CAST((julianday('now') - 2440587.5) * 86400000000 AS INTEGER))
+        DEFAULT (CAST((julianday('now') - 2440587.5) * 86400000000 AS INTEGER)),
+    active_thread_id       TEXT NOT NULL,
+    FOREIGN KEY (id, active_thread_id) REFERENCES threads(agent_id, id)
+        DEFERRABLE INITIALLY DEFERRED
+);
+
+-- One row per conversation boundary; the agent's active pointer
+-- names one of these. created_at is DB-stamped epoch millis -- the
+-- conversation-record convention (0009/0010), not agents' micros.
+-- threads.agent_id is immediate: unknown agents fail at the thread
+-- insert. The composite unique key is the FK parent for the pointer,
+-- for thread_messages, and for the predecessor link, so a message or
+-- a predecessor can never name another agent's thread.
+--   - previous_thread_id names the thread this one replaced: the
+--     display chain that turns /new into a divider. NULL on the
+--     agent's initial thread.
+--   - agent deletion still cascades in one statement: the cascade
+--     follows the child FKs (agent -> threads, agent -> messages),
+--     so parent and predecessor vanish together and the self-FK's
+--     no-action default is never evaluated against a surviving row.
+CREATE TABLE IF NOT EXISTS threads (
+    id                  TEXT NOT NULL,
+    agent_id            TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    created_at          BIGINT NOT NULL
+        DEFAULT (CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)),
+    previous_thread_id  TEXT,
+    PRIMARY KEY (id),
+    UNIQUE (agent_id, id),
+    FOREIGN KEY (agent_id, previous_thread_id) REFERENCES threads(agent_id, id)
 );
 
 -- The installed-tool catalog with its global switch. Built-ins ship

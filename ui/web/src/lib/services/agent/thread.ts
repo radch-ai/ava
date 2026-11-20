@@ -1,13 +1,29 @@
 import type { ThreadMessage } from '#lib/types/agent'
 import { api } from '../api'
-import type { CursorPage } from '../utils/cursor'
-import { mergePastPages } from '../utils/cursor'
 
 export type { ThreadMessage }
 
-export type AgentThread = CursorPage<ThreadMessage>
+/**
+ * One page of one thread, oldest→newest. A page is thread-scoped: the
+ * cursor walks inside a thread and crosses into its predecessor when
+ * the thread is exhausted, where the divider arrives.
+ */
+export interface AgentThread {
+	items: ThreadMessage[]
+	nextCursor: string | null
+	threadId: string
+}
 
-export const mergePastThread = mergePastPages<ThreadMessage>
+/**
+ * The display key of one row. Divider ids live in the thread-id
+ * namespace, so a divider and a message can share a raw id —
+ * namespacing both keeps them distinct rows.
+ */
+export function threadRowKey(message: { id: string; role: string }): string {
+	return message.role === 'divider'
+		? `divider:${message.id}`
+		: `msg:${message.id}`
+}
 
 export async function getAgentThread(
 	agentId: string,
@@ -38,6 +54,9 @@ function validateThread(thread: unknown): AgentThread {
 	) {
 		throw new Error('Invalid thread: nextCursor must be a string or null')
 	}
+	if (typeof t.threadId !== 'string') {
+		throw new Error('Invalid thread: threadId must be a string')
+	}
 	for (const item of t.items) {
 		if (typeof item !== 'object' || item === null) {
 			throw new Error('Invalid message: malformed message structure')
@@ -50,13 +69,15 @@ function validateThread(thread: unknown): AgentThread {
 			(msg.role !== 'user' &&
 				msg.role !== 'assistant' &&
 				msg.role !== 'tool' &&
-				msg.role !== 'error')
+				msg.role !== 'error' &&
+				msg.role !== 'divider')
 		) {
 			throw new Error('Invalid message: malformed message structure')
 		}
 	}
 	return {
 		items: t.items as ThreadMessage[],
-		nextCursor: t.nextCursor as string | null
+		nextCursor: t.nextCursor as string | null,
+		threadId: t.threadId
 	}
 }

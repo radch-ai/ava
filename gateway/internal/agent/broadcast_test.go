@@ -24,7 +24,7 @@ import (
 // binds no resolver here, so the test stays about connections.
 func submitConn(mgr *agent.UserAgentManager, agentID, connID string, conn *websocket.Conn) {
 	_, _ = mgr.Submit(agentID, connID, conn, "test",
-		&apitypes.ModelEntry{ID: "gpt-4o"})
+		&apitypes.ModelEntry{ID: "gpt-4o"}, "")
 }
 
 func TestMultipleConnectionsAttach(t *testing.T) {

@@ -32,7 +32,11 @@ describe('agent page load', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mockGetAgentActivityFeed.mockResolvedValue({ items: [], nextCursor: null })
-		mockGetAgentThread.mockResolvedValue({ items: [], nextCursor: null })
+		mockGetAgentThread.mockResolvedValue({
+			items: [],
+			nextCursor: null,
+			threadId: 'thread-1'
+		})
 	})
 
 	it('returns agent data with its activity feed', async () => {
@@ -56,7 +60,11 @@ describe('agent page load', () => {
 		}
 
 		expect(result.agent.id).toBe(SUPERAGENT_AGENT_ID)
-		expect(result.thread).toEqual({ items: [], nextCursor: null })
+		expect(result.thread).toEqual({
+			items: [],
+			nextCursor: null,
+			threadId: 'thread-1'
+		})
 		expect(result.threadError).toBeNull()
 		expect(mockGetAgentThread).toHaveBeenCalledWith(SUPERAGENT_AGENT_ID)
 		expect(mockGetAgentActivityFeed).not.toHaveBeenCalled()

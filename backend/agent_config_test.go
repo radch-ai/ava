@@ -9,17 +9,22 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+
+	"github.com/radch-ai/ava/backend/internal/db"
+	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
 func TestGetAgentConfigMapsPromptFields(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
-	if _, err := sqlDB.ExecContext(context.Background(),
-		`INSERT INTO agents (id, name, icon, soul_personality, soul_identity, user_context,
-			operating_instructions, tools_context)
-		 VALUES (?, 'Persona', 'globe', 'warm', 'companion', NULL, 'house rules', 'prefer search')`,
-		"persona-1"); err != nil {
-		t.Fatalf("seed agent: %v", err)
-	}
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
+		ID:                    "persona-1",
+		Name:                  "Persona",
+		Icon:                  "globe",
+		SoulPersonality:       "warm",
+		SoulIdentity:          "companion",
+		OperatingInstructions: "house rules",
+		ToolsContext:          "prefer search",
+	})
 
 	cfg, err := svc.GetAgentConfig(context.Background(), "persona-1")
 	if err != nil {

@@ -10,21 +10,12 @@
  * across turns, and a late result must land on its own turn's row.
  */
 
+import type { ThreadItem } from '#lib/types/agent'
 import type { AgentSocketEvent } from './ws'
 
-export interface LiveMessage {
-	id: string
-	role: 'user' | 'assistant' | 'tool' | 'error'
-	content: string
-	/** True while chunks are still arriving for an assistant message. */
-	pending?: boolean
-	/** Tool rows only: the invocation's turn (queue item) id. */
-	turnId?: string
-	name?: string
-	args?: string
-	result?: string
-	error?: string | null
-}
+/** The live tail's rows are display rows: one shape with the stored
+ * thread's. */
+export type LiveMessage = ThreadItem
 
 /** The composite identity of one tool invocation. */
 function toolRowId(turnId: string, callId: string): string {
@@ -181,12 +172,24 @@ export function createLiveTurns() {
 				!(m.role === 'error' && errors.has(m.id))
 		)
 	}
+	/** Takes the tail's rows for freezing at a thread boundary: returns
+	 * them and clears the tail, dropping empty assistant markers (pure
+	 * transient UI that must not be pinned into stored display). */
+	function takeRows(): LiveMessage[] {
+		const taken = messages.filter(
+			(m) => !(m.role === 'assistant' && !m.content)
+		)
+		messages = []
+		return taken
+	}
+
 	return {
 		get messages() {
 			return messages
 		},
 		beginUser,
 		applyEvent,
-		settleTurn
+		settleTurn,
+		takeRows
 	}
 }

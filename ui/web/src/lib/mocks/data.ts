@@ -28,6 +28,16 @@ export interface ToolRow {
 	enabled: boolean
 }
 
+/** One conversation boundary as the mock stores it. */
+export interface MockThread {
+	id: string
+	/** The thread this one replaced; null on the first thread. */
+	previousId: string | null
+	createdAt: string
+	/** Newest first — the page read's order. */
+	messages: ThreadMessage[]
+}
+
 /** Mutable in-memory state the mock handlers read from and write to. */
 export interface MockStore {
 	agents: AgentIdentity[]
@@ -44,7 +54,12 @@ export interface MockStore {
 	/** Granted tool ids per agent — presence is the whole meaning,
 	 * seeded for built-ins like the database's insert rules. */
 	toolGrants: Map<string, Set<string>>
-	thread: ThreadMessage[]
+	/**
+	 * Threads per agent id, newest (active) last. Each holds its own
+	 * messages newest-first, like the server's page read, and the
+	 * predecessor link the display dividers are built from.
+	 */
+	threads: Map<string, MockThread[]>
 	activity: Map<string, AgentActivityItem[]>
 	/** The one token POST /auth/exchange accepts. */
 	token: string
@@ -299,7 +314,7 @@ function seedActivity(): Map<string, AgentActivityItem[]> {
  */
 export function createSeedData(): MockStore {
 	// Newest first: the conversation above is authored oldest-first.
-	const thread = CONVERSATION.map(
+	const all = CONVERSATION.map(
 		([role, content], index): ThreadMessage => ({
 			id: `msg-${index + 1}`,
 			role,
@@ -307,6 +322,42 @@ export function createSeedData(): MockStore {
 			createdAt: minutesAgo((CONVERSATION.length - 1 - index) * 5)
 		})
 	).reverse()
+
+	// Two sessions: msg-1..msg-10 belong to the first, msg-11..msg-24
+	// to the active one — a conversation that already ran /new once.
+	const split = 14
+	const threads = new Map<string, MockThread[]>([
+		[
+			SUPERAGENT_AGENT_ID,
+			[
+				{
+					id: 'thread-1',
+					previousId: null,
+					createdAt: minutesAgo(24 * 5),
+					messages: all.slice(split)
+				},
+				{
+					id: 'thread-2',
+					previousId: 'thread-1',
+					createdAt: minutesAgo(10 * 5),
+					messages: all.slice(0, split)
+				}
+			]
+		],
+		// Every other agent starts on its own empty thread, exactly as
+		// the backend seeds one at creation.
+		...AGENT_SEEDS.map((agent): [string, MockThread[]] => [
+			agent.id,
+			[
+				{
+					id: `${agent.id}-t1`,
+					previousId: null,
+					createdAt: minutesAgo(0),
+					messages: []
+				}
+			]
+		])
+	])
 
 	return {
 		agents: [...AGENT_SEEDS],
@@ -320,7 +371,7 @@ export function createSeedData(): MockStore {
 				(id) => [id, new Set(BUILTIN_TOOL_IDS)]
 			)
 		),
-		thread,
+		threads,
 		activity: seedActivity(),
 		token: 'ava-mock-token'
 	}

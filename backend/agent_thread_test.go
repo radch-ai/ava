@@ -11,12 +11,15 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/radch-ai/ava/backend"
 	"github.com/radch-ai/ava/backend/apitypes"
+	"github.com/radch-ai/ava/backend/internal/db"
+	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
 func groupDraft(t *testing.T, turnID, content string, calls ...backend.AgentThreadCall) backend.ThreadMessageDraft {
@@ -54,7 +57,7 @@ func userDraft(content, turnID string) backend.ThreadMessageDraft {
 
 func TestGetAgentThreadPreservesNativeGroups(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
-	seedThreadAgent(t, sqlDB, "r1")
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "r1", Name: "Thread", Icon: "globe"})
 
 	// One turn: prompt, two parallel calls declared in order a,b but
 	// completed b then a, then the answer.
@@ -108,7 +111,7 @@ func TestGetAgentThreadPreservesNativeGroups(t *testing.T) {
 
 func TestGetAgentThreadProjectsIncompleteGroup(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
-	seedThreadAgent(t, sqlDB, "r2")
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "r2", Name: "Thread", Icon: "globe"})
 
 	// Two calls declared; only one outcome landed (interrupted turn).
 	drafts := []backend.ThreadMessageDraft{
@@ -143,7 +146,7 @@ func TestGetAgentThreadProjectsIncompleteGroup(t *testing.T) {
 
 func TestGetAgentThreadKeepsTextOnlyInterruptedGroup(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
-	seedThreadAgent(t, sqlDB, "r3")
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "r3", Name: "Thread", Icon: "globe"})
 
 	drafts := []backend.ThreadMessageDraft{
 		userDraft("search", "t1"),
@@ -171,7 +174,7 @@ func TestGetAgentThreadKeepsTextOnlyInterruptedGroup(t *testing.T) {
 
 func TestGetAgentThreadExcludesStructureOnlyGroup(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
-	seedThreadAgent(t, sqlDB, "r4")
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "r4", Name: "Thread", Icon: "globe"})
 
 	// No text, no outcome: the group is display structure only.
 	drafts := []backend.ThreadMessageDraft{
@@ -194,7 +197,7 @@ func TestGetAgentThreadExcludesStructureOnlyGroup(t *testing.T) {
 
 func TestGetAgentThreadMapsToolErrorToContent(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
-	seedThreadAgent(t, sqlDB, "r5")
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "r5", Name: "Thread", Icon: "globe"})
 
 	errText := "backend down"
 	drafts := []backend.ThreadMessageDraft{
@@ -218,7 +221,7 @@ func TestGetAgentThreadMapsToolErrorToContent(t *testing.T) {
 
 func TestGetAgentThreadRoundTripsJSONLiteralResults(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
-	seedThreadAgent(t, sqlDB, "r6")
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "r6", Name: "Thread", Icon: "globe"})
 
 	results := []string{`"quoted"`, `null`, `{"a":1}`, "  spaced  ", ""}
 	drafts := []backend.ThreadMessageDraft{userDraft("go", "t1")}
@@ -249,7 +252,7 @@ func TestGetAgentThreadRoundTripsJSONLiteralResults(t *testing.T) {
 
 func TestGetAgentThreadScopesReusedIDsToTheirGroup(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
-	seedThreadAgent(t, sqlDB, "r7")
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "r7", Name: "Thread", Icon: "globe"})
 
 	// Two model rounds in one turn reuse provider ids (call_0), and a
 	// later turn repeats one again. Outcomes must pair positionally.
@@ -286,7 +289,7 @@ func TestGetAgentThreadScopesReusedIDsToTheirGroup(t *testing.T) {
 
 func TestGetAgentThreadExcludesErrorRows(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
-	seedThreadAgent(t, sqlDB, "r8")
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "r8", Name: "Thread", Icon: "globe"})
 
 	drafts := []backend.ThreadMessageDraft{
 		userDraft("visible", "t1"),
@@ -365,7 +368,7 @@ func TestGetAgentThreadRejectsCorruptStructure(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			sqlDB, svc := resolverDB(t)
-			seedThreadAgent(t, sqlDB, "corrupt")
+			testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "corrupt", Name: "Thread", Icon: "globe"})
 			// Seeded past the sink: the write path rejects these
 			// drafts outright, so the read side is pinned against
 			// rows only a foreign writer could create.
@@ -383,10 +386,10 @@ func seedDraftsRaw(t *testing.T, sqlDB *sql.DB, agentID string, drafts []backend
 	t.Helper()
 	for i, d := range drafts {
 		_, err := sqlDB.Exec(
-			`INSERT INTO thread_messages (id, agent_id, role, content, created_at, turn_id, tool_calls)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO thread_messages (id, agent_id, role, content, created_at, turn_id, tool_calls, thread_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			fmt.Sprintf("raw-%s-%d", agentID, i), agentID, string(d.Role), d.Content,
-			time.Now().UnixMilli()+int64(i), d.TurnID, string(d.ToolCalls),
+			time.Now().UnixMilli()+int64(i), d.TurnID, string(d.ToolCalls), testdb.ThreadID(agentID),
 		)
 		if err != nil {
 			t.Fatalf("seed raw draft: %v", err)
@@ -394,13 +397,10 @@ func seedDraftsRaw(t *testing.T, sqlDB *sql.DB, agentID string, drafts []backend
 	}
 }
 
-func TestGetAgentThreadUnknownAgentIsEmpty(t *testing.T) {
+func TestGetAgentThreadUnknownAgentFails(t *testing.T) {
 	_, svc := resolverDB(t)
-	msgs, err := svc.GetAgentThread(context.Background(), "ghost")
-	if err != nil {
-		t.Fatalf("GetAgentThread: %v", err)
-	}
-	if len(msgs) != 0 {
-		t.Fatalf("replay messages = %d, want 0", len(msgs))
+	_, err := svc.GetAgentThread(context.Background(), "ghost")
+	if !errors.Is(err, backend.ErrUnknownAgent) {
+		t.Fatalf("GetAgentThread error = %v, want ErrUnknownAgent", err)
 	}
 }

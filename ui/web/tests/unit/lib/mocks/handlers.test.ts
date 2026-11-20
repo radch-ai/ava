@@ -36,16 +36,24 @@ describe('mock API handlers', () => {
 		}
 	})
 
-	it('pages the superagent thread oldest-first per page until the cursor is exhausted', async () => {
-		const first = (await (
-			await fetch(`${BASE}/agent/_superagent/thread?limit=10`)
+	// fetchThread reads one page of the mock thread contract.
+	async function fetchThread(query = '') {
+		return (await (
+			await fetch(`${BASE}/agent/_superagent/thread${query}`)
 		).json()) as {
-			items: { id: string }[]
+			items: { id: string; role: string }[]
 			nextCursor: string | null
+			threadId: string
 		}
-		// Pages walk newest chunk → oldest chunk; within a page the
-		// items read oldest→newest — the display order.
-		expect(first.items.map((message) => message.id)).toEqual([
+	}
+
+	it('pages a thread in the backend’s wire shape', async () => {
+		// Shapes only: the paging semantics (keyset walk, limit rules)
+		// are the backend endpoint tests' job. The mock must mirror
+		// what the client parses.
+		const first = await fetchThread('?limit=10')
+		expect(first.threadId).toBe('thread-2')
+		expect(first.items.map((item) => item.id)).toEqual([
 			'msg-15',
 			'msg-16',
 			'msg-17',
@@ -57,59 +65,46 @@ describe('mock API handlers', () => {
 			'msg-23',
 			'msg-24'
 		])
-		expect(first.nextCursor).toBe('msg-15')
+		expect(first.nextCursor).toBe('thread-2:msg-15')
 
-		const second = (await (
-			await fetch(`${BASE}/agent/_superagent/thread?limit=10&cursor=msg-15`)
-		).json()) as {
-			items: { id: string }[]
-			nextCursor: string | null
-		}
-		expect(second.items.map((message) => message.id)).toEqual([
-			'msg-5',
-			'msg-6',
-			'msg-7',
-			'msg-8',
-			'msg-9',
-			'msg-10',
-			'msg-11',
-			'msg-12',
-			'msg-13',
-			'msg-14'
-		])
-		expect(second.nextCursor).toBe('msg-5')
+		// An exhausted thread leads with its divider row — keyed by the
+		// thread id — and points the cursor at the predecessor.
+		const second = await fetchThread('?limit=10&cursor=thread-2:msg-15')
+		expect(second.items[0]).toMatchObject({
+			id: 'thread-2',
+			role: 'divider'
+		})
+		expect(second.items.at(-1)?.id).toBe('msg-14')
+		expect(second.nextCursor).toBe('thread-1:')
 
-		const third = (await (
-			await fetch(`${BASE}/agent/_superagent/thread?limit=10&cursor=msg-5`)
-		).json()) as {
-			items: { id: string }[]
-			nextCursor: string | null
-		}
-		expect(third.items.map((message) => message.id)).toEqual([
-			'msg-1',
-			'msg-2',
-			'msg-3',
-			'msg-4'
-		])
+		// The chain start answers null: nothing precedes it.
+		const third = await fetchThread('?limit=10&cursor=thread-1:')
+		expect(third.threadId).toBe('thread-1')
 		expect(third.nextCursor).toBeNull()
 	})
 
-	it('serves known agents an empty thread and 404s unknown agents', async () => {
+	it('serves known agents their own empty thread and 404s unknown agents', async () => {
 		const empty = (await (
 			await fetch(`${BASE}/agent/research/thread`)
 		).json()) as {
 			items: { id: string }[]
 			nextCursor: string | null
+			threadId: string
 		}
 		expect(empty.items).toEqual([])
 		expect(empty.nextCursor).toBeNull()
+		expect(empty.threadId).toBe('research-t1')
 		const missing = await fetch(`${BASE}/agent/ghost/thread`)
 		expect(missing.status).toBe(404)
 	})
 
-	it('rejects an unknown thread cursor with 400', async () => {
-		const res = await fetch(`${BASE}/agent/_superagent/thread?cursor=missing`)
-		expect(res.status).toBe(400)
+	it('rejects cursors that name no readable row with 400', async () => {
+		for (const cursor of ['missing', 'ghost-thread:', 'thread-2:nope']) {
+			const res = await fetch(
+				`${BASE}/agent/_superagent/thread?cursor=${cursor}`
+			)
+			expect(res.status).toBe(400)
+		}
 	})
 
 	it('returns an activity feed for a known agent and an empty page for unknown agents', async () => {

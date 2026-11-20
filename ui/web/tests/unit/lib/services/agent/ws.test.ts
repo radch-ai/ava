@@ -126,6 +126,47 @@ describe('agent socket', () => {
 		])
 	})
 
+	it('decodes command_completed frames as thread switches', () => {
+		const events: unknown[] = []
+		createAgentSocket('_superagent', (event) =>
+			events.push(event)
+		).requestStatus()
+
+		lastSocket().onmessage?.({
+			data: JSON.stringify({
+				type: 'command_completed',
+				agent_id: '_superagent',
+				data: {
+					item_id: 'cmd-1',
+					thread_id: 'thread-2',
+					previous_thread_id: 'thread-1',
+					divider: {
+						id: 'thread-2',
+						content: 'New session',
+						created_at: '2026-11-19T00:00:00.000Z'
+					}
+				}
+			})
+		})
+
+		expect(events).toEqual([
+			{
+				type: 'command_completed',
+				agent_id: '_superagent',
+				data: {
+					item_id: 'cmd-1',
+					thread_id: 'thread-2',
+					previous_thread_id: 'thread-1',
+					divider: {
+						id: 'thread-2',
+						content: 'New session',
+						created_at: '2026-11-19T00:00:00.000Z'
+					}
+				}
+			}
+		])
+	})
+
 	it('resolves a pending prompt through its queue_result', async () => {
 		const socket = createAgentSocket('_superagent', () => {})
 		openSocket()

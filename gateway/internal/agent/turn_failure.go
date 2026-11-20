@@ -65,7 +65,8 @@ func cleanToolError(err error) string {
 // converge on one id. A failed or missing sink leaves the row
 // unconfirmed: the event stays transient and carries the original
 // failure, never the sink's error. Tool-attributed failures already
-// persist in their envelope and stay transient here.
+// persist in their envelope and stay transient here. The sink resolves
+// the agent's active thread when it writes.
 func (a *UserAgent) failTurn(ctx context.Context, msgID, message, toolName string) {
 	rowID := ""
 	if toolName == "" && a.persistTurn != nil {

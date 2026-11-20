@@ -20,6 +20,10 @@ const (
 	EventTypeError        EventType = "error"
 	EventTypeQueueResult  EventType = "queue_result"
 	EventTypeQueueState   EventType = "queue_state"
+
+	// EventTypeCommandCompleted reports a durable thread switch: the
+	// /new (or /reset) command committed.
+	EventTypeCommandCompleted EventType = "command_completed"
 )
 
 // EnvelopeType tags client frames.

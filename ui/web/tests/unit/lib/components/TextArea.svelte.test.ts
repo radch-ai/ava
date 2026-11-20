@@ -185,6 +185,275 @@ describe('TextArea', () => {
 		})
 	})
 
+	describe('Command suggestions', () => {
+		it('offers /new for a bare slash', async () => {
+			render(TextArea)
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.fill('/')
+
+			await expect
+				.element(
+					page.getByRole('option', { name: /\/new.*fresh conversation/ })
+				)
+				.toBeVisible()
+		})
+
+		it('completes the draft on Enter without submitting', async () => {
+			const mockSubmit = vi.fn()
+			render(TextArea, { onsubmit: mockSubmit })
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, '/n{Enter}')
+
+			await expect.element(textarea).toHaveValue('/new')
+			expect(mockSubmit).not.toHaveBeenCalled()
+		})
+
+		it('completes the draft on Tab without submitting', async () => {
+			const mockSubmit = vi.fn()
+			render(TextArea, { onsubmit: mockSubmit })
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, '/n')
+			await userEvent.keyboard('{Tab}')
+
+			await expect.element(textarea).toHaveValue('/new')
+			expect(mockSubmit).not.toHaveBeenCalled()
+		})
+
+		it('completes the draft on click without submitting', async () => {
+			const mockSubmit = vi.fn()
+			render(TextArea, { onsubmit: mockSubmit })
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.fill('/')
+			await page
+				.getByRole('option', { name: /\/new.*fresh conversation/ })
+				.click()
+
+			await expect.element(textarea).toHaveValue('/new')
+			expect(mockSubmit).not.toHaveBeenCalled()
+		})
+
+		it('submits a fully typed command on Enter', async () => {
+			const mockSubmit = vi.fn()
+			render(TextArea, { onsubmit: mockSubmit })
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, '/new{Enter}')
+
+			expect(mockSubmit).toHaveBeenCalledWith('/new')
+		})
+
+		it('closes on Escape and submits the next Enter as a prompt', async () => {
+			const mockSubmit = vi.fn()
+			render(TextArea, { onsubmit: mockSubmit })
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.fill('/n')
+			await userEvent.keyboard('{Escape}')
+
+			await expect
+				.element(
+					page.getByRole('option', { name: /\/new.*fresh conversation/ })
+				)
+				.not.toBeInTheDocument()
+
+			await userEvent.keyboard('{Enter}')
+			expect(mockSubmit).toHaveBeenCalledWith('/n')
+		})
+
+		it('does not submit while an IME composes the Enter', async () => {
+			const mockSubmit = vi.fn()
+			render(TextArea, { onsubmit: mockSubmit })
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.fill('hello')
+			textarea.element().dispatchEvent(
+				new KeyboardEvent('keydown', {
+					key: 'Enter',
+					bubbles: true,
+					cancelable: true,
+					isComposing: true
+				})
+			)
+
+			expect(mockSubmit).not.toHaveBeenCalled()
+		})
+
+		it('lists every matching command for a bare slash', async () => {
+			render(TextArea)
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.fill('/')
+
+			await expect
+				.element(
+					page.getByRole('option', {
+						name: /\/new.*Start a fresh conversation/
+					})
+				)
+				.toBeVisible()
+			await expect
+				.element(
+					page.getByRole('option', {
+						name: /\/reset.*Alias of \/new — same fresh session/
+					})
+				)
+				.toBeVisible()
+		})
+
+		it('finds the alias by prefix and fills its own token on Enter', async () => {
+			render(TextArea)
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, '/re')
+			await expect
+				.element(
+					page.getByRole('option', {
+						name: /\/reset.*Alias of \/new — same fresh session/
+					})
+				)
+				.toBeVisible()
+
+			await userEvent.keyboard('{Enter}')
+			await expect.element(textarea).toHaveValue('/reset')
+		})
+
+		it('walks the rows with the arrow keys and fills the selected one', async () => {
+			render(TextArea)
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, '/')
+			await userEvent.keyboard('{ArrowDown}')
+			// Exactly one row is selected at a time: keyboard, hover, and
+			// completion move the same state.
+			const selected = page
+				.getByRole('option')
+				.all()
+				.filter((row) => row.element().getAttribute('aria-selected') === 'true')
+			expect(selected).toHaveLength(1)
+
+			await userEvent.keyboard('{Enter}')
+			await expect.element(textarea).toHaveValue('/reset')
+
+			await textarea.fill('/')
+			await userEvent.keyboard('{ArrowDown}{ArrowUp}{Enter}')
+			await expect.element(textarea).toHaveValue('/new')
+		})
+
+		it('clamps the highlight at both ends', async () => {
+			render(TextArea)
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, '/')
+
+			await userEvent.keyboard('{ArrowUp}{Enter}')
+			await expect.element(textarea).toHaveValue('/new')
+
+			await textarea.fill('/')
+			await userEvent.keyboard('{ArrowDown}{ArrowDown}{ArrowDown}{Enter}')
+			await expect.element(textarea).toHaveValue('/reset')
+		})
+
+		it('moves the single selection on hover and fills that row', async () => {
+			render(TextArea)
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.fill('/')
+
+			const reset = page.getByRole('option', {
+				name: /\/reset.*Alias of \/new/
+			})
+			await reset.hover()
+			await expect.element(reset).toHaveAttribute('aria-selected', 'true')
+			const selected = page
+				.getByRole('option')
+				.all()
+				.filter((row) => row.element().getAttribute('aria-selected') === 'true')
+			expect(selected).toHaveLength(1)
+
+			await userEvent.keyboard('{Enter}')
+			await expect.element(textarea).toHaveValue('/reset')
+		})
+
+		it('refilters and returns the highlight to the top row on typing', async () => {
+			render(TextArea)
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, '/')
+			await userEvent.keyboard('{ArrowDown}')
+			await userEvent.type(textarea, 'n')
+			await userEvent.keyboard('{Enter}')
+
+			await expect.element(textarea).toHaveValue('/new')
+		})
+
+		it('highlights the first row when the popup reopens after closing', async () => {
+			render(TextArea)
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, '/')
+			await userEvent.keyboard('{ArrowDown}')
+
+			// Escape dismisses; narrowing the draft to one command
+			// reopens the list — without the row the closed list had
+			// selected.
+			await userEvent.keyboard('{Escape}')
+			await expect.element(page.getByRole('option')).not.toBeInTheDocument()
+			await userEvent.type(textarea, 'n')
+
+			const sole = page.getByRole('option', {
+				name: /\/new.*fresh conversation/
+			})
+			await expect.element(sole).toBeVisible()
+			await expect.element(sole).toHaveAttribute('aria-selected', 'true')
+
+			await userEvent.keyboard('{Enter}')
+			await expect.element(textarea).toHaveValue('/new')
+		})
+
+		it('submits a fully typed alias without a popup', async () => {
+			const mockSubmit = vi.fn()
+			render(TextArea, { onsubmit: mockSubmit })
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.click()
+			await userEvent.type(textarea, '/reset')
+
+			await expect
+				.element(
+					page.getByRole('option', { name: /\/new.*fresh conversation/ })
+				)
+				.not.toBeInTheDocument()
+
+			await userEvent.keyboard('{Enter}')
+			expect(mockSubmit).toHaveBeenCalledWith('/reset')
+		})
+
+		it('stays closed for plain text', async () => {
+			render(TextArea)
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.fill('hi /new')
+
+			await expect
+				.element(
+					page.getByRole('option', { name: /\/new.*fresh conversation/ })
+				)
+				.not.toBeInTheDocument()
+		})
+	})
+
 	describe('onsubmit callback', () => {
 		it('calls onsubmit with trimmed text', async () => {
 			const mockSubmit = vi.fn()

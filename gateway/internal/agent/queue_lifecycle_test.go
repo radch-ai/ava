@@ -59,7 +59,7 @@ func TestPausedPendingWorkStaysIntact(t *testing.T) {
 	// behind it — the gate arms because work was queued before the
 	// failure.
 	submit(t, mgr, "agent-paused", "conn-1", sc, "fails")
-	bID, err := mgr.Submit("agent-paused", "conn-1", sc, "survivor", nil)
+	bID, err := mgr.Submit("agent-paused", "conn-1", sc, "survivor", nil, "")
 	require.NoError(t, err)
 	readUntilError(t, c)
 	snapshot := readQueueState(t, c)
@@ -114,7 +114,7 @@ func TestEmptyQueueFailureNeverPausesAndStateSurvivesEviction(t *testing.T) {
 	// A later prompt runs normally after the failure — no explicit
 	// selection needed — respawning a worker: it fails too, and with
 	// nothing behind it the queue still does not pause.
-	_, err := mgr.Submit("agent-evict", "conn-1", sc, "after eviction", nil)
+	_, err := mgr.Submit("agent-evict", "conn-1", sc, "after eviction", nil, "")
 	require.NoError(t, err)
 	readUntilError(t, c)
 	require.Equal(t, int32(2), resolverCalls.Load(), "the prompt ran without an explicit selection")
@@ -145,7 +145,7 @@ func TestStopInterruptsAndHoldsQueue(t *testing.T) {
 	// A parks mid-stream with B waiting behind it.
 	submit(t, mgr, "agent-stop", "conn-1", sc, "slow question")
 	bID, err := mgr.Submit("agent-stop", "conn-1", sc,
-		"b waits", &apitypes.ModelEntry{ID: "quick"})
+		"b waits", &apitypes.ModelEntry{ID: "quick"}, "")
 	require.NoError(t, err)
 	for {
 		ev := readEvent(t, c)

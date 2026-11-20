@@ -9,7 +9,6 @@ vi.mock('#lib/services/api', () => ({
 import {
 	type AgentThread,
 	getAgentThread,
-	mergePastThread,
 	type ThreadMessage
 } from '#lib/services/agent'
 import { type ApiResponsePromise, api } from '#lib/services/api'
@@ -30,6 +29,7 @@ function createThread(overrides?: Partial<AgentThread>): AgentThread {
 	return {
 		items: [createThreadMessage()],
 		nextCursor: null,
+		threadId: 'thread-1',
 		...overrides
 	}
 }
@@ -87,7 +87,11 @@ describe('agent/thread service', () => {
 
 		it('rejects malformed messages', async () => {
 			vi.mocked(api.get).mockReturnValue({
-				json: async () => ({ items: [{ id: 1 }], nextCursor: null })
+				json: async () => ({
+					items: [{ id: 1 }],
+					nextCursor: null,
+					threadId: 'thread-1'
+				})
 			} as ApiResponsePromise)
 
 			await expect(getAgentThread('_superagent')).rejects.toThrow(
@@ -114,11 +118,41 @@ describe('agent/thread service', () => {
 			await expect(getAgentThread('_superagent')).resolves.toEqual(thread)
 		})
 
+		it('accepts divider rows from the thread boundary', async () => {
+			const thread = createThread({
+				items: [
+					createThreadMessage({
+						id: 'thread-1',
+						role: 'divider',
+						content: 'New session'
+					}),
+					createThreadMessage({ id: 'msg-2', role: 'assistant' })
+				]
+			})
+
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => thread
+			} as ApiResponsePromise)
+
+			await expect(getAgentThread('_superagent')).resolves.toEqual(thread)
+		})
+
+		it('requires the page to name its thread', async () => {
+			vi.mocked(api.get).mockReturnValue({
+				json: async () => ({ items: [], nextCursor: null })
+			} as ApiResponsePromise)
+
+			await expect(getAgentThread('_superagent')).rejects.toThrow(
+				'threadId must be a string'
+			)
+		})
+
 		it('still rejects roles outside the wire contract', async () => {
 			vi.mocked(api.get).mockReturnValue({
 				json: async () => ({
 					items: [createThreadMessage({ role: 'system' as never })],
-					nextCursor: null
+					nextCursor: null,
+					threadId: 'thread-1'
 				})
 			} as ApiResponsePromise)
 
@@ -154,27 +188,6 @@ describe('agent/thread service', () => {
 				'tool-row',
 				'answer-row'
 			])
-		})
-	})
-
-	describe('mergePastThread', () => {
-		it('prepends an older page above the current one (oldest→newest pages)', () => {
-			const current = createThread({
-				items: [createThreadMessage({ id: 'msg-2' })],
-				nextCursor: 'msg-2'
-			})
-			const older = createThread({
-				items: [createThreadMessage({ id: 'msg-1' })],
-				nextCursor: null
-			})
-
-			const merged = mergePastThread(current, older)
-
-			expect(merged.items.map((message) => message.id)).toEqual([
-				'msg-1',
-				'msg-2'
-			])
-			expect(merged.nextCursor).toBeNull()
 		})
 	})
 })

@@ -6,19 +6,13 @@
 	import {
 		type ActivityFeed,
 		getAgentActivityFeed,
-		mergePastFeed
+		mergePastFeed,
+		threadRowKey
 	} from '#lib/services/agent'
-	import type { AgentIdentity } from '#lib/types/agent'
+	import type { AgentIdentity, ThreadItem } from '#lib/types/agent'
 	import ActivityContent from './ActivityContent.svelte'
 	import AgentHeader from './AgentHeader.svelte'
 	import ThreadContent from './ThreadContent.svelte'
-
-	interface ThreadItem {
-		id: string
-		role: 'user' | 'assistant' | 'tool' | 'error'
-		content: string
-		pending?: boolean
-	}
 
 	interface Props {
 		agent: AgentIdentity
@@ -68,11 +62,11 @@
 	const isConversation = $derived(
 		agentId === SUPERAGENT_AGENT_ID && activeTab === 'conversation'
 	)
-	const liveIds = $derived(new Set((liveItems ?? []).map((m) => m.id)))
+	const liveIds = $derived(new Set((liveItems ?? []).map(threadRowKey)))
 	// A running turn's user row is live; the refetched stored copy
 	// must not render beside it. Live wins until the turn settles.
 	const conversationItems = $derived([
-		...(threadItems ?? []).filter((m) => !liveIds.has(m.id)),
+		...(threadItems ?? []).filter((m) => !liveIds.has(threadRowKey(m))),
 		...(liveItems ?? [])
 	])
 

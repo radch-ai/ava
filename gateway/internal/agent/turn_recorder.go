@@ -53,6 +53,8 @@ type turnRecorder struct {
 	last   *schema.Message // the group's text and, at the end, the terminal answer
 }
 
+// newTurnRecorder builds one turn's recorder. Rows are attributed by
+// the sink, which resolves the agent's active thread at write time.
 func newTurnRecorder(lane *UserAgent, sink TurnSink, turnID string, emitCtx context.Context) *turnRecorder {
 	return &turnRecorder{
 		TypedBaseChatModelAgentMiddleware: &adk.TypedBaseChatModelAgentMiddleware[*schema.Message]{},

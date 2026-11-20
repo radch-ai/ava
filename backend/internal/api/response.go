@@ -14,9 +14,9 @@ import (
 	"github.com/radch-ai/ava/backend/apitypes"
 )
 
-// Handler serves one request. A non-nil error marks a server-side
-// fault (answered with a 500, or the response failed to encode);
-// handled client errors return nil — they need no log line.
+// Handler serves one request. A non-nil error is logged by api.Log;
+// handlers write their own status before returning it. Handled client
+// errors return nil — they need no log line.
 type Handler func(http.ResponseWriter, *http.Request) error
 
 // WriteJSON writes status and the JSON-encoded body. The status goes

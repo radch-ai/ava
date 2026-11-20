@@ -167,9 +167,12 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				})
 		),
 
-		// Per-agent thread, matching the backend: any known agent serves
-		// its thread (only the superagent has messages today; others
-		// page empty), unknown agents 404.
+		// Per-agent thread, matching the backend: one thread per page,
+		// the no-cursor read starting at the active one, and the
+		// cursor walking inside a thread and across its predecessor
+		// boundary. Known agents serve their thread page (only the
+		// superagent has messages today; others page empty), unknown
+		// agents 404.
 		http.get('*/api/agent/:id/thread', ({ request, params }) => {
 			const url = new URL(request.url)
 			const id = String(params.id)
@@ -182,25 +185,80 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 					{ status: 404 }
 				)
 			}
-			const thread = id === SUPERAGENT_AGENT_ID ? store.thread : []
-			const cursor = url.searchParams.get('cursor')
-			if (cursor && !thread.some((message) => message.id === cursor)) {
-				return HttpResponse.json<ErrorResponse>(
-					{ message: 'Invalid cursor' },
-					{ status: 400 }
-				)
-			}
-			const page = paginate(
-				thread,
-				Math.max(1, Number(url.searchParams.get('limit')) || 20),
-				cursor
+			const threads = store.threads.get(id) ?? []
+			const active = threads.at(-1)
+			// The backend clamps a page to 100 and floors it at 1.
+			const limit = Math.min(
+				100,
+				Math.max(1, Number(url.searchParams.get('limit')) || 20)
 			)
-			// The store pages newest-first like the SQL; the wire answers
-			// oldest→newest.
-			return HttpResponse.json({
-				items: [...page.items].reverse(),
-				nextCursor: page.nextCursor
-			})
+			const raw = url.searchParams.get('cursor')
+
+			let thread = active
+			let anchorId = ''
+			if (raw) {
+				const cut = raw.indexOf(':')
+				if (cut < 0) {
+					return HttpResponse.json<ErrorResponse>(
+						{ message: 'Invalid cursor' },
+						{ status: 400 }
+					)
+				}
+				const threadId = raw.slice(0, cut)
+				anchorId = raw.slice(cut + 1)
+				thread = threads.find((candidate) => candidate.id === threadId)
+				if (!thread) {
+					return HttpResponse.json<ErrorResponse>(
+						{ message: 'Invalid cursor' },
+						{ status: 400 }
+					)
+				}
+				if (
+					anchorId &&
+					!thread.messages.some((message) => message.id === anchorId)
+				) {
+					return HttpResponse.json<ErrorResponse>(
+						{ message: 'Invalid cursor' },
+						{ status: 400 }
+					)
+				}
+			}
+			if (!thread) {
+				// Every agent owns a thread from creation, so a known
+				// agent without a stored row still answers under that
+				// agent's own thread identity — never an empty id.
+				return HttpResponse.json({
+					items: [],
+					nextCursor: null,
+					threadId: `${id}-t1`
+				})
+			}
+
+			// Newest-first storage: the page starts below the anchor.
+			const start = anchorId
+				? thread.messages.findIndex((message) => message.id === anchorId) + 1
+				: 0
+			const window = thread.messages.slice(start, start + limit + 1)
+			const hasOlder = window.length > limit
+			const rows = hasOlder ? window.slice(0, limit) : window
+
+			// The wire answers oldest→newest.
+			const items = [...rows].reverse()
+			let nextCursor: string | null = null
+			if (hasOlder) {
+				nextCursor = `${thread.id}:${rows[rows.length - 1].id}`
+			} else if (thread.previousId) {
+				// The thread is exhausted: its boundary leads the page,
+				// then the predecessor's newest page follows.
+				items.unshift({
+					id: thread.id,
+					role: 'divider',
+					content: 'New session',
+					createdAt: thread.createdAt
+				} as (typeof items)[number])
+				nextCursor = `${thread.previousId}:`
+			}
+			return HttpResponse.json({ items, nextCursor, threadId: thread.id })
 		}),
 
 		http.get('*/api/agent/:id/activity', ({ request, params }) => {
@@ -411,8 +469,17 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			}
 			store.agents.push(agent)
 			// New agents get the built-ins granted, like the database's
-			// insert rule.
+			// insert rule, and their own empty thread, like the backend
+			// seeds one in the creation transaction.
 			store.toolGrants.set(id, new Set(BUILTIN_TOOL_IDS))
+			store.threads.set(id, [
+				{
+					id: `${id}-t1`,
+					previousId: null,
+					createdAt: new Date().toISOString(),
+					messages: []
+				}
+			])
 			return HttpResponse.json({ id }, { status: 201 })
 		}),
 

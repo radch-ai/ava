@@ -13,6 +13,7 @@ import (
 
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/backend/internal/db"
+	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
 func activityStore(t *testing.T) (*sql.DB, *db.Queries) {
@@ -167,13 +168,11 @@ func TestGetActivityInvalidCursor(t *testing.T) {
 func TestGetActivityCrossAgentCursor(t *testing.T) {
 	sqlDB, queries := activityStore(t)
 	seedActivity(t, sqlDB, "research", nil, "a1", "a2")
-	if err := queries.CreateAgent(t.Context(), db.CreateAgentParams{
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
 		ID: "scribe", Name: "Scribe", Icon: "pencil",
 		SoulPersonality: "terse", SoulIdentity: "records",
 		OperatingInstructions: "transcribe", ToolsContext: "",
-	}); err != nil {
-		t.Fatalf("seed scribe: %v", err)
-	}
+	})
 	seedActivity(t, sqlDB, "scribe", nil, "s1")
 
 	rec, err := serve(t, "GET /agent/{id}/activity", GetAgentActivity(queries),

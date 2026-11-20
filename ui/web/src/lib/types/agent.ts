@@ -48,6 +48,25 @@ import type {
 } from '#lib/types/gen/apitypes.gen'
 
 /**
+ * One row of the conversation display. The stored thread's rows and
+ * the live tail's rows share this shape, so both render through the
+ * same list.
+ */
+export interface ThreadItem {
+	id: string
+	role: 'user' | 'assistant' | 'tool' | 'error' | 'divider'
+	content: string
+	/** True while chunks are still arriving for an assistant message. */
+	pending?: boolean
+	/** Tool rows only: the invocation's turn (queue item) id. */
+	turnId?: string
+	name?: string
+	args?: string
+	result?: string
+	error?: string | null
+}
+
+/**
  * Agent identity — id plus the display fields; list entries and
  * detail bodies both carry it. UI narrowing: the wire carries any
  * icon string, the UI renders only its known icon names.

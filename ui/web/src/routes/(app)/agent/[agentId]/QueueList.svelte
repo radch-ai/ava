@@ -1,11 +1,7 @@
 <script lang="ts">
 	import { SendHorizontal } from '@lucide/svelte'
 	import { Button } from '#components/ui/button'
-
-	interface QueuedItem {
-		id: string
-		content: string
-	}
+	import type { QueueItem } from '#lib/types/gen/wstypes.gen'
 
 	let {
 		items,
@@ -16,10 +12,10 @@
 		pendingId = null,
 		onsendnow
 	}: {
-		items: QueuedItem[]
+		items: QueueItem[]
 		/** The send-now reservation: pinned above the waiting items,
 		 * action-less — its turn comes next regardless. */
-		next?: QueuedItem | null
+		next?: QueueItem | null
 		paused?: boolean
 		pendingId?: string | null
 		onsendnow: (itemId: string) => void
@@ -37,7 +33,10 @@
 	{#if next}
 		<li class="bg-primary/10 flex items-center gap-2 rounded-2xl px-3 py-1.5">
 			<span class="text-primary shrink-0 text-xs font-medium">Next</span>
-			<span class="text-muted-foreground min-w-0 flex-1 truncate text-sm">
+			<span
+				class="text-muted-foreground min-w-0 flex-1 truncate text-sm"
+				class:font-mono={next.kind === 'new_thread'}
+			>
 				{next.content}
 			</span>
 		</li>
@@ -46,7 +45,10 @@
 		<li
 			class="bg-overlay-dark/50 flex items-center gap-2 rounded-2xl px-3 py-1.5"
 		>
-			<span class="text-muted-foreground min-w-0 flex-1 truncate text-sm">
+			<span
+				class="text-muted-foreground min-w-0 flex-1 truncate text-sm"
+				class:font-mono={item.kind === 'new_thread'}
+			>
 				{item.content}
 			</span>
 			<Button

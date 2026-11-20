@@ -31,10 +31,13 @@ type UserAgentManagerOptions struct {
 	// Tools fetches each lane's effective tools per turn —
 	// permissions applied; nil leaves lanes tool-less.
 	Tools AgentToolsFunc
-	// GetAgentThread reads an agent's thread as the turn's model
-	// input; bound by the gateway at boot. Required: an unbound
+	// GetAgentThread reads the agent's active thread as the turn's
+	// model input; bound by the gateway at boot. Required: an unbound
 	// source fails each turn at message level.
 	GetAgentThread AgentThreadSource
+	// CreateThread runs command items' durable thread switch; bound
+	// by the gateway at boot. An unbound seam fails commands closed.
+	CreateThread ThreadActivator
 }
 
 // UserAgentManager manages per-agent queue states with thread-safe
@@ -47,6 +50,7 @@ type UserAgentManager struct {
 	getAgentConfig AgentConfigSource
 	tools          AgentToolsFunc
 	getAgentThread AgentThreadSource
+	createThread   ThreadActivator
 
 	rootCtx    context.Context
 	rootCancel context.CancelFunc
@@ -63,6 +67,7 @@ func NewUserAgentManager(logger zerolog.Logger, opts *UserAgentManagerOptions) *
 		m.getAgentConfig = opts.GetAgentConfig
 		m.tools = opts.Tools
 		m.getAgentThread = opts.GetAgentThread
+		m.createThread = opts.CreateThread
 	}
 	m.rootCtx, m.rootCancel = context.WithCancel(context.Background())
 	return m
@@ -103,6 +108,7 @@ func (m *UserAgentManager) newWorker(s *agentState) *UserAgent {
 		GetAgentConfig: m.getAgentConfig,
 		Tools:          m.tools,
 		GetAgentThread: m.getAgentThread,
+		CreateThread:   m.createThread,
 		Logger:         m.logger,
 		OnExit:         func(w *UserAgent) { m.workerExited(s, w) },
 	})
@@ -134,10 +140,13 @@ func (m *UserAgentManager) workerExited(s *agentState, w *UserAgent) {
 // enqueues one prompt, and ensures a worker can pick it up. A
 // rejected admission (full queue, draining) still leaves the
 // connection subscribed; the gateway reports the rejection.
-func (m *UserAgentManager) Submit(agentID, connID string, conn *websocket.Conn, content string, model *apitypes.ModelEntry) (string, error) {
+func (m *UserAgentManager) Submit(agentID, connID string, conn *websocket.Conn, content string, model *apitypes.ModelEntry, kind string) (string, error) {
+	if kind == "" {
+		kind = wstypes.QueueItemKindPrompt
+	}
 	s := m.state(agentID)
 	s.conns.Add(connID, conn)
-	item, err := s.enqueue(content, model)
+	item, err := s.enqueue(content, model, kind)
 	if err != nil {
 		return "", err
 	}

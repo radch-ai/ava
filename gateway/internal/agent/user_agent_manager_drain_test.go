@@ -42,7 +42,7 @@ func TestDrainInterruptsAndSettlesTurns(t *testing.T) {
 
 	c, sc := wsPair(t)
 
-	itemID, err := mgr.Submit("agent-drain", "conn-1", sc, "hi", nil)
+	itemID, err := mgr.Submit("agent-drain", "conn-1", sc, "hi", nil, "")
 	require.NoError(t, err)
 
 	// The turn is streaming its partial; wait for it to reach the
