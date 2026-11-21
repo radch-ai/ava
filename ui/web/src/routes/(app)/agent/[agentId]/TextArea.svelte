@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ArrowUp, CircleStop, Plus } from '@lucide/svelte'
+	import { ArrowUp, CircleStop } from '@lucide/svelte'
 	import { Button } from '#components/ui/button'
 	import * as Command from '#components/ui/command'
 	import * as Popover from '#components/ui/popover'
@@ -15,66 +15,68 @@
 	let {
 		onsubmit,
 		oninterrupt,
-		working = false
+		working = false,
+		blocked = false
 	}: {
-		/** Resolves when the gateway accepts the prompt; a rejection
-		 * (or a lost connection) keeps the draft in place. */
+		/** Resolves when the gateway accepted the prompt — or left the
+		 * outcome unconfirmed, which resolves too: the queue snapshot is
+		 * then the truth and the draft has done its work. Only a real
+		 * rejection throws, and only then does the draft stay. */
 		onsubmit?: (text: string) => Promise<void>
 		oninterrupt?: () => void
 		working?: boolean
+		/** Submissions are blocked while the lane is not synchronized:
+		 * the gateway would reject them anyway; the composer says why. */
+		blocked?: boolean
 	} = $props()
 
 	let input = $state('')
 	let submitting = $state(false)
 	let submitError = $state<string | null>(null)
-	// Dismissed by Escape: stays shut until the draft changes again.
-	let suggestionsDismissed = $state(false)
+	// The draft an Escape dismissed completion for: any other draft
+	// completes again, which is why the value is compared, not a flag.
+	let dismissedFor = $state<string | null>(null)
 	let textareaRef = $state<HTMLTextAreaElement | null>(null)
-	let isSendButtonDisabled = $derived(input.trim() === '' || submitting)
+	let isSendButtonDisabled = $derived(
+		input.trim() === '' || submitting || blocked
+	)
 
 	/** The rows the draft still completes, first match on top. A
 	 * fully typed command has nothing left to complete, so Enter
 	 * submits it. */
 	const suggestions = $derived.by(() => {
-		if (suggestionsDismissed) return []
+		if (dismissedFor === input) return []
 		if (!input.startsWith('/') || /\s/.test(input)) return []
 		return COMMANDS.filter(
 			(command) => command.name.startsWith(input) && command.name !== input
 		)
 	})
 
-	// The popup's selected row, owned by the Command primitive: it
-	// styles the row, marks it aria-selected, moves it on pointer
-	// hover, and re-selects the first row when a refilter drops the
-	// current one. Keyboard handling moves the same value.
-	let selected = $state('')
-
-	// A closed list forgets its selection: the kept value could name
-	// a row a reopened list no longer carries, leaving no highlight.
-	$effect(() => {
-		if (suggestions.length === 0) selected = ''
-	})
+	// The keyboard's row: -1 means "nothing chosen yet", which selects
+	// the first row for the popup and for Enter alike.
+	let cursor = $state(-1)
+	const activeCommand = $derived(
+		suggestions[Math.min(cursor, suggestions.length - 1)]
+	)
 
 	function acceptSuggestion(name: string) {
 		input = name
-		suggestionsDismissed = false
+		cursor = -1
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
 		// An IME's Enter commits the composition, not the draft.
 		if (event.isComposing) return
 		if (event.key === 'ArrowDown' && suggestions.length > 0) {
-			// The caret stays put; the selection moves instead. An
-			// unselected list starts at the first row.
+			// The caret stays put; the selection moves instead. From the
+			// unselected state the first press lands on the first row.
 			event.preventDefault()
-			const index = suggestions.findIndex((s) => s.name === selected)
-			selected = suggestions[Math.min(index + 1, suggestions.length - 1)].name
+			cursor = Math.min(cursor + 1, suggestions.length - 1)
 			return
 		}
 		if (event.key === 'ArrowUp' && suggestions.length > 0) {
 			event.preventDefault()
-			const index = suggestions.findIndex((s) => s.name === selected)
-			selected = suggestions[Math.max(index - 1, 0)].name
+			cursor = Math.max(cursor - 1, 0)
 			return
 		}
 		if (
@@ -83,12 +85,12 @@
 			!event.shiftKey
 		) {
 			event.preventDefault()
-			const current = suggestions.find((s) => s.name === selected)
-			acceptSuggestion(current?.name ?? suggestions[0].name)
+			acceptSuggestion((activeCommand ?? suggestions[0]).name)
 			return
 		}
 		if (event.key === 'Escape' && suggestions.length > 0) {
-			suggestionsDismissed = true
+			dismissedFor = input
+			cursor = -1
 			return
 		}
 		if (event.key === 'Enter' && !event.shiftKey) {
@@ -96,15 +98,10 @@
 		}
 	}
 
-	function handleInput() {
-		// A new draft reopens completion after an Escape.
-		suggestionsDismissed = false
-	}
-
 	async function handleSubmit(e: KeyboardEvent | MouseEvent) {
 		e.preventDefault()
 		const text = input.trim()
-		if (!text || submitting) {
+		if (!text || submitting || blocked) {
 			return
 		}
 		submitting = true
@@ -127,14 +124,9 @@
 		e.preventDefault()
 		oninterrupt?.()
 	}
-
-	function handleAttach() {
-		// TODO: Implement file attachment (images, documents)
-		console.log('Attach file')
-	}
 </script>
 
-<!-- Horizontal layout: + button | textarea | stop + send buttons -->
+<!-- Horizontal layout: textarea | stop + send buttons -->
 <div
 	class="bg-overlay-dark/70 relative flex items-end rounded-3xl transition-colors"
 >
@@ -145,19 +137,10 @@
 	and focus never leaves the textarea. The list keeps a fixed
 	maximum height and scrolls past it. -->
 	<Popover.Root open={suggestions.length > 0}>
-		<Button
-			size="icon"
-			variant="ghost"
-			class="mb-[2.5px] size-9 shrink-0 cursor-pointer rounded-full"
-			onclick={handleAttach}
-		>
-			<Plus class="size-5" />
-		</Button>
 		<Textarea
 			bind:value={input}
 			bind:ref={textareaRef}
 			onkeydown={handleKeydown}
-			oninput={handleInput}
 			placeholder="Enter your query!"
 			class="max-h-[200px] min-h-[40px] flex-1 resize-none !border-0 !bg-transparent px-2 py-[10px] !text-lg !leading-5 focus-visible:!border-transparent focus-visible:!ring-0"
 			rows={1}
@@ -172,13 +155,14 @@
 				shouldFilter={false}
 				label="Command suggestions"
 				class="p-0"
-				bind:value={selected}
+				value={activeCommand?.name ?? ''}
 			>
 				<Command.List class="max-h-48">
-					{#each suggestions as suggestion (suggestion.name)}
+					{#each suggestions as suggestion, index (suggestion.name)}
 						<Command.Item
 							value={suggestion.name}
 							onSelect={() => acceptSuggestion(suggestion.name)}
+							onpointermove={() => (cursor = index)}
 							onmousedown={(event) => event.preventDefault()}
 							class="data-selected:bg-accent data-selected:text-foreground flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm"
 						>

@@ -14,13 +14,13 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
+	"github.com/google/uuid"
 )
 
 // wrapTools rides every fetched implementation on the capture
@@ -64,13 +64,19 @@ func (t *capturingTool) Info(context.Context) (*schema.ToolInfo, error) {
 }
 
 func (t *capturingTool) InvokableRun(ctx context.Context, args string, opts ...tool.Option) (string, error) {
-	// The model's own call id: pairing is by this id, so a missing one
-	// is a malformed response — never a minted replacement.
+	// The model's own call id is metadata: repeated tool rounds may reuse
+	// it, so the invocation gets a server-assigned identity of its own.
+	// A missing call id is still a malformed response.
 	callID := compose.GetToolCallID(ctx)
 	if callID == "" {
 		return "", errors.New("tool call has no id")
 	}
-	t.rec.emitToolCall(callID, t.info.Name, args)
+	invocationID := uuid.NewString()
+	// Recorded intent precedes the external effect: a journal that cannot
+	// hold it stops the invocation before the tool runs.
+	if err := t.rec.recordStart(invocationID, callID, t.info.Name, args); err != nil {
+		return "", err
+	}
 	result, err := t.inner.InvokableRun(ctx, args, opts...)
 	invocationErr := err
 	if err != nil {
@@ -81,7 +87,7 @@ func (t *capturingTool) InvokableRun(ctx context.Context, args string, opts ...t
 	// The required outcome write wins over the invocation's own error:
 	// the transcript must not lose the row. The returned error is not
 	// tool-attributed, so the turn fails at message level.
-	if perr := t.rec.recordOutcome(callID, t.info.Name, args, result, invocationErr); perr != nil {
+	if perr := t.rec.recordOutcome(invocationID, callID, t.info.Name, result, invocationErr); perr != nil {
 		return result, perr
 	}
 	return result, err
@@ -95,14 +101,3 @@ type toolError struct {
 
 func (e *toolError) Error() string { return e.err.Error() }
 func (e *toolError) Unwrap() error { return e.err }
-
-// rawJSON keeps JSON verbatim and quotes anything else — a tool's
-// plain-text answer stays a valid envelope member (display only; the
-// model-facing result is always encoded as a JSON string).
-func rawJSON(s string) []byte {
-	if json.Valid([]byte(s)) {
-		return []byte(s)
-	}
-	encoded, _ := json.Marshal(s)
-	return encoded
-}

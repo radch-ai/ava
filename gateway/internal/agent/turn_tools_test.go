@@ -12,15 +12,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
+	"github.com/radch-ai/ava/backend"
 	"github.com/radch-ai/ava/backend/apitypes"
+
 	"github.com/radch-ai/ava/gateway/internal/agent"
 	"github.com/radch-ai/ava/gateway/wstypes"
 )
@@ -172,7 +174,7 @@ func TestToolMetadataFailureFailsTurn(t *testing.T) {
 	broken := &fakeTool{name: "echo_tool", infoErr: errors.New("schema unavailable")}
 	llm := newScriptedLLM(t, sseChunk("never reached"))
 
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel:   fixedResolver(llm.URL),
@@ -196,7 +198,7 @@ func TestToolRoundFeedsResultAndStreamsAnswer(t *testing.T) {
 		toolCallChunk("echo_tool")+toolCallDone(),
 		sseChunk("final answer"))
 
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel:   fixedResolver(llm.URL),
@@ -236,7 +238,7 @@ func TestFetchedToolsAreAllOffered(t *testing.T) {
 	weather := &fakeTool{name: "weather_tool", result: "sunny"}
 	llm := newScriptedLLM(t, sseChunk("no tools needed"))
 
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel:   fixedResolver(llm.URL),
@@ -260,7 +262,7 @@ func TestEmptyFetchAttachesNoTools(t *testing.T) {
 	echo := &fakeTool{name: "echo_tool", result: "unused"}
 	llm := newScriptedLLM(t, sseChunk("plain answer"))
 
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel:   fixedResolver(llm.URL),
@@ -280,42 +282,54 @@ func TestEmptyFetchAttachesNoTools(t *testing.T) {
 }
 func TestToolFailureErrorsTurn(t *testing.T) {
 	echo := &fakeTool{name: "echo_tool", err: errors.New("search backend down")}
-	llm := newScriptedLLM(t,
-		toolCallChunk("echo_tool")+toolCallDone(),
-		sseChunk("never reached"))
-
-	sink := &recordingSink{}
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
-		&agent.UserAgentManagerOptions{
-			GetAgentThread: emptyThread,
-			ResolveModel:   fixedResolver(llm.URL),
-			Tools:          fixedTools(echo),
-			PersistTurn:    sink.persist,
-		})
+	mgr, sqlDB := toolRoundManager(t, echo,
+		[]string{toolCallChunk("echo_tool") + toolCallDone(), sseChunk("never reached")})
 
 	c, sc := wsPair(t)
-	submit(t, mgr, "agent-toolfail", "conn-1", sc, "search for otters")
+	itemID := submit(t, mgr, "agent-toolfail", "conn-1", sc, "search for otters")
 
-	ev := readUntilError(t, c)
-	require.Equal(t, wstypes.EventTypeError, ev.Type)
-	require.Equal(t, "echo_tool",
-		eventPayload[wstypes.ErrorEvent](t, ev).Tool)
+	// The whole report is durable: read until the item's failed
+	// outcome commits, and never accept a transient error frame for a
+	// tool-attributed failure.
+	var toolName string
+	for {
+		ev := readEvent(t, c)
+		require.NotEqual(t, wstypes.EventTypeError, ev.Type,
+			"a tool-attributed failure is durable, never a transient error frame")
+		if ev.Type != wstypes.EventTypeLifecycle {
+			continue
+		}
+		done := false
+		for _, lifecycle := range lifecycleBatch(t, ev) {
+			if lifecycle.Kind == apitypes.LifecycleToolFinished {
+				toolName = lifecycle.ToolName
+			}
+			done = done || (lifecycle.Kind == apitypes.LifecycleItemFinished &&
+				lifecycle.Outcome == apitypes.ItemFailed)
+		}
+		if done {
+			break
+		}
+	}
+	require.Equal(t, "echo_tool", toolName)
 
 	// A tool failure fails the whole turn: the claim-written user row
 	// stands with the native assistant group and the failed
 	// invocation's outcome row — its error kept in the envelope — and
 	// no terminal assistant row joins them. The queue is not paused: a
 	// tool failure is not a message failure.
-	calls := sink.recorded()
-	require.Len(t, calls, 3)
-	require.Equal(t, apitypes.ThreadRoleUser, calls[0][0].Role)
-	require.Equal(t, "search for otters", calls[0][0].Content)
-	require.Len(t, calls[1], 1, "the round's assistant call group")
-	require.Equal(t, apitypes.ThreadRoleAssistant, calls[1][0].Role)
-	require.Len(t, calls[2], 1)
-	require.Equal(t, apitypes.ThreadRoleTool, calls[2][0].Role)
-	require.JSONEq(t, `{"name":"echo_tool","callId":"call-1","args":{"query":"plush otters"},
-		"result":"","error":"search backend down"}`, calls[2][0].Content)
+	rows := storedRows(t, sqlDB, "agent-toolfail")
+	require.Len(t, rows, 3, describe(rows))
+	require.Equal(t, apitypes.ThreadRoleUser, rows[0].Role)
+	require.Equal(t, "search for otters", rows[0].Content)
+	require.Equal(t, apitypes.ThreadRoleAssistant, rows[1].Role, "the round's assistant call group")
+	require.Equal(t, apitypes.ThreadRoleTool, rows[2].Role)
+	require.Equal(t, itemID, rows[2].TurnID, "the outcome row names its turn like every other row")
+	var envelope backend.ToolEnvelope
+	require.NoError(t, json.Unmarshal([]byte(rows[2].Content), &envelope))
+	require.Equal(t, "echo_tool", envelope.Name)
+	require.Equal(t, "call-1", envelope.CallID)
+	require.Equal(t, "search backend down", *envelope.Error)
 }
 
 // A failed fetch fails the turn outright — never a silent tool-less
@@ -323,7 +337,7 @@ func TestToolFailureErrorsTurn(t *testing.T) {
 func TestToolFetchFailureFailsTurn(t *testing.T) {
 	llm := newScriptedLLM(t, sseChunk("never reached"))
 
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel:   fixedResolver(llm.URL),
@@ -348,12 +362,10 @@ func TestToolFetchFailureFailsTurn(t *testing.T) {
 func TestInterruptDuringToolFetchEmitsNothing(t *testing.T) {
 	llm := newScriptedLLM(t, sseChunk("never reached"))
 	entered := make(chan struct{})
-	sink := &recordingSink{}
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr, sqlDB := journaledLane(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel:   fixedResolver(llm.URL),
-			PersistTurn:    sink.persist,
 			Tools: func(ctx context.Context, _ string) ([]tool.InvokableTool, error) {
 				close(entered)
 				<-ctx.Done()
@@ -371,14 +383,14 @@ func TestInterruptDuringToolFetchEmitsNothing(t *testing.T) {
 		t.Fatal("tools never fetched")
 	}
 
-	require.NotNil(t, mgr.Get("agent-toolstop"))
+	require.NotNil(t, agent.Worker(mgr, "agent-toolstop"))
 	mgr.Interrupt("agent-toolstop")
 
 	for idle := false; !idle; {
 		ev := readEvent(t, c)
 		switch ev.Type {
 		case wstypes.EventTypeQueueState, wstypes.EventTypeMessageChunk,
-			wstypes.EventTypeToolCall, wstypes.EventTypeToolResult:
+			wstypes.EventTypeLifecycle:
 		case wstypes.EventTypeLaneStatus:
 			if !eventPayload[wstypes.LaneStatus](t, ev).Working {
 				idle = true
@@ -391,8 +403,113 @@ func TestInterruptDuringToolFetchEmitsNothing(t *testing.T) {
 	}
 
 	// The user row stands alone: a stop writes no error row.
-	calls := sink.recorded()
-	require.Len(t, calls, 1)
-	require.Equal(t, apitypes.ThreadRoleUser, calls[0][0].Role)
+	rows := storedRows(t, sqlDB, "agent-toolstop")
+	require.Len(t, rows, 1, describe(rows))
+	require.Equal(t, apitypes.ThreadRoleUser, rows[0].Role)
 	require.Empty(t, llm.requests(), "the model must not be called")
+}
+
+// After a tool round commits, a mid-turn join's prefix carries only
+// what is not yet durable: the committed round's text and invocation
+// ride the journal — delivered exactly once — and the prefix excludes
+// them instead of repeating them.
+func TestPrefixExcludesCommittedRounds(t *testing.T) {
+	echo := &fakeTool{name: "echo_tool", result: "tool says hi"}
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unpark := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(unpark)
+	var rounds atomic.Int64
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		round := rounds.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		if round == 1 {
+			_, _ = w.Write([]byte(sseChunk("round one text ")))
+			_, _ = w.Write([]byte(toolCallChunk("echo_tool")))
+			_, _ = w.Write([]byte(toolCallDone()))
+		} else {
+			<-release // park inside round two: the join happens here
+			_, _ = w.Write([]byte(sseChunk("final answer")))
+		}
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		flusher.Flush()
+	}))
+	t.Cleanup(llm.Close)
+
+	mgr, sqlDB := journaledLane(t, &agent.UserAgentManagerOptions{
+		GetAgentThread: emptyThread,
+		ResolveModel:   fixedResolver(llm.URL),
+		Tools:          fixedTools(echo),
+	})
+	c1, sc1 := wsPair(t)
+	itemID := submit(t, mgr, "agent-prefix", "conn-1", sc1, "search")
+
+	// Wait for the round-one commit: its tool_finished event is the
+	// durable proof the invocation's outcome row landed.
+	for toolDone := false; !toolDone; {
+		ev := readEvent(t, c1)
+		if ev.Type != wstypes.EventTypeLifecycle {
+			continue
+		}
+		batch := eventPayload[wstypes.LifecycleBatchEvent](t, ev)
+		for _, raw := range batch.Events {
+			var leaf struct {
+				Kind string `json:"kind"`
+			}
+			require.NoError(t, json.Unmarshal(raw, &leaf))
+			if leaf.Kind == apitypes.LifecycleToolFinished {
+				toolDone = true
+			}
+		}
+	}
+
+	c2, sc2 := wsPair(t)
+	journal := mgr.Journal()
+	history, head, _, err := journal.JournalStatus(context.Background(), "agent-prefix")
+	require.NoError(t, err)
+	registered, _, err := mgr.HandOff(context.Background(), "agent-prefix", "conn-2", sc2, head)
+	require.NoError(t, err)
+	require.True(t, registered)
+	var ready wstypes.SyncReadyEvent
+	for {
+		ev := readEvent(t, c2)
+		if ev.Type == wstypes.EventTypeSyncReady {
+			ready = eventPayload[wstypes.SyncReadyEvent](t, ev)
+			break
+		}
+	}
+	require.NotNil(t, ready.Prefix, "the turn is mid-round-two, so a prefix exists")
+	require.Equal(t, itemID, ready.Prefix.ItemID)
+	require.Empty(t, ready.Prefix.Text,
+		"round-one text is committed and rides the journal; the prefix must not repeat it")
+	require.Empty(t, ready.Prefix.Invocations,
+		"the finished invocation is a durable tool row; the prefix must not repeat it")
+
+	// Replay delivers each committed round exactly once.
+	page, err := journal.ReplayAfter(context.Background(), "agent-prefix", history, 0, 100)
+	require.NoError(t, err)
+	committed, toolRows := 0, 0
+	for _, raw := range page.Events {
+		var ev apitypes.LifecycleEvent
+		require.NoError(t, json.Unmarshal(raw, &ev))
+		switch ev.Kind {
+		case apitypes.LifecycleMessageCommitted:
+			committed++
+		case apitypes.LifecycleToolFinished:
+			toolRows += len(ev.Rows)
+		}
+	}
+	require.Equal(t, 1, committed, "exactly one message_committed round")
+	require.Equal(t, 1, toolRows, "exactly one tool outcome row")
+	var toolCount int
+	require.NoError(t, sqlDB.QueryRow(
+		`SELECT COUNT(*) FROM thread_messages WHERE agent_id = 'agent-prefix' AND role = 'tool'`).
+		Scan(&toolCount))
+	require.Equal(t, 1, toolCount)
+
+	// The joiner still sees the live remainder and settlement.
+	unpark()
+	_, msg := readUntilMessage(t, c2)
+	require.Equal(t, "final answer", msg.Content)
 }

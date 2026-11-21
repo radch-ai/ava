@@ -2,9 +2,9 @@
 // Everything under gateway/internal is invisible outside this subtree; this
 // package is the only importable surface.
 //
-// It implements the client wire contract: connected event, prompt
-// routing into agent lanes, turn message and error events,
-// lane_status reply, interrupt.
+// It implements the client wire contract: the connected greeting, the
+// synchronization handshake that replays what a device missed, prompt
+// routing into agent lanes, and interrupt.
 package gateway
 
 import (
@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 
+	"github.com/radch-ai/ava/backend"
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/gateway/internal/agent"
 	"github.com/radch-ai/ava/gateway/wstypes"
@@ -44,10 +45,10 @@ type Config struct {
 	// to TurnService.ResolveModel by the binary at boot. Zero keeps the
 	// lanes unresolved: turns fail closed.
 	ResolveModel agent.ModelResolver
-	// PersistTurn appends a turn's messages to the agent's thread —
-	// bound to TurnService.AppendThreadMessages by the binary at boot.
-	// Zero keeps turns ephemeral.
-	PersistTurn agent.TurnSink
+	// Journal is the durable conversation lifecycle feed — bound to the
+	// backend TurnService by the binary at boot. It admits, settles, and
+	// replays items; zero fails every admission closed.
+	Journal agent.LifecycleJournal
 	// GetAgentConfig reads an agent's config for each turn's prompt —
 	// bound to TurnService.GetAgentConfig by the binary at boot. Zero
 	// keeps turns persona-less.
@@ -61,10 +62,6 @@ type Config struct {
 	// at boot. Required: the working context is the committed user
 	// row, so an unbound source fails the turn.
 	GetAgentThread agent.AgentThreadSource
-	// CreateThread runs /new and /reset — bound to
-	// TurnService.CreateAndActivateThread by the binary at boot. Zero
-	// fails commands closed.
-	CreateThread agent.ThreadActivator
 }
 
 // New builds the gateway. The gateway is a single WebSocket endpoint:
@@ -73,29 +70,26 @@ type Config struct {
 func New(cfg *Config, logger zerolog.Logger) (*Gateway, error) {
 	interval := pingInterval
 	resolve := agent.ModelResolver(nil)
-	var persist agent.TurnSink
+	var journal agent.LifecycleJournal
 	var getConfig agent.AgentConfigSource
 	var toolsFn agent.AgentToolsFunc
 	var getThread agent.AgentThreadSource
-	var createThread agent.ThreadActivator
 	if cfg != nil {
 		if cfg.PingInterval > 0 {
 			interval = cfg.PingInterval
 		}
 		resolve = cfg.ResolveModel
-		persist = cfg.PersistTurn
+		journal = cfg.Journal
 		getConfig = cfg.GetAgentConfig
 		toolsFn = cfg.Tools
 		getThread = cfg.GetAgentThread
-		createThread = cfg.CreateThread
 	}
 	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{
 		ResolveModel:   resolve,
-		PersistTurn:    persist,
+		Journal:        journal,
 		GetAgentConfig: getConfig,
 		Tools:          toolsFn,
 		GetAgentThread: getThread,
-		CreateThread:   createThread,
 	})
 	return &Gateway{
 		handler: handleWS(interval, logger, mgr),
@@ -140,9 +134,11 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 		// Inbound frames may carry a full prompt up to the admission
 		// bound; the default 32 KiB read limit would close the socket
 		// on a legitimate long prompt before admission could reject
-		// or accept it. Over-length frames reach the handler, whose
+		// or accept it. JSON escaping costs up to 6 bytes per content
+		// byte, so the decoded bound needs its worst-case framing on
+		// top. Over-length frames still reach the handler, whose
 		// validation answers with queue_result.
-		conn.SetReadLimit(maxPromptBytes + 8192)
+		conn.SetReadLimit(6*maxPromptBytes + 8192)
 
 		connID := uuid.New().String()
 		logger = logger.With().Str("conn_id", connID).Logger()
@@ -150,9 +146,13 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
 
-		// The first prompt fixes which lane this connection belongs to;
+		// The first frame fixes which lane this connection belongs to;
 		// leaving removes the connection from it.
 		var joinedAgent string
+		// synced gates every mutation: a peer that has not finished
+		// recovery cannot submit or interrupt, because it does not yet
+		// know the conversation it would act on.
+		var synced bool
 		defer func() {
 			if joinedAgent == "" {
 				return
@@ -191,6 +191,126 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 		// The watcher's close — or the peer's own disconnect — is
 		// what unblocks reads.
 		readCtx := context.WithoutCancel(ctx)
+
+		// syncAgent advances one synchronization step for the bound
+		// agent: a bounded replay batch after the client's cursor, the
+		// authoritative baseline when that cursor cannot resume, or the
+		// runtime snapshot plus a live subscription once the head is
+		// reached. One frame per request keeps recovery bounded no
+		// matter how far behind the device is. false means the
+		// connection is gone.
+		syncAgent := func(agentID string, msg wstypes.SyncMessage) bool {
+			journal := mgr.Journal()
+			if journal == nil {
+				logger.Warn().Str("agent_id", agentID).Msg("sync without a lifecycle journal")
+				return true
+			}
+			write := func(ev wstypes.Event) bool {
+				writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				defer cancel()
+				if err := wsjson.Write(writeCtx, conn, ev); err != nil {
+					logger.Warn().Err(err).Msg("failed to send sync event")
+					return false
+				}
+				return true
+			}
+			// failSync answers one failed synchronization step and closes
+			// the connection: a peer never hangs half-synchronized on a
+			// socket the server cannot advance.
+			failSync := func(step string, err error) bool {
+				logger.Warn().Err(err).Str("agent_id", agentID).Msg(step)
+				ok := write(wstypes.Event{
+					Type:    wstypes.EventTypeError,
+					AgentID: agentID,
+					Data:    wstypes.ErrorEvent{Message: "sync failed: " + err.Error()},
+				})
+				if ok {
+					_ = conn.Close(websocket.StatusInternalError, "sync failed")
+				}
+				return false
+			}
+			// sendSnapshot answers the authoritative baseline: the active
+			// thread's newest page at the committed head. A client applies
+			// it, then continues from its cursor. A snapshot that cannot be
+			// read is never silence: the peer learns the failure and the
+			// connection closes, so it cannot hang half-synchronized.
+			sendSnapshot := func() bool {
+				snapshot, err := journal.SyncSnapshot(readCtx, agentID, snapshotPageLimit)
+				if err != nil {
+					return failSync("sync snapshot", err)
+				}
+				page, err := json.Marshal(snapshot.Page)
+				if err != nil {
+					return failSync("marshal sync page", err)
+				}
+				return write(wstypes.Event{
+					Type:    wstypes.EventTypeSyncSnapshot,
+					AgentID: agentID,
+					Data: wstypes.SyncSnapshotEvent{
+						Cursor: snapshot.Cursor,
+						Page:   page,
+					},
+				})
+			}
+			// Shape first: an unparseable cursor recovers from a snapshot.
+			historyID, pos, ok := backend.ParseCursor(msg.Cursor)
+			if !ok {
+				return sendSnapshot()
+			}
+			// Replay validates scope, coordinates, and events in one
+			// read: a cursor from another database or projection never
+			// resumes here, and its positions describe history this
+			// database cannot serve.
+			page, err := journal.ReplayAfter(readCtx, agentID, historyID, pos, replayBatchSize)
+			if err != nil {
+				if errors.Is(err, backend.ErrReplayExpired) || errors.Is(err, backend.ErrReplayAhead) ||
+					errors.Is(err, backend.ErrReplayForeign) {
+					return sendSnapshot()
+				}
+				return failSync("replay journal", err)
+			}
+			if len(page.Events) > 0 {
+				return write(wstypes.Event{
+					Type:    wstypes.EventTypeSyncBatch,
+					AgentID: agentID,
+					Data: wstypes.LifecycleBatchEvent{
+						Cursor: backend.FormatCursor(historyID, page.LastPos),
+						Events: page.Events,
+					},
+				})
+			}
+
+			// Caught up: the manager registers the connection under
+			// the publication boundary, claiming readiness only while
+			// the head still matches this position. Any mismatch means
+			// the empty page that led here cannot advance the client,
+			// so the connection closes without sync_ready and the
+			// device recovers through a fresh sync instead of spinning
+			// here.
+			registered, head, err := mgr.HandOff(readCtx, agentID, connID, conn, pos)
+			if err != nil {
+				return failSync("sync hand-off", err)
+			}
+			if !registered {
+				logger.Warn().Str("agent_id", agentID).Int64("pos", pos).Int64("head", head).
+					Msg("replay stalled: empty page below head")
+				return false
+			}
+			synced = true
+			return true
+		}
+
+		// answer replies to one prompt or send_now on the requesting
+		// connection; false means the reply itself failed, so the
+		// handler ends — nothing else may ride a socket that cannot
+		// answer its own admission frames.
+		answer := func(agentID, requestID, itemID string, queueErr error) bool {
+			if rerr := replyQueueResult(ctx, conn, agentID, requestID, itemID, queueErr); rerr != nil {
+				logger.Warn().Err(rerr).Msg("failed to send queue_result event")
+				return false
+			}
+			return true
+		}
 		for {
 			var raw json.RawMessage
 			err := wsjson.Read(readCtx, conn, &raw)
@@ -224,14 +344,20 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 					logger.Warn().Err(err).Msg("malformed prompt message")
 					continue
 				}
+				if !synced {
+					logger.Warn().Str("agent_id", env.AgentID).Msg("prompt before synchronization")
+					if !answer(env.AgentID, msg.RequestID, "", errNotSynchronized) {
+						return
+					}
+					continue
+				}
 				// Admission validates content before anything binds or
 				// mutates: empty-after-trim and over-length prompts are
 				// answered through queue_result and dropped.
 				content := strings.TrimSpace(msg.Content)
 				if reject := validatePromptContent(msg.Content, content); reject != nil {
 					logger.Warn().Err(reject).Str("agent_id", env.AgentID).Msg("prompt rejected")
-					if rerr := replyQueueResult(ctx, conn, env.AgentID, msg.RequestID, "", reject); rerr != nil {
-						logger.Warn().Err(rerr).Msg("failed to send queue_result event")
+					if !answer(env.AgentID, msg.RequestID, "", reject) {
 						return
 					}
 					continue
@@ -242,8 +368,7 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 				kind, reject := classifySubmission(content)
 				if reject != nil {
 					logger.Warn().Err(reject).Str("agent_id", env.AgentID).Msg("command rejected")
-					if rerr := replyQueueResult(ctx, conn, env.AgentID, msg.RequestID, "", reject); rerr != nil {
-						logger.Warn().Err(rerr).Msg("failed to send queue_result event")
+					if !answer(env.AgentID, msg.RequestID, "", reject) {
 						return
 					}
 					continue
@@ -252,9 +377,10 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 					logger.Warn().Str("agent_id", env.AgentID).Msg("connection already bound to another agent")
 					continue
 				}
-				// Enqueue into the agent's queue: first submit creates
-				// the state, every submit subscribes this connection.
-				// A nil model follows the default routing.
+				// Admit into the agent's queue: the journal commits the
+				// acceptance before the runtime queue exposes it, and
+				// the accepted event rides the lifecycle feed. A nil
+				// model follows the default routing.
 				var entry *apitypes.ModelEntry
 				modelID, providerID := "", ""
 				if msg.Model != nil {
@@ -267,9 +393,8 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 					Str("provider_id", providerID).
 					Int("content_len", len(content)).
 					Msg("prompt received over ws")
-				itemID, err := mgr.Submit(env.AgentID, connID, conn, content, entry, kind)
-				if rerr := replyQueueResult(ctx, conn, env.AgentID, msg.RequestID, itemID, err); rerr != nil {
-					logger.Warn().Err(rerr).Msg("failed to send queue_result event")
+				itemID, err := mgr.Submit(env.AgentID, content, entry, kind)
+				if !answer(env.AgentID, msg.RequestID, itemID, err) {
 					return
 				}
 				if err != nil {
@@ -281,6 +406,13 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 					logger.Warn().Err(err).Msg("malformed send_now message")
 					continue
 				}
+				if !synced {
+					logger.Warn().Str("agent_id", env.AgentID).Msg("send_now before synchronization")
+					if !answer(env.AgentID, msg.RequestID, "", errNotSynchronized) {
+						return
+					}
+					continue
+				}
 				if !bindAgent(&joinedAgent, env.AgentID) {
 					logger.Warn().Str("agent_id", env.AgentID).Msg("connection already bound to another agent")
 					continue
@@ -290,39 +422,35 @@ func handleWS(interval time.Duration, logger zerolog.Logger, mgr *agent.UserAgen
 					entry = &apitypes.ModelEntry{ID: msg.Model.ID, ProviderID: msg.Model.ProviderID}
 				}
 				itemID, err := mgr.SendNow(env.AgentID, msg.ItemID, entry)
-				if rerr := replyQueueResult(ctx, conn, env.AgentID, msg.RequestID, itemID, err); rerr != nil {
-					logger.Warn().Err(rerr).Msg("failed to send queue_result event")
+				if !answer(env.AgentID, msg.RequestID, itemID, err) {
 					return
 				}
 				if err != nil {
 					logger.Warn().Err(err).Str("item_id", msg.ItemID).Msg("send_now rejected")
 				}
-			case wstypes.EnvelopeTypeStatus:
-				// One conversation per socket: the status frame binds its
+			case wstypes.EnvelopeTypeSync:
+				// One conversation per socket: the sync frame binds its
 				// agent exactly like a prompt — cross-agent frames are
-				// rejected, not a silent re-bind. Reply first, then join:
-				// a status request doubles as the lane join, so a page
-				// (re)opened mid-turn receives the queue snapshot, the
-				// streamed prefix, and everything after them. Joining an
-				// agent without a worker still subscribes — pending work
-				// survives the worker.
+				// rejected, not a silent re-bind.
+				var msg wstypes.SyncMessage
+				if err := json.Unmarshal(env.Data, &msg); err != nil {
+					logger.Warn().Err(err).Msg("malformed sync message")
+					continue
+				}
 				if !bindAgent(&joinedAgent, env.AgentID) {
 					logger.Warn().Str("agent_id", env.AgentID).Msg("connection already bound to another agent")
 					continue
 				}
-				writeCtx, writeCancel := context.WithTimeout(ctx, 10*time.Second)
-				err := wsjson.Write(writeCtx, conn, wstypes.Event{
-					Type:    wstypes.EventTypeLaneStatus,
-					AgentID: env.AgentID,
-					Data:    mgr.Status(env.AgentID),
-				})
-				writeCancel()
-				if err != nil {
-					logger.Warn().Err(err).Msg("failed to send lane_status event")
+				if !syncAgent(env.AgentID, msg) {
 					return
 				}
-				mgr.Join(env.AgentID, connID, conn)
 			case wstypes.EnvelopeTypeInterrupt:
+				// A peer that has not synchronized does not know the turn
+				// it would stop: its interrupt is ignored, not guessed at.
+				if !synced {
+					logger.Warn().Str("agent_id", env.AgentID).Msg("interrupt before synchronization")
+					continue
+				}
 				// The stop frame binds like every other frame: a socket
 				// bound to one agent must not stop another agent's turn.
 				if !bindAgent(&joinedAgent, env.AgentID) {
@@ -369,6 +497,9 @@ func keepalive(ctx context.Context, conn *websocket.Conn, interval time.Duration
 // bindAgent fixes the connection's agent on first use and rejects
 // cross-agent frames afterwards: one conversation per socket.
 func bindAgent(joined *string, agentID string) bool {
+	if agentID == "" {
+		return false
+	}
 	if *joined == "" {
 		*joined = agentID
 		return true
@@ -387,6 +518,18 @@ var (
 	// errCommandArguments rejects a recognized command carrying extra
 	// text: /new is the whole submission or it is an ordinary prompt.
 	errCommandArguments = errors.New("/new takes no arguments; submit /new alone")
+	// errNotSynchronized answers a mutation from a peer that has not
+	// finished recovery: it cannot act on a conversation it has not
+	// yet seen.
+	errNotSynchronized = errors.New("not synchronized; retry once the connection is live")
+)
+
+// Recovery bounds: one replay page and one snapshot page. A device that
+// fell further behind asks again with its cursor, so neither is a
+// promise about how much history a reconnect costs.
+const (
+	replayBatchSize   = 100
+	snapshotPageLimit = 20
 )
 
 // classifySubmission splits a trimmed submission into its queue kind:

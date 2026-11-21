@@ -7,12 +7,14 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 
-	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 
+	"github.com/radch-ai/ava/backend"
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/gateway/internal/wsconn"
 	"github.com/radch-ai/ava/gateway/wstypes"
@@ -42,29 +44,35 @@ type queuedItem struct {
 	model   *apitypes.ModelEntry
 }
 
-// turnClaim is an item moving to execution, with the context the
-// turn runs on. userMsgID names the started turn's persisted user
-// row — distinct from the item ID, which stays the stream ID.
+// turnClaim is an item moving to execution, with the context the turn
+// runs on. The persisted user row's identity is assigned by the backend
+// when the turn starts, so the claim carries none.
 type turnClaim struct {
-	item      *queuedItem
-	userMsgID string
-	ctx       context.Context
+	item *queuedItem
+	ctx  context.Context
 }
 
 // agentState is one agent's queue plus its subscribers. Lock order:
-// pubMu before mu, and neither across a network write — mu guards
-// data only; pubMu serializes mutate-then-publish so subscribers see
-// queue snapshots in mutation order.
+// pubMu before snapMu before mu, and none held across a network write
+// except pubMu's own publication calls — mu guards data only; pubMu
+// serializes durable-mutate-then-publish so subscribers see queue
+// snapshots and lifecycle frames in commit order; snapMu cuts the
+// streaming answer (prefix extension, sequence, chunk frame) so the cut
+// never queues behind a journal write.
 type agentState struct {
 	agentID string
 
-	pubMu sync.Mutex
-	mu    sync.Mutex
+	pubMu  sync.Mutex
+	snapMu sync.Mutex
+	mu     sync.Mutex
 
 	pending []*queuedItem
 	next    *queuedItem // reserved by send_now; runs before the FIFO
 
-	active    *queuedItem
+	active *queuedItem
+	// userMsgID names the started item's persisted user row, assigned by
+	// the backend's durable start. Empty until it commits, and for
+	// commands that never own a row.
 	userMsgID string
 	paused    bool
 	// pauseModel is the selection whose failure armed the pause —
@@ -72,6 +80,10 @@ type agentState struct {
 	// send_now rebinds the pending entries captured on it.
 	pauseModel *apitypes.ModelEntry
 	cancel     context.CancelFunc // cancels the active item's turn ctx
+	// halted stops all dispatch after a turn whose terminal outcome
+	// could not be recorded; only service recovery — which settles the
+	// stuck item before the next process serves the lane — clears it.
+	halted bool
 
 	// rootCtx parents every turn's context; the manager's root, set
 	// once when the state is created.
@@ -86,8 +98,12 @@ type agentState struct {
 	// by the manager, nil in unit tests.
 	ensureWorker func()
 
-	drainMu  sync.Mutex
-	draining bool
+	// draining gates admission and claims for good once shutdown starts.
+	draining atomic.Bool
+
+	// turnWG counts claimed turns still settling; the manager's Drain
+	// waits on it instead of polling the lane flags.
+	turnWG *sync.WaitGroup
 
 	// workerMu guards the disposable runtime worker handle; the
 	// queue itself never depends on it.
@@ -95,11 +111,12 @@ type agentState struct {
 	worker   *UserAgent
 }
 
-func newAgentState(agentID string, rootCtx context.Context, logger zerolog.Logger) *agentState {
+func newAgentState(agentID string, rootCtx context.Context, turnWG *sync.WaitGroup, logger zerolog.Logger) *agentState {
 	s := &agentState{
 		agentID: agentID,
 		rootCtx: rootCtx,
 		conns:   wsconn.NewBroadcaster(logger),
+		turnWG:  turnWG,
 	}
 	s.publish = func(ev wstypes.QueueStateEvent) {
 		_ = s.conns.WriteJSON(context.Background(), wstypes.Event{
@@ -112,30 +129,29 @@ func newAgentState(agentID string, rootCtx context.Context, logger zerolog.Logge
 }
 
 // drainingNow reports whether shutdown has gated the queue.
-func (s *agentState) drainingNow() bool {
-	s.drainMu.Lock()
-	defer s.drainMu.Unlock()
-	return s.draining
-}
+func (s *agentState) drainingNow() bool { return s.draining.Load() }
 
 // beginDrain gates the queue against new admissions and further
 // claims; the active turn, if any, keeps settling.
-func (s *agentState) beginDrain() {
-	s.drainMu.Lock()
-	defer s.drainMu.Unlock()
-	s.draining = true
-}
+func (s *agentState) beginDrain() { s.draining.Store(true) }
 
-// enqueue admits one prompt, publishing the new snapshot. Rejected
-// when draining or at capacity; a paused queue stays paused —
-// enqueueing is not a resume.
-func (s *agentState) enqueue(content string, model *apitypes.ModelEntry, kind string) (*queuedItem, error) {
-	s.pubMu.Lock()
-
+// admit records one submission and queues it. The capacity and drain
+// checks run first, under the publication boundary, and the durable
+// acceptance commits before the item exists in the runtime queue: a
+// rejected admission writes nothing, and an accepted one is never
+// acknowledged before it is durable. A paused queue stays paused —
+// admission is not a resume. accept is the durable half, called with the
+// boundary held but no queue mutex.
+func (s *agentState) admit(itemID, content string, model *apitypes.ModelEntry, kind string, accept func(context.Context) (*backend.JournalBatch, error)) (*queuedItem, error) {
+	// The drain gate is checked before the publication boundary is
+	// taken: a drain must reject at once, even while a journal write
+	// holds the boundary. The flag only ever flips on, so an admission
+	// let through here is at worst settled by recovery next boot.
 	if s.drainingNow() {
-		s.pubMu.Unlock()
 		return nil, errQueueDraining
 	}
+
+	s.pubMu.Lock()
 
 	s.mu.Lock()
 	if len(s.pending)+s.nextSlotCount() >= queueCapacity {
@@ -143,7 +159,21 @@ func (s *agentState) enqueue(content string, model *apitypes.ModelEntry, kind st
 		s.pubMu.Unlock()
 		return nil, errQueueFull
 	}
-	item := &queuedItem{id: uuid.NewString(), content: content, kind: kind, model: model}
+	s.mu.Unlock()
+
+	if batch, err := accept(context.Background()); err != nil {
+		s.pubMu.Unlock()
+		return nil, err
+	} else if batch != nil {
+		// The committed acceptance is published before the runtime
+		// queue names the item: a live client's cursor stays
+		// contiguous with replay, never skipping the positions the
+		// accepted event committed.
+		s.publishLifecycleLocked(batch)
+	}
+
+	s.mu.Lock()
+	item := &queuedItem{id: itemID, content: content, kind: kind, model: model}
 	s.pending = append(s.pending, item)
 	paused := s.paused
 	snapshot := s.snapshotLocked()
@@ -161,6 +191,70 @@ func (s *agentState) enqueue(content string, model *apitypes.ModelEntry, kind st
 	return item, nil
 }
 
+// publishLifecycleLocked enqueues one committed journal batch as a
+// lifecycle frame. Caller holds pubMu: the frame's cursor order and the
+// queue snapshots around it share one serialization, so a subscriber
+// applies durable facts in commit order. Publication is best-effort —
+// a device that misses frames resynchronizes from the journal, which
+// is why nothing here can fail a turn.
+func (s *agentState) publishLifecycleLocked(batch *backend.JournalBatch) {
+	if batch == nil || len(batch.Events) == 0 {
+		return
+	}
+	events := make([]json.RawMessage, 0, len(batch.Events))
+	for _, ev := range batch.Events {
+		raw, err := json.Marshal(ev)
+		if err != nil {
+			continue
+		}
+		events = append(events, raw)
+	}
+	if len(events) == 0 {
+		return
+	}
+	_ = s.conns.WriteJSON(context.Background(), wstypes.Event{
+		Type:    wstypes.EventTypeLifecycle,
+		AgentID: s.agentID,
+		Data:    wstypes.LifecycleBatchEvent{Cursor: batch.Cursor, Events: events},
+	})
+}
+
+// commitAndPublish runs one durable mutation inside the publication
+// boundary so enqueue order can never diverge from commit order: the
+// journal write and the lifecycle frame carrying it share one pubMu
+// section. The mutation itself is the caller's — its guard queries and
+// error classification stay where they run.
+func (s *agentState) commitAndPublish(mutate func() (*backend.JournalBatch, error)) error {
+	s.pubMu.Lock()
+	defer s.pubMu.Unlock()
+	batch, err := mutate()
+	if err != nil {
+		return err
+	}
+	s.publishLifecycleLocked(batch)
+	return nil
+}
+
+// startItem is commitAndPublish for an item's start: the committed
+// batch, the running identity, and the queue snapshot land in one
+// publication section, so a synchronizing device can never observe an
+// active item whose identity was not published with its durable start.
+func (s *agentState) startItem(mutate func() (*backend.ItemStart, *backend.JournalBatch, error)) error {
+	s.pubMu.Lock()
+	defer s.pubMu.Unlock()
+	start, batch, err := mutate()
+	if err != nil {
+		return err
+	}
+	s.publishLifecycleLocked(batch)
+	s.mu.Lock()
+	s.userMsgID = start.UserMessageID
+	snapshot := s.snapshotLocked()
+	s.mu.Unlock()
+	s.publish(snapshot)
+	return nil
+}
+
 // nextSlotCount reports the reserved slot as 0/1; caller holds mu.
 func (s *agentState) nextSlotCount() int {
 	if s.next != nil {
@@ -169,19 +263,20 @@ func (s *agentState) nextSlotCount() int {
 	return 0
 }
 
-// claim takes the next item to execute: the reserved item first —
-// an explicit selection, which also clears the pause gate — then the
-// FIFO head when not paused. The claim publishes the
-// waiting→executing transition before returning, so subscribers see
-// the item leave the queue and its user row appear together. The
-// turn context is installed with the claim so an interrupt can land
-// before streaming starts. Returns nil when nothing may run now.
+// claim takes the next item to execute: the reserved item first — an
+// explicit selection, which also clears the pause gate — then the FIFO
+// head when not paused. The claim publishes nothing: the
+// waiting→executing projection lands after the backend commits the
+// item's start (markStarted), so no subscriber ever sees a running item
+// whose user row does not exist. The turn context is installed with the
+// claim so an interrupt can land before streaming starts. Returns nil
+// when nothing may run now.
 func (s *agentState) claim() *turnClaim {
 	s.pubMu.Lock()
 	defer s.pubMu.Unlock()
 
 	s.mu.Lock()
-	if s.drainingNow() {
+	if s.drainingNow() || s.halted {
 		s.mu.Unlock()
 		return nil
 	}
@@ -204,10 +299,10 @@ func (s *agentState) claim() *turnClaim {
 		return nil
 	}
 	claim := s.activateLocked(item)
-	snapshot := s.snapshotLocked()
+	// Every claim is settled by exactly one finish: Drain waits on this
+	// count instead of sampling the lane flags.
+	s.turnWG.Add(1)
 	s.mu.Unlock()
-
-	s.publish(snapshot)
 	return claim
 }
 
@@ -217,40 +312,52 @@ func (s *agentState) activateLocked(item *queuedItem) *turnClaim {
 	ctx, cancel := context.WithCancel(s.rootCtx)
 	s.active = item
 	s.cancel = cancel
-	// Commands persist no user row: their work is the thread switch,
-	// not a prompt in the transcript.
+	// The backend assigns the user row when the item starts; commands
+	// never own one.
 	s.userMsgID = ""
-	if item.kind == wstypes.QueueItemKindPrompt {
-		s.userMsgID = uuid.NewString()
-	}
-	return &turnClaim{item: item, userMsgID: s.userMsgID, ctx: ctx}
+	return &turnClaim{item: item, ctx: ctx}
 }
 
 // finish records the active turn's end and reports whether another
-// item may run now. Only a message-level failure arms the pause
-// gate, and only while waiting work remains: the gate exists to hold
-// items queued before the failure, so an empty queue never pauses —
-// the next prompt runs normally. The failed turn's selection rides
-// the gate so a paused send_now can rebind the entries sharing it.
-// Tool failures and stops leave dispatch alone.
-func (s *agentState) finish(messageFailed bool) bool {
+// item may run now. outcomeTerminalUnrecorded stops the lane for good:
+// a terminal outcome nobody recorded must not be overtaken by any later
+// item, so only service recovery clears it. outcomeMessageFailed arms
+// the pause gate, and only while waiting work remains: the gate exists
+// to hold items queued before the failure, so an empty queue never
+// pauses — the next prompt runs normally. The failed turn's selection
+// rides the gate so a paused send_now can rebind the entries sharing
+// it. Every other outcome leaves dispatch alone.
+//
+// The turn's context is cancelled here: it exists for exactly one turn,
+// and nothing outside it may keep work alive after settlement.
+func (s *agentState) finish(outcome turnOutcome) bool {
 	s.pubMu.Lock()
 	defer s.pubMu.Unlock()
 
 	s.mu.Lock()
-	failedModel := s.active.model
+	pauseModel := s.active.model
+	cancel := s.cancel
 	s.active = nil
 	s.cancel = nil
 	s.userMsgID = ""
-	if messageFailed && len(s.pending) > 0 {
+	switch {
+	case outcome == outcomeTerminalUnrecorded:
+		s.halted = true
+	case outcome == outcomeMessageFailed && len(s.pending) > 0:
 		s.paused = true
-		s.pauseModel = failedModel
+		s.pauseModel = pauseModel
 	}
-	canRun := s.next != nil || (len(s.pending) > 0 && !s.paused)
+	canRun := !s.halted && (s.next != nil || (len(s.pending) > 0 && !s.paused))
 	snapshot := s.snapshotLocked()
 	s.mu.Unlock()
 
 	s.publish(snapshot)
+	// Cancel is idempotent and takes no other lock, so finishing the
+	// turn under pubMu is safe.
+	if cancel != nil {
+		defer cancel()
+	}
+	s.turnWG.Done()
 	return canRun
 }
 
@@ -266,12 +373,13 @@ func (s *agentState) finish(messageFailed bool) bool {
 // healthy queue ignores Model entirely; each item keeps the
 // selection it was admitted with.
 func (s *agentState) sendNow(itemID string, model *apitypes.ModelEntry) (*queuedItem, error) {
-	s.pubMu.Lock()
-
+	// Like admission, the drain gate answers before the boundary: a
+	// journal write in flight must not delay the rejection.
 	if s.drainingNow() {
-		s.pubMu.Unlock()
 		return nil, errQueueDraining
 	}
+
+	s.pubMu.Lock()
 
 	s.mu.Lock()
 	if s.next != nil && s.next.id == itemID {
@@ -350,7 +458,7 @@ func sameModelEntry(a, b *apitypes.ModelEntry) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}
-	return a.ID == b.ID && a.ProviderID == b.ProviderID
+	return *a == *b
 }
 
 // interruptActive cancels the active turn's context, if any. Manual
@@ -375,10 +483,18 @@ func (s *agentState) interruptActive() {
 // momentarily; an empty queue only interrupts, per the arming
 // invariant.
 func (s *agentState) stopNow() {
+	// The interrupt lands before the publication boundary is taken: a
+	// durable mutation in flight runs under pubMu and may itself be
+	// waiting on this turn's context, so the cancel must never queue
+	// behind the boundary it is meant to release. The selection the
+	// gate attributes is read after, off the settled (or settling)
+	// turn — a stop is a stop whether or not the turn got there first.
+	s.interruptActive()
+
 	s.pubMu.Lock()
+	defer s.pubMu.Unlock()
 
 	if s.drainingNow() {
-		s.pubMu.Unlock()
 		return
 	}
 
@@ -391,16 +507,10 @@ func (s *agentState) stopNow() {
 		s.paused = true
 		s.pauseModel = stoppedModel
 	}
-	cancel := s.cancel
 	snapshot := s.snapshotLocked()
 	s.mu.Unlock()
 
 	s.publish(snapshot)
-	s.pubMu.Unlock()
-
-	if cancel != nil {
-		cancel()
-	}
 }
 
 // snapshotLocked renders the wire snapshot; caller holds mu.
@@ -423,10 +533,6 @@ func (s *agentState) snapshotLocked() wstypes.QueueStateEvent {
 			Kind:          s.active.kind,
 			UserMessageID: s.userMsgID,
 		}
-		if s.active.model != nil {
-			m := modelRefWire(s.active.model)
-			ev.Active.Model = &m
-		}
 	}
 	return ev
 }
@@ -439,14 +545,6 @@ func (s *agentState) stateSnapshot() wstypes.QueueStateEvent {
 	return s.snapshotLocked()
 }
 
-// queueLen reports waiting items (FIFO plus reserved) for
-// lane_status.
-func (s *agentState) queueLen() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.pending) + s.nextSlotCount()
-}
-
 // canRunNow reports whether claim() would return an item right now:
 // a reserved send-now, or FIFO head while not paused. The worker
 // exit path uses it to respawn only for work that can actually run,
@@ -457,20 +555,9 @@ func (s *agentState) canRunNow() bool {
 	return s.next != nil || (!s.paused && len(s.pending) > 0)
 }
 
-// modelRefWire projects an entry onto the wire's public reference —
-// never a resolved endpoint or credential.
-func modelRefWire(e *apitypes.ModelEntry) wstypes.ModelRef {
-	return wstypes.ModelRef{ID: e.ID, ProviderID: e.ProviderID}
-}
-
 // queueItemWire renders one waiting item for a snapshot.
 func queueItemWire(it *queuedItem) wstypes.QueueItem {
-	q := wstypes.QueueItem{ID: it.id, Content: it.content, Kind: it.kind}
-	if it.model != nil {
-		m := modelRefWire(it.model)
-		q.Model = &m
-	}
-	return q
+	return wstypes.QueueItem{ID: it.id, Content: it.content, Kind: it.kind}
 }
 
 // activeModelID reports the active item's model id for lane_status;
@@ -482,11 +569,4 @@ func (s *agentState) activeModelID() string {
 		return ""
 	}
 	return s.active.model.ID
-}
-
-// hasActive reports whether an item is executing.
-func (s *agentState) hasActive() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.active != nil
 }

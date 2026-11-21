@@ -156,11 +156,10 @@ func serve(logger zerolog.Logger) {
 
 	gw, err := gateway.New(&gateway.Config{
 		ResolveModel:   turnSvc.ResolveModel,
-		PersistTurn:    turnSvc.AppendThreadMessages,
+		Journal:        turnSvc,
 		GetAgentConfig: turnSvc.GetAgentConfig,
 		Tools:          turnSvc.AgentTools,
 		GetAgentThread: turnSvc.GetAgentThread,
-		CreateThread:   turnSvc.CreateAndActivateThread,
 	}, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Failed to create gateway handler")

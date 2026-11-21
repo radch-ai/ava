@@ -49,7 +49,9 @@ describe('agent/thread service', () => {
 
 			const result = await getAgentThread('_superagent')
 
-			expect(api.get).toHaveBeenCalledWith('agent/_superagent/thread?limit=20')
+			expect(api.get).toHaveBeenCalledWith('agent/_superagent/thread', {
+				searchParams: { limit: '20' }
+			})
 			expect(result).toEqual(thread)
 		})
 
@@ -60,7 +62,9 @@ describe('agent/thread service', () => {
 
 			await getAgentThread('research')
 
-			expect(api.get).toHaveBeenCalledWith('agent/research/thread?limit=20')
+			expect(api.get).toHaveBeenCalledWith('agent/research/thread', {
+				searchParams: { limit: '20' }
+			})
 		})
 
 		it('passes limit and cursor as query params', async () => {
@@ -70,9 +74,9 @@ describe('agent/thread service', () => {
 
 			await getAgentThread('_superagent', 50, 'msg-9')
 
-			expect(api.get).toHaveBeenCalledWith(
-				'agent/_superagent/thread?limit=50&cursor=msg-9'
-			)
+			expect(api.get).toHaveBeenCalledWith('agent/_superagent/thread', {
+				searchParams: { limit: '50', cursor: 'msg-9' }
+			})
 		})
 
 		it('rejects malformed thread payloads', async () => {

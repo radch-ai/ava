@@ -14,7 +14,6 @@ import (
 	"testing"
 
 	"github.com/coder/websocket"
-	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
 	"github.com/radch-ai/ava/gateway/internal/agent"
@@ -51,13 +50,15 @@ func reasoningServer(t *testing.T) *httptest.Server {
 }
 
 // nextLaneStatus reads events until the next lane_status and returns
-// its payload; queue traffic in between is fine, turn output is not.
+// its payload; queue traffic and committed lifecycle facts in between
+// are fine, streamed chunks are expected mid-thought.
 func nextLaneStatus(t *testing.T, c *websocket.Conn) wstypes.LaneStatus {
 	t.Helper()
 	for {
 		ev := readEvent(t, c)
 		switch ev.Type {
-		case wstypes.EventTypeQueueState, wstypes.EventTypeQueueResult:
+		case wstypes.EventTypeQueueState, wstypes.EventTypeQueueResult,
+			wstypes.EventTypeLifecycle, wstypes.EventTypeMessageChunk:
 			continue
 		case wstypes.EventTypeLaneStatus:
 			return eventPayload[wstypes.LaneStatus](t, ev)
@@ -71,7 +72,7 @@ func TestTurnSignalsReasoningPhases(t *testing.T) {
 	llm := reasoningServer(t)
 	defer llm.Close()
 
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread, ResolveModel: fixedResolver(llm.URL)})
 
@@ -113,7 +114,7 @@ func TestReasoningSignalResetsWhenTheStreamEndsUnanswered(t *testing.T) {
 	}))
 	defer llm.Close()
 
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread, ResolveModel: fixedResolver(llm.URL)})
 

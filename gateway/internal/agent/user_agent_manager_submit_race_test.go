@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -38,23 +37,14 @@ func TestSubmitRacingWorkerExitNeverStrandsAcceptedItems(t *testing.T) {
 		return backend.ResolvedModel{BaseURL: llm.URL, APIKey: "sk-test", Model: "test-model"}, nil
 	}
 
-	var sinkMu sync.Mutex
-	var persisted strings.Builder
-	sink := func(_ context.Context, _ string, msgs []backend.ThreadMessageDraft) error {
-		sinkMu.Lock()
-		defer sinkMu.Unlock()
-		for _, m := range msgs {
-			persisted.WriteString(m.Content + "\n")
-		}
-		return nil
-	}
+	journal := newFakeJournal()
 
 	// No idle timer exists anymore: the worker exits whenever the
 	// queue has nothing runnable, so its exit races the senders the
 	// whole way through on its own.
 	m := NewUserAgentManager(zerolog.Nop(), &UserAgentManagerOptions{
 		ResolveModel: resolver,
-		PersistTurn:  sink,
+		Journal:      journal,
 		GetAgentThread: func(context.Context, string) ([]backend.AgentThreadMessage, error) {
 			return nil, nil
 		},
@@ -72,21 +62,30 @@ func TestSubmitRacingWorkerExitNeverStrandsAcceptedItems(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := m.Submit("agent-race", "conn-1", nil,
-				fmt.Sprintf("hi-%d", i), nil, "")
+			_, err := m.Submit("agent-race", fmt.Sprintf("hi-%d", i), nil, "")
 			accepted[i] = err == nil
 		}()
 	}
 	wg.Wait()
 
-	// Every reported success must show up as a persisted prompt; an
-	// item stranded in a dead worker's wake never would.
+	// Every reported success must show up as a started item — its user
+	// row committed; an item stranded in a dead worker's wake never
+	// would.
 	require.Eventually(t, func() bool {
-		sinkMu.Lock()
-		defer sinkMu.Unlock()
-		text := persisted.String()
+		journal.mu.Lock()
+		defer journal.mu.Unlock()
 		for i := range racers {
-			if accepted[i] && !strings.Contains(text, fmt.Sprintf("hi-%d", i)) {
+			if !accepted[i] {
+				continue
+			}
+			found := false
+			for _, item := range journal.items {
+				if item.content == fmt.Sprintf("hi-%d", i) && item.state != "accepted" {
+					found = true
+					break
+				}
+			}
+			if !found {
 				return false
 			}
 		}

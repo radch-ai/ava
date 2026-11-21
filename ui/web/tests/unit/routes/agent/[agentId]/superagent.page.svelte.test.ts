@@ -4,7 +4,8 @@ import { cleanup, render } from 'vitest-browser-svelte'
 import type {
 	AgentSocketEvent,
 	AgentSocketState,
-	AgentThread
+	AgentThread,
+	LifecycleEvent
 } from '#lib/services/agent'
 import { SUPERAGENT_AGENT } from '#lib/types/agent'
 import AgentPageTestWrapper from './AgentPageTestWrapper.svelte'
@@ -32,16 +33,15 @@ vi.mock('#lib/services/api', () => ({
 		}))
 	}
 }))
-
 const acceptedOp = { accepted: true, itemId: 'q-test' }
 const socketMock = {
 	sendPrompt: vi.fn((content: string) => {
-		// The gateway's snapshot after admission shows the item
-		// running: the page's user-row echo hangs off that
-		// transition, exactly as the real server orders it.
+		// The gateway's claim snapshot after admission shows the item
+		// running, and the start commits the user row into the thread:
+		// the page's echo hangs off those, exactly as the server
+		// orders them.
 		capturedOnEvent?.({
 			type: 'queue_state',
-			agent_id: '_superagent',
 			data: {
 				items: [],
 				paused: false,
@@ -53,12 +53,18 @@ const socketMock = {
 				}
 			}
 		})
+		sendLifecycle({
+			kind: 'item_started',
+			itemId: 'q-test',
+			threadId: 'thread-1',
+			userMessageId: 'stored-u',
+			rows: [row('stored-u', 'user', content)]
+		})
 		return Promise.resolve(acceptedOp)
 	}),
 	sendNow: vi.fn((_itemId: string, _selection: unknown) =>
 		Promise.resolve(acceptedOp)
 	),
-	requestStatus: vi.fn(),
 	sendInterrupt: vi.fn(),
 	close: vi.fn()
 }
@@ -74,12 +80,125 @@ vi.mock('#lib/services/agent/ws', () => ({
 		) => {
 			capturedOnEvent = onEvent as typeof capturedOnEvent
 			capturedOnState = onState as typeof capturedOnState
+			// The fake lane skips the handshake's wire traffic but not
+			// its result: the surface is live from the start, so the
+			// composer's readiness gate opens exactly as it does after
+			// a real sync_ready.
+			onState?.('live')
 			return socketMock
 		}
 	)
 }))
 
 import { type ApiResponsePromise, api } from '#lib/services/api'
+
+/** One display row as the lifecycle wire carries it. */
+function row(
+	id: string,
+	role: 'user' | 'assistant' | 'tool' | 'error',
+	content: string
+) {
+	return { id, role, content, createdAt: '2026-11-21T00:00:00.000Z' }
+}
+
+let lifecyclePos = 0
+
+/** Delivers one committed lifecycle batch: the events arrive inside a
+ * single frame, the cursor advancing past them. */
+function sendLifecycle(...events: Partial<LifecycleEvent>[]) {
+	lifecyclePos += events.length
+	capturedOnEvent?.({
+		type: 'lifecycle',
+		data: {
+			cursor: `v1:test:${lifecyclePos}`,
+			events: events.map((event, index) => ({
+				pos: lifecyclePos - events.length + index + 1,
+				batchEnd: index === events.length - 1,
+				...event
+			}))
+		}
+	})
+}
+
+/** A committed turn's terminal event: the rows ride the event, so the
+ * display never refetches to learn them. */
+function itemFinished(
+	itemId: string,
+	rows: Array<ReturnType<typeof row>>,
+	overrides: Partial<LifecycleEvent> = {}
+) {
+	return {
+		kind: 'item_finished',
+		itemId,
+		outcome: 'completed',
+		threadId: 'thread-1',
+		rows,
+		...overrides
+	}
+}
+
+/** A committed thread switch with its display divider. */
+function threadChanged(to: string, from: string) {
+	return {
+		kind: 'thread_changed',
+		itemId: `cmd-${to}`,
+		threadId: to,
+		previousThreadId: from,
+		divider: {
+			id: to,
+			role: 'divider' as const,
+			content: 'New session',
+			createdAt: '2026-11-21T00:00:00.000Z'
+		}
+	}
+}
+
+/** One streamed piece of the running turn's answer. */
+function sendChunk(id: string, delta: string, seq: number) {
+	capturedOnEvent?.({
+		type: 'message_chunk',
+		data: { id, delta, seq }
+	})
+}
+
+/** Ends the handshake: the runtime hand-off replaces the queue
+ * projection and the live tail, and the socket goes live. */
+function sendSyncReady(
+	queue: {
+		items?: Array<{ id: string; content: string; kind: string }>
+		active?: {
+			id: string
+			content: string
+			kind: string
+			user_message_id?: string
+		} | null
+		next?: { id: string; content: string; kind: string }
+		paused?: boolean
+	} = {},
+	prefix?: { item_id: string; text: string; last_seq: number }
+) {
+	lifecyclePos += 1
+	capturedOnEvent?.({
+		type: 'sync_ready',
+		data: {
+			cursor: `v1:test:${lifecyclePos}`,
+			queue: {
+				items: queue.items ?? [],
+				paused: queue.paused ?? false,
+				active: queue.active ?? undefined,
+				next: queue.next
+			},
+			lane: {
+				active: false,
+				working: false,
+				reasoning: false,
+				model: ''
+			},
+			prefix
+		}
+	})
+	capturedOnState?.('live')
+}
 
 function createThread(
 	items: Array<{
@@ -589,7 +708,7 @@ describe('AgentPage (superagent branch)', () => {
 	})
 
 	describe('composer submit over websocket', () => {
-		it('sends the prompt on submit; the lane resync rides the live transition', async () => {
+		it('sends the prompt on submit; going live asks the gateway for nothing', async () => {
 			render(AgentPageTestWrapper, { data: createMockData() })
 
 			const textarea = page.getByPlaceholder('Enter your query!')
@@ -602,12 +721,10 @@ describe('AgentPage (superagent branch)', () => {
 					null
 				)
 			})
-			// Submit does not ask for lane status; going live does.
-			expect(socketMock.requestStatus).not.toHaveBeenCalled()
+			// The lane needs no resync request anymore: readiness is the
+			// sync hand-off itself, so going live only renders.
 			capturedOnState?.('live')
-			await vi.waitFor(() => {
-				expect(socketMock.requestStatus).toHaveBeenCalledTimes(1)
-			})
+			await expect.element(page.getByText('connected')).toBeVisible()
 		})
 
 		it('renders live state from the socket state callback', async () => {
@@ -630,14 +747,11 @@ describe('AgentPage (superagent branch)', () => {
 			capturedOnState?.('live')
 			capturedOnEvent?.({
 				type: 'lane_status',
-				agent_id: '_superagent',
 				data: {
 					active: true,
 					working: false,
 					reasoning: false,
-					model: null,
-					queue_len: 0,
-					conn_count: 1
+					model: ''
 				}
 			})
 			await expect
@@ -660,14 +774,11 @@ describe('AgentPage (superagent branch)', () => {
 			capturedOnState?.('live')
 			capturedOnEvent?.({
 				type: 'lane_status',
-				agent_id: '_superagent',
 				data: {
 					active: true,
 					working: false,
 					reasoning: false,
-					model: null,
-					queue_len: 0,
-					conn_count: 1
+					model: ''
 				}
 			})
 
@@ -685,24 +796,20 @@ describe('AgentPage (superagent branch)', () => {
 			capturedOnState?.('live')
 			capturedOnEvent?.({
 				type: 'lane_status',
-				agent_id: '_superagent',
 				data: {
 					active: true,
 					working: true,
 					reasoning: false,
-					model: null,
-					queue_len: 0,
-					conn_count: 1
+					model: ''
 				}
 			})
 
 			// Waiting rows are pending plus the pinned reservation.
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
-					items: [{ id: 'q-1', content: 'first waiting' }],
-					next: { id: 'q-2', content: 'second waiting' },
+					items: [{ id: 'q-1', content: 'first waiting', kind: 'prompt' }],
+					next: { id: 'q-2', content: 'second waiting', kind: 'prompt' },
 					paused: false
 				}
 			})
@@ -711,14 +818,11 @@ describe('AgentPage (superagent branch)', () => {
 			// A stale lane_status count never lowers the projection.
 			capturedOnEvent?.({
 				type: 'lane_status',
-				agent_id: '_superagent',
 				data: {
 					active: true,
 					working: true,
 					reasoning: false,
-					model: null,
-					queue_len: 1,
-					conn_count: 1
+					model: ''
 				}
 			})
 			await expect.element(page.getByText(/queue 2/)).toBeVisible()
@@ -726,7 +830,6 @@ describe('AgentPage (superagent branch)', () => {
 			// The claim empties the queue and the count follows.
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
 					items: [],
 					active: {
@@ -749,24 +852,24 @@ describe('AgentPage (superagent branch)', () => {
 
 			await expect.element(page.getByText('stream me')).toBeVisible()
 
-			capturedOnEvent?.({
-				type: 'message_chunk',
-				agent_id: '_superagent',
-				data: { id: 'msg-1', delta: 'hello ' }
-			})
-			capturedOnEvent?.({
-				type: 'message_chunk',
-				agent_id: '_superagent',
-				data: { id: 'msg-1', delta: 'streamed' }
-			})
+			sendChunk('q-test', 'hello ', 1)
+			sendChunk('q-test', 'streamed', 2)
 			await expect.element(page.getByText('hello streamed')).toBeVisible()
 
-			capturedOnEvent?.({
-				type: 'message',
-				agent_id: '_superagent',
-				data: { id: 'msg-1', content: 'hello streamed world' }
+			// The turn commits: its rows ride the terminal event, and the
+			// streamed copy gives way to the committed one.
+			sendLifecycle(
+				itemFinished('q-test', [
+					row('stored-u', 'user', 'stream me'),
+					row('stored-a', 'assistant', 'hello streamed world')
+				])
+			)
+			await vi.waitFor(() => {
+				expect(page.getByText('stream me').elements()).toHaveLength(1)
+				expect(page.getByText('hello streamed world').elements()).toHaveLength(
+					1
+				)
 			})
-			await expect.element(page.getByText('hello streamed world')).toBeVisible()
 		})
 
 		it('shows the thinking marker only while the lane reports reasoning', async () => {
@@ -778,28 +881,22 @@ describe('AgentPage (superagent branch)', () => {
 
 			capturedOnEvent?.({
 				type: 'lane_status',
-				agent_id: '_superagent',
 				data: {
 					active: true,
 					working: true,
 					reasoning: true,
-					model: null,
-					queue_len: 0,
-					conn_count: 1
+					model: ''
 				}
 			})
 			await expect.element(page.getByText('Thinking')).toBeVisible()
 
 			capturedOnEvent?.({
 				type: 'lane_status',
-				agent_id: '_superagent',
 				data: {
 					active: true,
 					working: true,
 					reasoning: false,
-					model: null,
-					queue_len: 0,
-					conn_count: 1
+					model: ''
 				}
 			})
 			await vi.waitFor(() => {
@@ -807,28 +904,7 @@ describe('AgentPage (superagent branch)', () => {
 			})
 		})
 
-		it('reconciles the stored thread when a turn settles', async () => {
-			vi.mocked(api.get).mockReturnValue({
-				json: async () => ({
-					items: [
-						{
-							id: 'stored-u',
-							role: 'user',
-							content: 'recon me',
-							createdAt: '2026-01-01T00:00:00.000Z'
-						},
-						{
-							id: 'stored-a',
-							role: 'assistant',
-							content: 'stored answer',
-							createdAt: '2026-01-01T00:00:01.000Z'
-						}
-					],
-					nextCursor: null,
-					threadId: 'thread-1'
-				})
-			} as ApiResponsePromise)
-
+		it('places the committed rows when a turn settles — no refetch', async () => {
 			const { container } = render(AgentPageTestWrapper, {
 				data: createMockData()
 			})
@@ -837,26 +913,22 @@ describe('AgentPage (superagent branch)', () => {
 			await userEvent.type(textarea, 'recon me{Enter}')
 			await expect.element(page.getByText('recon me')).toBeVisible()
 
-			capturedOnEvent?.({
-				type: 'message_chunk',
-				agent_id: '_superagent',
-				data: { id: 'msg-1', delta: 'stored ' }
-			})
-			capturedOnEvent?.({
-				type: 'message',
-				agent_id: '_superagent',
-				data: { id: 'msg-1', content: 'stored answer' }
-			})
+			sendChunk('q-test', 'stored ', 1)
 
-			// The settle refetch pulls the persisted turn.
-			await vi.waitFor(() => {
-				expect(vi.mocked(api.get)).toHaveBeenCalledWith(
-					expect.stringContaining('agent/_superagent/thread')
-				)
-			})
-			// The stored page renders the turn; the live copies are
-			// gone — nothing appears twice — and the settled turn sits at
-			// the bottom, still oldest→newest.
+			// The terminal event carries the persisted turn: the rows
+			// ride it, so the display never refetches.
+			sendLifecycle(
+				itemFinished('q-test', [
+					row('stored-u', 'user', 'recon me'),
+					row('stored-a', 'assistant', 'stored answer')
+				])
+			)
+
+			const urls = vi.mocked(api.get).mock.calls.map(([url]) => String(url))
+			expect(urls.filter((url) => url.includes('thread?'))).toEqual([])
+			// The stored rows render the turn; the live copies are gone —
+			// nothing appears twice — and the settled turn sits at the
+			// bottom, still oldest→newest.
 			await vi.waitFor(() => {
 				expect(page.getByText('recon me').elements()).toHaveLength(1)
 				expect(page.getByText('stored answer').elements()).toHaveLength(1)
@@ -869,107 +941,94 @@ describe('AgentPage (superagent branch)', () => {
 			expect(answerIdx).toBeGreaterThan(promptIdx)
 		})
 
-		it('reconciles a tool turn: live tool line swaps for the persisted row', async () => {
-			vi.mocked(api.get).mockReturnValue({
-				json: async () => ({
-					items: [
-						{
-							id: 'stored-u',
-							role: 'user',
-							content: 'search otters',
-							createdAt: '2026-01-01T00:00:00.000Z'
-						},
-						{
-							id: 'stored-t',
-							role: 'tool',
-							content:
-								'{"name":"web_search","args":{"query":"otters"},"result":"\\"2 hits\\""}',
-							createdAt: '2026-01-01T00:00:01.000Z'
-						},
-						{
-							id: 'stored-a',
-							role: 'assistant',
-							content: 'found 2 hits',
-							createdAt: '2026-01-01T00:00:02.000Z'
-						}
-					],
-					nextCursor: null,
-					threadId: 'thread-1'
-				})
-			} as ApiResponsePromise)
-
+		it('settles a tool turn: committed rounds ride their own events', async () => {
 			render(AgentPageTestWrapper, { data: createMockData() })
 			const textarea = page.getByPlaceholder('Enter your query!')
 			await textarea.click()
 			await userEvent.type(textarea, 'search otters{Enter}')
 
-			// The turn runs a tool before answering.
-			capturedOnEvent?.({
-				type: 'tool_call',
-				agent_id: '_superagent',
-				data: {
-					id: 'call-1',
-					turn_id: 'msg-1',
-					name: 'web_search',
-					args: '{"query":"otters"}'
-				}
+			// The turn runs a tool before answering: one invocation,
+			// keyed by its server id from start to finish.
+			sendLifecycle({
+				kind: 'tool_started',
+				itemId: 'q-test',
+				invocationId: 'inv-1',
+				callId: 'call-1',
+				toolName: 'web_search',
+				toolArgs: '{"query":"otters"}'
 			})
-			capturedOnEvent?.({
-				type: 'tool_result',
-				agent_id: '_superagent',
-				data: { id: 'call-1', turn_id: 'msg-1', result: '"2 hits"' }
+			// The gateway shape: tool_finished carries the committed
+			// tool row itself, and the live invocation line retires.
+			sendLifecycle({
+				kind: 'tool_finished',
+				itemId: 'q-test',
+				invocationId: 'inv-1',
+				threadId: 'thread-1',
+				toolResult: '"2 hits"',
+				rows: [
+					row(
+						'stored-t',
+						'tool',
+						'{"name":"web_search","args":{"query":"otters"},"result":"\\"2 hits\\""}'
+					)
+				]
 			})
-			capturedOnEvent?.({
-				type: 'message',
-				agent_id: '_superagent',
-				data: { id: 'msg-1', content: 'found 2 hits' }
-			})
-
-			// The settle refetch carries the persisted tool row; the
-			// live tool line is gone — the name appears exactly once.
 			await vi.waitFor(() => {
 				expect(page.getByText(/web_search/).elements()).toHaveLength(1)
 			})
+
+			// A mid-run assistant round commits before the terminal one:
+			// its row rides message_committed and must survive
+			// settlement without reload or duplication.
+			sendLifecycle({
+				kind: 'message_committed',
+				itemId: 'q-test',
+				threadId: 'thread-1',
+				rows: [row('stored-r1', 'assistant', 'round one text')]
+			})
+			await vi.waitFor(() => {
+				expect(page.getByText('round one text').elements()).toHaveLength(1)
+			})
+
+			// The terminal event carries only the terminal rows; the
+			// committed tool and mid-run rows are already placed.
+			sendLifecycle(
+				itemFinished('q-test', [
+					row('stored-u', 'user', 'search otters'),
+					row('stored-a', 'assistant', 'found 2 hits')
+				])
+			)
+			await vi.waitFor(() => {
+				expect(page.getByText(/web_search/).elements()).toHaveLength(1)
+				expect(page.getByText('round one text').elements()).toHaveLength(1)
+				expect(page.getByText('found 2 hits').elements()).toHaveLength(1)
+			})
 		})
 
-		it('reconciles a stored failure into one durable error row', async () => {
-			vi.mocked(api.get).mockReturnValue({
-				json: async () => ({
-					items: [
-						{
-							id: 'stored-u',
-							role: 'user',
-							content: 'fail me',
-							createdAt: '2026-01-01T00:00:00.000Z'
-						},
-						{
-							id: 'stored-e',
-							role: 'error',
-							content: 'no default model set — pick a model in the composer',
-							createdAt: '2026-01-01T00:00:01.000Z'
-						}
-					],
-					nextCursor: null,
-					threadId: 'thread-1'
-				})
-			} as ApiResponsePromise)
+		it('settles a stored failure into one durable error row', async () => {
 			render(AgentPageTestWrapper, { data: createMockData() })
 			const textarea = page.getByPlaceholder('Enter your query!')
 			await textarea.click()
 			await userEvent.type(textarea, 'fail me{Enter}')
 
-			capturedOnEvent?.({
-				type: 'error',
-				agent_id: '_superagent',
-				data: {
-					id: 'stored-e',
-					turn_id: 'msg-1',
-					message: 'no default model set — pick a model in the composer'
-				}
-			})
+			// The failure commits durably: its row rides the terminal
+			// event instead of a transient wire error.
+			sendLifecycle(
+				itemFinished(
+					'q-test',
+					[
+						row('stored-u', 'user', 'fail me'),
+						row(
+							'stored-e',
+							'error',
+							'no default model set — pick a model in the composer'
+						)
+					],
+					{ outcome: 'failed' }
+				)
+			)
 
-			// The stored row replaces the live copy: prompt and failure
-			// each render exactly once.
+			// Prompt and failure each render exactly once.
 			await vi.waitFor(() => {
 				expect(
 					page
@@ -980,113 +1039,59 @@ describe('AgentPage (superagent branch)', () => {
 			})
 		})
 
-		it('keeps the live error through a failed refetch, retires it on the next settle', async () => {
-			const failing = {
-				json: async () => {
-					throw new Error('refetch down')
-				}
-			} as unknown as ApiResponsePromise
-			const recovered = {
-				json: async () => ({
-					items: [
-						{
-							id: 'stored-u',
-							role: 'user',
-							content: 'fail me',
-							createdAt: '2026-01-01T00:00:00.000Z'
-						},
-						{
-							id: 'stored-e',
-							role: 'error',
-							content: 'read provider p-1: no rows',
-							createdAt: '2026-01-01T00:00:01.000Z'
-						},
-						{
-							id: 'stored-a',
-							role: 'assistant',
-							content: 'later answer',
-							createdAt: '2026-01-01T00:00:02.000Z'
-						}
-					],
-					nextCursor: null,
-					threadId: 'thread-1'
-				})
-			} as ApiResponsePromise
-
+		it('keeps a transient error bubble through a later turn’s settlement', async () => {
 			render(AgentPageTestWrapper, { data: createMockData() })
 			const textarea = page.getByPlaceholder('Enter your query!')
 			await textarea.click()
 			await userEvent.type(textarea, 'fail me{Enter}')
 
-			vi.mocked(api.get).mockReturnValueOnce(failing)
+			// The journal write failed: the failure surfaces as a
+			// transient bubble only — no durable row exists for a later
+			// settle to carry or retire.
 			capturedOnEvent?.({
 				type: 'error',
-				agent_id: '_superagent',
 				data: {
-					id: 'stored-e',
-					turn_id: 'msg-1',
+					turn_id: 'q-test',
 					message: 'read provider p-1: no rows'
 				}
 			})
-			// The refetch fails: the live copy stays the truth.
 			await expect
 				.element(page.getByText('read provider p-1: no rows'))
 				.toBeVisible()
 
-			vi.mocked(api.get).mockReturnValue(recovered)
-			capturedOnEvent?.({
-				type: 'message',
-				agent_id: '_superagent',
-				data: { id: 'msg-2', content: 'later answer' }
-			})
-			// The next terminal event retries the pending stored error:
-			// its row lands, the live copy retires — exactly one bubble.
+			// A later turn settles from its event; the uncovered bubble
+			// stays visible alongside the new answer.
+			sendLifecycle(
+				itemFinished('turn-2', [row('stored-a', 'assistant', 'later answer')])
+			)
 			await vi.waitFor(() => {
-				expect(
-					page.getByText('read provider p-1: no rows').elements()
-				).toHaveLength(1)
+				expect(page.getByText('later answer').elements()).toHaveLength(1)
 			})
+			await expect
+				.element(page.getByText('read provider p-1: no rows'))
+				.toBeVisible()
 		})
 
 		it('renders repeated identical failures as distinct rows', async () => {
-			vi.mocked(api.get).mockReturnValue({
-				json: async () => ({
-					items: [
-						{
-							id: 'u-1',
-							role: 'user',
-							content: 'fail me',
-							createdAt: '2026-01-01T00:00:00.000Z'
-						},
-						{
-							id: 'e-1',
-							role: 'error',
-							content: 'same failure',
-							createdAt: '2026-01-01T00:00:01.000Z'
-						},
-						{
-							id: 'e-2',
-							role: 'error',
-							content: 'same failure',
-							createdAt: '2026-01-01T00:00:02.000Z'
-						}
-					],
-					nextCursor: null,
-					threadId: 'thread-1'
-				})
-			} as ApiResponsePromise)
 			render(AgentPageTestWrapper, { data: createMockData() })
 			const textarea = page.getByPlaceholder('Enter your query!')
 			await textarea.click()
 			await userEvent.type(textarea, 'fail me{Enter}')
 
-			for (const id of ['e-1', 'e-2']) {
-				capturedOnEvent?.({
-					type: 'error',
-					agent_id: '_superagent',
-					data: { id, turn_id: 'msg-1', message: 'same failure' }
-				})
-			}
+			// Two turns fail with the same message: each commits its own
+			// row under its own id.
+			sendLifecycle(
+				itemFinished(
+					'turn-1',
+					[row('u-1', 'user', 'fail me'), row('e-1', 'error', 'same failure')],
+					{ outcome: 'failed' }
+				),
+				itemFinished(
+					'turn-2',
+					[row('u-2', 'user', 'fail me'), row('e-2', 'error', 'same failure')],
+					{ outcome: 'failed' }
+				)
+			)
 
 			await vi.waitFor(() => {
 				expect(page.getByText('same failure').elements()).toHaveLength(2)
@@ -1100,21 +1105,13 @@ describe('AgentPage (superagent branch)', () => {
 			await textarea.click()
 			await userEvent.type(textarea, 'follow me{Enter}')
 
-			capturedOnEvent?.({
-				type: 'message_chunk',
-				agent_id: '_superagent',
-				data: { id: 'msg-1', delta: 'first' }
-			})
+			sendChunk('q-test', 'first', 1)
 			await expect.element(page.getByText('first')).toBeVisible()
 
 			// A chunk that grows the existing bubble must scroll again —
 			// the follow cannot depend on the message count alone.
 			scrollTo.mockClear()
-			capturedOnEvent?.({
-				type: 'message_chunk',
-				agent_id: '_superagent',
-				data: { id: 'msg-1', delta: ' second' }
-			})
+			sendChunk('q-test', ' second', 2)
 			await expect.element(page.getByText('first second')).toBeVisible()
 			await vi.waitFor(() => {
 				expect(scrollTo).toHaveBeenCalled()
@@ -1130,14 +1127,11 @@ describe('AgentPage (superagent branch)', () => {
 
 			capturedOnEvent?.({
 				type: 'lane_status',
-				agent_id: '_superagent',
 				data: {
 					active: true,
 					working: true,
 					reasoning: false,
-					model: null,
-					queue_len: 0,
-					conn_count: 1
+					model: ''
 				}
 			})
 
@@ -1157,14 +1151,11 @@ describe('AgentPage (superagent branch)', () => {
 
 			capturedOnEvent?.({
 				type: 'lane_status',
-				agent_id: '_superagent',
 				data: {
 					active: true,
 					working: true,
 					reasoning: false,
-					model: null,
-					queue_len: 0,
-					conn_count: 1
+					model: ''
 				}
 			})
 			await expect
@@ -1173,21 +1164,17 @@ describe('AgentPage (superagent branch)', () => {
 
 			capturedOnEvent?.({
 				type: 'lane_status',
-				agent_id: '_superagent',
 				data: {
 					active: true,
 					working: false,
 					reasoning: false,
-					model: null,
-					queue_len: 0,
-					conn_count: 1
+					model: ''
 				}
 			})
 			// The settle snapshot clears the claim, as the gateway
 			// publishes it when the turn finishes.
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: { items: [], paused: false }
 			})
 			await expect
@@ -1205,11 +1192,10 @@ describe('AgentPage (superagent branch)', () => {
 
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
 					items: [
-						{ id: 'q-1', content: 'first waiting' },
-						{ id: 'q-2', content: 'second waiting' }
+						{ id: 'q-1', content: 'first waiting', kind: 'prompt' },
+						{ id: 'q-2', content: 'second waiting', kind: 'prompt' }
 					],
 					paused: false
 				}
@@ -1223,14 +1209,11 @@ describe('AgentPage (superagent branch)', () => {
 			capturedOnState?.('live')
 			capturedOnEvent?.({
 				type: 'lane_status',
-				agent_id: '_superagent',
 				data: {
 					active: true,
 					working: false,
 					reasoning: false,
-					model: null,
-					queue_len: 0,
-					conn_count: 1
+					model: ''
 				}
 			})
 			await expect.element(page.getByText(/queue 2/)).toBeVisible()
@@ -1240,11 +1223,10 @@ describe('AgentPage (superagent branch)', () => {
 			render(AgentPageTestWrapper, { data: createMockData() })
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
 					items: [
-						{ id: 'q-1', content: 'first waiting' },
-						{ id: 'q-2', content: 'second waiting' }
+						{ id: 'q-1', content: 'first waiting', kind: 'prompt' },
+						{ id: 'q-2', content: 'second waiting', kind: 'prompt' }
 					],
 					paused: false
 				}
@@ -1264,9 +1246,8 @@ describe('AgentPage (superagent branch)', () => {
 			render(AgentPageTestWrapper, { data: createMockData() })
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
-					items: [{ id: 'q-1', content: 'waiting' }],
+					items: [{ id: 'q-1', content: 'waiting', kind: 'prompt' }],
 					paused: true
 				}
 			})
@@ -1281,7 +1262,6 @@ describe('AgentPage (superagent branch)', () => {
 			// unpaused snapshot removes it whole, label included.
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: { items: [], paused: false }
 			})
 			await vi.waitFor(() => {
@@ -1297,9 +1277,8 @@ describe('AgentPage (superagent branch)', () => {
 			render(AgentPageTestWrapper, { data: createMockData() })
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
-					items: [{ id: 'q-1', content: 'about to run' }],
+					items: [{ id: 'q-1', content: 'about to run', kind: 'prompt' }],
 					paused: false
 				}
 			})
@@ -1307,7 +1286,6 @@ describe('AgentPage (superagent branch)', () => {
 
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
 					items: [],
 					paused: false,
@@ -1324,32 +1302,22 @@ describe('AgentPage (superagent branch)', () => {
 			})
 		})
 
-		it('never re-flashes an executed item as waiting (stale snapshot replay)', async () => {
-			// The transition away from the claimed item schedules a
-			// settle refetch; an empty page keeps the live row standing.
-			vi.mocked(api.get).mockReturnValue({
-				json: async () => ({
-					items: [],
-					nextCursor: null,
-					threadId: 'thread-1'
-				})
-			} as ApiResponsePromise)
+		it('retires the waiting row when the claim snapshot arrives', async () => {
 			render(AgentPageTestWrapper, { data: createMockData() })
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
-					items: [{ id: 'q-1', content: 'claimed already' }],
+					items: [{ id: 'q-1', content: 'claimed already', kind: 'prompt' }],
 					paused: false
 				}
 			})
 			await expect.element(page.getByText('claimed already')).toBeVisible()
 
-			// The claim snapshot arrives; the item executes and its
-			// user row takes over the transcript.
+			// The claim snapshot is the queue's whole truth: the item
+			// leaves the waiting list for the running projection, and the
+			// start commits its user row into the transcript.
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
 					items: [],
 					paused: false,
@@ -1361,15 +1329,12 @@ describe('AgentPage (superagent branch)', () => {
 					}
 				}
 			})
-			// A stale pre-claim snapshot replays (reconnect backlog
-			// order): it must not resurrect the waiting entry.
-			capturedOnEvent?.({
-				type: 'queue_state',
-				agent_id: '_superagent',
-				data: {
-					items: [{ id: 'q-1', content: 'claimed already' }],
-					paused: false
-				}
+			sendLifecycle({
+				kind: 'item_started',
+				itemId: 'q-1',
+				threadId: 'thread-1',
+				userMessageId: 'u-1',
+				rows: [row('u-1', 'user', 'claimed already')]
 			})
 
 			await vi.waitFor(() => {
@@ -1382,14 +1347,54 @@ describe('AgentPage (superagent branch)', () => {
 				.toBeVisible()
 		})
 
+		it('drops the previous agent’s projection on an in-place switch', async () => {
+			const first = render(AgentPageTestWrapper, { data: createMockData() })
+			capturedOnEvent?.({
+				type: 'queue_state',
+				data: {
+					items: [
+						{ id: 'q-1', content: 'belongs to the old lane', kind: 'prompt' }
+					],
+					paused: false
+				}
+			})
+			capturedOnEvent?.({
+				type: 'message_chunk',
+				data: { id: 'msg-1', delta: 'old lane text', seq: 1 }
+			})
+			await expect
+				.element(page.getByText('belongs to the old lane'))
+				.toBeVisible()
+			await expect.element(page.getByText('old lane text')).toBeVisible()
+
+			// Away and back: the superagent surface remounts without any
+			// frames, so anything still on screen is the previous lane's
+			// leaked projection.
+			await first.rerender({
+				data: createMockData({
+					agent: { id: 'other-agent', name: 'Other', icon: 'bot' }
+				})
+			})
+			await first.rerender({ data: createMockData() })
+
+			await vi.waitFor(() => {
+				expect(
+					page.getByRole('list', { name: 'Pending prompts' }).elements()
+				).toHaveLength(0)
+			})
+			expect(page.getByText('belongs to the old lane').elements()).toHaveLength(
+				0
+			)
+			expect(page.getByText('old lane text').elements()).toHaveLength(0)
+		})
+
 		it('renders the reserved item as a pinned action-less next row', async () => {
 			render(AgentPageTestWrapper, { data: createMockData() })
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
-					items: [{ id: 'q-1', content: 'still waiting' }],
-					next: { id: 'n-1', content: 'chosen next' },
+					items: [{ id: 'q-1', content: 'still waiting', kind: 'prompt' }],
+					next: { id: 'n-1', content: 'chosen next', kind: 'prompt' },
 					paused: false
 				}
 			})
@@ -1405,9 +1410,8 @@ describe('AgentPage (superagent branch)', () => {
 			// leaves the queue surface for its transcript user row.
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
-					items: [{ id: 'q-1', content: 'still waiting' }],
+					items: [{ id: 'q-1', content: 'still waiting', kind: 'prompt' }],
 					active: {
 						id: 'n-1',
 						content: 'chosen next',
@@ -1441,7 +1445,6 @@ describe('AgentPage (superagent branch)', () => {
 			render(AgentPageTestWrapper, { data: createMockData() })
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
 					items: [],
 					paused: false,
@@ -1466,9 +1469,8 @@ describe('AgentPage (superagent branch)', () => {
 			render(AgentPageTestWrapper, { data: createMockData() })
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
-					items: [{ id: 'q-1', content: 'held by pause' }],
+					items: [{ id: 'q-1', content: 'held by pause', kind: 'prompt' }],
 					paused: true
 				}
 			})
@@ -1479,6 +1481,145 @@ describe('AgentPage (superagent branch)', () => {
 			await expect
 				.element(page.getByRole('button', { name: /^Stop$/ }))
 				.not.toBeInTheDocument()
+		})
+
+		it('reduces replayed sync batches exactly like live events', async () => {
+			render(AgentPageTestWrapper, {
+				data: createMockData({ thread: createThread([]) })
+			})
+
+			// A reconnect replays what the device missed; the batch's events
+			// go through the same reducer as live frames, so the committed
+			// interruption notice lands in the thread.
+			lifecyclePos += 1
+			capturedOnEvent?.({
+				type: 'sync_batch',
+				data: {
+					cursor: `v1:test:${lifecyclePos}`,
+					events: [
+						{
+							pos: lifecyclePos,
+							batchEnd: true,
+							kind: 'item_finished',
+							itemId: 'q-replayed',
+							itemKind: 'prompt',
+							threadId: 'thread-1',
+							outcome: 'interrupted',
+							reason: 'service_restart',
+							rows: [
+								{
+									id: 'err-replayed',
+									role: 'error',
+									content: 'interrupted by service restart',
+									createdAt: new Date().toISOString()
+								}
+							]
+						}
+					]
+				}
+			})
+
+			await expect
+				.element(page.getByText('interrupted by service restart'))
+				.toBeVisible()
+		})
+
+		it('renders a replayed cancellation notice once, never a transcript row', async () => {
+			// A cancelled item minted no row, so the event itself is the
+			// notice: it names the submission that never ran, and a
+			// repeated replay of the same event renders it once.
+			render(AgentPageTestWrapper, {
+				data: createMockData({
+					thread: {
+						threadId: 'thread-1',
+						items: [row('msg-1', 'user', 'existing turn')],
+						nextCursor: null
+					}
+				})
+			})
+			const deliver = () => {
+				capturedOnEvent?.({
+					type: 'sync_batch',
+					data: {
+						cursor: `v1:test:${lifecyclePos}`,
+						events: [
+							{
+								pos: lifecyclePos,
+								batchEnd: true,
+								kind: 'item_finished',
+								itemId: 'q-cancelled',
+								itemKind: 'prompt',
+								threadId: 'thread-1',
+								outcome: 'cancelled',
+								reason: 'service_restart',
+								content: 'queued words that never ran'
+							}
+						]
+					}
+				})
+			}
+			deliver()
+			deliver()
+
+			await expect
+				.element(
+					page.getByText(
+						'cancelled (service_restart): queued words that never ran'
+					)
+				)
+				.toBeVisible()
+			const all = [...document.querySelectorAll('*')].filter(
+				(el) =>
+					el.textContent ===
+						'cancelled (service_restart): queued words that never ran' &&
+					el.children.length === 0
+			).length
+			expect(all).toBe(1)
+		})
+
+		it('applies the sync hand-off: queue and running turn replace stale state', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			capturedOnEvent?.({
+				type: 'queue_state',
+				data: {
+					items: [{ id: 'q-stale', content: 'stale waiting', kind: 'prompt' }],
+					paused: false
+				}
+			})
+			await expect.element(page.getByText('stale waiting')).toBeVisible()
+
+			sendSyncReady(
+				{
+					active: {
+						id: 'q-live',
+						content: 'running prompt',
+						kind: 'prompt',
+						user_message_id: 'u-live'
+					}
+				},
+				{ item_id: 'q-live', text: 'partial ', last_seq: 2 }
+			)
+
+			// The hand-off replaces the queue wholesale — the stale
+			// waiting row is gone — and restores the running turn's
+			// user row and streamed prefix.
+			await vi.waitFor(() => {
+				expect(page.getByText('stale waiting').elements()).toHaveLength(0)
+			})
+			await expect
+				.element(page.getByText('running prompt', { exact: true }))
+				.toBeVisible()
+			await expect
+				.element(page.getByText('partial', { exact: true }))
+				.toBeVisible()
+
+			// The restored stream continues after the prefix's last
+			// sequence, and the turn keeps the composer busy.
+			sendChunk('q-live', 'answer', 3)
+			await expect.element(page.getByText('partial answer')).toBeVisible()
+			await expect
+				.element(page.getByRole('button', { name: 'Stop' }))
+				.toBeVisible()
 		})
 	})
 
@@ -1491,71 +1632,53 @@ describe('AgentPage (superagent branch)', () => {
 				],
 				{ threadId: 'thread-1' }
 			)
-			vi.mocked(api.get).mockReturnValue({
-				json: async () => ({
-					items: [
-						{
-							id: 'thread-2',
-							role: 'divider',
-							content: 'New session',
-							createdAt: '2026-11-19T00:00:00.000Z'
-						},
-						{
-							id: 'u-2',
-							role: 'user',
-							content: 'second session',
-							createdAt: '2026-11-19T00:00:01.000Z'
-						}
-					],
-					nextCursor: 'thread-1:',
-					threadId: 'thread-2'
-				})
-			} as ApiResponsePromise)
 
-			render(AgentPageTestWrapper, {
+			const { container } = render(AgentPageTestWrapper, {
 				data: createMockData({ thread: threadPage })
 			})
 			await expect.element(page.getByText('first session')).toBeVisible()
 
-			// /new commits: the divider lands in the live tail at once.
-			capturedOnEvent?.({
-				type: 'command_completed',
-				agent_id: '_superagent',
-				data: {
-					item_id: 'cmd-1',
-					thread_id: 'thread-2',
-					previous_thread_id: 'thread-1',
-					divider: {
-						id: 'thread-2',
-						content: 'New session',
-						created_at: '2026-11-19T00:00:00.000Z'
-					}
-				}
-			})
+			// /new commits: the divider lands in the display at once.
+			sendLifecycle(threadChanged('thread-2', 'thread-1'))
 			await vi.waitFor(() => {
 				expect(page.getByText('New session').elements()).toHaveLength(2)
 			})
 
-			// The next turn pins its refresh to the new thread, and the
-			// stored divider replaces the live copy instead of stacking.
-			capturedOnEvent?.({
-				type: 'message',
-				agent_id: '_superagent',
-				data: { id: 'turn-2', content: 'answer' }
-			})
-			await vi.waitFor(() => {
-				const urls = vi
-					.mocked(api.get)
-					.mock.calls.map(([url]) => decodeURIComponent(String(url)))
-				expect(urls.some((url) => url.includes('cursor=thread-2'))).toBe(true)
-			})
+			// The next turn runs in the new thread: its start and settle
+			// ride lifecycle events pinned to thread-2, landing below the
+			// boundary — no refetch tells the display where they go.
+			sendLifecycle(
+				{
+					kind: 'item_started',
+					itemId: 'turn-2',
+					threadId: 'thread-2',
+					userMessageId: 'u-2',
+					rows: [row('u-2', 'user', 'second session')]
+				},
+				itemFinished(
+					'turn-2',
+					[
+						row('u-2', 'user', 'second session'),
+						row('a-2', 'assistant', 'answer')
+					],
+					{ threadId: 'thread-2' }
+				)
+			)
 			await vi.waitFor(() => {
 				expect(page.getByText('second session').elements()).toHaveLength(1)
 				expect(page.getByText('New session').elements()).toHaveLength(2)
+				const texts = rowTexts(container)
+				const firstIdx = texts.findIndex((t) => t.includes('first session'))
+				const dividerIdx = texts
+					.map((t) => t.includes('New session'))
+					.lastIndexOf(true)
+				const secondIdx = texts.findIndex((t) => t.includes('second session'))
+				expect(dividerIdx).toBeGreaterThan(firstIdx)
+				expect(secondIdx).toBeGreaterThan(dividerIdx)
 			})
 		})
 
-		it('keeps a delayed old-thread refresh above the newer divider', async () => {
+		it('keeps a delayed old-thread settle above the newer divider', async () => {
 			const threadPage = createThread(
 				[
 					{ id: 'm-1', role: 'user', content: 'old prompt' },
@@ -1563,37 +1686,16 @@ describe('AgentPage (superagent branch)', () => {
 				],
 				{ threadId: 'thread-1' }
 			)
-			vi.mocked(api.get).mockReturnValue({
-				json: async () => ({
-					items: [
-						{
-							id: 'm-1',
-							role: 'user',
-							content: 'old prompt',
-							createdAt: '2026-01-01T00:00:00.000Z'
-						},
-						{
-							id: 'm-2',
-							role: 'assistant',
-							content: 'old answer',
-							createdAt: '2026-01-01T00:00:01.000Z'
-						}
-					],
-					nextCursor: null,
-					threadId: 'thread-1'
-				})
-			} as ApiResponsePromise)
 
 			const { container } = render(AgentPageTestWrapper, {
 				data: createMockData({ thread: threadPage })
 			})
 			await expect.element(page.getByText('old answer')).toBeVisible()
 
-			// The old turn claims in thread-1, then /new commits while
-			// it runs, then its settle event lands late.
+			// The old turn claims and starts in thread-1, then /new commits
+			// while it runs, then its terminal event lands late.
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
 					items: [],
 					paused: false,
@@ -1605,38 +1707,26 @@ describe('AgentPage (superagent branch)', () => {
 					}
 				}
 			})
-			capturedOnEvent?.({
-				type: 'command_completed',
-				agent_id: '_superagent',
-				data: {
-					item_id: 'cmd-1',
-					thread_id: 'thread-2',
-					previous_thread_id: 'thread-1',
-					divider: {
-						id: 'thread-2',
-						content: 'New session',
-						created_at: '2026-11-19T00:00:00.000Z'
-					}
-				}
+			sendLifecycle({
+				kind: 'item_started',
+				itemId: 'turn-1',
+				threadId: 'thread-1',
+				userMessageId: 'm-1',
+				rows: [row('m-1', 'user', 'old prompt')]
 			})
-			capturedOnEvent?.({
-				type: 'message',
-				agent_id: '_superagent',
-				data: { id: 'turn-1', content: 'old answer' }
-			})
+			sendLifecycle(threadChanged('thread-2', 'thread-1'))
+			sendLifecycle(
+				itemFinished('turn-1', [row('m-2', 'assistant', 'old answer')])
+			)
 
 			await vi.waitFor(() => {
-				const texts = Array.from(
-					container.querySelectorAll('div.flex.flex-col.gap-4 > *')
-				).map((el) => (el.textContent ?? '').trim())
+				const texts = rowTexts(container)
 				const dividerIdx = texts.findIndex((t) => t.includes('New session'))
 				const oldIdx = texts.findIndex((t) => t.includes('old answer'))
 				expect(oldIdx).toBeGreaterThanOrEqual(0)
 				expect(dividerIdx).toBeGreaterThan(oldIdx)
 			})
-			// The refresh stayed pinned to the thread the turn ran in.
-			const urls = vi.mocked(api.get).mock.calls.map(([url]) => String(url))
-			expect(urls.some((url) => url.includes('cursor=thread-1'))).toBe(true)
+			// The late rows stayed pinned to the thread the turn ran in.
 			expect(page.getByText('New session').elements()).toHaveLength(1)
 			expect(page.getByText('old answer').elements()).toHaveLength(1)
 		})
@@ -1646,7 +1736,6 @@ describe('AgentPage (superagent branch)', () => {
 
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
 					items: [],
 					paused: false,
@@ -1664,7 +1753,7 @@ describe('AgentPage (superagent branch)', () => {
 				.toBeVisible()
 		})
 
-		it('keeps the load-more cursor when a settle refresh lands', async () => {
+		it('keeps the load-more cursor when a turn settles', async () => {
 			const threadPage = createThread(
 				[
 					{ id: 'msg-1', role: 'user', content: 'older prompt' },
@@ -1672,26 +1761,6 @@ describe('AgentPage (superagent branch)', () => {
 				],
 				{ nextCursor: 'thread-2:msg-1' }
 			)
-			vi.mocked(api.get).mockReturnValue({
-				json: async () => ({
-					items: [
-						{
-							id: 'msg-3',
-							role: 'user',
-							content: 'newer prompt',
-							createdAt: '2026-01-01T00:00:00.000Z'
-						},
-						{
-							id: 'msg-4',
-							role: 'assistant',
-							content: 'newer answer',
-							createdAt: '2026-01-01T00:00:01.000Z'
-						}
-					],
-					nextCursor: 'thread-2:msg-3',
-					threadId: 'thread-2'
-				})
-			} as ApiResponsePromise)
 
 			render(AgentPageTestWrapper, {
 				data: createMockData({ thread: threadPage })
@@ -1701,16 +1770,21 @@ describe('AgentPage (superagent branch)', () => {
 				.element(page.getByRole('button', { name: /load more/i }))
 				.toBeVisible()
 
-			capturedOnEvent?.({
-				type: 'message',
-				agent_id: '_superagent',
-				data: { id: 'turn-2', content: 'newer answer' }
-			})
+			sendLifecycle(
+				itemFinished(
+					'turn-2',
+					[
+						row('msg-3', 'user', 'newer prompt'),
+						row('msg-4', 'assistant', 'newer answer')
+					],
+					{ threadId: 'thread-2' }
+				)
+			)
 
 			await vi.waitFor(() => {
 				expect(page.getByText('newer answer').elements()).toHaveLength(1)
 			})
-			// The reader's loaded depth survives the refresh: the button
+			// The reader's loaded depth survives the settle: the button
 			// still offers the older page the display started with.
 			await expect
 				.element(page.getByRole('button', { name: /load more/i }))
@@ -1718,32 +1792,10 @@ describe('AgentPage (superagent branch)', () => {
 			expect(page.getByText('older prompt').elements()).toHaveLength(1)
 		})
 
-		it('refreshes once per settlement, even when the queue transition follows', async () => {
-			vi.mocked(api.get).mockReturnValue({
-				json: async () => ({
-					items: [
-						{
-							id: 'u-1',
-							role: 'user',
-							content: 'one prompt',
-							createdAt: '2026-01-01T00:00:00.000Z'
-						},
-						{
-							id: 'a-1',
-							role: 'assistant',
-							content: 'one answer',
-							createdAt: '2026-01-01T00:00:01.000Z'
-						}
-					],
-					nextCursor: null,
-					threadId: 'thread-1'
-				})
-			} as ApiResponsePromise)
-
+		it('settles once from the event, even when the queue transition follows', async () => {
 			render(AgentPageTestWrapper, { data: createMockData() })
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
 					items: [],
 					paused: false,
@@ -1755,23 +1807,31 @@ describe('AgentPage (superagent branch)', () => {
 					}
 				}
 			})
-			capturedOnEvent?.({
-				type: 'message',
-				agent_id: '_superagent',
-				data: { id: 'turn-1', content: 'one answer' }
-			})
+			sendLifecycle(
+				{
+					kind: 'item_started',
+					itemId: 'turn-1',
+					threadId: 'thread-1',
+					userMessageId: 'u-1',
+					rows: [row('u-1', 'user', 'one prompt')]
+				},
+				itemFinished('turn-1', [
+					row('u-1', 'user', 'one prompt'),
+					row('a-1', 'assistant', 'one answer')
+				])
+			)
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: { items: [], paused: false }
 			})
 
 			await vi.waitFor(() => {
 				expect(page.getByText('one answer').elements()).toHaveLength(1)
 			})
-			await vi.waitFor(() => {
-				expect(vi.mocked(api.get).mock.calls).toHaveLength(1)
-			})
+			// The settle never refetches: only the model selector's
+			// catalog request ever hits the API.
+			const urls = vi.mocked(api.get).mock.calls.map(([url]) => String(url))
+			expect(urls.filter((url) => url.includes('thread?'))).toEqual([])
 		})
 
 		it('keeps the divider above the new thread’s settled rows', async () => {
@@ -1782,60 +1842,29 @@ describe('AgentPage (superagent branch)', () => {
 				],
 				{ threadId: 'thread-1' }
 			)
-			// The new thread's page: its own rows, no divider — the
-			// divider belongs to the boundary the command event carries.
-			vi.mocked(api.get).mockReturnValue({
-				json: async () => ({
-					items: [
-						{
-							id: 'u-2',
-							role: 'user',
-							content: 'new prompt',
-							createdAt: '2026-11-19T00:00:01.000Z'
-						},
-						{
-							id: 'a-2',
-							role: 'assistant',
-							content: 'new answer',
-							createdAt: '2026-11-19T00:00:02.000Z'
-						}
-					],
-					nextCursor: null,
-					threadId: 'thread-2'
-				})
-			} as ApiResponsePromise)
 
 			const { container } = render(AgentPageTestWrapper, {
 				data: createMockData({ thread: threadPage })
 			})
 			await expect.element(page.getByText('old answer')).toBeVisible()
 
-			capturedOnEvent?.({
-				type: 'command_completed',
-				agent_id: '_superagent',
-				data: {
-					item_id: 'cmd-1',
-					thread_id: 'thread-2',
-					previous_thread_id: 'thread-1',
-					divider: {
-						id: 'thread-2',
-						content: 'New session',
-						created_at: '2026-11-19T00:00:00.000Z'
-					}
-				}
-			})
-			// The new thread's turn settles into the stored page.
-			capturedOnEvent?.({
-				type: 'message',
-				agent_id: '_superagent',
-				data: { id: 'turn-2', content: 'new answer' }
-			})
+			sendLifecycle(threadChanged('thread-2', 'thread-1'))
+			// The new thread's turn settles from its event: its rows
+			// carry no divider of their own — the boundary belongs to
+			// the thread_changed event.
+			sendLifecycle(
+				itemFinished(
+					'turn-2',
+					[
+						row('u-2', 'user', 'new prompt'),
+						row('a-2', 'assistant', 'new answer')
+					],
+					{ threadId: 'thread-2' }
+				)
+			)
 
 			await vi.waitFor(() => {
-				const texts = Array.from(
-					container.querySelectorAll('div.flex.flex-col.gap-4 > *')
-				).map((el) => (el.textContent ?? '').trim())
-				expect(texts.map((t) => t.split('\n')[0])).toEqual([
+				expect(rowTexts(container).map((t) => t.split('\n')[0])).toEqual([
 					'old prompt',
 					'old answer',
 					'New session',
@@ -1854,84 +1883,31 @@ describe('AgentPage (superagent branch)', () => {
 				],
 				{ threadId: 'thread-1' }
 			)
-			// The newest thread's exhausted page, server shape: its own
-			// divider at the head, rows behind it, and a predecessor
-			// cursor — not null. Both boundaries arrived as command
-			// events — repeated empty sessions — so the merge must place
-			// the window below both.
-			vi.mocked(api.get).mockReturnValue({
-				json: async () => ({
-					items: [
-						{
-							id: 'thread-3',
-							role: 'divider',
-							content: 'New session',
-							createdAt: '2026-11-19T00:00:02.000Z'
-						},
-						{
-							id: 'u-3',
-							role: 'user',
-							content: 'newest prompt',
-							createdAt: '2026-11-19T00:00:03.000Z'
-						},
-						{
-							id: 'a-3',
-							role: 'assistant',
-							content: 'newest answer',
-							createdAt: '2026-11-19T00:00:04.000Z'
-						}
-					],
-					nextCursor: 'thread-2:',
-					threadId: 'thread-3'
-				})
-			} as ApiResponsePromise)
 
 			const { container } = render(AgentPageTestWrapper, {
 				data: createMockData({ thread: threadPage })
 			})
 			await expect.element(page.getByText('old answer')).toBeVisible()
 
-			capturedOnEvent?.({
-				type: 'command_completed',
-				agent_id: '_superagent',
-				data: {
-					item_id: 'cmd-1',
-					thread_id: 'thread-2',
-					previous_thread_id: 'thread-1',
-					divider: {
-						id: 'thread-2',
-						content: 'New session',
-						created_at: '2026-11-19T00:00:01.000Z'
-					}
-				}
-			})
-			capturedOnEvent?.({
-				type: 'command_completed',
-				agent_id: '_superagent',
-				data: {
-					item_id: 'cmd-2',
-					thread_id: 'thread-3',
-					previous_thread_id: 'thread-2',
-					divider: {
-						id: 'thread-3',
-						content: 'New session',
-						created_at: '2026-11-19T00:00:02.000Z'
-					}
-				}
-			})
-			// A prompt in the newest thread settles: its stored page
-			// lands below both boundaries, which keep their order.
-			capturedOnEvent?.({
-				type: 'message',
-				agent_id: '_superagent',
-				data: { id: 'turn-3', content: 'newest answer' }
-			})
+			// Both boundaries arrived as command events — repeated empty
+			// sessions — so the turn's rows must land below both.
+			sendLifecycle(threadChanged('thread-2', 'thread-1'))
+			sendLifecycle(threadChanged('thread-3', 'thread-2'))
+			// A prompt in the newest thread settles: its rows land below
+			// both boundaries, which keep their order.
+			sendLifecycle(
+				itemFinished(
+					'turn-3',
+					[
+						row('u-3', 'user', 'newest prompt'),
+						row('a-3', 'assistant', 'newest answer')
+					],
+					{ threadId: 'thread-3' }
+				)
+			)
 
 			await vi.waitFor(() => {
-				const texts = Array.from(
-					container.querySelectorAll('div.flex.flex-col.gap-4 > *')
-				).map((el) => (el.textContent ?? '').trim())
-				expect(texts.map((t) => t.split('\n')[0])).toEqual([
+				expect(rowTexts(container).map((t) => t.split('\n')[0])).toEqual([
 					'old prompt',
 					'old answer',
 					'New session',
@@ -1943,7 +1919,7 @@ describe('AgentPage (superagent branch)', () => {
 			expect(page.getByText('New session').elements()).toHaveLength(2)
 		})
 
-		it('keeps the loaded cursor when a refresh adopts a new thread', async () => {
+		it('keeps the loaded cursor when a turn adopts a new thread', async () => {
 			const threadPage = createThread(
 				[
 					{ id: 'm-1', role: 'user', content: 'old prompt' },
@@ -1971,23 +1947,23 @@ describe('AgentPage (superagent branch)', () => {
 			})
 			await expect.element(page.getByText('old answer')).toBeVisible()
 
-			capturedOnEvent?.({
-				type: 'message',
-				agent_id: '_superagent',
-				data: { id: 'turn-2', content: 'new prompt' }
-			})
+			sendLifecycle(
+				itemFinished('turn-2', [row('u-2', 'user', 'new prompt')], {
+					threadId: 'thread-2'
+				})
+			)
 			await vi.waitFor(() => {
-				expect(vi.mocked(api.get).mock.calls).toHaveLength(1)
+				expect(page.getByText('new prompt').elements()).toHaveLength(1)
 			})
 
-			// The reader was mid-pagination: adoption must not rewind
+			// The reader was mid-pagination: the settle must not rewind
 			// the position to the new thread's own continuation.
 			await page.getByRole('button', { name: /load more/i }).click()
 			await vi.waitFor(() => {
-				const urls = vi
-					.mocked(api.get)
-					.mock.calls.map(([url]) => decodeURIComponent(String(url)))
-				expect(urls.at(-1)).toContain('cursor=thread-1:m-1')
+				const calls = vi.mocked(api.get).mock.calls
+				expect(calls.at(-1)?.[1]).toMatchObject({
+					searchParams: { cursor: 'thread-1:m-1' }
+				})
 			})
 		})
 
@@ -2001,30 +1977,15 @@ describe('AgentPage (superagent branch)', () => {
 			})
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
 					items: [],
 					paused: false,
 					active: { id: 'cmd-1', content: '/new', kind: 'new_thread' }
 				}
 			})
-			capturedOnEvent?.({
-				type: 'command_completed',
-				agent_id: '_superagent',
-				data: {
-					item_id: 'cmd-1',
-					thread_id: 'thread-2',
-					previous_thread_id: 'thread-1',
-					divider: {
-						id: 'thread-2',
-						content: 'New session',
-						created_at: '2026-11-19T00:00:00.000Z'
-					}
-				}
-			})
+			sendLifecycle(threadChanged('thread-2', 'thread-1'))
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: { items: [], paused: false }
 			})
 
@@ -2037,55 +1998,20 @@ describe('AgentPage (superagent branch)', () => {
 			expect(page.getByText('New session').elements()).toHaveLength(1)
 		})
 
-		it('does not rewind the followed thread when a delayed refresh lands after two switches', async () => {
+		it('keeps a late old-thread settle above two newer boundaries', async () => {
 			const seed = createThread(
 				[{ id: 'm-1', role: 'user', content: 'old prompt' }],
 				{ threadId: 'thread-1' }
 			)
-			let releaseLate: (() => void) | undefined
-			vi.mocked(api.get).mockImplementation((input) => {
-				const url = String(input)
-				if (url.includes('thread-1')) {
-					// The turn's own thread, answered only when the test
-					// releases it — two switches land in the meantime.
-					return {
-						json: () => {
-							const { promise, resolve } = Promise.withResolvers<unknown>()
-							releaseLate = () =>
-								resolve({
-									items: [
-										{
-											id: 'm-2',
-											role: 'assistant',
-											content: 'late answer',
-											createdAt: '2026-11-19T00:00:05.000Z'
-										}
-									],
-									nextCursor: null,
-									threadId: 'thread-1'
-								})
-							return promise
-						}
-					} as ApiResponsePromise
-				}
-				return {
-					json: async () => ({
-						items: [],
-						nextCursor: null,
-						threadId: 'thread-3'
-					})
-				} as ApiResponsePromise
-			})
 
 			const { container } = render(AgentPageTestWrapper, {
 				data: createMockData({ thread: seed })
 			})
 			await expect.element(page.getByText('old prompt')).toBeVisible()
 
-			// The turn claims in thread-1 …
+			// The turn claims and starts in thread-1 …
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
 					items: [],
 					paused: false,
@@ -2097,33 +2023,19 @@ describe('AgentPage (superagent branch)', () => {
 					}
 				}
 			})
-			// … two switches commit, then its settle event lands late.
-			for (const [from, to] of [
-				['thread-1', 'thread-2'],
-				['thread-2', 'thread-3']
-			] as const) {
-				capturedOnEvent?.({
-					type: 'command_completed',
-					agent_id: '_superagent',
-					data: {
-						item_id: `cmd-${to}`,
-						thread_id: to,
-						previous_thread_id: from,
-						divider: {
-							id: to,
-							content: 'New session',
-							created_at: '2026-11-19T00:00:00.000Z'
-						}
-					}
-				})
-			}
-			capturedOnEvent?.({
-				type: 'message',
-				agent_id: '_superagent',
-				data: { id: 'turn-1', content: 'late answer' }
+			sendLifecycle({
+				kind: 'item_started',
+				itemId: 'turn-1',
+				threadId: 'thread-1',
+				userMessageId: 'm-1',
+				rows: [row('m-1', 'user', 'old prompt')]
 			})
-			await vi.waitFor(() => expect(releaseLate).toBeTypeOf('function'))
-			releaseLate?.()
+			// … two switches commit, then its terminal event lands late.
+			sendLifecycle(threadChanged('thread-2', 'thread-1'))
+			sendLifecycle(threadChanged('thread-3', 'thread-2'))
+			sendLifecycle(
+				itemFinished('turn-1', [row('m-2', 'assistant', 'late answer')])
+			)
 
 			// The late rows land inside thread-1's position — above both
 			// boundaries — and the boundaries keep their chain order.
@@ -2137,10 +2049,10 @@ describe('AgentPage (superagent branch)', () => {
 			})
 			expect(page.getByText('late answer').elements()).toHaveLength(1)
 
-			// The next prompt claims in the thread the reader follows.
+			// The next prompt runs in the thread the reader follows: its
+			// rows land below both boundaries.
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
 					items: [],
 					paused: false,
@@ -2152,90 +2064,51 @@ describe('AgentPage (superagent branch)', () => {
 					}
 				}
 			})
-			capturedOnEvent?.({
-				type: 'message',
-				agent_id: '_superagent',
-				data: { id: 'turn-2', content: 'next answer' }
-			})
+			sendLifecycle(
+				{
+					kind: 'item_started',
+					itemId: 'turn-2',
+					threadId: 'thread-3',
+					userMessageId: 'u-9',
+					rows: [row('u-9', 'user', 'next prompt')]
+				},
+				itemFinished(
+					'turn-2',
+					[
+						row('u-9', 'user', 'next prompt'),
+						row('a-9', 'assistant', 'next answer')
+					],
+					{ threadId: 'thread-3' }
+				)
+			)
 			await vi.waitFor(() => {
-				const urls = vi
-					.mocked(api.get)
-					.mock.calls.map(([url]) => decodeURIComponent(String(url)))
-				expect(urls.some((url) => url.includes('cursor=thread-3'))).toBe(true)
+				expect(rowTexts(container)).toEqual([
+					'old prompt',
+					'late answer',
+					'New session',
+					'New session',
+					'next prompt',
+					'next answer'
+				])
 			})
 		})
 
-		it('lands a delayed middle-thread refresh between its boundaries', async () => {
+		it('lands a late middle-thread settle between its boundaries', async () => {
 			const seed = createThread(
 				[{ id: 'm-1', role: 'user', content: 'old prompt' }],
 				{ threadId: 'thread-1' }
 			)
-			let releaseLate: (() => void) | undefined
-			vi.mocked(api.get).mockImplementation((input) => {
-				const url = String(input)
-				if (url.includes('thread-2')) {
-					// The turn ran in thread-2; its refresh answers
-					// only when the test releases it — after the
-					// switch to thread-3 commits.
-					return {
-						json: () => {
-							const { promise, resolve } = Promise.withResolvers<unknown>()
-							releaseLate = () =>
-								resolve({
-									items: [
-										{
-											id: 'm-2',
-											role: 'user',
-											content: 'ask T2',
-											createdAt: '2026-11-19T00:00:04.000Z'
-										},
-										{
-											id: 'm-3',
-											role: 'assistant',
-											content: 'late T2 answer',
-											createdAt: '2026-11-19T00:00:05.000Z'
-										}
-									],
-									nextCursor: null,
-									threadId: 'thread-2'
-								})
-							return promise
-						}
-					} as ApiResponsePromise
-				}
-				return {
-					json: async () => ({
-						items: [],
-						nextCursor: null,
-						threadId: 'thread-3'
-					})
-				} as ApiResponsePromise
-			})
 
 			const { container } = render(AgentPageTestWrapper, {
 				data: createMockData({ thread: seed })
 			})
 			await expect.element(page.getByText('old prompt')).toBeVisible()
 
-			// The switch into thread-2 commits, then the turn claims
-			// there …
-			capturedOnEvent?.({
-				type: 'command_completed',
-				agent_id: '_superagent',
-				data: {
-					item_id: 'cmd-thread-2',
-					thread_id: 'thread-2',
-					previous_thread_id: 'thread-1',
-					divider: {
-						id: 'thread-2',
-						content: 'New session',
-						created_at: '2026-11-19T00:00:00.000Z'
-					}
-				}
-			})
+			// The switch into thread-2 commits, then the turn claims and
+			// starts there …
+			sendLifecycle(threadChanged('thread-2', 'thread-1'))
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
 					items: [],
 					paused: false,
@@ -2247,29 +2120,26 @@ describe('AgentPage (superagent branch)', () => {
 					}
 				}
 			})
-			// … and the surface moves on to thread-3 before the turn
-			// settles.
-			capturedOnEvent?.({
-				type: 'command_completed',
-				agent_id: '_superagent',
-				data: {
-					item_id: 'cmd-thread-3',
-					thread_id: 'thread-3',
-					previous_thread_id: 'thread-2',
-					divider: {
-						id: 'thread-3',
-						content: 'New session',
-						created_at: '2026-11-19T00:00:01.000Z'
-					}
-				}
+			sendLifecycle({
+				kind: 'item_started',
+				itemId: 'turn-1',
+				threadId: 'thread-2',
+				userMessageId: 'm-2',
+				rows: [row('m-2', 'user', 'ask T2')]
 			})
-			capturedOnEvent?.({
-				type: 'message',
-				agent_id: '_superagent',
-				data: { id: 'turn-1', content: 'late T2 answer' }
-			})
-			await vi.waitFor(() => expect(releaseLate).toBeTypeOf('function'))
-			releaseLate?.()
+			// … and the surface moves on to thread-3 before the turn's
+			// terminal event arrives.
+			sendLifecycle(threadChanged('thread-3', 'thread-2'))
+			sendLifecycle(
+				itemFinished(
+					'turn-1',
+					[
+						row('m-2', 'user', 'ask T2'),
+						row('m-3', 'assistant', 'late T2 answer')
+					],
+					{ threadId: 'thread-2' }
+				)
+			)
 
 			// The late rows land inside thread-2's position — above the
 			// thread-3 boundary, below thread-2's own.
@@ -2284,10 +2154,10 @@ describe('AgentPage (superagent branch)', () => {
 			})
 			expect(page.getByText('late T2 answer').elements()).toHaveLength(1)
 
-			// The next prompt claims in the thread the reader follows.
+			// The next prompt runs in the thread the reader follows: its
+			// rows land below the newest boundary.
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
 					items: [],
 					paused: false,
@@ -2299,57 +2169,53 @@ describe('AgentPage (superagent branch)', () => {
 					}
 				}
 			})
-			capturedOnEvent?.({
-				type: 'message',
-				agent_id: '_superagent',
-				data: { id: 'turn-2', content: 'next answer' }
-			})
+			sendLifecycle(
+				{
+					kind: 'item_started',
+					itemId: 'turn-2',
+					threadId: 'thread-3',
+					userMessageId: 'u-9',
+					rows: [row('u-9', 'user', 'next prompt')]
+				},
+				itemFinished(
+					'turn-2',
+					[
+						row('u-9', 'user', 'next prompt'),
+						row('a-9', 'assistant', 'next answer')
+					],
+					{ threadId: 'thread-3' }
+				)
+			)
 			await vi.waitFor(() => {
-				const urls = vi
-					.mocked(api.get)
-					.mock.calls.map(([url]) => decodeURIComponent(String(url)))
-				expect(urls.some((url) => url.includes('cursor=thread-3'))).toBe(true)
+				expect(rowTexts(container)).toEqual([
+					'old prompt',
+					'New session',
+					'ask T2',
+					'late T2 answer',
+					'New session',
+					'next prompt',
+					'next answer'
+				])
 			})
 		})
 
-		it('keeps an exhausted oldest cursor exhausted across refreshes and commands', async () => {
+		it('keeps an exhausted oldest cursor exhausted across settles and commands', async () => {
 			const seed = createThread(
 				[{ id: 'm-1', role: 'user', content: 'only prompt' }],
 				{ nextCursor: null, threadId: 'thread-1' }
 			)
-			// The fresh page offers a continuation the reader never had:
-			// a refresh must not resurrect an exhausted cursor.
-			vi.mocked(api.get).mockReturnValue({
-				json: async () => ({
-					items: [
-						{
-							id: 'm-1',
-							role: 'user',
-							content: 'only prompt',
-							createdAt: '2026-11-19T00:00:00.000Z'
-						},
-						{
-							id: 'a-1',
-							role: 'assistant',
-							content: 'only answer',
-							createdAt: '2026-11-19T00:00:01.000Z'
-						}
-					],
-					nextCursor: 'thread-1:m-1',
-					threadId: 'thread-1'
-				})
-			} as ApiResponsePromise)
 
 			render(AgentPageTestWrapper, {
 				data: createMockData({ thread: seed })
 			})
 			await expect.element(page.getByText('only prompt')).toBeVisible()
 
-			capturedOnEvent?.({
-				type: 'message',
-				agent_id: '_superagent',
-				data: { id: 'turn-1', content: 'only answer' }
-			})
+			sendLifecycle(
+				itemFinished('turn-1', [
+					row('m-1', 'user', 'only prompt'),
+					row('a-1', 'assistant', 'only answer')
+				])
+			)
 			await vi.waitFor(() => {
 				expect(page.getByText('only answer').elements()).toHaveLength(1)
 			})
@@ -2357,20 +2223,7 @@ describe('AgentPage (superagent branch)', () => {
 				.element(page.getByRole('button', { name: /load more/i }))
 				.not.toBeInTheDocument()
 
-			capturedOnEvent?.({
-				type: 'command_completed',
-				agent_id: '_superagent',
-				data: {
-					item_id: 'cmd-1',
-					thread_id: 'thread-2',
-					previous_thread_id: 'thread-1',
-					divider: {
-						id: 'thread-2',
-						content: 'New session',
-						created_at: '2026-11-19T00:00:02.000Z'
-					}
-				}
-			})
+			sendLifecycle(threadChanged('thread-2', 'thread-1'))
 
 			// Still exhausted: the command adds a boundary, not history.
 			await expect.element(page.getByText('New session')).toBeVisible()
@@ -2384,20 +2237,6 @@ describe('AgentPage (superagent branch)', () => {
 				[{ id: 'm-1', role: 'user', content: 'old prompt' }],
 				{ threadId: 'thread-1' }
 			)
-			vi.mocked(api.get).mockReturnValue({
-				json: async () => ({
-					items: [
-						{
-							id: 'a-1',
-							role: 'assistant',
-							content: 'old answer',
-							createdAt: '2026-11-19T00:00:00.000Z'
-						}
-					],
-					nextCursor: null,
-					threadId: 'thread-1'
-				})
-			} as ApiResponsePromise)
 
 			const { container } = render(AgentPageTestWrapper, {
 				data: createMockData({ thread: seed })
@@ -2406,7 +2245,6 @@ describe('AgentPage (superagent branch)', () => {
 
 			capturedOnEvent?.({
 				type: 'queue_state',
-				agent_id: '_superagent',
 				data: {
 					items: [],
 					paused: false,
@@ -2418,33 +2256,21 @@ describe('AgentPage (superagent branch)', () => {
 					}
 				}
 			})
+			sendLifecycle({
+				kind: 'item_started',
+				itemId: 'turn-1',
+				threadId: 'thread-1',
+				userMessageId: 'm-1',
+				rows: [row('m-1', 'user', 'old prompt')]
+			})
 			// Two switches whose boundaries carry the SAME timestamp: the
 			// chain order is the only truth.
-			for (const [from, to] of [
-				['thread-1', 'thread-2'],
-				['thread-2', 'thread-3']
-			] as const) {
-				capturedOnEvent?.({
-					type: 'command_completed',
-					agent_id: '_superagent',
-					data: {
-						item_id: `cmd-${to}`,
-						thread_id: to,
-						previous_thread_id: from,
-						divider: {
-							id: to,
-							content: 'New session',
-							created_at: '2026-11-19T00:00:00.000Z'
-						}
-					}
-				})
-			}
-			// The older thread's settle refresh lands afterwards.
-			capturedOnEvent?.({
-				type: 'message',
-				agent_id: '_superagent',
-				data: { id: 'turn-1', content: 'old answer' }
-			})
+			sendLifecycle(threadChanged('thread-2', 'thread-1'))
+			sendLifecycle(threadChanged('thread-3', 'thread-2'))
+			// The older thread's terminal event lands afterwards.
+			sendLifecycle(
+				itemFinished('turn-1', [row('a-1', 'assistant', 'old answer')])
+			)
 
 			await vi.waitFor(() => {
 				expect(rowTexts(container)).toEqual([
@@ -2457,57 +2283,11 @@ describe('AgentPage (superagent branch)', () => {
 			expect(page.getByText('old answer').elements()).toHaveLength(1)
 		})
 
-		it('freezes live rows above the boundary while their refresh is pending', async () => {
+		it('freezes a persist-failed turn’s live rows above the boundary', async () => {
 			const seed = createThread(
 				[{ id: 'm-1', role: 'user', content: 'old prompt' }],
 				{ threadId: 'thread-1' }
 			)
-			let releaseRefresh: (() => void) | undefined
-			vi.mocked(api.get).mockImplementation((input) => {
-				if (String(input).includes('thread-1')) {
-					return {
-						json: () => {
-							const { promise, resolve } = Promise.withResolvers<unknown>()
-							// The stored copy of the turn that ran in
-							// thread-1: user row, tool row, answer.
-							releaseRefresh = () =>
-								resolve({
-									items: [
-										{
-											id: 'stored-u',
-											role: 'user',
-											content: 'ask A',
-											createdAt: '2026-11-19T00:00:00.000Z'
-										},
-										{
-											id: 'stored-t',
-											role: 'tool',
-											content:
-												'{"name":"search","args":{"q":"x"},"result":"hit"}',
-											createdAt: '2026-11-19T00:00:01.000Z'
-										},
-										{
-											id: 'stored-a',
-											role: 'assistant',
-											content: 'answer A',
-											createdAt: '2026-11-19T00:00:02.000Z'
-										}
-									],
-									nextCursor: null,
-									threadId: 'thread-1'
-								})
-							return promise
-						}
-					} as ApiResponsePromise
-				}
-				return {
-					json: async () => ({
-						items: [],
-						nextCursor: null,
-						threadId: 'thread-1'
-					})
-				} as ApiResponsePromise
-			})
 
 			const { container } = render(AgentPageTestWrapper, {
 				data: createMockData({ thread: seed })
@@ -2515,70 +2295,60 @@ describe('AgentPage (superagent branch)', () => {
 			const textarea = page.getByPlaceholder('Enter your query!')
 			await textarea.click()
 			await userEvent.type(textarea, 'ask A{Enter}')
+			await expect.element(page.getByText('ask A')).toBeVisible()
 
-			// The turn streams a tool call and an answer in thread-1.
-			capturedOnEvent?.({
-				type: 'tool_call',
-				agent_id: '_superagent',
-				data: {
-					id: 'call-1',
-					turn_id: 'q-test',
-					name: 'search',
-					args: '{"q":"x"}'
-				}
+			// The turn runs a tool and streams an answer in thread-1 —
+			// then its journal write fails, so no terminal event will
+			// ever commit rows for it. The queued /new still runs.
+			sendLifecycle({
+				kind: 'tool_started',
+				itemId: 'q-test',
+				invocationId: 'inv-1',
+				callId: 'call-1',
+				toolName: 'search',
+				toolArgs: '{"q":"x"}'
 			})
-			capturedOnEvent?.({
-				type: 'message_chunk',
-				agent_id: '_superagent',
-				data: { id: 'q-test', delta: 'answer ' }
-			})
-			capturedOnEvent?.({
-				type: 'message',
-				agent_id: '_superagent',
-				data: { id: 'q-test', content: 'answer A' }
-			})
-			// /new commits before the turn's refresh resolves.
-			capturedOnEvent?.({
-				type: 'command_completed',
-				agent_id: '_superagent',
-				data: {
-					item_id: 'cmd-1',
-					thread_id: 'thread-2',
-					previous_thread_id: 'thread-1',
-					divider: {
-						id: 'thread-2',
-						content: 'New session',
-						created_at: '2026-11-19T00:00:03.000Z'
-					}
-				}
-			})
+			sendChunk('q-test', 'answer ', 1)
+			sendLifecycle(threadChanged('thread-2', 'thread-1'))
 
-			// The tail is frozen above the boundary at once: one user row,
-			// one tool line, one answer, then the boundary.
+			// The tail is frozen above the boundary at once: one user
+			// row, one tool line, one answer, then the boundary — the
+			// live rows are all the turn will ever have.
 			await vi.waitFor(() => {
 				expect(rowTexts(container)).toHaveLength(5)
 			})
 			expect(rowTexts(container)[0]).toBe('old prompt')
 			expect(rowTexts(container)[1]).toContain('ask A')
 			expect(rowTexts(container)[2]).toContain('search')
-			expect(rowTexts(container)[3]).toContain('answer A')
+			expect(rowTexts(container)[3]).toContain('answer')
 			expect(rowTexts(container)[4]).toBe('New session')
 			expect(page.getByText('ask A').elements()).toHaveLength(1)
 			expect(page.getByText(/search/).elements()).toHaveLength(1)
-			expect(page.getByText('answer A').elements()).toHaveLength(1)
 
-			// The stored copy replaces the frozen one — still once each,
-			// the wire-id namespace mismatch notwithstanding.
-			await vi.waitFor(() => expect(releaseRefresh).toBeTypeOf('function'))
-			releaseRefresh?.()
+			// The boundary does not swallow later committed work: the
+			// next turn in the new thread settles from its event, below
+			// the divider, still once each.
+			sendLifecycle(
+				itemFinished(
+					'turn-2',
+					[
+						row('u-2', 'user', 'next prompt'),
+						row('a-2', 'assistant', 'next answer')
+					],
+					{ threadId: 'thread-2' }
+				)
+			)
 			await vi.waitFor(() => {
-				expect(rowTexts(container)[1]).toContain('ask A')
-				expect(rowTexts(container)[4]).toBe('New session')
+				expect(rowTexts(container)).toEqual([
+					'old prompt',
+					'ask A',
+					'search {"q":"x"}',
+					'answer',
+					'New session',
+					'next prompt',
+					'next answer'
+				])
 			})
-			expect(rowTexts(container)).toHaveLength(5)
-			expect(page.getByText('ask A').elements()).toHaveLength(1)
-			expect(page.getByText(/search/).elements()).toHaveLength(1)
-			expect(page.getByText('answer A').elements()).toHaveLength(1)
 		})
 	})
 

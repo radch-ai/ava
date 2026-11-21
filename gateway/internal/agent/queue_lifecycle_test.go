@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
 	"github.com/radch-ai/ava/backend"
@@ -48,7 +47,7 @@ func TestPausedPendingWorkStaysIntact(t *testing.T) {
 	defer quick.Close()
 	r := &failThenQuick{url: quick.URL}
 
-	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{
+	mgr := newJournaledManager(t, &agent.UserAgentManagerOptions{
 		GetAgentThread: emptyThread,
 		ResolveModel:   r.resolve,
 	})
@@ -59,7 +58,7 @@ func TestPausedPendingWorkStaysIntact(t *testing.T) {
 	// behind it — the gate arms because work was queued before the
 	// failure.
 	submit(t, mgr, "agent-paused", "conn-1", sc, "fails")
-	bID, err := mgr.Submit("agent-paused", "conn-1", sc, "survivor", nil, "")
+	bID, err := admitItem(t, mgr, "agent-paused", "conn-1", sc, "survivor", nil, "")
 	require.NoError(t, err)
 	readUntilError(t, c)
 	snapshot := readQueueState(t, c)
@@ -71,7 +70,7 @@ func TestPausedPendingWorkStaysIntact(t *testing.T) {
 	// the manager-owned state keeps the items and the pause intact,
 	// and no respawn loop spins against the gate.
 	require.Eventually(t, func() bool {
-		return mgr.Get("agent-paused") == nil
+		return agent.Worker(mgr, "agent-paused") == nil
 	}, 2*time.Second, 5*time.Millisecond, "paused waiting work releases the worker")
 
 	// The explicit selection resumes: B runs.
@@ -90,7 +89,7 @@ func TestEmptyQueueFailureNeverPausesAndStateSurvivesEviction(t *testing.T) {
 		return r.resolve(ctx, entry)
 	}
 
-	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{
+	mgr := newJournaledManager(t, &agent.UserAgentManagerOptions{
 		GetAgentThread: emptyThread,
 		ResolveModel:   resolver,
 	})
@@ -107,14 +106,14 @@ func TestEmptyQueueFailureNeverPausesAndStateSurvivesEviction(t *testing.T) {
 	// runnable; the attached connection keeps the manager-owned
 	// state alive past the exit.
 	require.Eventually(t, func() bool {
-		return mgr.Get("agent-evict") == nil
+		return agent.Worker(mgr, "agent-evict") == nil
 	}, 2*time.Second, 5*time.Millisecond, "the quiet queue releases the worker")
-	require.Equal(t, 1, mgr.Status("agent-evict").ConnCount)
+	require.Equal(t, 1, agent.ConnCount(mgr, "agent-evict"))
 
 	// A later prompt runs normally after the failure — no explicit
 	// selection needed — respawning a worker: it fails too, and with
 	// nothing behind it the queue still does not pause.
-	_, err := mgr.Submit("agent-evict", "conn-1", sc, "after eviction", nil, "")
+	_, err := admitItem(t, mgr, "agent-evict", "conn-1", sc, "after eviction", nil, "")
 	require.NoError(t, err)
 	readUntilError(t, c)
 	require.Equal(t, int32(2), resolverCalls.Load(), "the prompt ran without an explicit selection")
@@ -137,15 +136,14 @@ func TestStopInterruptsAndHoldsQueue(t *testing.T) {
 		}
 		return backend.ResolvedModel{BaseURL: parked.URL, APIKey: "sk-test", Model: "test-model"}, nil
 	}
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{GetAgentThread: emptyThread, ResolveModel: resolver})
 
 	c, sc := wsPair(t)
 
 	// A parks mid-stream with B waiting behind it.
 	submit(t, mgr, "agent-stop", "conn-1", sc, "slow question")
-	bID, err := mgr.Submit("agent-stop", "conn-1", sc,
-		"b waits", &apitypes.ModelEntry{ID: "quick"}, "")
+	bID, err := admitItem(t, mgr, "agent-stop", "conn-1", sc, "b waits", &apitypes.ModelEntry{ID: "quick"}, "")
 	require.NoError(t, err)
 	for {
 		ev := readEvent(t, c)
@@ -164,8 +162,9 @@ func TestStopInterruptsAndHoldsQueue(t *testing.T) {
 
 	// The parked turn settles its partial — a stop, not a failure —
 	// and B does not run behind it.
-	_, settled := readUntilMessage(t, c)
+	_, settled := readUntilSettled(t, c)
 	require.Equal(t, "slow ", settled.Content)
+	require.Equal(t, apitypes.ItemStopped, settled.Event.Outcome)
 	require.Zero(t, quickHits.Load(), "the held queue ran nothing behind the stop")
 
 	// Send immediately is the resume: B runs on its own selection.

@@ -16,15 +16,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/gateway/internal/agent"
 )
 
-// submitConn enqueues a prompt from one connection; the manager
-// binds no resolver here, so the test stays about connections.
+// submitConn subscribes one connection to the lane's feed; these tests are
+// about connection bookkeeping, so no prompt is admitted.
 func submitConn(mgr *agent.UserAgentManager, agentID, connID string, conn *websocket.Conn) {
-	_, _ = mgr.Submit(agentID, connID, conn, "test",
-		&apitypes.ModelEntry{ID: "gpt-4o"}, "")
+	subscribe(mgr, agentID, connID, conn)
 }
 
 func TestMultipleConnectionsAttach(t *testing.T) {
@@ -47,13 +45,13 @@ func TestMultipleConnectionsAttach(t *testing.T) {
 
 	agentID := "agent-multi-conn"
 	submitConn(mgr, agentID, "conn-1", c1)
-	assert.Equal(t, 1, mgr.Status(agentID).ConnCount)
+	assert.Equal(t, 1, agent.ConnCount(mgr, agentID))
 
 	submitConn(mgr, agentID, "conn-2", c2)
-	assert.Equal(t, 2, mgr.Status(agentID).ConnCount)
+	assert.Equal(t, 2, agent.ConnCount(mgr, agentID))
 
 	submitConn(mgr, agentID, "conn-3", c3)
-	assert.Equal(t, 3, mgr.Status(agentID).ConnCount)
+	assert.Equal(t, 3, agent.ConnCount(mgr, agentID))
 }
 
 func TestRemoveConnectionDropsFromState(t *testing.T) {
@@ -72,13 +70,13 @@ func TestRemoveConnectionDropsFromState(t *testing.T) {
 	agentID := "agent-remove"
 	submitConn(mgr, agentID, "conn-1", c1)
 	submitConn(mgr, agentID, "conn-2", c2)
-	require.Equal(t, 2, mgr.Status(agentID).ConnCount)
+	require.Equal(t, 2, agent.ConnCount(mgr, agentID))
 
 	mgr.RemoveConn(agentID, "conn-1")
-	assert.Equal(t, 1, mgr.Status(agentID).ConnCount)
+	assert.Equal(t, 1, agent.ConnCount(mgr, agentID))
 
 	mgr.RemoveConn(agentID, "conn-2")
-	assert.Equal(t, 0, mgr.Status(agentID).ConnCount)
+	assert.Equal(t, 0, agent.ConnCount(mgr, agentID))
 }
 
 func TestRemoveNonExistentConnectionIsSafe(t *testing.T) {
@@ -91,10 +89,10 @@ func TestRemoveNonExistentConnectionIsSafe(t *testing.T) {
 
 	agentID := "agent-noexist"
 	submitConn(mgr, agentID, "conn-1", c)
-	require.Equal(t, 1, mgr.Status(agentID).ConnCount)
+	require.Equal(t, 1, agent.ConnCount(mgr, agentID))
 
 	mgr.RemoveConn(agentID, "conn-unknown")
-	assert.Equal(t, 1, mgr.Status(agentID).ConnCount)
+	assert.Equal(t, 1, agent.ConnCount(mgr, agentID))
 }
 
 func TestReplaceConnectionWithSameID(t *testing.T) {
@@ -110,11 +108,11 @@ func TestReplaceConnectionWithSameID(t *testing.T) {
 
 	agentID := "agent-replace"
 	submitConn(mgr, agentID, "conn-1", c1)
-	require.Equal(t, 1, mgr.Status(agentID).ConnCount)
+	require.Equal(t, 1, agent.ConnCount(mgr, agentID))
 
 	// Same conn id, new connection: replaced, not added.
 	submitConn(mgr, agentID, "conn-1", c2)
-	assert.Equal(t, 1, mgr.Status(agentID).ConnCount)
+	assert.Equal(t, 1, agent.ConnCount(mgr, agentID))
 
 	// The replaced connection is closed.
 	_, _, err := c1.Reader(context.Background())

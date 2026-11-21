@@ -1,0 +1,9 @@
+DROP INDEX IF EXISTS idx_lifecycle_journal_cancelled;
+DROP INDEX IF EXISTS idx_lifecycle_journal_item;
+DROP TABLE IF EXISTS lifecycle_journal;
+DROP INDEX IF EXISTS idx_tool_invocations_item;
+DROP TABLE IF EXISTS tool_invocations;
+DROP INDEX IF EXISTS idx_queue_items_unsettled;
+DROP TABLE IF EXISTS queue_items;
+DROP TABLE IF EXISTS agent_sync_state;
+DROP TABLE IF EXISTS sync_history;

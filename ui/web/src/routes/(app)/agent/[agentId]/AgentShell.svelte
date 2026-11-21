@@ -62,13 +62,17 @@
 	const isConversation = $derived(
 		agentId === SUPERAGENT_AGENT_ID && activeTab === 'conversation'
 	)
-	const liveIds = $derived(new Set((liveItems ?? []).map(threadRowKey)))
-	// A running turn's user row is live; the refetched stored copy
-	// must not render beside it. Live wins until the turn settles.
-	const conversationItems = $derived([
-		...(threadItems ?? []).filter((m) => !liveIds.has(threadRowKey(m))),
-		...(liveItems ?? [])
-	])
+	// A running turn's user row is live; the refetched stored copy must
+	// not render beside it. Live wins until the turn settles — and with no
+	// live rows there is nothing to filter, so the stored list is used
+	// as-is.
+	const conversationItems = $derived.by(() => {
+		const live = liveItems ?? []
+		const stored = threadItems ?? []
+		if (live.length === 0) return stored
+		const liveIds = new Set(live.map(threadRowKey))
+		return [...stored.filter((m) => !liveIds.has(threadRowKey(m))), ...live]
+	})
 
 	const error = $derived(isConversation ? threadError : activityError)
 	const isLoading = $derived(
@@ -79,33 +83,37 @@
 	let loadMoreError = $state<string | null>(null)
 	let scrollRegionElement: HTMLDivElement | undefined = $state()
 
-	// A growing live tail pins the view to the newest message while the
-	// reader stays near the bottom; scrolling up keeps the position.
+	// One scroll follower covers both growth sources: the live tail (a
+	// streaming answer, a new tool row) and the queue rows rendered below
+	// the thread. A reader near the bottom stays pinned to the newest
+	// rows; a reader elsewhere keeps the position. Both dependencies feed
+	// one animation frame, so a burst of chunks costs one scroll, not one
+	// per chunk.
+	let followFrame: number | undefined
+	function scheduleFollow() {
+		if (followFrame !== undefined) cancelAnimationFrame(followFrame)
+		followFrame = requestAnimationFrame(() => {
+			followFrame = undefined
+			void tick().then(() => {
+				const el = scrollRegionElement
+				if (!el) return
+				const nearBottom =
+					el.scrollHeight - el.scrollTop - el.clientHeight < 120
+				if (nearBottom) el.scrollTo({ top: el.scrollHeight })
+			})
+		})
+	}
+
 	$effect(() => {
 		const live = liveItems ?? []
-		// Length alone misses chunks that grow an existing bubble, so
-		// the tail's total text is part of the dependency.
+		// Length alone misses chunks that grow an existing bubble, so the
+		// tail's total text is part of the dependency.
 		void live.reduce((sum, message) => sum + message.content.length, 0)
-		if (live.length === 0) return
-		void tick().then(() => {
-			const el = scrollRegionElement
-			if (!el) return
-			const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
-			if (nearBottom) el.scrollTo({ top: el.scrollHeight })
-		})
-	})
-
-	// The queue rendered below the thread resizes the scroll region: a
-	// reader near the bottom stays pinned to the newest rows instead of
-	// losing them under the fold; a reader elsewhere keeps the position.
-	$effect(() => {
 		void queueRows
-		void tick().then(() => {
-			const el = scrollRegionElement
-			if (!el) return
-			const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
-			if (nearBottom) el.scrollTo({ top: el.scrollHeight })
-		})
+		scheduleFollow()
+		return () => {
+			if (followFrame !== undefined) cancelAnimationFrame(followFrame)
+		}
 	})
 
 	// Forced scroll for the submit moment only: unconditional, unlike

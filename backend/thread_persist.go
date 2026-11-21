@@ -11,9 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/backend/internal/db"
@@ -73,95 +70,6 @@ type ThreadMessageDraft struct {
 	Content   string
 	TurnID    string
 	ToolCalls []byte
-}
-
-// AppendThreadMessages writes drafts to the agent's active thread in
-// one transaction: either every row becomes visible or none does. The
-// active pointer is resolved inside the transaction, so a batch can
-// never straddle a pointer swap. Each row gets a millisecond timestamp,
-// strictly rising within the call and across calls — the assistant row
-// a turn appends after its user row always sorts after it. A rolled-back
-// batch leaves nothing visible. A non-empty batch for an unknown
-// agent fails on the pointer resolve; an empty batch writes nothing
-// and resolves nothing.
-func (s *TurnService) AppendThreadMessages(ctx context.Context, agentID string, msgs []ThreadMessageDraft) error {
-	if len(msgs) == 0 {
-		return nil
-	}
-	// Structure is the read path's contract: a row the projection
-	// would treat as corruption is rejected here, before any write.
-	for i, m := range msgs {
-		if err := validateDraft(m); err != nil {
-			return fmt.Errorf("append thread message: draft %d: %w", i, err)
-		}
-	}
-	// Supplied ids are the caller's claim about stored rows; a batch
-	// repeating one would collide inside its own transaction.
-	seen := make(map[string]struct{}, len(msgs))
-	for i, m := range msgs {
-		if m.ID == "" {
-			continue
-		}
-		if _, dup := seen[m.ID]; dup {
-			return fmt.Errorf("append thread message: draft %d: duplicate row id %q", i, m.ID)
-		}
-		seen[m.ID] = struct{}{}
-	}
-	s.persistMu.Lock()
-	defer s.persistMu.Unlock()
-
-	now := time.Now().UnixMilli()
-	if now <= s.lastPersistedMs {
-		now = s.lastPersistedMs + 1
-	}
-
-	tx, err := s.sqlDB.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("append thread message: %w", err)
-	}
-	qtx := s.queries.WithTx(tx)
-	threadID, err := qtx.GetActiveThreadID(ctx, agentID)
-	if err != nil {
-		_ = tx.Rollback()
-		if errors.Is(err, sql.ErrNoRows) {
-			err = ErrUnknownAgent
-		}
-		return fmt.Errorf("append thread message: resolve active thread: %w", err)
-	}
-	for i, m := range msgs {
-		id := m.ID
-		if id == "" {
-			id = uuid.NewString()
-		}
-		var toolCalls sql.NullString
-		if len(m.ToolCalls) > 0 {
-			toolCalls = sql.NullString{String: string(m.ToolCalls), Valid: true}
-		}
-		if err := qtx.InsertThreadMessage(ctx, db.InsertThreadMessageParams{
-			ID:        id,
-			AgentID:   agentID,
-			Role:      string(m.Role),
-			Content:   m.Content,
-			CreatedAt: now + int64(i),
-			TurnID:    m.TurnID,
-			ToolCalls: toolCalls,
-			ThreadID:  threadID,
-		}); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("append thread message: %w", err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		// A commit the store applied but reported failed must not
-		// leave later batches minting timestamps at or below rows it
-		// committed: resync the watermark from storage.
-		if max, rerr := s.queries.MaxThreadCreatedAt(context.Background()); rerr == nil && max > s.lastPersistedMs {
-			s.lastPersistedMs = max
-		}
-		return fmt.Errorf("append thread message: %w", err)
-	}
-	s.lastPersistedMs = now + int64(len(msgs)) - 1
-	return nil
 }
 
 // validateDraft rejects rows the replay projection would treat as

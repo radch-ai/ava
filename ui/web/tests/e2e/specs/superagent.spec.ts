@@ -1,6 +1,10 @@
 // tests/e2e/specs/superagent.spec.ts
 import { expect, test } from '../setup/fixtures'
 
+/** Mock-mode runs have no gateway, so the synchronization handshake never
+ * completes: the live-lane scenarios belong to the real-backend run. */
+const GATEWAYLESS = process.env.VITE_USE_MOCKS === 'true'
+
 test.describe('ava agent', () => {
 	test('should load home page as superagent chat', async ({ page }) => {
 		await page.goto('/')
@@ -215,11 +219,15 @@ test.describe('ava tabs', () => {
 		const conversationTab = page.getByRole('tab', { name: /conversation/i })
 		const activityTab = page.getByRole('tab', { name: /activity/i })
 
-		// Wait for the conversation to settle before comparing counts
+		// Wait for the conversation to settle before comparing counts. A
+		// thread whose only row is its divider is settled too: a switch
+		// just happened and nothing has been said yet.
 		await expect(
 			page
 				.getByText(/no messages yet/i)
-				.or(page.locator('[class*="rounded-2xl"]').first())
+				.or(page.getByText(/new session/i))
+				.or(page.locator('[class*="rounded-2xl"]'))
+				.first()
 		).toBeVisible()
 
 		const initialContent = await page.locator('[class*="rounded-2xl"]').count()
@@ -230,5 +238,35 @@ test.describe('ava tabs', () => {
 		const finalContent = await page.locator('[class*="rounded-2xl"]').count()
 
 		expect(finalContent).toBe(initialContent)
+	})
+})
+
+// The synchronization scenarios commit real conversation state (a thread
+// boundary), and the whole suite shares one backend: they run last so no
+// earlier scenario observes a switched thread.
+test.describe('ava agent synchronization', () => {
+	test('keeps a second tab in sync without a reload', async ({
+		page,
+		context
+	}) => {
+		test.skip(GATEWAYLESS, 'Requires the real gateway')
+		await page.goto('/')
+		// Live only after the handshake replayed the committed state.
+		await expect(page.getByText(/^lane /)).toBeVisible()
+
+		// A second device joins the same conversation and finishes its own
+		// handshake — no reload of either page afterwards.
+		const other = await context.newPage()
+		await other.goto('/agent/_superagent')
+		await expect(other.getByText(/^lane /)).toBeVisible()
+		const dividers = await other.getByText('New session').count()
+
+		// A model-free command commits a thread boundary; the durable feed
+		// delivers it to the other tab as a lifecycle event.
+		await page.getByRole('textbox').fill('/new')
+		await page.getByRole('textbox').press('Enter')
+		await expect
+			.poll(() => other.getByText('New session').count())
+			.toBeGreaterThan(dividers)
 	})
 })

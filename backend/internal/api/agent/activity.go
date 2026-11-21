@@ -13,6 +13,7 @@ import (
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/backend/internal/api"
 	"github.com/radch-ai/ava/backend/internal/db"
+	"github.com/radch-ai/ava/backend/internal/threadpage"
 )
 
 // activityItem assembles one wire row from its columns; message is
@@ -20,7 +21,7 @@ import (
 func activityItem(id string, createdAt int64, triggeredBy, action, status string, message sql.NullString) apitypes.AgentActivityItem {
 	item := apitypes.AgentActivityItem{
 		ID:          id,
-		CreatedAt:   isoTime(createdAt),
+		CreatedAt:   threadpage.ISOTime(createdAt),
 		TriggeredBy: apitypes.ActivityTrigger(triggeredBy),
 		Action:      action,
 		Status:      apitypes.ActivityStatus(status),

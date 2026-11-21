@@ -14,7 +14,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
 	"github.com/radch-ai/ava/backend/apitypes"
@@ -82,14 +81,12 @@ func TestTurnLeadsModelCallWithPersona(t *testing.T) {
 	}
 	llm := newRecordingLLM(t, "hello from the model")
 
-	th := &memThread{}
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
-		&agent.UserAgentManagerOptions{
-			PersistTurn:    th.append,
-			GetAgentThread: th.load,
-			ResolveModel:   fixedResolver(llm.URL),
-			GetAgentConfig: fixedConfig(cfg),
-		})
+	_, svc := contextBackend(t, "agent-persona")
+	mgr := hookedManager(t, &agent.UserAgentManagerOptions{
+		GetAgentThread: svc.GetAgentThread,
+		ResolveModel:   fixedResolver(llm.URL),
+		GetAgentConfig: fixedConfig(cfg),
+	}, &journalHook{LifecycleJournal: svc})
 
 	c, sc := wsPair(t)
 
@@ -109,7 +106,7 @@ func TestTurnLeadsModelCallWithPersona(t *testing.T) {
 func TestTurnConfigFetchFailureStillAnswers(t *testing.T) {
 	llm := newRecordingLLM(t, "still answering")
 
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel:   fixedResolver(llm.URL),

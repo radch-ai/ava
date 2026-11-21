@@ -6,12 +6,12 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	"github.com/coder/websocket"
 	"github.com/rs/zerolog"
 
 	"github.com/radch-ai/ava/backend"
@@ -34,11 +34,37 @@ const (
 // no adapter.
 type ModelResolver = func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error)
 
-// TurnSink appends a turn's messages to the agent's active thread. An
-// alias of backend TurnService.AppendThreadMessages, so the bound
-// method value needs no adapter. The backend resolves the active
-// thread; the gateway never learns thread identities.
-type TurnSink = func(ctx context.Context, agentID string, msgs []backend.ThreadMessageDraft) error
+// LifecycleJournal is the durable half of a turn: item bookkeeping, the
+// conversation rows each transition commits, and the ordered event feed
+// every subscriber receives. *backend.TurnService satisfies it, so the
+// binary binds the service directly. The backend owns item, thread, and
+// row identities — the gateway never mints them.
+type LifecycleJournal interface {
+	// AcceptItem records one admitted submission under its stable item id.
+	AcceptItem(ctx context.Context, agentID, itemID, content, kind string, model *apitypes.ModelEntry) (*backend.JournalBatch, error)
+	// StartItem resolves the execution thread and commits a prompt's
+	// user row with the transition.
+	StartItem(ctx context.Context, agentID, itemID string) (*backend.ItemStart, *backend.JournalBatch, error)
+	// RecordToolStarted records an invocation's intent before it runs.
+	RecordToolStarted(ctx context.Context, agentID, itemID, invocationID, callID, name, args string) (*backend.JournalBatch, error)
+	// RecordToolFinished commits an invocation's outcome row.
+	RecordToolFinished(ctx context.Context, agentID, itemID, invocationID, result string, errText *string) (*backend.JournalBatch, error)
+	// AppendItemMessages commits a started item's nonterminal rows.
+	AppendItemMessages(ctx context.Context, agentID, itemID string, msgs []backend.ThreadMessageDraft) (*backend.JournalBatch, error)
+	// FinishItem settles the item with its one terminal outcome and any
+	// final rows.
+	FinishItem(ctx context.Context, agentID, itemID, outcome, reason string, msgs []backend.ThreadMessageDraft) (*backend.JournalBatch, error)
+	// ExecuteThreadSwitch runs a command's durable thread switch.
+	ExecuteThreadSwitch(ctx context.Context, agentID, itemID string) (*backend.ActivatedThread, *backend.JournalBatch, error)
+	// ReplayAfter answers one bounded replay page, validating the
+	// cursor's history inside the same read.
+	ReplayAfter(ctx context.Context, agentID, historyID string, afterPos int64, limit int) (*backend.JournalPage, error)
+	// JournalStatus reports the history identity and the agent's
+	// committed coordinates.
+	JournalStatus(ctx context.Context, agentID string) (historyID string, head, floor int64, err error)
+	// SyncSnapshot answers the authoritative baseline.
+	SyncSnapshot(ctx context.Context, agentID string, pageLimit int64) (*backend.SyncSnapshot, error)
+}
 
 // AgentConfigSource reads an agent's editable config — the prompt
 // texts and tool list a turn needs. An alias of backend
@@ -57,11 +83,6 @@ type AgentToolsFunc = func(ctx context.Context, agentID string) ([]tool.Invokabl
 // bound method value needs no adapter.
 type AgentThreadSource = func(ctx context.Context, agentID string) ([]backend.AgentThreadMessage, error)
 
-// ThreadActivator runs the backend's durable create-and-activate
-// operation for a command item, returning the committed thread
-// switch. An alias of backend TurnService.CreateAndActivateThread.
-type ThreadActivator = func(ctx context.Context, agentID string) (*backend.ActivatedThread, error)
-
 // turnOutcome classifies a settled turn for the queue: only
 // outcomeMessageFailed pauses automatic dispatch.
 type turnOutcome int
@@ -71,21 +92,22 @@ const (
 	outcomeStopped
 	outcomeToolFailed
 	outcomeMessageFailed
+	// outcomeTerminalUnrecorded marks a started item whose terminal
+	// outcome could not be committed: the lane halts rather than let
+	// anything else run ahead of an outcome nobody recorded.
+	outcomeTerminalUnrecorded
 )
 
-// messageFailed reports whether the outcome gates the queue.
-func (o turnOutcome) messageFailed() bool { return o == outcomeMessageFailed }
-
 type UserAgentOptions struct {
-	AgentID string
-	State   *agentState
-	OnExit  func(*UserAgent)
+	State  *agentState
+	OnExit func(*UserAgent)
 	// ResolveModel maps a selection to a callable endpoint for
 	// every lane; bound by the gateway at boot.
 	ResolveModel ModelResolver
-	// PersistTurn appends the turn's messages to the thread; bound
-	// by the gateway at boot.
-	PersistTurn TurnSink
+	// Journal is the durable lifecycle feed every transition commits
+	// through; bound by the gateway at boot. An unbound journal fails
+	// every turn and command closed.
+	Journal LifecycleJournal
 	// GetAgentConfig reads the agent's config for each turn's
 	// prompt; bound by the gateway at boot.
 	GetAgentConfig AgentConfigSource
@@ -96,10 +118,7 @@ type UserAgentOptions struct {
 	// GetAgentThread reads one thread as the turn's model input;
 	// bound by the gateway at boot.
 	GetAgentThread AgentThreadSource
-	// CreateThread runs a command item's durable thread switch; bound
-	// by the gateway at boot. An unbound seam fails commands closed.
-	CreateThread ThreadActivator
-	Logger       zerolog.Logger
+	Logger         zerolog.Logger
 }
 
 // UserAgent is one agent's disposable runtime worker: it executes
@@ -108,9 +127,6 @@ type UserAgentOptions struct {
 // worker exits as soon as no runnable work remains — the transcript
 // lives in the backend's thread store, not a live worker.
 type UserAgent struct {
-	agentID string
-	ctx     context.Context
-
 	state *agentState
 	mu    sync.Mutex
 
@@ -119,40 +135,41 @@ type UserAgent struct {
 	working   bool
 	reasoning bool
 
-	// turnMsgID and turnPrefix track the live turn's streamed text —
-	// the prefix a mid-turn join replays as one chunk. Guarded by
-	// mu; cleared at turn end before the closing event.
-	turnMsgID  string
-	turnPrefix strings.Builder
+	// turnMsgID, turnPrefix, and recorder describe the live turn: its
+	// streamed text and invocation states, the prefix a synchronizing
+	// device receives before the chunks still to come. turnSeq is the
+	// stream's own increasing sequence, read atomically by the prefix
+	// snapshot. turnPrefixGen bumps when a round's rows commit — the
+	// committed round rides the journal, so a stream whose generation
+	// is behind stops extending the prefix. Guarded by mu except
+	// turnSeq.
+	turnMsgID     string
+	turnPrefix    strings.Builder
+	turnPrefixGen uint64
+	turnSeq       atomic.Int64
+	recorder      *turnRecorder
 
 	onExit         func(*UserAgent)
 	logger         zerolog.Logger
 	resolveModel   ModelResolver
-	persistTurn    TurnSink
 	getAgentConfig AgentConfigSource
 	tools          AgentToolsFunc
 	getAgentThread AgentThreadSource
-	createThread   ThreadActivator
+	journal        LifecycleJournal
 }
 
-// newUserAgent creates a worker and starts its claim loop. The turn
-// context is minted from the manager's root context, so cancelling the
+// newUserAgent creates a worker and starts its claim loop. Turn
+// contexts are minted from the state's root context, so cancelling the
 // root ends any turn still running.
-func newUserAgent(ctx context.Context, opts UserAgentOptions) *UserAgent {
+func newUserAgent(opts UserAgentOptions) *UserAgent {
 	a := &UserAgent{
-		// The worker's context is the manager's root: cancelling it
-		// ends the worker. Turn settlement rides the emit context,
-		// which outlives the turn's own cancel.
-		ctx:            ctx,
-		agentID:        opts.AgentID,
 		state:          opts.State,
 		logger:         opts.Logger,
 		resolveModel:   opts.ResolveModel,
-		persistTurn:    opts.PersistTurn,
 		getAgentConfig: opts.GetAgentConfig,
 		tools:          opts.Tools,
 		getAgentThread: opts.GetAgentThread,
-		createThread:   opts.CreateThread,
+		journal:        opts.Journal,
 		onExit:         opts.OnExit,
 	}
 
@@ -160,38 +177,30 @@ func newUserAgent(ctx context.Context, opts UserAgentOptions) *UserAgent {
 	return a
 }
 
-// Join attaches a connection mid-life: the queue snapshot first, so
-// a joiner cannot mistake reserved or active work for lost, then the
-// live turn's accumulated text as one chunk ordered before whatever
-// still streams. Both are captured under data locks inside the
-// broadcaster's backlog callback; no path may take pubMu there.
-func (a *UserAgent) Join(connID string, conn *websocket.Conn) {
-	a.state.conns.AddWithBacklog(connID, conn, func() []any {
-		snapshot := a.state.stateSnapshot()
-
-		a.mu.Lock()
-		working := a.working
-		msgID := a.turnMsgID
-		var prefix string
-		if working {
-			prefix = a.turnPrefix.String()
-		}
-		a.mu.Unlock()
-
-		backlog := []any{wstypes.Event{
-			Type:    wstypes.EventTypeQueueState,
-			AgentID: a.agentID,
-			Data:    snapshot,
-		}}
-		if working && prefix != "" {
-			backlog = append(backlog, wstypes.Event{
-				Type:    wstypes.EventTypeMessageChunk,
-				AgentID: a.agentID,
-				Data:    wstypes.MessageChunkEvent{ID: msgID, Delta: prefix},
-			})
-		}
-		return backlog
-	})
+// prefixSnapshotLocked captures the live turn's replayable state, or
+// nil when no turn runs, for the final synchronization hand-off: a
+// synchronizing device receives the text and invocations that precede
+// the chunks still to come. Caller holds the agent state's snapMu
+// across the whole hand-off step, so the cut and the connection
+// registration are atomic — a chunk flushed after the snapshot follows
+// the registration instead of falling between the two. The streaming
+// flush shares snapMu: a prefix never includes a chunk whose frame has
+// not been written, and never omits one that has.
+func (a *UserAgent) prefixSnapshotLocked() *wstypes.TurnPrefix {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.turnMsgID == "" {
+		return nil
+	}
+	prefix := &wstypes.TurnPrefix{
+		ItemID:  a.turnMsgID,
+		Text:    a.turnPrefix.String(),
+		LastSeq: a.turnSeq.Load(),
+	}
+	if a.recorder != nil {
+		prefix.Invocations = a.recorder.snapshotInvocations()
+	}
+	return prefix
 }
 
 func (a *UserAgent) loop() {
@@ -210,7 +219,7 @@ func (a *UserAgent) loop() {
 		// finish reports whether more work may run now; its false
 		// arm is claim's own nil predicate, so the worker retires
 		// here instead of paying another claim round to learn it.
-		if !a.state.finish(outcome.messageFailed()) {
+		if !a.state.finish(outcome) {
 			a.exit()
 			return
 		}
@@ -226,9 +235,9 @@ func (a *UserAgent) loop() {
 func (a *UserAgent) exit() {
 	status := a.LaneStatus()
 	status.Active = false
-	_ = a.state.conns.WriteJSON(a.ctx, wstypes.Event{
+	_ = a.state.conns.WriteJSON(a.state.rootCtx, wstypes.Event{
 		Type:    wstypes.EventTypeLaneStatus,
-		AgentID: a.agentID,
+		AgentID: a.state.agentID,
 		Data:    status,
 	})
 	if a.onExit != nil {
@@ -243,7 +252,6 @@ func (a *UserAgent) exit() {
 func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 	msgID := claim.item.id
 	entry := claim.item.model
-	prompt := claim.item.content
 
 	// Events outlive the turn's context: an interrupted turn still
 	// reports why it ended.
@@ -259,34 +267,39 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 		return a.processCommand(claim, emitCtx, msgID)
 	}
 
-	// The user's words persist before anything can fail: every
-	// failure mode below keeps the prompt in the thread. The row
-	// carries the claim's user id, minted apart from the stream id,
-	// and the replay structure the working context records.
-	if a.persistTurn != nil {
-		if err := a.persistTurn(emitCtx, a.agentID,
-			[]backend.ThreadMessageDraft{{ID: claim.userMsgID, Role: apitypes.ThreadRoleUser,
-				Content: prompt, TurnID: msgID}}); err != nil {
-			// Required write: a prompt that is not durable never
-			// reaches the model.
-			a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("persist user message")
-			a.failTurn(emitCtx, msgID, "persist user message: "+err.Error(), "")
-			return outcomeMessageFailed
-		}
+	// Starting is the first durable step: the execution thread resolves,
+	// the user row commits, and the item is running before any model or
+	// tool work. A prompt that cannot start never reaches the model.
+	if a.journal == nil {
+		a.logger.Error().Str("agent_id", a.state.agentID).Msg("lane has no lifecycle journal")
+		a.failTurn(emitCtx, msgID, "no lifecycle journal configured", "")
+		return outcomeMessageFailed
+	}
+	// The started batch and the running projection land in one
+	// publication section: subscribers never see an active item whose
+	// durable identity has not been published with it.
+	if err := a.state.startItem(func() (*backend.ItemStart, *backend.JournalBatch, error) {
+		return a.journal.StartItem(claim.ctx, a.state.agentID, msgID)
+	}); err != nil {
+		a.logger.Error().Err(err).Str("agent_id", a.state.agentID).Msg("start item")
+		a.failTurn(emitCtx, msgID, "persist item start: "+err.Error(), "")
+		return outcomeMessageFailed
 	}
 
 	// The thread source is required, like the resolver: the working
 	// context is the committed user row.
 	if a.getAgentThread == nil {
-		a.logger.Error().Str("agent_id", a.agentID).Msg("lane has no thread source")
-		a.failTurn(emitCtx, msgID, "no thread source configured", "")
-		return outcomeMessageFailed
+		a.logger.Error().Str("agent_id", a.state.agentID).Msg("lane has no thread source")
+		if a.failTurn(emitCtx, msgID, "no thread source configured", "") {
+			return outcomeMessageFailed
+		}
+		return outcomeTerminalUnrecorded
 	}
 	// The turn's input is the backend's read: it already includes the
 	// row just committed, so the prompt appears exactly once — the
 	// committed user row is the prompt, unconditionally. A failed load
 	// fails the turn; a stop during it settles as a quiet stop.
-	records, err := a.getAgentThread(claim.ctx, a.agentID)
+	records, err := a.getAgentThread(claim.ctx, a.state.agentID)
 	if err != nil {
 		return a.setupFailure(emitCtx, claim, msgID, "load conversation history", err)
 	}
@@ -295,7 +308,7 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 	// The resolver seam is immutable after construction, read
 	// directly like every other seam.
 	if a.resolveModel == nil {
-		a.logger.Error().Str("agent_id", a.agentID).Msg("lane has no model resolver")
+		a.logger.Error().Str("agent_id", a.state.agentID).Msg("lane has no model resolver")
 		a.failTurn(emitCtx, msgID, "no model resolver configured", "")
 		return outcomeMessageFailed
 	}
@@ -313,9 +326,9 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 	// resolver, where no model means no answer at all.
 	instruction := ""
 	if a.getAgentConfig != nil {
-		cfg, err := a.getAgentConfig(claim.ctx, a.agentID)
+		cfg, err := a.getAgentConfig(claim.ctx, a.state.agentID)
 		if err != nil {
-			a.logger.Warn().Err(err).Str("agent_id", a.agentID).
+			a.logger.Warn().Err(err).Str("agent_id", a.state.agentID).
 				Msg("fetch agent config; turn proceeds without persona")
 		} else {
 			instruction = BuildSystemPrompt(cfg)
@@ -323,14 +336,15 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 	}
 	// The recorder owns this turn's replay rows: the native assistant
 	// hook writes call groups, the tool wrapper writes outcomes.
-	rec := newTurnRecorder(a, a.persistTurn, msgID, emitCtx)
+	rec := newTurnRecorder(a, msgID, emitCtx)
+	a.setRecorder(rec)
 	// Tools arrive through their own seam — permissions and global
 	// switches already applied, ready to wrap. A failed read or an
 	// unreadable manifest fails the turn; an empty set is an honest
 	// tool-less turn. A stop during setup is not a failure.
 	var turnTools []tool.BaseTool
 	if a.tools != nil {
-		impls, err := a.tools(claim.ctx, a.agentID)
+		impls, err := a.tools(claim.ctx, a.state.agentID)
 		if err != nil {
 			return a.setupFailure(emitCtx, claim, msgID, "resolve tools", err)
 		}
@@ -339,7 +353,7 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 		}
 	}
 	handlers := []adk.TypedChatModelAgentMiddleware[*schema.Message]{rec}
-	einoAgent, err := buildEinoAgent(claim.ctx, a.agentID, instruction, chatModel, turnTools, handlers)
+	einoAgent, err := buildEinoAgent(claim.ctx, a.state.agentID, instruction, chatModel, turnTools, handlers)
 	if err != nil {
 		return a.setupFailure(emitCtx, claim, msgID, "build agent", err)
 	}
@@ -387,10 +401,7 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 	// failTurn instead; a crash between the two leaves the user row
 	// standing alone. The terminal row carries only the terminal
 	// round's text — earlier rounds are their own recorded rows.
-	if !a.settleTurn(emitCtx, msgID, rec.terminalContent(answer.String())) {
-		return outcomeMessageFailed
-	}
-	return outcomeSucceeded
+	return a.settleTurn(emitCtx, msgID, rec.terminalContent(answer.String()))
 }
 
 // failEvent classifies one turn error. A required-write failure wins
@@ -401,17 +412,26 @@ func (a *UserAgent) failEvent(emitCtx context.Context, claim *turnClaim, msgID s
 	rec.close()
 	var rwe *requiredWriteError
 	if errors.As(err, &rwe) {
-		a.logger.Error().Err(rwe.err).Str("agent_id", a.agentID).Msg("persist turn message")
-		a.failTurn(emitCtx, msgID, "persist turn message: "+rwe.err.Error(), "")
-		return outcomeMessageFailed
+		a.logger.Error().Err(rwe.err).Str("agent_id", a.state.agentID).Msg("persist turn message")
+		if a.failTurn(emitCtx, msgID, "persist turn message: "+rwe.err.Error(), "") {
+			return outcomeMessageFailed
+		}
+		return outcomeTerminalUnrecorded
 	}
 	if turnStopped(claim.ctx) {
 		return a.finishInterrupted(emitCtx, msgID, answer)
 	}
-	a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("model query")
+	a.logger.Error().Err(err).Str("agent_id", a.state.agentID).Msg("model query")
 	text, toolName := turnError(err)
-	a.failTurn(emitCtx, msgID, text, toolName)
-	return a.failureOutcome(toolName)
+	if a.failTurn(emitCtx, msgID, text, toolName) {
+		// A tool-attributed failure already shows on its own row and
+		// must not pause the queue.
+		if toolName != "" {
+			return outcomeToolFailed
+		}
+		return outcomeMessageFailed
+	}
+	return outcomeTerminalUnrecorded
 }
 
 // mapAgentThread converts thread records into model messages.
@@ -447,19 +467,11 @@ func (a *UserAgent) setupFailure(emitCtx context.Context, claim *turnClaim, msgI
 	if turnStopped(claim.ctx) {
 		return a.finishInterrupted(emitCtx, msgID, &strings.Builder{})
 	}
-	a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg(site)
-	a.failTurn(emitCtx, msgID, err.Error(), "")
-	return outcomeMessageFailed
-}
-
-// failureOutcome maps a turn failure to its queue outcome: a
-// tool-attributed failure already shows on its own row and must not
-// pause the queue.
-func (a *UserAgent) failureOutcome(toolName string) turnOutcome {
-	if toolName != "" {
-		return outcomeToolFailed
+	a.logger.Error().Err(err).Str("agent_id", a.state.agentID).Msg(site)
+	if a.failTurn(emitCtx, msgID, err.Error(), "") {
+		return outcomeMessageFailed
 	}
-	return outcomeMessageFailed
+	return outcomeTerminalUnrecorded
 }
 
 // turnStopped separates a user stop from a real failure: the turn's
@@ -469,54 +481,77 @@ func turnStopped(queryCtx context.Context) bool {
 	return queryCtx.Err() != nil
 }
 
-// finishInterrupted ends a user-stopped turn. Whatever streamed
-// settles like a completed answer — the transcript keeps it. An empty
-// stop emits nothing at all — no error, no draft row: a stop is not a
-// failure, the user message already stands in the transcript, and
-// the next prompt is simply another user turn.
+// finishInterrupted ends a user-stopped turn: the item settles as
+// stopped, carrying whatever streamed as its answer row. A quiet stop
+// commits no row at all — no error bubble, no empty assistant row: a
+// stop is not a failure, the user message already stands in the
+// transcript, and the next prompt is simply another user turn.
 func (a *UserAgent) finishInterrupted(emitCtx context.Context, msgID string, answer *strings.Builder) turnOutcome {
+	var drafts []backend.ThreadMessageDraft
 	if answer.Len() > 0 {
-		if !a.settleTurn(emitCtx, msgID, answer.String()) {
-			return outcomeMessageFailed
-		}
+		drafts = []backend.ThreadMessageDraft{{
+			Role: apitypes.ThreadRoleAssistant, Content: answer.String(), TurnID: msgID,
+		}}
+	}
+	if a.journal == nil {
+		a.clearTurnPrefix()
 		return outcomeStopped
+	}
+	err := a.state.commitAndPublish(func() (*backend.JournalBatch, error) {
+		return a.journal.FinishItem(emitCtx, a.state.agentID, msgID, apitypes.ItemStopped, "", drafts)
+	})
+	if err != nil {
+		a.logger.Warn().Err(err).Str("agent_id", a.state.agentID).Msg("persist stopped item")
+		a.emitError(emitCtx, "persist turn outcome: "+err.Error(), "", msgID)
+		return outcomeTerminalUnrecorded
 	}
 	a.clearTurnPrefix()
 	return outcomeStopped
 }
 
-// settleTurn persists the assistant row, then broadcasts the final
-// message event — the persist-before-emit ordering is what keeps the
-// UI's settle refetch from racing the write. The replay prefix
-// retires first so a join racing the settle never replays a finished
-// turn. A failed persist fails the turn at message level: success is
-// never reported for a conversation that is not durable.
-func (a *UserAgent) settleTurn(emitCtx context.Context, msgID, content string) bool {
-	if a.persistTurn != nil {
-		if err := a.persistTurn(emitCtx, a.agentID,
+// settleTurn persists the terminal answer and broadcasts the committed
+// batch — the persist-before-emit ordering is what keeps the durable
+// feed evidence of a recorded outcome rather than a claim. A failed
+// persist settles the item as failed through failTurn; when even that
+// cannot commit, the outcome is unrecorded and the lane must halt.
+func (a *UserAgent) settleTurn(emitCtx context.Context, msgID, content string) turnOutcome {
+	if a.journal == nil {
+		a.failTurn(emitCtx, msgID, "no lifecycle journal configured", "")
+		return outcomeMessageFailed
+	}
+	err := a.state.commitAndPublish(func() (*backend.JournalBatch, error) {
+		return a.journal.FinishItem(emitCtx, a.state.agentID, msgID, apitypes.ItemCompleted, "",
 			[]backend.ThreadMessageDraft{{Role: apitypes.ThreadRoleAssistant,
-				Content: content, TurnID: msgID}}); err != nil {
-			a.logger.Error().Err(err).Str("agent_id", a.agentID).Msg("persist assistant message")
-			a.failTurn(emitCtx, msgID, "persist assistant message: "+err.Error(), "")
-			return false
+				Content: content, TurnID: msgID}})
+	})
+	if err != nil {
+		a.logger.Error().Err(err).Str("agent_id", a.state.agentID).Msg("persist assistant message")
+		if a.failTurn(emitCtx, msgID, "persist assistant message: "+err.Error(), "") {
+			return outcomeMessageFailed
 		}
+		return outcomeTerminalUnrecorded
 	}
 	a.clearTurnPrefix()
-	_ = a.state.conns.WriteJSON(emitCtx, wstypes.Event{
-		Type:    wstypes.EventTypeMessage,
-		AgentID: a.agentID,
-		Data:    wstypes.MessageEvent{ID: msgID, Content: content},
-	})
-	return true
+	return outcomeSucceeded
 }
 
-// beginTurn resets the replay state for a new turn; joins during the
-// turn replay whatever streams from here on.
+// beginTurn resets the replay state for a new turn; a synchronizing
+// device receives whatever streams from here on.
 func (a *UserAgent) beginTurn(msgID string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.turnMsgID = msgID
 	a.turnPrefix.Reset()
+	a.recorder = nil
+	a.turnSeq.Store(0)
+}
+
+// setRecorder installs the turn's recorder for prefix snapshots; nil at
+// turn end.
+func (a *UserAgent) setRecorder(rec *turnRecorder) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.recorder = rec
 }
 
 // clearTurnPrefix retires the replay state at turn end, before the
@@ -525,6 +560,22 @@ func (a *UserAgent) clearTurnPrefix() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.turnPrefix.Reset()
+	a.turnMsgID = ""
+	a.recorder = nil
+}
+
+// dropCommittedPrefix retires committed rounds' text from the replay
+// prefix: those rows ride the journal now, so a mid-turn snapshot must
+// not repeat them. The generation bump also stops the committed round's
+// own stream — whose drain may still be flushing — from re-extending
+// the prefix after the cut. Same locks as the streaming flush's cut.
+func (a *UserAgent) dropCommittedPrefix() {
+	a.state.snapMu.Lock()
+	defer a.state.snapMu.Unlock()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.turnPrefix.Reset()
+	a.turnPrefixGen++
 }
 
 // streamAnswer relays one streamed answer in coalesced deltas and
@@ -541,7 +592,9 @@ func (a *UserAgent) streamAnswer(ctx context.Context, stream *schema.StreamReade
 		chunk *schema.Message
 		err   error
 	}
-	recv := make(chan recvResult)
+	// Buffered so a recv never blocks the reader while the loop is
+	// flushing: coalescing is the ticker's and the byte cap's job.
+	recv := make(chan recvResult, 8)
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
@@ -559,20 +612,40 @@ func (a *UserAgent) streamAnswer(ctx context.Context, stream *schema.StreamReade
 	}()
 
 	var pending strings.Builder
+	// The prefix carries only this round's text while it is still
+	// uncommitted: a round whose rows committed mid-drain rides the
+	// journal, so its chunks keep flowing to live connections but stop
+	// extending the replay prefix.
+	a.mu.Lock()
+	gen := a.turnPrefixGen
+	a.mu.Unlock()
 	flush := func() {
 		if pending.Len() == 0 {
 			return
 		}
 		delta := pending.String()
 		pending.Reset()
+		// The prefix extension, its sequence, and the frame share one cut
+		// under snapMu, so a device registering mid-turn receives text
+		// and sequence that agree — never a chunk it already has in the
+		// prefix, never a hole. The cut is deliberately not pubMu: a
+		// journal write must never queue behind streaming frames.
+		a.state.snapMu.Lock()
 		a.mu.Lock()
-		a.turnPrefix.WriteString(delta)
+		if a.turnPrefixGen == gen {
+			a.turnPrefix.WriteString(delta)
+		}
 		a.mu.Unlock()
+		// The sequence is stream-local: a synchronizing device compares
+		// it with the prefix's last sequence and reconnects on a gap
+		// instead of displaying torn text.
+		seq := a.turnSeq.Add(1)
 		_ = a.state.conns.WriteJSON(ctx, wstypes.Event{
 			Type:    wstypes.EventTypeMessageChunk,
-			AgentID: a.agentID,
-			Data:    wstypes.MessageChunkEvent{ID: msgID, Delta: delta},
+			AgentID: a.state.agentID,
+			Data:    wstypes.MessageChunkEvent{ID: msgID, Delta: delta, Seq: seq},
 		})
+		a.state.snapMu.Unlock()
 	}
 	// The reasoning flag covers the whole stream: on while reasoning
 	// tokens arrive, off once the answer or the stream ends. The
@@ -594,6 +667,9 @@ func (a *UserAgent) streamAnswer(ctx context.Context, stream *schema.StreamReade
 			if r.chunk == nil {
 				continue
 			}
+			// The flag is a transition signal, not a per-token pulse:
+			// setReasoning broadcasts only when the value changes, so
+			// these calls cost one status frame per phase change.
 			if r.chunk.Content != "" {
 				a.setReasoning(false)
 			} else if r.chunk.ReasoningContent != "" {
@@ -625,14 +701,15 @@ func (a *UserAgent) LaneStatus() wstypes.LaneStatus {
 	reasoning := a.reasoning
 	a.mu.Unlock()
 
-	modelID := a.state.activeModelID()
 	return wstypes.LaneStatus{
-		Active:    a.ctx.Err() == nil,
+		// Process liveness, not a per-worker signal: a live root
+		// context means this process still owns the lane. exit()
+		// settles the final status by reporting the worker gone;
+		// Drain is what cancels the root context.
+		Active:    a.state.rootCtx.Err() == nil,
 		Working:   working,
 		Reasoning: reasoning,
-		Model:     modelID,
-		QueueLen:  a.state.queueLen(),
-		ConnCount: a.state.conns.Count(),
+		Model:     a.state.activeModelID(),
 	}
 }
 
@@ -646,9 +723,9 @@ func (a *UserAgent) setWorking(working bool) {
 	}
 	a.working = working
 	a.mu.Unlock()
-	_ = a.state.conns.WriteJSON(a.ctx, wstypes.Event{
+	_ = a.state.conns.WriteJSON(a.state.rootCtx, wstypes.Event{
 		Type:    wstypes.EventTypeLaneStatus,
-		AgentID: a.agentID,
+		AgentID: a.state.agentID,
 		Data:    a.LaneStatus(),
 	})
 }
@@ -663,9 +740,9 @@ func (a *UserAgent) setReasoning(reasoning bool) {
 	}
 	a.reasoning = reasoning
 	a.mu.Unlock()
-	_ = a.state.conns.WriteJSON(a.ctx, wstypes.Event{
+	_ = a.state.conns.WriteJSON(a.state.rootCtx, wstypes.Event{
 		Type:    wstypes.EventTypeLaneStatus,
-		AgentID: a.agentID,
+		AgentID: a.state.agentID,
 		Data:    a.LaneStatus(),
 	})
 }

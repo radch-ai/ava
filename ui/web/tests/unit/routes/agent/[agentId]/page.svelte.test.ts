@@ -5,6 +5,17 @@ import type { ActivityFeed, AgentActivityItem } from '#lib/services/agent'
 import type { AgentIdentity } from '#lib/types/agent'
 import AgentPageTestWrapper from './AgentPageTestWrapper.svelte'
 
+vi.mock('#lib/services/agent/ws', () => ({
+	// The conversation store owns its socket directly from this
+	// module; the fake keeps every test off the network.
+	createAgentSocket: vi.fn(() => ({
+		sendPrompt: vi.fn(),
+		sendNow: vi.fn(),
+		sendInterrupt: vi.fn(),
+		close: vi.fn()
+	}))
+}))
+
 vi.mock('#lib/services/agent', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('#lib/services/agent')>()
 	return {
@@ -16,12 +27,7 @@ vi.mock('#lib/services/agent', async (importOriginal) => {
 		updateAgentConfig: vi.fn(),
 		updateHeartbeat: vi.fn(),
 		updateCronJobs: vi.fn(),
-		createAgent: vi.fn(),
-		createAgentSocket: vi.fn(() => ({
-			sendPrompt: vi.fn(),
-			requestStatus: vi.fn(),
-			close: vi.fn()
-		}))
+		createAgent: vi.fn()
 	}
 })
 
@@ -34,7 +40,11 @@ vi.mock('$app/paths', () => ({
 	})
 }))
 
-import { getAgentActivityFeed, mergePastFeed } from '#lib/services/agent'
+import {
+	createAgentSocket,
+	getAgentActivityFeed,
+	mergePastFeed
+} from '#lib/services/agent'
 
 const mockGetAgentActivityFeed = vi.mocked(getAgentActivityFeed)
 const mockMergePastFeed = vi.mocked(mergePastFeed)
@@ -379,6 +389,30 @@ describe('AgentPage (non-superagent branch)', () => {
 			await loadMoreButton.click()
 
 			await expect.element(page.getByText('Network error')).toBeVisible()
+		})
+
+		describe('Agent switch', () => {
+			it('closes the old agent’s socket and connects the new lane', async () => {
+				const first = render(AgentPageTestWrapper, {
+					data: createPageData({ agent: agents.support })
+				})
+				await expect.element(page.getByText('Support')).toBeVisible()
+
+				await first.rerender({
+					data: createPageData({ agent: agents.analyst })
+				})
+				await expect.element(page.getByText('Analyst')).toBeVisible()
+
+				const calls = vi.mocked(createAgentSocket).mock.calls
+				expect(calls.map((call) => call[0])).toEqual(['support', 'analyst'])
+				// The stale lane's socket is closed, so its frames can never
+				// reach the new agent's projection.
+				const sockets = vi
+					.mocked(createAgentSocket)
+					.mock.results.map((result) => result.value)
+				expect(sockets[0].close).toHaveBeenCalled()
+				expect(sockets[1].close).not.toHaveBeenCalled()
+			})
 		})
 	})
 })

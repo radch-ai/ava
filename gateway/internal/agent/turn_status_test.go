@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
 	"github.com/radch-ai/ava/gateway/internal/agent"
@@ -20,7 +19,7 @@ import (
 func TestTurnBroadcastsWorkingTransitions(t *testing.T) {
 	llm := fakeOpenAI(t, "working done")
 
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread, ResolveModel: fixedResolver(llm.URL)})
 
@@ -29,10 +28,11 @@ func TestTurnBroadcastsWorkingTransitions(t *testing.T) {
 	submit(t, mgr, "agent-working", "conn-1", sc, "hi")
 
 	// The turn announces itself before any turn output; the
-	// admission snapshot may precede the announcement.
+	// admission's durable event and snapshot may precede the
+	// announcement.
 	first := readEvent(t, c)
 	require.Contains(t,
-		[]wstypes.EventType{wstypes.EventTypeLaneStatus, wstypes.EventTypeQueueState},
+		[]wstypes.EventType{wstypes.EventTypeLifecycle, wstypes.EventTypeLaneStatus, wstypes.EventTypeQueueState},
 		first.Type, "unexpected leading event %v", first.Type)
 	started := nextLaneStatus(t, c)
 	require.True(t, started.Working)
@@ -52,7 +52,7 @@ func TestWorkerExitLowersLane(t *testing.T) {
 	llm := fakeOpenAI(t, "done")
 	defer llm.Close()
 
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread, ResolveModel: fixedResolver(llm.URL)})
 

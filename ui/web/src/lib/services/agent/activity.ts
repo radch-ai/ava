@@ -14,12 +14,10 @@ export async function getAgentActivityFeed(
 	limit = 20,
 	cursor?: string
 ): Promise<ActivityFeed> {
-	const params = new URLSearchParams({ limit: String(limit) })
-	if (cursor) {
-		params.set('cursor', cursor)
-	}
 	const response = await api
-		.get(`agent/${agentId}/activity?${params.toString()}`)
+		.get(`agent/${agentId}/activity`, {
+			searchParams: { limit: String(limit), ...(cursor ? { cursor } : {}) }
+		})
 		.json<unknown>()
 	return validateActivityFeed(response)
 }

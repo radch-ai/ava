@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
 	"github.com/radch-ai/ava/backend"
@@ -16,7 +15,7 @@ import (
 )
 
 func TestUserAgent_SubmitAdmitsAndRunsWorker(t *testing.T) {
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel: func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
@@ -24,17 +23,16 @@ func TestUserAgent_SubmitAdmitsAndRunsWorker(t *testing.T) {
 			},
 		})
 
-	id, err := mgr.Submit("agent-start-test", "conn-1", nil,
-		"test message", &apitypes.ModelEntry{ID: "gpt-4o"}, "")
+	id, err := mgr.Submit("agent-start-test", "test message", &apitypes.ModelEntry{ID: "gpt-4o"}, "")
 	require.NoError(t, err)
 	require.NotEmpty(t, id, "admission returns the item's stable id")
 
 	// The worker exists to run the queue.
-	require.NotNil(t, mgr.Get("agent-start-test"))
+	require.NotNil(t, agent.Worker(mgr, "agent-start-test"))
 }
 
 func TestUserAgent_ConcurrentSubmit(t *testing.T) {
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel: func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
@@ -51,8 +49,7 @@ func TestUserAgent_ConcurrentSubmit(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range numMessagesPerGoroutine {
-				_, _ = mgr.Submit("agent-concurrent-test",
-					"conn-concurrent", nil, "concurrent message", nil, "")
+				_, _ = mgr.Submit("agent-concurrent-test", "concurrent message", nil, "")
 			}
 		}()
 	}
@@ -60,18 +57,17 @@ func TestUserAgent_ConcurrentSubmit(t *testing.T) {
 }
 
 func TestUserAgent_StatusReportsQueue(t *testing.T) {
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{GetAgentThread: emptyThread})
 
-	_, err := mgr.Submit("agent-status-test", "conn-1", nil,
-		"test", &apitypes.ModelEntry{ID: "gpt-4o"}, "")
+	_, err := mgr.Submit("agent-status-test", "test", &apitypes.ModelEntry{ID: "gpt-4o"}, "")
 	require.NoError(t, err)
 
-	require.True(t, mgr.Status("agent-status-test").Active)
+	require.True(t, agent.LaneStatus(mgr, "agent-status-test").Active)
 
 	// The worker claims asynchronously: whatever raced, the queue
 	// ends up empty once the item runs.
 	require.Eventually(t, func() bool {
-		return mgr.Status("agent-status-test").QueueLen == 0
+		return agent.QueueLen(mgr, "agent-status-test") == 0
 	}, 5*time.Second, 10*time.Millisecond, "the submitted item never left the queue")
 }

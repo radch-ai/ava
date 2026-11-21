@@ -1,8 +1,8 @@
 package backend_test
 
-// Thread lifecycle pins the agent's active pointer: creation swaps it
-// atomically, reads never repair, and message writes land in whatever
-// thread is active when the sink resolves.
+// Thread lifecycle pins the agent's active pointer: a command item's
+// switch creates the next thread, links it to its predecessor, and swaps
+// the pointer in one transaction; replay reads only the active thread.
 
 import (
 	"context"
@@ -19,7 +19,22 @@ import (
 	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
-func TestCreateAndActivateThreadSwapsPointer(t *testing.T) {
+// switchThread admits and starts one command item, then runs its durable
+// switch.
+func switchThread(t *testing.T, svc *backend.TurnService, agentID, itemID string) (*backend.ActivatedThread, error) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := svc.AcceptItem(ctx, agentID, itemID, "/new", "new_thread", nil); err != nil {
+		t.Fatalf("accept %s: %v", itemID, err)
+	}
+	if _, _, err := svc.StartItem(ctx, agentID, itemID); err != nil {
+		t.Fatalf("start %s: %v", itemID, err)
+	}
+	activated, _, err := svc.ExecuteThreadSwitch(ctx, agentID, itemID)
+	return activated, err
+}
+
+func TestExecuteThreadSwitchSwapsPointer(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "lc1", Name: "Thread", Icon: "globe"})
 	ctx := context.Background()
@@ -29,14 +44,11 @@ func TestCreateAndActivateThreadSwapsPointer(t *testing.T) {
 		t.Fatalf("active thread = %q, want the seeded %q", first, testdb.ThreadID("lc1"))
 	}
 	// History in the old thread stays where it is.
-	if err := svc.AppendThreadMessages(ctx, "lc1",
-		[]backend.ThreadMessageDraft{{Role: apitypes.ThreadRoleUser, Content: "old", TurnID: "t1"}}); err != nil {
-		t.Fatalf("append old thread: %v", err)
-	}
+	startedItem(t, svc, "lc1", "item-1", "old")
 
-	freshRes, err := svc.CreateAndActivateThread(ctx, "lc1")
+	freshRes, err := switchThread(t, svc, "lc1", "cmd-1")
 	if err != nil {
-		t.Fatalf("CreateAndActivateThread: %v", err)
+		t.Fatalf("ExecuteThreadSwitch: %v", err)
 	}
 	fresh := freshRes.ID
 	if fresh == first || fresh == "" {
@@ -63,10 +75,10 @@ func TestCreateAndActivateThreadSwapsPointer(t *testing.T) {
 		t.Fatalf("new thread rows = %d, want 0", len(empty))
 	}
 
-	// Each activation mints another identity.
-	secondRes, err := svc.CreateAndActivateThread(ctx, "lc1")
+	// Each switch mints another identity.
+	secondRes, err := switchThread(t, svc, "lc1", "cmd-2")
 	if err != nil {
-		t.Fatalf("second CreateAndActivateThread: %v", err)
+		t.Fatalf("second ExecuteThreadSwitch: %v", err)
 	}
 	second := secondRes.ID
 	if second == fresh || second == first {
@@ -74,10 +86,9 @@ func TestCreateAndActivateThreadSwapsPointer(t *testing.T) {
 	}
 }
 
-// Each activation records the thread it replaced: the display chain
-// the /new dividers are built from, with the committed timestamp the
-// completion event carries.
-func TestCreateAndActivateThreadLinksPredecessor(t *testing.T) {
+// Each switch records the thread it replaced: the display chain the /new
+// dividers are built from, with the committed timestamp the event carries.
+func TestExecuteThreadSwitchLinksPredecessor(t *testing.T) {
 	// A file-backed store: the restart below closes the handle and
 	// reopens the same database.
 	sqlDB := testdb.Open(t, false)
@@ -86,25 +97,33 @@ func TestCreateAndActivateThreadLinksPredecessor(t *testing.T) {
 		t.Fatalf("backend.New: %v", err)
 	}
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "lc-chain", Name: "Chain", Icon: "globe"})
-	ctx := context.Background()
 
 	first := activeThread(t, sqlDB, "lc-chain")
-	res1, err := svc.CreateAndActivateThread(ctx, "lc-chain")
+	res1, err := switchThread(t, svc, "lc-chain", "cmd-1")
 	if err != nil {
-		t.Fatalf("first activation: %v", err)
+		t.Fatalf("first switch: %v", err)
 	}
 	if res1.PreviousID != first {
 		t.Errorf("first previous = %q, want %q", res1.PreviousID, first)
 	}
-	res2, err := svc.CreateAndActivateThread(ctx, "lc-chain")
+	res2, err := switchThread(t, svc, "lc-chain", "cmd-2")
 	if err != nil {
-		t.Fatalf("second activation: %v", err)
+		t.Fatalf("second switch: %v", err)
 	}
 	if res2.PreviousID != res1.ID {
 		t.Errorf("second previous = %q, want %q", res2.PreviousID, res1.ID)
 	}
-	if res1.CreatedAt <= 0 || res2.CreatedAt < res1.CreatedAt {
-		t.Errorf("created stamps = %d, %d, want positive and non-decreasing", res1.CreatedAt, res2.CreatedAt)
+	var firstStamp, secondStamp int64
+	if err := sqlDB.QueryRow(
+		`SELECT created_at FROM threads WHERE id = ?`, res1.ID).Scan(&firstStamp); err != nil {
+		t.Fatalf("read first stamp: %v", err)
+	}
+	if err := sqlDB.QueryRow(
+		`SELECT created_at FROM threads WHERE id = ?`, res2.ID).Scan(&secondStamp); err != nil {
+		t.Fatalf("read second stamp: %v", err)
+	}
+	if firstStamp <= 0 || secondStamp < firstStamp {
+		t.Errorf("created stamps = %d, %d, want positive and non-decreasing", firstStamp, secondStamp)
 	}
 
 	// The stored chain matches the results, and survives a restart:
@@ -129,32 +148,46 @@ func TestCreateAndActivateThreadLinksPredecessor(t *testing.T) {
 	if active := activeThread(t, reopenedDB, "lc-chain"); active != res2.ID {
 		t.Errorf("active thread after restart = %q, want %q", active, res2.ID)
 	}
-	if _, err := reopened.GetAgentThread(ctx, "lc-chain"); err != nil {
+	if _, err := reopened.GetAgentThread(context.Background(), "lc-chain"); err != nil {
 		t.Fatalf("GetAgentThread after restart: %v", err)
 	}
 }
 
-// A failed write leaves no half-made thread: the insert rolls back
-// with the pointer swap it belongs to.
-func TestCreateAndActivateThreadRollbackLeavesNoThread(t *testing.T) {
+// A failed switch leaves no half-made thread: the insert rolls back with
+// the pointer swap it belongs to.
+func TestExecuteThreadSwitchRollbackLeavesNoThread(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "lc-rb", Name: "Rollback", Icon: "globe"})
+	if _, err := svc.AcceptItem(context.Background(), "lc-rb", "cmd-1", "/new", "new_thread", nil); err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	if _, _, err := svc.StartItem(context.Background(), "lc-rb", "cmd-1"); err != nil {
+		t.Fatalf("start: %v", err)
+	}
 	before := countThreads(t, sqlDB)
 
-	// The pointer table gone: the thread insert commits inside the
-	// transaction, the pointer update fails, so the rollback must
-	// take the thread row with it.
+	// The pointer table gone: the committed thread row must roll back
+	// with the failed swap.
 	if _, err := sqlDB.Exec(`ALTER TABLE agents RENAME TO agents_off`); err != nil {
 		t.Fatalf("rename agents: %v", err)
 	}
-	if _, err := svc.CreateAndActivateThread(context.Background(), "lc-rb"); err == nil {
-		t.Fatal("activation succeeded with the pointer table gone")
+	if _, _, err := svc.ExecuteThreadSwitch(context.Background(), "lc-rb", "cmd-1"); err == nil {
+		t.Fatal("switch succeeded with the pointer table gone")
 	}
 	if _, err := sqlDB.Exec(`ALTER TABLE agents_off RENAME TO agents`); err != nil {
 		t.Fatalf("restore agents: %v", err)
 	}
 	if after := countThreads(t, sqlDB); after != before {
-		t.Fatalf("threads after failed activation = %d, want %d (no orphan)", after, before)
+		t.Fatalf("threads after failed switch = %d, want %d (no orphan)", after, before)
+	}
+	// The item stays started, so its outcome is still unreported.
+	var state string
+	if err := sqlDB.QueryRow(
+		`SELECT state FROM queue_items WHERE agent_id = 'lc-rb' AND id = 'cmd-1'`).Scan(&state); err != nil {
+		t.Fatalf("read item state: %v", err)
+	}
+	if state != "started" {
+		t.Errorf("item state = %q, want started after the rollback", state)
 	}
 }
 
@@ -171,21 +204,21 @@ func activeThread(t *testing.T, sqlDB *sql.DB, agentID string) string {
 	return id
 }
 
-func TestCreateAndActivateThreadUnknownAgentFails(t *testing.T) {
+func TestExecuteThreadSwitchUnknownItemFails(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
 	ctx := context.Background()
 
 	before := countThreads(t, sqlDB)
-	if _, err := svc.CreateAndActivateThread(ctx, "ghost"); err == nil {
-		t.Fatal("CreateAndActivateThread succeeded for an unknown agent")
+	if _, _, err := svc.ExecuteThreadSwitch(ctx, "ghost", "cmd-1"); err == nil {
+		t.Fatal("ExecuteThreadSwitch succeeded for an unknown agent")
 	}
 	if after := countThreads(t, sqlDB); after != before {
-		t.Fatalf("threads after failed activation = %d, want %d (no orphan)", after, before)
+		t.Fatalf("threads after failed switch = %d, want %d (no orphan)", after, before)
 	}
 }
 
-// countThreads is the whole table's row count: an activation either
-// leaves one more row or none.
+// countThreads is the whole table's row count: a switch either leaves one
+// more row or none.
 func countThreads(t *testing.T, sqlDB *sql.DB) int {
 	t.Helper()
 	var n int
@@ -200,19 +233,13 @@ func TestGetAgentThreadIsScopedToActiveThread(t *testing.T) {
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "sc", Name: "Thread", Icon: "globe"})
 	ctx := context.Background()
 
-	if err := svc.AppendThreadMessages(ctx, "sc",
-		[]backend.ThreadMessageDraft{{Role: apitypes.ThreadRoleUser, Content: "first thread", TurnID: "t1"}}); err != nil {
-		t.Fatalf("append first thread: %v", err)
-	}
-	secondRes, err := svc.CreateAndActivateThread(ctx, "sc")
+	startedItem(t, svc, "sc", "item-1", "first thread")
+	secondRes, err := switchThread(t, svc, "sc", "cmd-1")
 	if err != nil {
-		t.Fatalf("CreateAndActivateThread: %v", err)
+		t.Fatalf("ExecuteThreadSwitch: %v", err)
 	}
 	second := secondRes.ID
-	if err := svc.AppendThreadMessages(ctx, "sc",
-		[]backend.ThreadMessageDraft{{Role: apitypes.ThreadRoleUser, Content: "second thread", TurnID: "t2"}}); err != nil {
-		t.Fatalf("append second thread: %v", err)
-	}
+	startedItem(t, svc, "sc", "item-2", "second thread")
 
 	msgs, err := svc.GetAgentThread(ctx, "sc")
 	if err != nil {
@@ -235,9 +262,9 @@ func TestActiveThreadSurvivesRestart(t *testing.T) {
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "persist", Name: "Thread", Icon: "globe"})
 	ctx := context.Background()
 
-	createdRes, err := svc.CreateAndActivateThread(ctx, "persist")
+	createdRes, err := switchThread(t, svc, "persist", "cmd-1")
 	if err != nil {
-		t.Fatalf("CreateAndActivateThread: %v", err)
+		t.Fatalf("ExecuteThreadSwitch: %v", err)
 	}
 	created := createdRes.ID
 
@@ -251,8 +278,7 @@ func TestActiveThreadSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("backend.New (reopen): %v", err)
 	}
-	active := activeThread(t, reopenedDB, "persist")
-	if active != created {
+	if active := activeThread(t, reopenedDB, "persist"); active != created {
 		t.Fatalf("active thread after restart = %q, want %q", active, created)
 	}
 	msgs, err := reopened.GetAgentThread(ctx, "persist")
@@ -284,44 +310,51 @@ func TestNewAgentHasEmptyInitialThread(t *testing.T) {
 	}
 }
 
-// Batches and pointer swaps share one writer: concurrent appends and
-// activations each land whole, in one thread, never straddling a swap.
-func TestConcurrentSwapAndAppendStayWhole(t *testing.T) {
+// Item writes and thread switches share one writer: an item's rows land
+// whole in the thread it started in, never straddling a concurrent swap.
+func TestConcurrentSwitchAndAppendStayWhole(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "race", Name: "Thread", Icon: "globe"})
 	ctx := context.Background()
+
+	const prompts = 10
+	for i := range prompts {
+		startedItem(t, svc, "race", fmt.Sprintf("item-%d", i), fmt.Sprintf("q%d", i))
+	}
 
 	var (
 		mu      sync.Mutex
 		created = map[string]struct{}{testdb.ThreadID("race"): {}}
 		wg      sync.WaitGroup
-		errCh   = make(chan error, 15)
+		errCh   = make(chan error, prompts+5)
 	)
-	for i := range 10 {
+	for i := range prompts {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			if err := svc.AppendThreadMessages(ctx, "race", []backend.ThreadMessageDraft{
-				{ID: fmt.Sprintf("pair-%d-a", i), Role: apitypes.ThreadRoleUser, Content: "q", TurnID: fmt.Sprintf("t%d", i)},
-				{ID: fmt.Sprintf("pair-%d-b", i), Role: apitypes.ThreadRoleAssistant, Content: "a", TurnID: fmt.Sprintf("t%d", i)},
-			}); err != nil {
+			if _, err := svc.AppendItemMessages(ctx, "race", fmt.Sprintf("item-%d", i),
+				[]backend.ThreadMessageDraft{{
+					ID:      fmt.Sprintf("answer-%d", i),
+					Role:    apitypes.ThreadRoleAssistant,
+					Content: "a",
+				}}); err != nil {
 				errCh <- fmt.Errorf("append %d: %w", i, err)
 			}
 		}(i)
 	}
-	for range 5 {
+	for i := range 5 {
 		wg.Add(1)
-		go func() {
+		go func(i int) {
 			defer wg.Done()
-			res, err := svc.CreateAndActivateThread(ctx, "race")
+			activated, err := switchThread(t, svc, "race", fmt.Sprintf("cmd-%d", i))
 			if err != nil {
-				errCh <- fmt.Errorf("activate: %w", err)
+				errCh <- fmt.Errorf("switch %d: %w", i, err)
 				return
 			}
 			mu.Lock()
-			created[res.ID] = struct{}{}
+			created[activated.ID] = struct{}{}
 			mu.Unlock()
-		}()
+		}(i)
 	}
 	wg.Wait()
 	close(errCh)
@@ -329,12 +362,12 @@ func TestConcurrentSwapAndAppendStayWhole(t *testing.T) {
 		t.Fatalf("concurrent write: %v", err)
 	}
 
-	rows, err := sqlDB.Query(`SELECT id, thread_id FROM thread_messages`)
+	rows, err := sqlDB.Query(`SELECT id, thread_id FROM thread_messages WHERE role = 'assistant'`)
 	if err != nil {
 		t.Fatalf("read rows: %v", err)
 	}
 	defer func() { _ = rows.Close() }()
-	threadOfRow := make(map[string]string, 20)
+	threadOfRow := make(map[string]string, prompts)
 	for rows.Next() {
 		var id, threadID string
 		if err := rows.Scan(&id, &threadID); err != nil {
@@ -348,16 +381,16 @@ func TestConcurrentSwapAndAppendStayWhole(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(threadOfRow) != 20 {
-		t.Fatalf("stored rows = %d, want 20", len(threadOfRow))
+	if len(threadOfRow) != prompts {
+		t.Fatalf("stored answers = %d, want %d", len(threadOfRow), prompts)
 	}
-	for i := range 10 {
-		a, b := threadOfRow[fmt.Sprintf("pair-%d-a", i)], threadOfRow[fmt.Sprintf("pair-%d-b", i)]
-		if a == "" || a != b {
-			t.Fatalf("pair %d split across threads: %q / %q", i, a, b)
+	for i := range prompts {
+		threadID := threadOfRow[fmt.Sprintf("answer-%d", i)]
+		if threadID == "" {
+			t.Fatalf("answer %d missing", i)
 		}
-		if _, ok := created[a]; !ok {
-			t.Fatalf("pair %d landed in unknown thread %q", i, a)
+		if _, ok := created[threadID]; !ok {
+			t.Fatalf("answer %d landed in unknown thread %q", i, threadID)
 		}
 	}
 }

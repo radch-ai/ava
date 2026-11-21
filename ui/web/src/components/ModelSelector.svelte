@@ -2,6 +2,7 @@
 	import { RefreshCw } from '@lucide/svelte'
 	import * as Select from '#components/ui/select'
 	import {
+		isModelSelection,
 		type ModelEntry,
 		type ModelGroup,
 		type ModelSelection,
@@ -51,12 +52,8 @@
 		let next: ModelSelection = null
 		if (key !== NULL_KEY) {
 			try {
-				const parsed = JSON.parse(key) as ModelEntry
-				if (
-					parsed &&
-					typeof parsed.id === 'string' &&
-					typeof parsed.providerId === 'string'
-				) {
+				const parsed: unknown = JSON.parse(key)
+				if (isModelSelection(parsed) && parsed !== null) {
 					next = { id: parsed.id, providerId: parsed.providerId }
 				}
 			} catch {

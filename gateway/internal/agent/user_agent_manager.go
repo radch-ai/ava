@@ -7,12 +7,15 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 
+	"github.com/radch-ai/ava/backend"
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/gateway/wstypes"
 )
@@ -22,9 +25,10 @@ type UserAgentManagerOptions struct {
 	// ResolveModel maps a selection to a callable endpoint for
 	// every lane; bound by the gateway at boot.
 	ResolveModel ModelResolver
-	// PersistTurn appends turn messages to the thread for every
-	// lane; bound by the gateway at boot.
-	PersistTurn TurnSink
+	// Journal is the durable lifecycle feed every transition commits
+	// through; bound by the gateway at boot. An unbound journal fails
+	// every admission and turn closed.
+	Journal LifecycleJournal
 	// GetAgentConfig reads an agent's editable config — the prompt
 	// texts and tool list a turn needs; bound by the gateway at boot.
 	GetAgentConfig AgentConfigSource
@@ -35,22 +39,24 @@ type UserAgentManagerOptions struct {
 	// model input; bound by the gateway at boot. Required: an unbound
 	// source fails each turn at message level.
 	GetAgentThread AgentThreadSource
-	// CreateThread runs command items' durable thread switch; bound
-	// by the gateway at boot. An unbound seam fails commands closed.
-	CreateThread ThreadActivator
 }
 
 // UserAgentManager manages per-agent queue states with thread-safe
-// access. Uses sync.Map for lock-free reads.
+// access. States are never removed — a submitted item outlives its
+// worker — so a plain map under a read lock is the cheapest fit.
 type UserAgentManager struct {
-	states         sync.Map // map[agentID]*agentState
+	statesMu sync.RWMutex
+	states   map[string]*agentState
+
 	logger         zerolog.Logger
 	resolveModel   ModelResolver
-	persistTurn    TurnSink
 	getAgentConfig AgentConfigSource
 	tools          AgentToolsFunc
 	getAgentThread AgentThreadSource
-	createThread   ThreadActivator
+	journal        LifecycleJournal
+
+	// turns counts claimed turns across every lane; Drain waits on it.
+	turns sync.WaitGroup
 
 	rootCtx    context.Context
 	rootCancel context.CancelFunc
@@ -60,14 +66,14 @@ type UserAgentManager struct {
 func NewUserAgentManager(logger zerolog.Logger, opts *UserAgentManagerOptions) *UserAgentManager {
 	m := &UserAgentManager{
 		logger: logger,
+		states: make(map[string]*agentState),
 	}
 	if opts != nil {
 		m.resolveModel = opts.ResolveModel
-		m.persistTurn = opts.PersistTurn
 		m.getAgentConfig = opts.GetAgentConfig
 		m.tools = opts.Tools
 		m.getAgentThread = opts.GetAgentThread
-		m.createThread = opts.CreateThread
+		m.journal = opts.Journal
 	}
 	m.rootCtx, m.rootCancel = context.WithCancel(context.Background())
 	return m
@@ -77,13 +83,22 @@ func NewUserAgentManager(logger zerolog.Logger, opts *UserAgentManagerOptions) *
 // state exists before any prompt: subscriptions attach to it even
 // while no worker runs.
 func (m *UserAgentManager) state(agentID string) *agentState {
-	if v, ok := m.states.Load(agentID); ok {
-		return v.(*agentState)
+	m.statesMu.RLock()
+	s, ok := m.states[agentID]
+	m.statesMu.RUnlock()
+	if ok {
+		return s
 	}
-	s := newAgentState(agentID, m.rootCtx, m.logger)
+
+	m.statesMu.Lock()
+	defer m.statesMu.Unlock()
+	if s, ok := m.states[agentID]; ok {
+		return s
+	}
+	s = newAgentState(agentID, m.rootCtx, &m.turns, m.logger)
 	s.ensureWorker = func() { m.ensureWorker(s) }
-	actual, _ := m.states.LoadOrStore(agentID, s)
-	return actual.(*agentState)
+	m.states[agentID] = s
+	return s
 }
 
 // ensureWorker installs exactly one live worker on the state; the
@@ -100,15 +115,13 @@ func (m *UserAgentManager) ensureWorker(s *agentState) {
 
 // newWorker builds and starts a worker; caller holds workerMu.
 func (m *UserAgentManager) newWorker(s *agentState) *UserAgent {
-	return newUserAgent(m.rootCtx, UserAgentOptions{
-		AgentID:        s.agentID,
+	return newUserAgent(UserAgentOptions{
 		State:          s,
 		ResolveModel:   m.resolveModel,
-		PersistTurn:    m.persistTurn,
 		GetAgentConfig: m.getAgentConfig,
 		Tools:          m.tools,
 		GetAgentThread: m.getAgentThread,
-		CreateThread:   m.createThread,
+		Journal:        m.journal,
 		Logger:         m.logger,
 		OnExit:         func(w *UserAgent) { m.workerExited(s, w) },
 	})
@@ -136,17 +149,27 @@ func (m *UserAgentManager) workerExited(s *agentState, w *UserAgent) {
 	}
 }
 
-// Submit attaches the connection to the agent's subscribers,
-// enqueues one prompt, and ensures a worker can pick it up. A
-// rejected admission (full queue, draining) still leaves the
-// connection subscribed; the gateway reports the rejection.
-func (m *UserAgentManager) Submit(agentID, connID string, conn *websocket.Conn, content string, model *apitypes.ModelEntry, kind string) (string, error) {
+// Journal returns the durable lifecycle journal the manager's workers
+// commit through, nil when the binary bound none.
+func (m *UserAgentManager) Journal() LifecycleJournal { return m.journal }
+
+// Submit admits one prompt or command. The durable acceptance commits
+// before the item enters the runtime queue, so a rejected submission
+// writes nothing and an accepted one can never be lost from the journal;
+// the caller answers the requesting connection with queue_result, and
+// subscribers learn of it through the lifecycle feed.
+func (m *UserAgentManager) Submit(agentID, content string, model *apitypes.ModelEntry, kind string) (string, error) {
 	if kind == "" {
 		kind = wstypes.QueueItemKindPrompt
 	}
+	if m.journal == nil {
+		return "", errors.New("no lifecycle journal configured")
+	}
 	s := m.state(agentID)
-	s.conns.Add(connID, conn)
-	item, err := s.enqueue(content, model, kind)
+	itemID := uuid.NewString()
+	item, err := s.admit(itemID, content, model, kind, func(ctx context.Context) (*backend.JournalBatch, error) {
+		return m.journal.AcceptItem(ctx, agentID, itemID, content, kind, model)
+	})
 	if err != nil {
 		return "", err
 	}
@@ -167,64 +190,75 @@ func (m *UserAgentManager) SendNow(agentID, itemID string, model *apitypes.Model
 	return item.id, nil
 }
 
-// Join attaches a connection to the agent's subscribers so it
-// receives the queue snapshot and, while a turn streams, its
-// streamed prefix — ordered before the chunks still to come.
-func (m *UserAgentManager) Join(agentID, connID string, conn *websocket.Conn) {
+// HandOff finishes one connection's synchronization: under the agent's
+// publication boundary it compares the client's position with the
+// committed head and, when they still match, registers the connection
+// with sync_ready as its ordered backlog. The prefix cut and the
+// registration share the streaming cut's snapMu, so a chunk flushed
+// between the two cannot miss the new connection — the backlog is the
+// continuation point the prefix names. Live events enqueued after the
+// boundary releases follow that backlog, so nothing committed between
+// the last replay batch and the registration is lost. false means the
+// head moved off the position the empty replay page ended on, so the
+// page cannot advance the client — the caller closes without
+// sync_ready and the device recovers through a fresh sync. The
+// returned head is the one the comparison read.
+func (m *UserAgentManager) HandOff(ctx context.Context, agentID, connID string, conn *websocket.Conn, pos int64) (bool, int64, error) {
+	if m.journal == nil {
+		return false, 0, errors.New("no lifecycle journal configured")
+	}
 	s := m.state(agentID)
+	s.pubMu.Lock()
+	defer s.pubMu.Unlock()
+
+	serverHistory, head, _, err := m.journal.JournalStatus(ctx, agentID)
+	if err != nil {
+		return false, 0, err
+	}
+	if head != pos {
+		return false, head, nil
+	}
 	s.workerMu.Lock()
 	w := s.worker
 	s.workerMu.Unlock()
+	// The cut and the registration are one step under snapMu; the lock
+	// order matches the streaming flush (snapMu → worker.mu, snapMu →
+	// conns), so nothing inverts.
+	s.snapMu.Lock()
+	var prefix *wstypes.TurnPrefix
 	if w != nil {
-		w.Join(connID, conn)
-		return
+		prefix = w.prefixSnapshotLocked()
 	}
-	s.conns.AddWithBacklog(connID, conn, func() []any {
-		return []any{wstypes.Event{
-			Type:    wstypes.EventTypeQueueState,
-			AgentID: agentID,
-			Data:    s.stateSnapshot(),
-		}}
-	})
+	ready := wstypes.Event{
+		Type:    wstypes.EventTypeSyncReady,
+		AgentID: agentID,
+		Data: wstypes.SyncReadyEvent{
+			Cursor: backend.FormatCursor(serverHistory, head),
+			Queue:  s.stateSnapshot(),
+			Lane:   w.LaneStatus(),
+			Prefix: prefix,
+		},
+	}
+	s.conns.AddWithBacklog(connID, conn, func() []any { return []any{ready} })
+	s.snapMu.Unlock()
+	return true, head, nil
 }
 
-// Get returns the agent's live worker or nil; workers are optional
-// surfaces over the durable queue state.
-func (m *UserAgentManager) Get(agentID string) *UserAgent {
-	if v, ok := m.states.Load(agentID); ok {
-		s := v.(*agentState)
-		s.workerMu.Lock()
-		defer s.workerMu.Unlock()
-		return s.worker
-	}
-	return nil
-}
-
-// Status snapshots the agent onto the wire even without a worker —
-// a queue can hold pending work while idle.
-func (m *UserAgentManager) Status(agentID string) wstypes.LaneStatus {
-	if v, ok := m.states.Load(agentID); ok {
-		s := v.(*agentState)
-		s.workerMu.Lock()
-		w := s.worker
-		s.workerMu.Unlock()
-		if w != nil {
-			return w.LaneStatus()
-		}
-		return wstypes.LaneStatus{
-			QueueLen:  s.queueLen(),
-			ConnCount: s.conns.Count(),
-		}
-	}
-	return wstypes.LaneStatus{}
+// peek returns the agent's queue state without creating one; false
+// means no state exists — nothing was ever admitted for the agent.
+func (m *UserAgentManager) peek(agentID string) (*agentState, bool) {
+	m.statesMu.RLock()
+	defer m.statesMu.RUnlock()
+	s, ok := m.states[agentID]
+	return s, ok
 }
 
 // Interrupt is the Stop button: cancel the active item, if any, and
 // hold the queue behind it — waiting work pauses instead of running
 // on. Send-now's own interrupt never arms the gate.
 func (m *UserAgentManager) Interrupt(agentID string) {
-	if v, ok := m.states.Load(agentID); ok {
-		v.(*agentState).stopNow()
+	if s, ok := m.peek(agentID); ok {
+		s.stopNow()
 	}
 }
 
@@ -233,8 +267,8 @@ func (m *UserAgentManager) Interrupt(agentID string) {
 // them here could only race a concurrent Submit that already loaded
 // the state, orphaning its admitted work.
 func (m *UserAgentManager) RemoveConn(agentID, connID string) {
-	if v, ok := m.states.Load(agentID); ok {
-		v.(*agentState).conns.Remove(connID)
+	if s, ok := m.peek(agentID); ok {
+		s.conns.Remove(connID)
 	}
 }
 
@@ -247,31 +281,27 @@ func (m *UserAgentManager) RemoveConn(agentID, connID string) {
 // process; transcript retention belongs to the backend and durable
 // storage rebuilds it.
 func (m *UserAgentManager) Drain(timeout time.Duration) {
-	m.states.Range(func(_, val any) bool {
-		s := val.(*agentState)
+	m.statesMu.RLock()
+	states := make([]*agentState, 0, len(m.states))
+	for _, s := range m.states {
+		states = append(states, s)
+	}
+	m.statesMu.RUnlock()
+
+	for _, s := range states {
 		s.beginDrain()
 		s.interruptActive()
-		return true
-	})
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if !m.anyActive() {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	}
+	// Every claim settles exactly one finish, so the wait ends as soon
+	// as the last interrupted turn has persisted — no polling.
+	done := make(chan struct{})
+	go func() {
+		m.turns.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
 	}
 	m.rootCancel()
-}
-
-// anyActive reports whether any queue still executes an item.
-func (m *UserAgentManager) anyActive() bool {
-	active := false
-	m.states.Range(func(_, val any) bool {
-		if val.(*agentState).hasActive() {
-			active = true
-			return false
-		}
-		return true
-	})
-	return active
 }

@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -135,20 +136,20 @@ func queueStateUntil(t *testing.T, c *websocket.Conn, done func(wstypes.QueueSta
 }
 
 func contextManager(t *testing.T, llm *contextLLM, svc *backend.TurnService,
-	sink agent.TurnSink, tools ...tool.InvokableTool) *agent.UserAgentManager {
+	hook *journalHook, tools ...tool.InvokableTool) *agent.UserAgentManager {
 	t.Helper()
 	opts := &agent.UserAgentManagerOptions{
 		ResolveModel:   fixedResolver(llm.URL),
-		PersistTurn:    svc.AppendThreadMessages,
 		GetAgentThread: svc.GetAgentThread,
-	}
-	if sink != nil {
-		opts.PersistTurn = sink
 	}
 	if len(tools) > 0 {
 		opts.Tools = fixedTools(tools...)
 	}
-	return agent.NewUserAgentManager(zerolog.Nop(), opts)
+	if hook == nil {
+		hook = &journalHook{}
+	}
+	hook.LifecycleJournal = svc
+	return hookedManager(t, opts, hook)
 }
 
 // rawThreadRow is this file's private scan shape for one storage row:
@@ -223,7 +224,7 @@ func TestQueuedSubmissionsShareContext(t *testing.T) {
 
 	c, sc := wsPair(t)
 	submit(t, mgr, "agent-q", "conn-1", sc, "queued first")
-	_, err := mgr.Submit("agent-q", "conn-1", sc, "queued second", nil, "")
+	_, err := admitItem(t, mgr, "agent-q", "conn-1", sc, "queued second", nil, "")
 	require.NoError(t, err)
 	for range 2 {
 		_, p := readUntilMessage(t, c)
@@ -336,11 +337,10 @@ func TestStopDuringReplayLoadIsQuietStop(t *testing.T) {
 		<-release
 		return nil, ctx.Err()
 	}
-	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{
+	mgr := hookedManager(t, &agent.UserAgentManagerOptions{
 		ResolveModel:   fixedResolver(llm.URL),
-		PersistTurn:    svc.AppendThreadMessages,
 		GetAgentThread: replay,
-	})
+	}, &journalHook{LifecycleJournal: svc})
 
 	c, sc := wsPair(t)
 	submit(t, mgr, "agent-stopload", "conn-1", sc, "hi")
@@ -368,23 +368,18 @@ func TestToolRowPersistFailureFailsTurn(t *testing.T) {
 
 	var sawTool bool
 	var mu sync.Mutex
-	sink := func(ctx context.Context, agentID string, msgs []backend.ThreadMessageDraft) error {
-		for _, m := range msgs {
-			if m.Role == apitypes.ThreadRoleTool {
-				mu.Lock()
-				sawTool = true
-				mu.Unlock()
-				return errSink
-			}
-		}
-		return svc.AppendThreadMessages(ctx, agentID, msgs)
-	}
-	mgr := contextManager(t, llm, svc, sink, echo)
+	hook := &journalHook{toolFinished: func(context.Context, string, string, string, string, *string) (*backend.JournalBatch, error) {
+		mu.Lock()
+		sawTool = true
+		mu.Unlock()
+		return nil, errSink
+	}}
+	mgr := contextManager(t, llm, svc, hook, echo)
 
 	c, sc := wsPair(t)
-	_, err := mgr.Submit("agent-tsink", "conn-1", sc, "search", nil, "")
+	_, err := admitItem(t, mgr, "agent-tsink", "conn-1", sc, "search", nil, "")
 	require.NoError(t, err)
-	_, err = mgr.Submit("agent-tsink", "conn-1", sc, "waits behind", nil, "")
+	_, err = admitItem(t, mgr, "agent-tsink", "conn-1", sc, "waits behind", nil, "")
 	require.NoError(t, err)
 
 	p := eventPayload[wstypes.ErrorEvent](t, readUntilError(t, c))
@@ -439,16 +434,15 @@ func TestThreadSwitchIsolatesModelContext(t *testing.T) {
 		}
 		return svc.GetAgentThread(ctx, agentID)
 	}
-	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{
+	mgr := hookedManager(t, &agent.UserAgentManagerOptions{
 		ResolveModel:   fixedResolver(llm.URL),
-		PersistTurn:    svc.AppendThreadMessages,
 		GetAgentThread: threads,
-	})
+	}, &journalHook{LifecycleJournal: svc})
 
 	c, sc := wsPair(t)
 	submit(t, mgr, "agent-switch", "conn-1", sc, "prompt A")
 	<-started
-	bID, err := mgr.Submit("agent-switch", "conn-1", sc, "prompt B", nil, "")
+	bID, err := admitItem(t, mgr, "agent-switch", "conn-1", sc, "prompt B", nil, "")
 	require.NoError(t, err)
 	mgr.Interrupt("agent-switch")
 	close(release)
@@ -459,14 +453,19 @@ func TestThreadSwitchIsolatesModelContext(t *testing.T) {
 		return p.Active == nil && p.Paused && len(p.Items) == 1
 	})
 
-	freshRes, err := svc.CreateAndActivateThread(t.Context(), "agent-switch")
+	// The switch is a command item: promoted through the paused gate, it
+	// commits the new thread, and the waiting prompt follows it.
+	cmdID, err := admitItem(t, mgr, "agent-switch", "conn-1", sc, "/new", nil, wstypes.QueueItemKindNewThread)
 	require.NoError(t, err)
-	fresh := freshRes.ID
+	_, err = mgr.SendNow("agent-switch", cmdID, nil)
+	require.NoError(t, err)
+	switched := readUntilCommandCompleted(t, c)
+	fresh := switched.ThreadID
+	require.NotEmpty(t, fresh)
 
-	_, err = mgr.SendNow("agent-switch", bID, nil)
-	require.NoError(t, err)
 	_, p := readUntilMessage(t, c)
 	require.Equal(t, "answer B", p.Content)
+	_ = bID
 
 	// The new thread's first model request carries its own prompt
 	// alone — A's T1 rows never reach it, and the model was never
@@ -491,15 +490,10 @@ func TestAssistantSettleFailureFailsTurn(t *testing.T) {
 	llm := newContextLLM(t, sseChunk("streamed but not durable"))
 	_, svc := contextBackend(t, "agent-asink")
 
-	sink := func(ctx context.Context, agentID string, msgs []backend.ThreadMessageDraft) error {
-		for _, m := range msgs {
-			if m.Role == apitypes.ThreadRoleAssistant && len(m.ToolCalls) == 0 {
-				return errSink
-			}
-		}
-		return svc.AppendThreadMessages(ctx, agentID, msgs)
-	}
-	mgr := contextManager(t, llm, svc, sink)
+	hook := &journalHook{finishItem: func(context.Context, string, string, string, string, []backend.ThreadMessageDraft) (*backend.JournalBatch, error) {
+		return nil, errSink
+	}}
+	mgr := contextManager(t, llm, svc, hook)
 
 	c, sc := wsPair(t)
 	submit(t, mgr, "agent-asink", "conn-1", sc, "hi")
@@ -522,22 +516,39 @@ func TestPersistFailureRacingStopIsMessageFailure(t *testing.T) {
 	llm := newContextLLM(t, toolCallChunk("echo_tool")+toolCallDone(), sseChunk("never shown"))
 	sqlDB, svc := contextBackend(t, "agent-race")
 
-	var mgr *agent.UserAgentManager
 	var once sync.Once
-	sink := func(ctx context.Context, agentID string, msgs []backend.ThreadMessageDraft) error {
+	inWrite := make(chan struct{})
+	releaseWrite := make(chan struct{})
+	hook := &journalHook{appendMessages: func(ctx context.Context, agentID, itemID string, msgs []backend.ThreadMessageDraft) (*backend.JournalBatch, error) {
 		for _, m := range msgs {
 			if m.Role == apitypes.ThreadRoleAssistant && len(m.ToolCalls) > 0 {
-				once.Do(func() { mgr.Interrupt(agentID) })
-				return errSink
+				once.Do(func() { close(inWrite) })
+				<-releaseWrite
+				return nil, errSink
 			}
 		}
-		return svc.AppendThreadMessages(ctx, agentID, msgs)
-	}
-	mgr = contextManager(t, llm, svc, sink, echo)
+		return svc.AppendItemMessages(ctx, agentID, itemID, msgs)
+	}}
+	mgr := contextManager(t, llm, svc, hook, echo)
 
 	c, sc := wsPair(t)
-	_, err := mgr.Submit("agent-race", "conn-1", sc, "search", nil, "")
+	_, err := admitItem(t, mgr, "agent-race", "conn-1", sc, "search", nil, "")
 	require.NoError(t, err)
+
+	// The stop is issued while the failing write is still parked: its
+	// cancel lands at once, so the failure below races a stop that has
+	// already taken effect on the turn.
+	<-inWrite
+	stopped := make(chan struct{})
+	go func() {
+		mgr.Interrupt("agent-race")
+		close(stopped)
+	}()
+	// The cancel is lock-free and lands immediately; the interrupt
+	// itself then waits on the boundary the parked write holds.
+	time.Sleep(20 * time.Millisecond)
+	close(releaseWrite)
+	<-stopped
 
 	p := eventPayload[wstypes.ErrorEvent](t, readUntilError(t, c))
 	require.Contains(t, p.Message, "persist turn message",

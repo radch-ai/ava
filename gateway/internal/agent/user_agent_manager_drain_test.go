@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
 	"github.com/radch-ai/ava/backend"
@@ -32,17 +31,15 @@ func TestDrainInterruptsAndSettlesTurns(t *testing.T) {
 	}))
 	defer llm.Close()
 
-	sink := &recordingSink{}
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr, sqlDB := journaledLane(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel:   fixedResolver(llm.URL),
-			PersistTurn:    sink.persist,
 		})
 
 	c, sc := wsPair(t)
 
-	itemID, err := mgr.Submit("agent-drain", "conn-1", sc, "hi", nil, "")
+	itemID, err := admitItem(t, mgr, "agent-drain", "conn-1", sc, "hi", nil, "")
 	require.NoError(t, err)
 
 	// The turn is streaming its partial; wait for it to reach the
@@ -56,19 +53,21 @@ func TestDrainInterruptsAndSettlesTurns(t *testing.T) {
 
 	mgr.Drain(3 * time.Second)
 
-	// The interrupted turn settled: the partial became the final
-	// message, and it persisted before Drain returned.
-	_, p := readUntilMessage(t, c)
+	// The interrupted turn settled: the partial became the stopped
+	// item's final row, and it committed before Drain returned.
+	_, p := readUntilSettled(t, c)
+	require.Equal(t, itemID, p.ID)
+	require.Equal(t, apitypes.ItemStopped, p.Event.Outcome)
 	require.Equal(t, "par ", p.Content)
 
-	calls := sink.recorded()
-	require.Len(t, calls, 2)
-	require.Equal(t,
-		[]backend.ThreadMessageDraft{{Role: apitypes.ThreadRoleAssistant, Content: "par ",
-			TurnID: itemID}},
-		calls[1])
+	rows := storedRows(t, sqlDB, "agent-drain")
+	require.Len(t, rows, 2, describe(rows))
+	require.Equal(t, apitypes.ThreadRoleUser, rows[0].Role)
+	require.Equal(t, apitypes.ThreadRoleAssistant, rows[1].Role)
+	require.Equal(t, "par ", rows[1].Content)
+	require.Equal(t, itemID, rows[1].TurnID)
 
-	require.False(t, mgr.Status("agent-drain").Working)
+	require.False(t, agent.LaneStatus(mgr, "agent-drain").Working)
 }
 
 // Drain ends the queue for good: a drained worker exits with the
@@ -78,7 +77,7 @@ func TestDrainStopsWorkersWithoutRespawn(t *testing.T) {
 	failing := func(context.Context, *apitypes.ModelEntry) (backend.ResolvedModel, error) {
 		return backend.ResolvedModel{}, errors.New("no default model set")
 	}
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{GetAgentThread: emptyThread, ResolveModel: failing})
 
 	c, sc := wsPair(t)
@@ -98,13 +97,13 @@ func TestDrainStopsWorkersWithoutRespawn(t *testing.T) {
 	// The paused queue has already released its worker — nothing
 	// may run — and its state waits for Drain without a respawn
 	// loop.
-	require.Nil(t, mgr.Get("agent-drainstop"),
+	require.Nil(t, agent.Worker(mgr, "agent-drainstop"),
 		"a paused queue with waiting work holds no worker")
 
 	mgr.Drain(time.Second)
 
 	require.Eventually(t, func() bool {
-		return mgr.Get("agent-drainstop") == nil
+		return agent.Worker(mgr, "agent-drainstop") == nil
 	}, 2*time.Second, 20*time.Millisecond,
 		"a drained worker exits with the manager root and no replacement spawns")
 }

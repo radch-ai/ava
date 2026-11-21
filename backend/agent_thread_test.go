@@ -55,6 +55,33 @@ func userDraft(content, turnID string) backend.ThreadMessageDraft {
 	}
 }
 
+// seedRows writes the drafts as thread rows directly: the projection under
+// test reads storage, and these fixtures pin row shapes the item write path
+// never produces (incomplete call groups, misplaced outcomes). created_at
+// rises with the draft order, exactly as the journal's writer mints it.
+func seedRows(t *testing.T, sqlDB *sql.DB, agentID string, drafts []backend.ThreadMessageDraft) {
+	t.Helper()
+	base := time.Now().UnixMilli()
+	threadID := testdb.ThreadID(agentID)
+	for i, d := range drafts {
+		id := d.ID
+		if id == "" {
+			id = fmt.Sprintf("%s-row-%d", agentID, i)
+		}
+		var calls sql.NullString
+		if len(d.ToolCalls) > 0 {
+			calls = sql.NullString{String: string(d.ToolCalls), Valid: true}
+		}
+		if _, err := sqlDB.Exec(
+			`INSERT INTO thread_messages (id, agent_id, role, content, created_at, turn_id, tool_calls, thread_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, agentID, string(d.Role), d.Content, base+int64(i), d.TurnID, calls, threadID,
+		); err != nil {
+			t.Fatalf("seed row %d: %v", i, err)
+		}
+	}
+}
+
 func TestGetAgentThreadPreservesNativeGroups(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "r1", Name: "Thread", Icon: "globe"})
@@ -71,9 +98,7 @@ func TestGetAgentThreadPreservesNativeGroups(t *testing.T) {
 		toolDraft(t, "t1", "call-a", "web_search", `{"q":"a"}`, "a hits", nil),
 		{Role: apitypes.ThreadRoleAssistant, Content: "done", TurnID: "t1"},
 	}
-	if err := svc.AppendThreadMessages(context.Background(), "r1", drafts); err != nil {
-		t.Fatalf("append: %v", err)
-	}
+	seedRows(t, sqlDB, "r1", drafts)
 
 	msgs, err := svc.GetAgentThread(context.Background(), "r1")
 	if err != nil {
@@ -122,9 +147,7 @@ func TestGetAgentThreadProjectsIncompleteGroup(t *testing.T) {
 		),
 		toolDraft(t, "t1", "call-a", "web_search", `{}`, "a hits", nil),
 	}
-	if err := svc.AppendThreadMessages(context.Background(), "r2", drafts); err != nil {
-		t.Fatalf("append: %v", err)
-	}
+	seedRows(t, sqlDB, "r2", drafts)
 
 	msgs, err := svc.GetAgentThread(context.Background(), "r2")
 	if err != nil {
@@ -154,9 +177,7 @@ func TestGetAgentThreadKeepsTextOnlyInterruptedGroup(t *testing.T) {
 			backend.AgentThreadCall{ID: "call-a", Name: "web_search", Arguments: `{}`},
 		),
 	}
-	if err := svc.AppendThreadMessages(context.Background(), "r3", drafts); err != nil {
-		t.Fatalf("append: %v", err)
-	}
+	seedRows(t, sqlDB, "r3", drafts)
 	msgs, err := svc.GetAgentThread(context.Background(), "r3")
 	if err != nil {
 		t.Fatalf("GetAgentThread: %v", err)
@@ -183,9 +204,7 @@ func TestGetAgentThreadExcludesStructureOnlyGroup(t *testing.T) {
 			backend.AgentThreadCall{ID: "call-a", Name: "web_search", Arguments: `{}`},
 		),
 	}
-	if err := svc.AppendThreadMessages(context.Background(), "r4", drafts); err != nil {
-		t.Fatalf("append: %v", err)
-	}
+	seedRows(t, sqlDB, "r4", drafts)
 	msgs, err := svc.GetAgentThread(context.Background(), "r4")
 	if err != nil {
 		t.Fatalf("GetAgentThread: %v", err)
@@ -207,9 +226,7 @@ func TestGetAgentThreadMapsToolErrorToContent(t *testing.T) {
 		),
 		toolDraft(t, "t1", "call-a", "web_search", `{}`, "partial", &errText),
 	}
-	if err := svc.AppendThreadMessages(context.Background(), "r5", drafts); err != nil {
-		t.Fatalf("append: %v", err)
-	}
+	seedRows(t, sqlDB, "r5", drafts)
 	msgs, err := svc.GetAgentThread(context.Background(), "r5")
 	if err != nil {
 		t.Fatalf("GetAgentThread: %v", err)
@@ -235,9 +252,7 @@ func TestGetAgentThreadRoundTripsJSONLiteralResults(t *testing.T) {
 	for i, r := range results {
 		drafts = append(drafts, toolDraft(t, "t1", calls[i].ID, "echo", `{}`, r, nil))
 	}
-	if err := svc.AppendThreadMessages(context.Background(), "r6", drafts); err != nil {
-		t.Fatalf("append: %v", err)
-	}
+	seedRows(t, sqlDB, "r6", drafts)
 	msgs, err := svc.GetAgentThread(context.Background(), "r6")
 	if err != nil {
 		t.Fatalf("GetAgentThread: %v", err)
@@ -268,9 +283,7 @@ func TestGetAgentThreadScopesReusedIDsToTheirGroup(t *testing.T) {
 		groupDraft(t, "t2", "", backend.AgentThreadCall{ID: "call_0", Name: "c", Arguments: `{}`}),
 		toolDraft(t, "t2", "call_0", "c", `{}`, "third outcome", nil),
 	}
-	if err := svc.AppendThreadMessages(context.Background(), "r7", drafts); err != nil {
-		t.Fatalf("append: %v", err)
-	}
+	seedRows(t, sqlDB, "r7", drafts)
 	msgs, err := svc.GetAgentThread(context.Background(), "r7")
 	if err != nil {
 		t.Fatalf("GetAgentThread: %v", err)
@@ -295,9 +308,7 @@ func TestGetAgentThreadExcludesErrorRows(t *testing.T) {
 		userDraft("visible", "t1"),
 		{Role: apitypes.ThreadRoleError, Content: "failed"},
 	}
-	if err := svc.AppendThreadMessages(context.Background(), "r8", drafts); err != nil {
-		t.Fatalf("append: %v", err)
-	}
+	seedRows(t, sqlDB, "r8", drafts)
 
 	msgs, err := svc.GetAgentThread(context.Background(), "r8")
 	if err != nil {

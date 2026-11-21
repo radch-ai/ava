@@ -57,40 +57,49 @@ func cleanToolError(err error) string {
 	return err.Error()
 }
 
-// failTurn ends a failed turn. A turn-level failure (no tool
-// attribution) is persisted as an error row — grouped under the
-// failed turn like every other row — before its event, so the
-// refetch a client makes on the event cannot outrun the write, and
-// the event then names the stored row, so live and reloaded state
-// converge on one id. A failed or missing sink leaves the row
-// unconfirmed: the event stays transient and carries the original
-// failure, never the sink's error. Tool-attributed failures already
-// persist in their envelope and stay transient here. The sink resolves
-// the agent's active thread when it writes.
-func (a *UserAgent) failTurn(ctx context.Context, msgID, message, toolName string) {
-	rowID := ""
-	if toolName == "" && a.persistTurn != nil {
-		rowID = uuid.NewString()
-		if err := a.persistTurn(ctx, a.agentID,
-			[]backend.ThreadMessageDraft{{ID: rowID, Role: apitypes.ThreadRoleError, Content: message, TurnID: msgID}}); err != nil {
-			a.logger.Warn().Err(err).Str("agent_id", a.agentID).Msg("persist error message")
-			rowID = ""
+// failTurn ends a failed turn and settles its item, reporting whether
+// a terminal outcome committed. The item always reaches a terminal
+// outcome — otherwise a restart would misreport it as interrupted. A
+// turn-level failure (no tool attribution) carries one persisted error
+// row, committed with the outcome, so live and reloaded state converge
+// on the same row: the row rides the lifecycle event and no transient
+// notice repeats it. A tool-attributed failure's own row already
+// carries the failure, so the durable batch is the whole report. When
+// the durable write itself fails, the client gets the transient notice
+// and the caller knows the outcome is unrecorded.
+func (a *UserAgent) failTurn(ctx context.Context, msgID, message, toolName string) bool {
+	if a.journal != nil {
+		var drafts []backend.ThreadMessageDraft
+		if toolName == "" {
+			drafts = []backend.ThreadMessageDraft{{
+				ID:      uuid.NewString(),
+				Role:    apitypes.ThreadRoleError,
+				Content: message,
+				TurnID:  msgID,
+			}}
 		}
+		err := a.state.commitAndPublish(func() (*backend.JournalBatch, error) {
+			return a.journal.FinishItem(ctx, a.state.agentID, msgID, apitypes.ItemFailed, "", drafts)
+		})
+		if err == nil {
+			a.clearTurnPrefix()
+			return true
+		}
+		a.logger.Warn().Err(err).Str("agent_id", a.state.agentID).Msg("persist item outcome")
 	}
-	a.emitError(ctx, message, toolName, rowID, msgID)
+	a.emitError(ctx, message, toolName, msgID)
+	return false
 }
 
-// emitError reports a failed turn to the lane's connections. The
-// replay prefix retires first: nothing replays after the turn is
-// over. rowID names the stored error row when the failure persisted;
-// turnID names the failed turn's stream.
-func (a *UserAgent) emitError(ctx context.Context, message, tool, rowID, turnID string) {
+// emitError reports a transient failure to the lane's connections. The
+// replay prefix retires first: nothing replays after the turn is over.
+// Durable failures arrive as lifecycle events instead.
+func (a *UserAgent) emitError(ctx context.Context, message, tool, turnID string) {
 	a.clearTurnPrefix()
 	_ = a.state.conns.WriteJSON(ctx, wstypes.Event{
 		Type:    wstypes.EventTypeError,
-		AgentID: a.agentID,
+		AgentID: a.state.agentID,
 		Data: wstypes.ErrorEvent{
-			ID:      rowID,
 			TurnID:  turnID,
 			Message: message,
 			Tool:    tool,

@@ -62,7 +62,9 @@ describe('agent/activity service', () => {
 
 			const result = await getAgentActivityFeed('ava')
 
-			expect(api.get).toHaveBeenCalledWith('agent/ava/activity?limit=20')
+			expect(api.get).toHaveBeenCalledWith('agent/ava/activity', {
+				searchParams: { limit: '20' }
+			})
 			expect(result).toEqual(
 				createActivityFeed({
 					items: [
@@ -96,9 +98,9 @@ describe('agent/activity service', () => {
 
 			const result = await getAgentActivityFeed('ava', 50, 'cursor-abc')
 
-			expect(api.get).toHaveBeenCalledWith(
-				'agent/ava/activity?limit=50&cursor=cursor-abc'
-			)
+			expect(api.get).toHaveBeenCalledWith('agent/ava/activity', {
+				searchParams: { limit: '50', cursor: 'cursor-abc' }
+			})
 			expect(result.nextCursor).toBe('next-cursor-xyz')
 			expect(result.items[0]?.status).toBe('running')
 		})
@@ -435,7 +437,9 @@ describe('agent/activity service', () => {
 
 			await getAgentActivityFeed('ava', 1000)
 
-			expect(api.get).toHaveBeenCalledWith('agent/ava/activity?limit=1000')
+			expect(api.get).toHaveBeenCalledWith('agent/ava/activity', {
+				searchParams: { limit: '1000' }
+			})
 		})
 
 		it('handles default limit parameter', async () => {
@@ -447,7 +451,9 @@ describe('agent/activity service', () => {
 
 			await getAgentActivityFeed('ava')
 
-			expect(api.get).toHaveBeenCalledWith('agent/ava/activity?limit=20')
+			expect(api.get).toHaveBeenCalledWith('agent/ava/activity', {
+				searchParams: { limit: '20' }
+			})
 		})
 
 		it('passes triggeredBy through unchanged', async () => {
@@ -653,9 +659,9 @@ describe('agent/activity service', () => {
 
 			await getAgentActivityFeed('custom-agent')
 
-			expect(api.get).toHaveBeenCalledWith(
-				'agent/custom-agent/activity?limit=20'
-			)
+			expect(api.get).toHaveBeenCalledWith('agent/custom-agent/activity', {
+				searchParams: { limit: '20' }
+			})
 		})
 
 		it('handles URL encoding in agent names', async () => {
@@ -667,9 +673,9 @@ describe('agent/activity service', () => {
 
 			await getAgentActivityFeed('agent with spaces')
 
-			expect(api.get).toHaveBeenCalledWith(
-				'agent/agent with spaces/activity?limit=20'
-			)
+			expect(api.get).toHaveBeenCalledWith('agent/agent with spaces/activity', {
+				searchParams: { limit: '20' }
+			})
 		})
 
 		it('handles complex cursor values', async () => {

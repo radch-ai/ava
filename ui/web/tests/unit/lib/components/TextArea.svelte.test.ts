@@ -16,17 +16,10 @@ describe('TextArea', () => {
 			await expect.element(textarea).toBeVisible()
 		})
 
-		it('renders plus button for attachments', async () => {
-			render(TextArea)
-
-			const plusButton = page.getByRole('button').first()
-			await expect.element(plusButton).toBeVisible()
-		})
-
 		it('renders send button (arrow up)', async () => {
 			render(TextArea)
 
-			const sendButton = page.getByRole('button').nth(1)
+			const sendButton = page.getByRole('button').first()
 			await expect.element(sendButton).toBeVisible()
 		})
 	})
@@ -35,7 +28,7 @@ describe('TextArea', () => {
 		it('is disabled when input is empty', async () => {
 			render(TextArea)
 
-			const sendButton = page.getByRole('button').nth(1)
+			const sendButton = page.getByRole('button').first()
 			await expect.element(sendButton).toBeDisabled()
 		})
 
@@ -45,7 +38,7 @@ describe('TextArea', () => {
 			const textarea = page.getByPlaceholder('Enter your query!')
 			await textarea.fill('Hello world')
 
-			const sendButton = page.getByRole('button').nth(1)
+			const sendButton = page.getByRole('button').first()
 			await expect.element(sendButton).not.toBeDisabled()
 		})
 
@@ -55,8 +48,22 @@ describe('TextArea', () => {
 			const textarea = page.getByPlaceholder('Enter your query!')
 			await textarea.fill('   ')
 
-			const sendButton = page.getByRole('button').nth(1)
+			const sendButton = page.getByRole('button').first()
 			await expect.element(sendButton).toBeDisabled()
+		})
+
+		it('is disabled while the lane is not synchronized', async () => {
+			const mockSubmit = vi.fn()
+			render(TextArea, { onsubmit: mockSubmit, blocked: true })
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.fill('ready to send')
+
+			const sendButton = page.getByRole('button').first()
+			await expect.element(sendButton).toBeDisabled()
+
+			await userEvent.type(textarea, '{Enter}')
+			expect(mockSubmit).not.toHaveBeenCalled()
 		})
 	})
 
@@ -114,7 +121,7 @@ describe('TextArea', () => {
 			const textarea = page.getByPlaceholder('Enter your query!')
 			await textarea.fill('Hello world')
 
-			const sendButton = page.getByRole('button').nth(1)
+			const sendButton = page.getByRole('button').first()
 			await sendButton.click()
 
 			await expect.element(textarea).toHaveValue('')
@@ -331,6 +338,8 @@ describe('TextArea', () => {
 			const textarea = page.getByPlaceholder('Enter your query!')
 			await textarea.click()
 			await userEvent.type(textarea, '/')
+			// The unselected list starts before the first row: one press
+			// lands on it.
 			await userEvent.keyboard('{ArrowDown}')
 			// Exactly one row is selected at a time: keyboard, hover, and
 			// completion move the same state.
@@ -341,10 +350,10 @@ describe('TextArea', () => {
 			expect(selected).toHaveLength(1)
 
 			await userEvent.keyboard('{Enter}')
-			await expect.element(textarea).toHaveValue('/reset')
+			await expect.element(textarea).toHaveValue('/new')
 
 			await textarea.fill('/')
-			await userEvent.keyboard('{ArrowDown}{ArrowUp}{Enter}')
+			await userEvent.keyboard('{ArrowDown}{ArrowDown}{ArrowUp}{Enter}')
 			await expect.element(textarea).toHaveValue('/new')
 		})
 
@@ -473,7 +482,7 @@ describe('TextArea', () => {
 			const textarea = page.getByPlaceholder('Enter your query!')
 			await textarea.fill('Test message')
 
-			const sendButton = page.getByRole('button').nth(1)
+			const sendButton = page.getByRole('button').first()
 			await sendButton.click()
 
 			expect(mockSubmit).toHaveBeenCalledWith('Test message')
@@ -485,7 +494,7 @@ describe('TextArea', () => {
 			const textarea = page.getByPlaceholder('Enter your query!')
 			await textarea.fill('Test message')
 
-			const sendButton = page.getByRole('button').nth(1)
+			const sendButton = page.getByRole('button').first()
 			await expect(async () => {
 				await sendButton.click()
 			}).not.toThrow()
@@ -509,18 +518,10 @@ describe('TextArea', () => {
 			expect(textareaElement.className).toContain('!text-lg')
 		})
 
-		it('has attach button with size-9 class', async () => {
-			render(TextArea)
-
-			const attachButton = page.getByRole('button').first()
-			const buttonElement = attachButton.element()
-			expect(buttonElement.className).toContain('size-9')
-		})
-
 		it('has send button with size-9 class', async () => {
 			render(TextArea)
 
-			const sendButton = page.getByRole('button').nth(1)
+			const sendButton = page.getByRole('button').first()
 			const buttonElement = sendButton.element()
 			expect(buttonElement.className).toContain('size-9')
 		})

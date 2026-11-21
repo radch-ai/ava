@@ -21,7 +21,6 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
-	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
 	"github.com/radch-ai/ava/backend"
@@ -36,41 +35,114 @@ func fakeOpenAI(t *testing.T, reply string) *httptest.Server {
 	return sseOpenAI(t, reply)
 }
 
-// readUntilMessage drains mid-turn events — chunks, statuses, tool
-// activity, queue traffic — until the final message event; it
-// returns the envelope and its payload.
-func readUntilMessage(t *testing.T, c *websocket.Conn) (wstypes.Event, wstypes.MessageEvent) {
+// settledTurn is a completed turn's committed outcome in the shape these
+// tests assert on: the item id and its terminal answer text.
+type settledTurn struct {
+	ID      string
+	Content string
+	Event   apitypes.LifecycleEvent
+}
+
+// terminalText is the answer text a terminal event committed: its last
+// assistant row.
+func terminalText(rows []apitypes.ThreadMessage) string {
+	for i := len(rows) - 1; i >= 0; i-- {
+		if rows[i].Role == apitypes.ThreadRoleAssistant {
+			return rows[i].Content
+		}
+	}
+	return ""
+}
+
+// readUntilMessage drains mid-turn frames until the turn's terminal
+// lifecycle event and reports the settled answer.
+func readUntilMessage(t *testing.T, c *websocket.Conn) (wstypes.Event, settledTurn) {
 	t.Helper()
 	for {
 		ev := readEvent(t, c)
-		switch ev.Type {
-		case wstypes.EventTypeMessageChunk, wstypes.EventTypeLaneStatus,
-			wstypes.EventTypeToolCall, wstypes.EventTypeToolResult,
-			wstypes.EventTypeQueueState, wstypes.EventTypeQueueResult:
+		if ev.Type != wstypes.EventTypeLifecycle {
 			continue
-		case wstypes.EventTypeMessage:
-			return ev, eventPayload[wstypes.MessageEvent](t, ev)
-		default:
-			t.Fatalf("unexpected event %v", ev.Type)
+		}
+		for _, lifecycle := range lifecycleBatch(t, ev) {
+			if lifecycle.Kind != apitypes.LifecycleItemFinished || lifecycle.Outcome != apitypes.ItemCompleted {
+				continue
+			}
+			return ev, settledTurn{
+				ID:      lifecycle.ItemID,
+				Content: terminalText(lifecycle.Rows),
+				Event:   lifecycle,
+			}
 		}
 	}
 }
 
-// readUntilError drains statuses, tool activity, and queue traffic
-// until the error event; it returns the envelope.
+// readUntilError drains frames until a turn failure is reported: the
+// transient error frame (tool-attributed failures, unpersisted
+// outcomes), or a failed item's terminal event, whose error row
+// carries the message.
 func readUntilError(t *testing.T, c *websocket.Conn) wstypes.Event {
 	t.Helper()
 	for {
 		ev := readEvent(t, c)
 		switch ev.Type {
-		case wstypes.EventTypeLaneStatus, wstypes.EventTypeToolCall,
-			wstypes.EventTypeToolResult, wstypes.EventTypeQueueState,
-			wstypes.EventTypeQueueResult:
-			continue
 		case wstypes.EventTypeError:
 			return ev
-		default:
-			t.Fatalf("unexpected event %v", ev.Type)
+		case wstypes.EventTypeLifecycle:
+			for _, lifecycle := range lifecycleBatch(t, ev) {
+				if lifecycle.Kind != apitypes.LifecycleItemFinished {
+					continue
+				}
+				if lifecycle.Outcome != apitypes.ItemFailed || len(lifecycle.Rows) == 0 {
+					// A stop is not a failure; a tool-attributed
+					// failure carries its own row and keeps the
+					// transient bubble, which follows.
+					continue
+				}
+				return wstypes.Event{
+					Type:    wstypes.EventTypeError,
+					AgentID: ev.AgentID,
+					Data: wstypes.ErrorEvent{
+						TurnID:  lifecycle.ItemID,
+						Message: lifecycle.Rows[len(lifecycle.Rows)-1].Content,
+					},
+				}
+			}
+		}
+	}
+}
+
+// lifecycleBatch decodes every event carried by one lifecycle frame.
+func lifecycleBatch(t *testing.T, ev wstypes.Event) []apitypes.LifecycleEvent {
+	t.Helper()
+	batch := eventPayload[wstypes.LifecycleBatchEvent](t, ev)
+	out := make([]apitypes.LifecycleEvent, 0, len(batch.Events))
+	for _, raw := range batch.Events {
+		var lifecycle apitypes.LifecycleEvent
+		require.NoError(t, json.Unmarshal(raw, &lifecycle))
+		out = append(out, lifecycle)
+	}
+	return out
+}
+
+// readUntilSettled drains mid-turn frames until the turn's terminal
+// lifecycle event — any outcome, a stop included — and reports the
+// settled turn.
+func readUntilSettled(t *testing.T, c *websocket.Conn) (wstypes.Event, settledTurn) {
+	t.Helper()
+	for {
+		ev := readEvent(t, c)
+		if ev.Type != wstypes.EventTypeLifecycle {
+			continue
+		}
+		for _, lifecycle := range lifecycleBatch(t, ev) {
+			if lifecycle.Kind != apitypes.LifecycleItemFinished {
+				continue
+			}
+			return ev, settledTurn{
+				ID:      lifecycle.ItemID,
+				Content: terminalText(lifecycle.Rows),
+				Event:   lifecycle,
+			}
 		}
 	}
 }
@@ -87,11 +159,12 @@ func readQueueState(t *testing.T, c *websocket.Conn) wstypes.QueueStateEvent {
 	}
 }
 
-// submit enqueues one prompt and returns the admitted item's stable
-// id — the turn's stream id on the wire.
+// submit accommodates one prompt on a subscribed connection and returns the
+// admitted item's stable id — the turn's stream id on the wire.
 func submit(t *testing.T, mgr *agent.UserAgentManager, agentID, connID string, conn *websocket.Conn, content string) string {
 	t.Helper()
-	id, err := mgr.Submit(agentID, connID, conn, content, nil, "")
+	subscribe(mgr, agentID, connID, conn)
+	id, err := mgr.Submit(agentID, content, nil, "")
 	require.NoError(t, err)
 	return id
 }
@@ -183,7 +256,7 @@ func TestTurnStreamsChunks(t *testing.T) {
 	llm := sseOpenAI(t, "hello ", "streamed ", "world")
 	defer llm.Close()
 
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{GetAgentThread: emptyThread, ResolveModel: fixedResolver(llm.URL)})
 
 	c, sc := wsPair(t)
@@ -201,13 +274,19 @@ func TestTurnStreamsChunks(t *testing.T) {
 		case wstypes.EventTypeMessageChunk:
 			p := eventPayload[wstypes.MessageChunkEvent](t, ev)
 			require.Equal(t, itemID, p.ID)
+			require.Positive(t, p.Seq, "chunks carry the stream's own sequence")
 			deltas.WriteString(p.Delta)
-		case wstypes.EventTypeMessage:
-			p := eventPayload[wstypes.MessageEvent](t, ev)
-			require.Equal(t, itemID, p.ID)
-			require.Equal(t, "hello streamed world", p.Content)
-			require.Equal(t, "hello streamed world", deltas.String())
-			sawFinal = true
+		case wstypes.EventTypeLifecycle:
+			for _, lifecycle := range lifecycleBatch(t, ev) {
+				if lifecycle.Kind != apitypes.LifecycleItemFinished ||
+					lifecycle.Outcome != apitypes.ItemCompleted {
+					continue
+				}
+				require.Equal(t, itemID, lifecycle.ItemID)
+				require.Equal(t, "hello streamed world", terminalText(lifecycle.Rows))
+				require.Equal(t, "hello streamed world", deltas.String())
+				sawFinal = true
+			}
 		default:
 			t.Fatalf("unexpected event %v", ev.Type)
 		}
@@ -218,7 +297,7 @@ func TestTurnBroadcastsAnswer(t *testing.T) {
 	llm := fakeOpenAI(t, "hello from the model")
 	defer llm.Close()
 
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{GetAgentThread: emptyThread, ResolveModel: fixedResolver(llm.URL)})
 
 	c, sc := wsPair(t)
@@ -237,13 +316,22 @@ func TestTurnResolverErrorPausesUntilExplicitSelection(t *testing.T) {
 	defer llm.Close()
 
 	var failFirst atomic.Bool
+	// Every resolver call reports the selection it ran on: the routing
+	// choice is not projected on the wire, so the rebind is proven where
+	// it takes effect.
+	resolved := make(chan string, 8)
 	resolver := func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
+		selection := ""
+		if entry != nil {
+			selection = entry.ID
+		}
+		resolved <- selection
 		if failFirst.CompareAndSwap(false, true) {
 			return backend.ResolvedModel{}, errors.New("read default model: no rows")
 		}
 		return backend.ResolvedModel{BaseURL: llm.URL, APIKey: "sk-test", Model: "test-model"}, nil
 	}
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{GetAgentThread: emptyThread, ResolveModel: resolver})
 
 	c, sc := wsPair(t)
@@ -253,14 +341,12 @@ func TestTurnResolverErrorPausesUntilExplicitSelection(t *testing.T) {
 	item1 := submit(t, mgr, "agent-rerr", "conn-1", sc, "hi")
 	item2 := submit(t, mgr, "agent-rerr", "conn-1", sc, "again")
 
-	ev := readUntilError(t, c)
-	require.Equal(t, wstypes.EventTypeError, ev.Type)
-	p := eventPayload[wstypes.ErrorEvent](t, ev)
-	require.Contains(t, p.Message, "no rows")
-	// No sink is bound: the error is transient — nothing stored to
-	// name, but the turn is.
-	require.Empty(t, p.ID)
-	require.Equal(t, item1, p.TurnID)
+	// The failure is durable: it settles the item as failed with the
+	// cause as its error row.
+	terminal := readTerminal(t, c, item1)
+	require.Equal(t, apitypes.ItemFailed, terminal.Outcome)
+	require.Len(t, terminal.Rows, 1)
+	require.Contains(t, terminal.Rows[0].Content, "no rows")
 
 	// The message-level failure paused the queue with item2 gated;
 	// the silence is probed on a disposable conn, because a timed-out
@@ -291,10 +377,10 @@ func TestTurnResolverErrorPausesUntilExplicitSelection(t *testing.T) {
 	snapshot = readQueueState(t, c)
 	require.NotNil(t, snapshot.Next)
 	require.Equal(t, item2, snapshot.Next.ID)
-	require.NotNil(t, snapshot.Next.Model, "the paused rebind replaced the gated item's selection")
-	require.Equal(t, "recovered", snapshot.Next.Model.ID)
 	_, p2 := readUntilMessage(t, c)
 	require.Equal(t, "recovered", p2.Content)
+	require.Equal(t, "", <-resolved, "the failed turn ran on default routing")
+	require.Equal(t, "recovered", <-resolved, "the paused rebind replaced the gated item's selection")
 }
 
 func TestTurnInterruptCancelsQuery(t *testing.T) {
@@ -322,7 +408,7 @@ func TestTurnInterruptCancelsQuery(t *testing.T) {
 	defer llm.Close()
 	defer close(release) // LIFO: runs before llm.Close()
 
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{GetAgentThread: emptyThread, ResolveModel: fixedResolver(llm.URL)})
 
 	c, sc := wsPair(t)
@@ -343,7 +429,7 @@ func TestTurnInterruptCancelsQuery(t *testing.T) {
 		ev := readEvent(t, c)
 		switch ev.Type {
 		case wstypes.EventTypeQueueState, wstypes.EventTypeMessageChunk,
-			wstypes.EventTypeToolCall, wstypes.EventTypeToolResult:
+			wstypes.EventTypeLifecycle:
 		case wstypes.EventTypeLaneStatus:
 			if !eventPayload[wstypes.LaneStatus](t, ev).Working {
 				idle = true
@@ -382,9 +468,8 @@ func TestTurnCanceledDuringResolveSettlesAsStop(t *testing.T) {
 		return backend.ResolvedModel{}, errors.New("no default model set")
 	}
 
-	sink := &recordingSink{}
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
-		&agent.UserAgentManagerOptions{GetAgentThread: emptyThread, ResolveModel: resolver, PersistTurn: sink.persist})
+	mgr, sqlDB := journaledLane(t,
+		&agent.UserAgentManagerOptions{GetAgentThread: emptyThread, ResolveModel: resolver})
 
 	c, sc := wsPair(t)
 
@@ -403,10 +488,16 @@ func TestTurnCanceledDuringResolveSettlesAsStop(t *testing.T) {
 		ev := readEvent(t, c)
 		switch ev.Type {
 		case wstypes.EventTypeQueueState, wstypes.EventTypeQueueResult,
-			wstypes.EventTypeMessageChunk, wstypes.EventTypeToolCall,
-			wstypes.EventTypeToolResult:
-		case wstypes.EventTypeMessage:
-			t.Fatalf("a stopped turn must not settle a message: %+v", ev.Data)
+			wstypes.EventTypeMessageChunk:
+		case wstypes.EventTypeLifecycle:
+			for _, lifecycle := range lifecycleBatch(t, ev) {
+				if lifecycle.Kind != apitypes.LifecycleItemFinished {
+					continue
+				}
+				require.Equal(t, apitypes.ItemStopped, lifecycle.Outcome,
+					"a stopped turn must not settle a message")
+				require.Empty(t, lifecycle.Rows, "a quiet stop commits no rows")
+			}
 		case wstypes.EventTypeLaneStatus:
 			if !eventPayload[wstypes.LaneStatus](t, ev).Working {
 				idle = true
@@ -418,10 +509,11 @@ func TestTurnCanceledDuringResolveSettlesAsStop(t *testing.T) {
 		}
 	}
 
-	// Only the user row persisted — no error row.
-	calls := sink.recorded()
-	require.Len(t, calls, 1)
-	require.Equal(t, apitypes.ThreadRoleUser, calls[0][0].Role)
+	// Only the user row persisted — no error row, no assistant row.
+	rows := storedRows(t, sqlDB, "agent-cancel-stop")
+	require.Len(t, rows, 1, describe(rows))
+	require.Equal(t, apitypes.ThreadRoleUser, rows[0].Role)
+	require.Equal(t, "hi", rows[0].Content)
 }
 
 // A fast stream coalesces: the answer costs fewer frames than it has
@@ -430,7 +522,7 @@ func TestStreamCoalescesFastChunks(t *testing.T) {
 	llm := sseOpenAI(t, "a", "b", "c", "d", "e")
 	defer llm.Close()
 
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{GetAgentThread: emptyThread, ResolveModel: fixedResolver(llm.URL)})
 
 	c, sc := wsPair(t)
@@ -450,12 +542,17 @@ func TestStreamCoalescesFastChunks(t *testing.T) {
 			require.Equal(t, itemID, p.ID)
 			chunks++
 			deltas.WriteString(p.Delta)
-		case wstypes.EventTypeMessage:
-			p := eventPayload[wstypes.MessageEvent](t, ev)
-			require.Equal(t, "abcde", p.Content)
-			require.Equal(t, "abcde", deltas.String())
-			require.Less(t, chunks, 5, "a fast stream coalesces: fewer frames than chunks")
-			return
+		case wstypes.EventTypeLifecycle:
+			for _, lifecycle := range lifecycleBatch(t, ev) {
+				if lifecycle.Kind != apitypes.LifecycleItemFinished ||
+					lifecycle.Outcome != apitypes.ItemCompleted {
+					continue
+				}
+				require.Equal(t, "abcde", terminalText(lifecycle.Rows))
+				require.Equal(t, "abcde", deltas.String())
+				require.Less(t, chunks, 5, "a fast stream coalesces: fewer frames than chunks")
+				return
+			}
 		default:
 			t.Fatalf("unexpected event %v", ev.Type)
 		}
@@ -482,12 +579,10 @@ func TestInterruptMidStreamSettlesPartial(t *testing.T) {
 	defer llm.Close()
 	defer close(release)
 
-	sink := &recordingSink{}
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr, sqlDB := journaledLane(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel:   fixedResolver(llm.URL),
-			PersistTurn:    sink.persist,
 		})
 
 	c, sc := wsPair(t)
@@ -495,13 +590,14 @@ func TestInterruptMidStreamSettlesPartial(t *testing.T) {
 	itemID := submit(t, mgr, "agent-stop", "conn-1", sc, "hi")
 
 	// Wait until the streamed partial reached this client — a stop
-	// only preserves what the user has actually seen.
+	// only preserves what the user has actually seen. Durable facts
+	// (the start) may interleave; they are not stream output.
 	var got strings.Builder
 	for got.String() != "partial answer" {
 		ev := readEvent(t, c)
 		switch ev.Type {
 		case wstypes.EventTypeLaneStatus, wstypes.EventTypeQueueState,
-			wstypes.EventTypeQueueResult:
+			wstypes.EventTypeQueueResult, wstypes.EventTypeLifecycle:
 			continue
 		case wstypes.EventTypeMessageChunk:
 			p := eventPayload[wstypes.MessageChunkEvent](t, ev)
@@ -515,16 +611,21 @@ func TestInterruptMidStreamSettlesPartial(t *testing.T) {
 	mgr.Interrupt("agent-stop")
 
 	// A deliberate stop keeps what was said: the partial settles as
-	// the final message — no error event.
-	_, p := readUntilMessage(t, c)
+	// the stopped item's final row — no error event.
+	_, p := readUntilSettled(t, c)
 	require.Equal(t, itemID, p.ID)
+	require.Equal(t, apitypes.ItemStopped, p.Event.Outcome)
 	require.Equal(t, "partial answer", p.Content)
 
 	// The turn bracket closes and nothing else follows.
-	last := readEvent(t, c)
-	require.Equal(t, wstypes.EventTypeLaneStatus, last.Type)
-	ended := eventPayload[wstypes.LaneStatus](t, last)
-	require.False(t, ended.Working)
+	for ended := (wstypes.LaneStatus{Working: true}); ended.Working; {
+		last := readEvent(t, c)
+		if last.Type != wstypes.EventTypeLaneStatus {
+			continue
+		}
+		ended = eventPayload[wstypes.LaneStatus](t, last)
+		require.False(t, ended.Reasoning, "the bracket lowers reasoning with the turn")
+	}
 	// Queue traffic may trail the bracket; further turn output may not.
 	quiet := time.Now().Add(250 * time.Millisecond)
 	for {
@@ -538,12 +639,12 @@ func TestInterruptMidStreamSettlesPartial(t *testing.T) {
 		}
 	}
 
-	calls := sink.recorded()
-	require.Len(t, calls, 2)
-	require.Equal(t,
-		[]backend.ThreadMessageDraft{{Role: apitypes.ThreadRoleAssistant, Content: "partial answer",
-			TurnID: itemID}},
-		calls[1])
+	rows := storedRows(t, sqlDB, "agent-stop")
+	require.Len(t, rows, 2, describe(rows))
+	require.Equal(t, apitypes.ThreadRoleUser, rows[0].Role)
+	require.Equal(t, apitypes.ThreadRoleAssistant, rows[1].Role)
+	require.Equal(t, "partial answer", rows[1].Content)
+	require.Equal(t, itemID, rows[1].TurnID)
 }
 
 // A stop before any output is a quiet stop: no error, no assistant
@@ -562,14 +663,12 @@ func TestInterruptBeforeOutputEmitsNothing(t *testing.T) {
 	defer close(release)
 
 	target := llm.URL
-	sink := &recordingSink{}
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr, sqlDB := journaledLane(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel: func(_ context.Context, _ *apitypes.ModelEntry) (backend.ResolvedModel, error) {
 				return backend.ResolvedModel{BaseURL: target, APIKey: "sk-test", Model: "test-model"}, nil
 			},
-			PersistTurn: sink.persist,
 		})
 
 	c, sc := wsPair(t)
@@ -590,7 +689,7 @@ func TestInterruptBeforeOutputEmitsNothing(t *testing.T) {
 		ev := readEvent(t, c)
 		switch ev.Type {
 		case wstypes.EventTypeQueueState, wstypes.EventTypeMessageChunk,
-			wstypes.EventTypeToolCall, wstypes.EventTypeToolResult:
+			wstypes.EventTypeLifecycle:
 		case wstypes.EventTypeLaneStatus:
 			if !eventPayload[wstypes.LaneStatus](t, ev).Working {
 				idle = true
@@ -603,9 +702,9 @@ func TestInterruptBeforeOutputEmitsNothing(t *testing.T) {
 	}
 
 	// The user row stands alone — no assistant draft, no error row.
-	calls := sink.recorded()
-	require.Len(t, calls, 1)
-	require.Equal(t, apitypes.ThreadRoleUser, calls[0][0].Role)
+	rows := storedRows(t, sqlDB, "agent-stop2")
+	require.Len(t, rows, 1, describe(rows))
+	require.Equal(t, apitypes.ThreadRoleUser, rows[0].Role)
 
 	// The lane keeps serving: the next prompt runs and settles.
 	fast := fakeOpenAI(t, "quick reply")
@@ -621,12 +720,10 @@ func TestTurnSurvivesSubmittingConnectionLoss(t *testing.T) {
 	llm := fakeOpenAI(t, "survivor")
 	defer llm.Close()
 
-	sink := &recordingSink{}
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr, sqlDB := journaledLane(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel:   fixedResolver(llm.URL),
-			PersistTurn:    sink.persist,
 		})
 
 	c, sc := wsPair(t)
@@ -639,12 +736,12 @@ func TestTurnSurvivesSubmittingConnectionLoss(t *testing.T) {
 	closeConn(c)
 
 	require.Eventually(t, func() bool {
-		calls := sink.recorded()
-		return len(calls) == 2 && calls[1][0].Content == "survivor"
+		rows := storedRows(t, sqlDB, "agent-outlive")
+		return len(rows) == 2 && rows[1].Content == "survivor"
 	}, 5*time.Second, 10*time.Millisecond, "the turn must settle despite the submitter's loss")
 
 	require.Eventually(t, func() bool {
-		return mgr.Get("agent-outlive") == nil
+		return agent.Worker(mgr, "agent-outlive") == nil
 	}, 2*time.Second, 10*time.Millisecond,
 		"the settled, connection-less queue releases its worker cleanly")
 }
@@ -665,73 +762,54 @@ func readEventMaybe(t *testing.T, c *websocket.Conn, wait time.Duration) (wstype
 	return ev, true
 }
 
-// recordingSink captures PersistTurn calls. With a handshake armed it
-// parks the assistant write so tests can pin the write-then-emit
-// ordering; fail makes every write fail like a sick database.
-type recordingSink struct {
-	mu          sync.Mutex
-	calls       [][]backend.ThreadMessageDraft
-	fail        error
-	failRole    apitypes.ThreadRole // when set, only this role's writes fail
-	parked      bool
-	blocked     chan struct{} // closed when the assistant write starts
-	release     chan struct{} // closed by unblock to let the write finish
+// parkedFinish parks the journal's first FinishItem call — the answer
+// row's write — until released, then commits it against the wrapped
+// journal: the mid-write window the persist-before-emit probes read
+// through. Durable assertions read the store, so nothing is recorded.
+type parkedFinish struct {
+	agent.LifecycleJournal
+	blocked     chan struct{} // closed when the parked write starts
+	release     chan struct{}
+	parkOnce    sync.Once
 	releaseOnce sync.Once
 }
 
-func (s *recordingSink) persist(ctx context.Context, agentID string, msgs []backend.ThreadMessageDraft) error {
-	s.mu.Lock()
-	s.calls = append(s.calls, msgs)
-	fail := s.fail
-	if s.failRole != "" && len(msgs) > 0 && msgs[0].Role == s.failRole {
-		fail = errSinkRoleFailure
-	}
-	// Park only the first assistant or error draft; later turns'
-	// drafts flow through.
-	park := s.blocked != nil && !s.parked &&
-		(msgs[0].Role == apitypes.ThreadRoleAssistant || msgs[0].Role == apitypes.ThreadRoleError)
-	if park {
-		s.parked = true
-	}
-	s.mu.Unlock()
-
-	if park {
-		close(s.blocked)
-		<-s.release
-	}
-	return fail
+func (p *parkedFinish) FinishItem(ctx context.Context, agentID, itemID, outcome, reason string, msgs []backend.ThreadMessageDraft) (*backend.JournalBatch, error) {
+	p.parkOnce.Do(func() {
+		close(p.blocked)
+		<-p.release
+	})
+	return p.LifecycleJournal.FinishItem(ctx, agentID, itemID, outcome, reason, msgs)
 }
-
-// errSinkRoleFailure names the role-targeted sink failure in tests.
-var errSinkRoleFailure = errors.New("role write unavailable")
 
 // unblock lets a parked write finish; safe whether or not the write
 // ever parked, and safe to call twice.
-func (s *recordingSink) unblock() {
-	if s.release == nil {
-		return
-	}
-	s.releaseOnce.Do(func() { close(s.release) })
+func (p *parkedFinish) unblock() {
+	p.releaseOnce.Do(func() { close(p.release) })
 }
 
-func (s *recordingSink) recorded() [][]backend.ThreadMessageDraft {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([][]backend.ThreadMessageDraft, len(s.calls))
-	copy(out, s.calls)
-	return out
+// failingStart makes the journal's StartItem fail like a sick database
+// — the required user-row write, before any model work.
+type failingStart struct {
+	agent.LifecycleJournal
+	err error
 }
+
+func (f *failingStart) StartItem(ctx context.Context, agentID, itemID string) (*backend.ItemStart, *backend.JournalBatch, error) {
+	return nil, nil, f.err
+}
+
+// errJournalWrite names the journal-write failure in tests.
+var errJournalWrite = errors.New("journal write unavailable")
 
 func TestQueuedPromptsRunOnePerTurn(t *testing.T) {
 	llm := fakeOpenAI(t, "same reply")
 	defer llm.Close()
 
-	sink := &recordingSink{}
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr, sqlDB := journaledLane(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel:   fixedResolver(llm.URL),
-			PersistTurn:    sink.persist,
 		})
 
 	c, sc := wsPair(t)
@@ -740,55 +818,76 @@ func TestQueuedPromptsRunOnePerTurn(t *testing.T) {
 	second := submit(t, mgr, "agent-persist", "conn-1", sc, "again")
 
 	// Two prompts, two turns: each is one model call with exactly
-	// its own text — never a joined batch.
+	// its own text — never a joined batch. Each prompt's user row
+	// rides its own item_started, under the id the backend minted.
+	started1 := readLifecycle(t, c, func(ev apitypes.LifecycleEvent) bool {
+		return ev.Kind == apitypes.LifecycleItemStarted && ev.ItemID == first
+	})
 	_, p := readUntilMessage(t, c)
 	require.Equal(t, first, p.ID)
 	require.Equal(t, "same reply", p.Content)
+	started2 := readLifecycle(t, c, func(ev apitypes.LifecycleEvent) bool {
+		return ev.Kind == apitypes.LifecycleItemStarted && ev.ItemID == second
+	})
 	_, p = readUntilMessage(t, c)
 	require.Equal(t, second, p.ID)
 
-	calls := sink.recorded()
-	require.Len(t, calls, 4, "user+assistant drafts per turn, one turn per item")
-	require.Equal(t, apitypes.ThreadRoleUser, calls[0][0].Role)
-	require.Equal(t, "hello", calls[0][0].Content)
-	require.Equal(t, apitypes.ThreadRoleAssistant, calls[1][0].Role)
-	require.Equal(t, apitypes.ThreadRoleUser, calls[2][0].Role)
-	require.Equal(t, "again", calls[2][0].Content)
-	require.NotEmpty(t, calls[0][0].ID, "the started user row carries the claim's id")
+	rows := storedRows(t, sqlDB, "agent-persist")
+	require.Len(t, rows, 4, "user+assistant rows per turn, one turn per item: "+describe(rows))
+	require.Equal(t, apitypes.ThreadRoleUser, rows[0].Role)
+	require.Equal(t, "hello", rows[0].Content)
+	require.Equal(t, apitypes.ThreadRoleAssistant, rows[1].Role)
+	require.Equal(t, "same reply", rows[1].Content)
+	require.Equal(t, apitypes.ThreadRoleUser, rows[2].Role)
+	require.Equal(t, "again", rows[2].Content)
+	require.Equal(t, apitypes.ThreadRoleAssistant, rows[3].Role)
+	require.Equal(t, first, rows[0].TurnID)
+	require.Equal(t, second, rows[2].TurnID)
+	require.NotEmpty(t, rows[0].ID)
+	require.Equal(t, rows[0].ID, started1.UserMessageID, "the started user row rides item_started")
+	require.Equal(t, rows[2].ID, started2.UserMessageID)
 }
 
 func TestTurnPersistsAssistantBeforeFinalEvent(t *testing.T) {
 	llm := fakeOpenAI(t, "ordered")
 	defer llm.Close()
 
-	sink := &recordingSink{blocked: make(chan struct{}), release: make(chan struct{})}
-	defer sink.unblock() // a write parked past the body drains at teardown
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	// Park the answer row's journal write: the terminal event and the
+	// row are one transaction, so while the write is parked neither
+	// can exist.
+	sqlDB, turns := journalFor(t)
+	journal := &lazyJournal{TurnService: turns, sqlDB: sqlDB, seen: make(map[string]struct{})}
+	parked := &parkedFinish{
+		LifecycleJournal: journal,
+		blocked:          make(chan struct{}),
+		release:          make(chan struct{}),
+	}
+	defer parked.unblock() // a write parked past the body drains at teardown
+	mgr := hookedManager(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel:   fixedResolver(llm.URL),
-			PersistTurn:    sink.persist,
-		})
+		}, &journalHook{LifecycleJournal: parked})
 
 	c, sc := wsPair(t)
 
 	submit(t, mgr, "agent-order", "conn-1", sc, "hi")
 
 	select {
-	case <-sink.blocked:
+	case <-parked.blocked:
 	case <-time.After(5 * time.Second):
-		t.Fatal("assistant draft never reached the sink")
+		t.Fatal("the answer write never reached the journal")
 	}
 
 	// A passive second connection joins the broadcaster; its only
-	// possible delivery while the write is parked is queue traffic,
-	// never the final message — so it doubles as the ordering probe.
-	// (A short-timeout read closes a coder/websocket conn — the
-	// probe conn is disposable on purpose; the submitting conn is
+	// possible delivery while the write is parked is runtime traffic,
+	// never the terminal event — so it doubles as the ordering probe.
+	// It submits nothing: the assertion must not race a second item's
+	// own rows. (A short-timeout read closes a coder/websocket conn —
+	// the probe conn is disposable on purpose; the submitting conn is
 	// never touched.)
 	_, probe := wsPair(t)
-	_, err := mgr.Submit("agent-order", "conn-2", probe, "queued", nil, "")
-	require.NoError(t, err)
+	subscribe(mgr, "agent-order", "conn-2", probe)
 
 	deadline := time.Now().Add(150 * time.Millisecond)
 	for {
@@ -796,116 +895,157 @@ func TestTurnPersistsAssistantBeforeFinalEvent(t *testing.T) {
 		if !arrived {
 			break
 		}
-		require.NotEqual(t, wstypes.EventTypeMessage, ev.Type,
-			"final message outran the assistant write")
+		switch ev.Type {
+		case wstypes.EventTypeLifecycle:
+			for _, lifecycle := range lifecycleBatch(t, ev) {
+				require.NotEqual(t, apitypes.LifecycleItemFinished, lifecycle.Kind,
+					"the terminal event outran the answer write")
+			}
+		case wstypes.EventTypeError:
+			t.Fatalf("an error event outran the answer write: %+v", ev.Data)
+		}
 	}
 
-	sink.unblock()
+	parked.unblock()
 	_, p := readUntilMessage(t, c)
 	require.Equal(t, "ordered", p.Content)
+	rows := storedRows(t, sqlDB, "agent-order")
+	require.Len(t, rows, 2, describe(rows))
+	require.Equal(t, apitypes.ThreadRoleAssistant, rows[1].Role)
+	require.Equal(t, "ordered", rows[1].Content)
 }
 
 func TestTurnErrorPersistsUserThenErrorRow(t *testing.T) {
 	llm := fakeOpenAI(t, "never reached")
 	defer llm.Close()
 
-	sink := &recordingSink{}
 	resolver := func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
 		return backend.ResolvedModel{}, errors.New("read provider p-1: no rows")
 	}
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr, sqlDB := journaledLane(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel:   resolver,
-			PersistTurn:    sink.persist,
 		})
 
 	c, sc := wsPair(t)
 
 	itemID := submit(t, mgr, "agent-errrow", "conn-1", sc, "hello")
 
-	ev := readUntilError(t, c)
-	require.Equal(t, wstypes.EventTypeError, ev.Type)
-	p := eventPayload[wstypes.ErrorEvent](t, ev)
-	require.Equal(t, itemID, p.TurnID)
+	terminal := readTerminal(t, c, itemID)
+	require.Equal(t, apitypes.ItemFailed, terminal.Outcome)
+	require.Len(t, terminal.Rows, 1)
 
 	// The failure lands as an error row after the user row, and the
-	// event names that row — live and reloaded state converge on it.
-	calls := sink.recorded()
-	require.Len(t, calls, 2)
-	require.Equal(t, apitypes.ThreadRoleUser, calls[0][0].Role)
-	require.Equal(t, "hello", calls[0][0].Content)
-	require.Len(t, calls[1], 1)
-	require.Equal(t, apitypes.ThreadRoleError, calls[1][0].Role)
-	require.Equal(t, itemID, calls[1][0].TurnID, "the error row names its turn like every other row")
-	require.Equal(t, "read provider p-1: no rows", calls[1][0].Content)
-	require.NotEmpty(t, p.ID)
-	require.Equal(t, p.ID, calls[1][0].ID)
+	// terminal event carries that row — live and reloaded state
+	// converge on it.
+	rows := storedRows(t, sqlDB, "agent-errrow")
+	require.Len(t, rows, 2, describe(rows))
+	require.Equal(t, apitypes.ThreadRoleUser, rows[0].Role)
+	require.Equal(t, "hello", rows[0].Content)
+	require.Equal(t, apitypes.ThreadRoleError, rows[1].Role)
+	require.Equal(t, itemID, rows[1].TurnID, "the error row names its turn like every other row")
+	require.Equal(t, "read provider p-1: no rows", rows[1].Content)
+	require.NotEmpty(t, terminal.Rows[0].ID)
+	require.Equal(t, terminal.Rows[0].ID, rows[1].ID, "the terminal event names the stored error row")
 }
 
 func TestTurnErrorPersistsBeforeEvent(t *testing.T) {
-	sink := &recordingSink{blocked: make(chan struct{}), release: make(chan struct{})}
-	defer sink.unblock()
 	resolver := func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
 		return backend.ResolvedModel{}, errors.New("read provider p-1: no rows")
 	}
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	// Park the failed outcome's journal write — the error row and its
+	// terminal event are one transaction.
+	sqlDB, turns := journalFor(t)
+	journal := &lazyJournal{TurnService: turns, sqlDB: sqlDB, seen: make(map[string]struct{})}
+	parked := &parkedFinish{
+		LifecycleJournal: journal,
+		blocked:          make(chan struct{}),
+		release:          make(chan struct{}),
+	}
+	defer parked.unblock()
+	mgr := hookedManager(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel:   resolver,
-			PersistTurn:    sink.persist,
-		})
+		}, &journalHook{LifecycleJournal: parked})
 
 	c, sc := wsPair(t)
 
-	submit(t, mgr, "agent-errorder", "conn-1", sc, "hello")
+	itemID := submit(t, mgr, "agent-errorder", "conn-1", sc, "hello")
 
 	select {
-	case <-sink.blocked:
+	case <-parked.blocked:
 	case <-time.After(5 * time.Second):
-		t.Fatal("error draft never reached the sink")
+		t.Fatal("the failed outcome never reached the journal")
 	}
-	// While the error write is parked, the failure must not be on the
-	// wire — a client refetching on the event would miss the row.
-	if ev, arrived := readEventMaybe(t, c, 150*time.Millisecond); arrived {
-		require.NotEqual(t, wstypes.EventTypeError, ev.Type,
-			"error event outran the error write")
+	// While the outcome write is parked, the failure must not be on
+	// the wire — a client acting on the event would miss the row. The
+	// probe is a disposable subscribed connection: a timed-out read
+	// closes a coder/websocket conn, and the submitting conn still
+	// has to deliver the settlement.
+	_, probe := wsPair(t)
+	subscribe(mgr, "agent-errorder", "conn-2", probe)
+	deadline := time.Now().Add(150 * time.Millisecond)
+	for {
+		ev, arrived := readEventMaybe(t, probe, time.Until(deadline))
+		if !arrived {
+			break
+		}
+		switch ev.Type {
+		case wstypes.EventTypeLifecycle:
+			for _, lifecycle := range lifecycleBatch(t, ev) {
+				require.NotEqual(t, apitypes.LifecycleItemFinished, lifecycle.Kind,
+					"the terminal event outran the error write")
+			}
+		case wstypes.EventTypeError:
+			t.Fatalf("an error event outran the error write: %+v", ev.Data)
+		}
 	}
 
-	sink.unblock()
-	p := eventPayload[wstypes.ErrorEvent](t, readUntilError(t, c))
-	require.NotEmpty(t, p.ID)
-	calls := sink.recorded()
-	require.Equal(t, p.ID, calls[1][0].ID)
+	parked.unblock()
+	terminal := readTerminal(t, c, itemID)
+	require.Equal(t, apitypes.ItemFailed, terminal.Outcome)
+	rows := storedRows(t, sqlDB, "agent-errorder")
+	require.Len(t, rows, 2, describe(rows))
+	require.Equal(t, apitypes.ThreadRoleError, rows[1].Role)
+	require.Equal(t, terminal.Rows[0].ID, rows[1].ID, "the terminal event names the stored error row")
 }
 
 func TestTurnErrorSinkFailureStaysTransient(t *testing.T) {
-	sink := &recordingSink{failRole: apitypes.ThreadRoleError}
 	resolver := func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
 		return backend.ResolvedModel{}, errors.New("read provider p-1: no rows")
 	}
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	// The outcome write fails like a sick database: nothing durable
+	// can settle the item, so the failure must stay transient.
+	sqlDB, turns := journalFor(t)
+	journal := &lazyJournal{TurnService: turns, sqlDB: sqlDB, seen: make(map[string]struct{})}
+	hook := &journalHook{LifecycleJournal: journal}
+	hook.finishItem = func(ctx context.Context, agentID, itemID, outcome, reason string, msgs []backend.ThreadMessageDraft) (*backend.JournalBatch, error) {
+		return nil, errJournalWrite
+	}
+	mgr := hookedManager(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel:   resolver,
-			PersistTurn:    sink.persist,
-		})
+		}, hook)
 
 	c, sc := wsPair(t)
 
 	itemID := submit(t, mgr, "agent-errsink", "conn-1", sc, "hello")
 
-	// The durable user row landed; the error row's failed write
-	// leaves the failure transient: the event keeps the original
-	// cause, claims no stored id, and the write was still attempted.
+	// The durable user row landed; the outcome's failed write leaves
+	// the failure transient: the event keeps the original cause.
 	p := eventPayload[wstypes.ErrorEvent](t, readUntilError(t, c))
 	require.Equal(t, "read provider p-1: no rows", p.Message)
-	require.Empty(t, p.ID)
 	require.Equal(t, itemID, p.TurnID)
-	calls := sink.recorded()
-	require.Len(t, calls, 2)
-	require.Equal(t, apitypes.ThreadRoleUser, calls[0][0].Role)
-	require.Equal(t, apitypes.ThreadRoleError, calls[1][0].Role)
+
+	// Nothing durable claims the failure: the user row stands alone
+	// and the item stays unresolved for recovery to settle.
+	rows := storedRows(t, sqlDB, "agent-errsink")
+	require.Len(t, rows, 1, describe(rows))
+	require.Equal(t, apitypes.ThreadRoleUser, rows[0].Role)
+	require.Equal(t, "started", itemStates(t, sqlDB, "agent-errsink")[itemID])
 }
 
 func TestTurnStreamErrorPersistsErrorRow(t *testing.T) {
@@ -916,54 +1056,56 @@ func TestTurnStreamErrorPersistsErrorRow(t *testing.T) {
 	}))
 	defer llm.Close()
 
-	sink := &recordingSink{}
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr, sqlDB := journaledLane(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel:   fixedResolver(llm.URL),
-			PersistTurn:    sink.persist,
 		})
 
 	c, sc := wsPair(t)
 
-	submit(t, mgr, "agent-errstream", "conn-1", sc, "hello")
+	itemID := submit(t, mgr, "agent-errstream", "conn-1", sc, "hello")
 
-	p := eventPayload[wstypes.ErrorEvent](t, readUntilError(t, c))
-	require.NotEmpty(t, p.ID)
-	require.NotEmpty(t, p.Message)
-	calls := sink.recorded()
-	require.Len(t, calls, 2)
-	require.Equal(t, apitypes.ThreadRoleError, calls[1][0].Role)
-	require.Equal(t, p.Message, calls[1][0].Content)
-	require.Equal(t, p.ID, calls[1][0].ID)
+	terminal := readTerminal(t, c, itemID)
+	require.Equal(t, apitypes.ItemFailed, terminal.Outcome)
+	rows := storedRows(t, sqlDB, "agent-errstream")
+	require.Len(t, rows, 2, describe(rows))
+	require.Equal(t, apitypes.ThreadRoleError, rows[1].Role)
+	require.Equal(t, terminal.Rows[0].Content, rows[1].Content)
+	require.Equal(t, terminal.Rows[0].ID, rows[1].ID, "the terminal event names the stored error row")
+	require.NotEmpty(t, rows[1].Content)
 }
 
 func TestUserRowSinkFailureFailsTurnBeforeModel(t *testing.T) {
 	llm := newScriptedLLM(t, sseChunk("never reached"))
 
-	sink := &recordingSink{fail: errors.New("db down")}
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	// The user-row write fails like a sick database: a prompt that
+	// cannot become durable never reaches the model.
+	sqlDB, turns := journalFor(t)
+	journal := &lazyJournal{TurnService: turns, sqlDB: sqlDB, seen: make(map[string]struct{})}
+	mgr := hookedManager(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel:   fixedResolver(llm.URL),
-			PersistTurn:    sink.persist,
-		})
+		}, &journalHook{LifecycleJournal: &failingStart{
+			LifecycleJournal: journal, err: errJournalWrite,
+		}})
 
 	c, sc := wsPair(t)
 
-	submit(t, mgr, "agent-sinkfail", "conn-1", sc, "hi")
+	itemID := submit(t, mgr, "agent-sinkfail", "conn-1", sc, "hi")
 
-	// Required persistence: a prompt that is not durable never
-	// reaches the model. The turn fails at message level naming the
-	// write, and the model is never called.
+	// The turn fails at message level naming the write — transiently:
+	// the item never started, so no durable outcome exists to carry
+	// the failure — and the model is never called.
 	p := eventPayload[wstypes.ErrorEvent](t, readUntilError(t, c))
-	require.Contains(t, p.Message, "persist user message")
-	require.Contains(t, p.Message, "db down")
+	require.Contains(t, p.Message, "persist item start")
+	require.Contains(t, p.Message, errJournalWrite.Error())
 	require.Empty(t, llm.requests(), "the model must not be called")
 
-	// The user write and the error-row write were both attempted.
-	calls := sink.recorded()
-	require.Len(t, calls, 2)
-	require.Equal(t, apitypes.ThreadRoleUser, calls[0][0].Role)
-	require.Equal(t, apitypes.ThreadRoleError, calls[1][0].Role)
+	// Nothing durable: the user row rolled back with the failed start.
+	rows := storedRows(t, sqlDB, "agent-sinkfail")
+	require.Empty(t, rows, describe(rows))
+	require.Equal(t, "accepted", itemStates(t, sqlDB, "agent-sinkfail")[itemID],
+		"the never-started item stays accepted for restart recovery")
 }

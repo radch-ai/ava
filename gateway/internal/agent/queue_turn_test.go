@@ -12,7 +12,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
 	"github.com/radch-ai/ava/backend"
@@ -55,7 +54,7 @@ func TestClaimSnapshotPrecedesFirstChunk(t *testing.T) {
 	quick := quickStream(t)
 	defer quick.Close()
 
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread, ResolveModel: fixedResolver(quick.URL)})
 
@@ -96,7 +95,7 @@ func TestSendNowInterruptsActiveAndRunsSelectedNext(t *testing.T) {
 		return backend.ResolvedModel{BaseURL: parked.URL, APIKey: "sk-test", Model: "test-model"}, nil
 	}
 
-	mgr := agent.NewUserAgentManager(zerolog.Nop(),
+	mgr := newJournaledManager(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread, ResolveModel: resolver})
 
@@ -104,11 +103,9 @@ func TestSendNowInterruptsActiveAndRunsSelectedNext(t *testing.T) {
 
 	// A parks mid-stream; B and C wait behind it, both quick.
 	submit(t, mgr, "agent-sendnow", "conn-1", sc, "slow question")
-	_, err := mgr.Submit("agent-sendnow", "conn-1", sc,
-		"b waits", &apitypes.ModelEntry{ID: "quick"}, "")
+	_, err := admitItem(t, mgr, "agent-sendnow", "conn-1", sc, "b waits", &apitypes.ModelEntry{ID: "quick"}, "")
 	require.NoError(t, err)
-	cID, err := mgr.Submit("agent-sendnow", "conn-1", sc,
-		"c chosen", &apitypes.ModelEntry{ID: "quick"}, "")
+	cID, err := admitItem(t, mgr, "agent-sendnow", "conn-1", sc, "c chosen", &apitypes.ModelEntry{ID: "quick"}, "")
 	require.NoError(t, err)
 
 	// The parked turn's first chunk is on the wire.
@@ -124,10 +121,11 @@ func TestSendNowInterruptsActiveAndRunsSelectedNext(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, cID, promoted)
 
-	// The parked turn settles its partial as the final message —
-	// send-now is a stop, not a failure.
-	_, settled := readUntilMessage(t, c)
+	// The parked turn settles its partial as the stopped item's final
+	// row — send-now is a stop, not a failure.
+	_, settled := readUntilSettled(t, c)
 	require.Equal(t, "slow ", settled.Content)
+	require.Equal(t, apitypes.ItemStopped, settled.Event.Outcome)
 
 	// C runs next — its quick answer arrives before B's — and the
 	// queue then continues on its own: B follows with no further

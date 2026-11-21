@@ -18,10 +18,10 @@ INSERT INTO threads (id, agent_id, previous_thread_id) VALUES (?, ?, ?);
 -- thread as its predecessor, in a single statement: the read and the
 -- insert share a statement, so the chain cannot name a stale
 -- pointer. sql.ErrNoRows means unknown agent; the caller then swaps
--- the pointer. created_at is DB-stamped and returned for the
--- completion event.
-INSERT INTO threads (id, agent_id, previous_thread_id)
-SELECT sqlc.arg(thread_id), a.id, a.active_thread_id
+-- the pointer. created_at is the caller's watermark stamp, so the
+-- divider sorts with the rows the same process writes.
+INSERT INTO threads (id, agent_id, previous_thread_id, created_at)
+SELECT sqlc.arg(thread_id), a.id, a.active_thread_id, sqlc.arg(created_ms)
 FROM agents a WHERE a.id = sqlc.arg(agent_id)
 RETURNING previous_thread_id, created_at;
 

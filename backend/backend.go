@@ -67,12 +67,23 @@ func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte) (http.Handler, 
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("seed thread watermark: %w", err)
 	}
+	// Migration 0012 guarantees the singleton history row exists, so a
+	// read failure here is a broken database, not an empty one.
+	historyID, err := queries.GetSyncHistory(context.Background())
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("read sync history: %w", err)
+	}
 	turns := &TurnService{
 		queries:         queries,
 		sqlDB:           sqlDB,
 		vaultStore:      vaultStore,
 		registry:        registry,
+		logger:          logger,
 		lastPersistedMs: watermark,
+		historyID:       historyID,
+	}
+	if err := turns.recoverUnfinished(context.Background()); err != nil {
+		return nil, nil, nil, err
 	}
 	if err := syncToolCatalog(queries, registry.Catalog()); err != nil {
 		return nil, nil, nil, err

@@ -24,7 +24,6 @@ import (
 
 	"github.com/radch-ai/ava/backend"
 	"github.com/radch-ai/ava/backend/apitypes"
-	"github.com/radch-ai/ava/gateway/internal/wsconn"
 	"github.com/radch-ai/ava/gateway/wstypes"
 )
 
@@ -37,32 +36,47 @@ type requiredWriteError struct{ err error }
 func (e *requiredWriteError) Error() string { return e.err.Error() }
 func (e *requiredWriteError) Unwrap() error { return e.err }
 
-// turnRecorder records one run's replay structure through the native
-// assistant-message hook and the tool wrapper's outcome capture.
+// invState is one invocation of the running turn as the prefix snapshot
+// reports it: the recorded intent plus, once it finishes, its outcome.
+// The map key is the invocation id, so the state need not repeat it.
+type invState struct {
+	name      string
+	args      string
+	result    string
+	errText   string
+	pending   bool
+	committed bool // outcome row is durable; the journal carries it now
+}
+
+// turnRecorder records one run's replay structure through the
+// assistant-message hook and the tool wrapper's outcome capture, and
+// keeps the turn's invocation registry for the prefix snapshot.
 type turnRecorder struct {
 	*adk.TypedBaseChatModelAgentMiddleware[*schema.Message]
 
-	agentID string
-	conns   *wsconn.Broadcaster
 	turnID  string
 	emitCtx context.Context
-	sink    TurnSink
+	lane    *UserAgent
 
 	mu     sync.Mutex
 	closed bool
 	last   *schema.Message // the group's text and, at the end, the terminal answer
+	// invocations is the registry; order records first-start order so
+	// the prefix snapshot is stable rather than map-ordered.
+	invocations map[string]*invState
+	order       []string
 }
 
-// newTurnRecorder builds one turn's recorder. Rows are attributed by
-// the sink, which resolves the agent's active thread at write time.
-func newTurnRecorder(lane *UserAgent, sink TurnSink, turnID string, emitCtx context.Context) *turnRecorder {
+// newTurnRecorder builds one turn's recorder. The lane owns the agent
+// identity and the journal the backend attributes rows through; the
+// item's execution thread was resolved when the item started.
+func newTurnRecorder(lane *UserAgent, turnID string, emitCtx context.Context) *turnRecorder {
 	return &turnRecorder{
 		TypedBaseChatModelAgentMiddleware: &adk.TypedBaseChatModelAgentMiddleware[*schema.Message]{},
-		agentID:                           lane.agentID,
-		conns:                             lane.state.conns,
 		turnID:                            turnID,
 		emitCtx:                           emitCtx,
-		sink:                              sink,
+		lane:                              lane,
+		invocations:                       make(map[string]*invState),
 	}
 }
 
@@ -129,68 +143,147 @@ func (r *turnRecorder) AfterModelRewriteState(
 	return ctx, state, nil
 }
 
-// persist writes one required batch. A closed recorder refuses: the
-// turn is over, and a late row would land after the next turn's prompt.
+// persist writes one required batch and publishes the event that carries
+// it. A closed recorder refuses: the turn is over, and a late row would
+// land after the next turn's prompt.
 func (r *turnRecorder) persist(msgs []backend.ThreadMessageDraft) error {
-	if r.sink == nil {
+	if r.lane.journal == nil || r.isClosed() {
 		return nil
 	}
-	if r.isClosed() {
-		return nil
-	}
-	if err := r.sink(r.emitCtx, r.agentID, msgs); err != nil {
+	err := r.lane.state.commitAndPublish(func() (*backend.JournalBatch, error) {
+		batch, err := r.lane.journal.AppendItemMessages(r.emitCtx, r.lane.state.agentID, r.turnID, msgs)
+		if err != nil {
+			return nil, err
+		}
+		// The committed rows ride the journal from here: drop their
+		// text from the replay prefix inside the same publication
+		// boundary, so a mid-turn snapshot never repeats what replay
+		// already delivers.
+		r.lane.dropCommittedPrefix()
+		return batch, nil
+	})
+	if err != nil {
 		return &requiredWriteError{err: err}
 	}
 	return nil
 }
 
-// recordOutcome emits the invocation's wire event and persists its
-// outcome row. It returns a required-write error when persistence
-// fails — the wrapper passes it out of the invocation so the round
-// aborts at message level.
-func (r *turnRecorder) recordOutcome(callID, name, args, result string, invocationErr error) error {
-	var errText *string
-	if invocationErr != nil {
-		// One rendered cause for both the event and the row, so live
-		// and reloaded state never disagree on wording.
-		msg := cleanToolError(invocationErr)
-		errText = &msg
-	}
-	_ = r.conns.WriteJSON(r.emitCtx, wstypes.Event{
-		Type:    wstypes.EventTypeToolResult,
-		AgentID: r.agentID,
-		Data:    wstypes.ToolResultEvent{ID: callID, TurnID: r.turnID, Result: result, Error: errText},
-	})
-
+// recordStart records one invocation's intent before it runs, publishes
+// the event that carries it, and registers the invocation for the prefix
+// snapshot. A required-write error reaches the wrapper, which then never
+// invokes the tool: intent the journal cannot record must not run.
+func (r *turnRecorder) recordStart(invocationID, callID, name, args string) error {
 	if r.isClosed() {
 		return nil
 	}
-	// The envelope's Result is the exact model-facing string;
-	// encoding/json quotes it once, so replay reads it verbatim.
-	envelope, err := json.Marshal(backend.ToolEnvelope{
-		Name:   name,
-		CallID: callID,
-		Args:   rawJSON(args),
-		Result: result,
-		Error:  errText,
+	if r.lane.journal == nil {
+		return nil
+	}
+	err := r.lane.state.commitAndPublish(func() (*backend.JournalBatch, error) {
+		batch, err := r.lane.journal.RecordToolStarted(r.emitCtx, r.lane.state.agentID, r.turnID,
+			invocationID, callID, name, args)
+		if err != nil {
+			return nil, err
+		}
+		// Registration rides the publication boundary: a prefix cut
+		// taken after the frame went out always names this call.
+		r.mu.Lock()
+		r.invocations[invocationID] = &invState{
+			name:    name,
+			args:    args,
+			pending: true,
+		}
+		r.order = append(r.order, invocationID)
+		r.mu.Unlock()
+		return batch, nil
 	})
 	if err != nil {
-		return &requiredWriteError{err: fmt.Errorf("marshal tool envelope: %w", err)}
+		return &requiredWriteError{err: err}
 	}
-	return r.persist([]backend.ThreadMessageDraft{{
-		Role:    apitypes.ThreadRoleTool,
-		Content: string(envelope),
-		TurnID:  r.turnID,
-	}})
+	return nil
 }
 
-// emitToolCall tells the lane's connections a tool is about to run.
-func (r *turnRecorder) emitToolCall(callID, name, args string) {
-	_ = r.conns.WriteJSON(r.emitCtx, wstypes.Event{
-		Type:    wstypes.EventTypeToolCall,
-		AgentID: r.agentID,
-		Data:    wstypes.ToolCallEvent{ID: callID, TurnID: r.turnID, Name: name, Args: args},
+// recordOutcome commits the invocation's outcome row and publishes the
+// event that carries it. It returns a required-write error when the
+// write fails — the wrapper passes it out of the invocation so the round
+// aborts at message level.
+func (r *turnRecorder) recordOutcome(invocationID, callID, name, result string, invocationErr error) error {
+	errText := ""
+	if invocationErr != nil {
+		// One rendered cause for the row and the live bubble, so live
+		// and reloaded state never disagree on wording.
+		errText = cleanToolError(invocationErr)
+	}
+	r.mu.Lock()
+	closed := r.closed
+	if !closed {
+		if inv, ok := r.invocations[invocationID]; ok {
+			inv.result = result
+			inv.errText = errText
+			inv.pending = false
+		}
+	}
+	r.mu.Unlock()
+	if closed || r.lane.journal == nil {
+		return nil
+	}
+	// The journal's error half is a nil-or-value pointer, so an empty
+	// rendered cause stays absent from the stored envelope.
+	var errRef *string
+	if errText != "" {
+		errRef = &errText
+	}
+	err := r.lane.state.commitAndPublish(func() (*backend.JournalBatch, error) {
+		batch, err := r.lane.journal.RecordToolFinished(r.emitCtx, r.lane.state.agentID, r.turnID,
+			invocationID, result, errRef)
+		if err != nil {
+			return nil, err
+		}
+		// The committed outcome rides the journal as a tool row: mark
+		// the invocation inside the publication boundary so a prefix
+		// cut racing the publish cannot still report it as snapshot
+		// state.
+		r.mu.Lock()
+		if inv, ok := r.invocations[invocationID]; ok {
+			inv.committed = true
+		}
+		r.mu.Unlock()
+		return batch, nil
 	})
+	if err != nil {
+		return &requiredWriteError{err: err}
+	}
+	return nil
+}
+
+// snapshotInvocations renders the turn's invocations for a prefix
+// snapshot, pending ones included: a device that reconnects mid-call
+// sees the call that began while it was away. Committed invocations
+// ride the journal as tool rows; the snapshot carries only what is not
+// yet durable.
+func (r *turnRecorder) snapshotInvocations() []wstypes.ToolInvocationState {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]wstypes.ToolInvocationState, 0, len(r.order))
+	for _, id := range r.order {
+		inv, ok := r.invocations[id]
+		if !ok || inv.committed {
+			continue
+		}
+		state := wstypes.ToolInvocationState{
+			InvocationID: id,
+			Name:         inv.name,
+			Args:         inv.args,
+			Result:       inv.result,
+			Error:        inv.errText,
+			Pending:      inv.pending,
+		}
+		out = append(out, state)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // close ends the turn's recording window. Late invocations may still

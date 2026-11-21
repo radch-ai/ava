@@ -30,17 +30,18 @@ export async function getAgentThread(
 	limit = 20,
 	cursor?: string
 ): Promise<AgentThread> {
-	const params = new URLSearchParams({ limit: String(limit) })
-	if (cursor) {
-		params.set('cursor', cursor)
-	}
 	const response = await api
-		.get(`agent/${agentId}/thread?${params.toString()}`)
+		.get(`agent/${agentId}/thread`, {
+			searchParams: { limit: String(limit), ...(cursor ? { cursor } : {}) }
+		})
 		.json<unknown>()
-	return validateThread(response)
+	return parseAgentThread(response)
 }
 
-function validateThread(thread: unknown): AgentThread {
+/** Validates one page body — the display endpoint's or the synchronization
+ * snapshot's, which carry the same shape. Unknown shapes are rejected rather
+ * than partially rendered. */
+export function parseAgentThread(thread: unknown): AgentThread {
 	if (typeof thread !== 'object' || thread === null) {
 		throw new Error('Invalid thread: expected an object')
 	}

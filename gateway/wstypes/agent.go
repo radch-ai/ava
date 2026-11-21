@@ -1,5 +1,7 @@
 package wstypes
 
+import "encoding/json"
+
 // Queue item kinds. QueueItemKindPrompt is an ordinary Eino turn;
 // QueueItemKindNewThread is a /new or /reset command. Every item
 // carries one of these — there is no zero-value spelling.
@@ -45,51 +47,26 @@ type LaneStatus struct {
 	Working   bool   `json:"working"`
 	Reasoning bool   `json:"reasoning"`
 	Model     string `json:"model"`
-	QueueLen  int    `json:"queue_len"`
-	ConnCount int    `json:"conn_count"`
 }
 
-// QueueItem is one queued prompt: the model selection captured at
-// submission (nil = default routing) rides the item. Kind is always
-// set — a command or an ordinary prompt.
+// QueueItem is one queued prompt. Kind is always set — a command or an
+// ordinary prompt. The item's model selection is not projected: routing
+// is the queue's business, and the transcript shows what actually ran.
 type QueueItem struct {
-	ID      string    `json:"id"`
-	Content string    `json:"content"`
-	Kind    string    `json:"kind,omitempty"`
-	Model   *ModelRef `json:"model,omitempty"`
+	ID      string `json:"id"`
+	Content string `json:"content"`
+	Kind    string `json:"kind"`
 }
 
-// QueueActiveItem is the executing item. UserMessageID names the
-// started turn's persisted user row — distinct from the stream ID,
+// QueueActiveItem is the executing item. UserMessageID names its
+// persisted user row — server-assigned and distinct from the stream ID,
 // which stays the item ID. Commands persist no user row, so they omit
 // it. Kind is always set, like the queued item's.
 type QueueActiveItem struct {
-	ID            string    `json:"id"`
-	Content       string    `json:"content"`
-	Kind          string    `json:"kind,omitempty"`
-	Model         *ModelRef `json:"model,omitempty"`
-	UserMessageID string    `json:"user_message_id,omitempty"`
-}
-
-// CommandCompletedEvent is the payload of a command_completed event:
-// the durable thread switch committed. Divider is the display record
-// the UI appends; PreviousThreadID names the thread the new one
-// replaced.
-type CommandCompletedEvent struct {
-	ItemID           string        `json:"item_id"`
-	ThreadID         string        `json:"thread_id"`
-	PreviousThreadID string        `json:"previous_thread_id"`
-	Divider          ThreadDivider `json:"divider"`
-}
-
-// ThreadDivider is one thread boundary's display record: the thread
-// id as its id, the boundary label, and the thread's creation time.
-// It mirrors the display endpoint's generated divider row, in the
-// wire's snake_case.
-type ThreadDivider struct {
-	ID        string `json:"id"`
-	Content   string `json:"content"`
-	CreatedAt string `json:"created_at"`
+	ID            string `json:"id"`
+	Content       string `json:"content"`
+	Kind          string `json:"kind"`
+	UserMessageID string `json:"user_message_id,omitempty"`
 }
 
 // QueueResultEvent is the payload of a queue_result event: the reply
@@ -115,53 +92,78 @@ type QueueStateEvent struct {
 }
 
 // MessageChunkEvent is the payload of a message_chunk event: one
-// streamed piece of the answer in flight. The final message event
-// with the same ID is the authoritative record.
+// streamed piece of the answer in flight. Seq is the stream's own
+// increasing sequence — a client ignores a duplicate and reconnects on a
+// gap rather than display incomplete text. Streaming is transient: the
+// authoritative record is the committed row in the lifecycle feed.
 type MessageChunkEvent struct {
 	ID    string `json:"id"`
 	Delta string `json:"delta"`
+	Seq   int64  `json:"seq"`
 }
 
-// ToolCallEvent is the payload of a tool_call event: the model
-// invoked a tool. ID is the model's tool-call id; the matching
-// tool_result carries the same one. TurnID names the queue item that
-// issued the call — a late result keeps its turn, not whichever turn
-// is active when it lands.
-type ToolCallEvent struct {
-	ID     string `json:"id"`
-	TurnID string `json:"turn_id,omitempty"`
-	Name   string `json:"name"`
-	Args   string `json:"args"`
-}
-
-// ToolResultEvent is the payload of a tool_result event: one
-// invocation completed. Error is set when the tool failed; result
-// then carries whatever the tool managed to say. TurnID matches the
-// originating tool_call's.
-type ToolResultEvent struct {
-	ID     string  `json:"id"`
-	TurnID string  `json:"turn_id,omitempty"`
-	Result string  `json:"result"`
-	Error  *string `json:"error,omitempty"`
-}
-
-// MessageEvent is the payload of a message event: the assistant's
-// completed answer to a turn.
-type MessageEvent struct {
-	ID      string `json:"id"`
-	Content string `json:"content"`
-}
-
-// ErrorEvent is the payload of an error event: why a turn failed.
-// Tool is set when a tool invocation failed the turn — its row
-// already shows the failure, so clients need not repeat it. ID names
-// the stored error row when the failure persisted; without one the
-// error is transient (tool failures, a failed write — stopped turns
-// emit nothing at all). TurnID names the failed turn's stream, like
-// the message events'.
+// ErrorEvent is the payload of a transient error event: why a turn
+// failed when nothing durable could carry the failure. Tool is set when a
+// tool invocation failed the turn — its own row already shows the
+// failure, so clients need not repeat it. Durable failures arrive as
+// lifecycle events carrying their stored rows; this frame never does.
 type ErrorEvent struct {
-	ID      string `json:"id,omitempty"`
 	TurnID  string `json:"turn_id,omitempty"`
 	Message string `json:"message"`
 	Tool    string `json:"tool,omitempty"`
+}
+
+// SyncMessage is the payload of a sync frame: continue from the cursor the
+// client last applied, or omit it for a fresh baseline. A client that
+// reconnects keeps its cursor and replays what it missed.
+type SyncMessage struct {
+	Cursor string `json:"cursor,omitempty"`
+}
+
+// SyncSnapshotEvent answers a sync request with the authoritative
+// baseline — the active thread's newest display page — and the cursor a
+// client checkpoints after applying it. Page is an apitypes.ThreadPage.
+type SyncSnapshotEvent struct {
+	Cursor string          `json:"cursor"`
+	Page   json.RawMessage `json:"page"`
+}
+
+// SyncReadyEvent ends synchronization: the committed head and the runtime
+// state a live client needs. Queue and Lane replace stale runtime state;
+// Prefix is the in-flight turn's answer so far while its worker lives.
+type SyncReadyEvent struct {
+	Cursor string          `json:"cursor"`
+	Queue  QueueStateEvent `json:"queue"`
+	Lane   LaneStatus      `json:"lane"`
+	Prefix *TurnPrefix     `json:"prefix,omitempty"`
+}
+
+// TurnPrefix is one in-flight turn's replayable state: the answer text
+// streamed so far, the last chunk sequence it includes, and every
+// invocation of the turn — pending ones included.
+type TurnPrefix struct {
+	ItemID      string                `json:"item_id"`
+	Text        string                `json:"text"`
+	LastSeq     int64                 `json:"last_seq"`
+	Invocations []ToolInvocationState `json:"invocations,omitempty"`
+}
+
+// ToolInvocationState is one tool invocation of the in-flight turn, keyed
+// by the server-assigned invocation id.
+type ToolInvocationState struct {
+	InvocationID string `json:"invocation_id"`
+	Name         string `json:"name"`
+	Args         string `json:"args"`
+	Result       string `json:"result,omitempty"`
+	Error        string `json:"error,omitempty"`
+	Pending      bool   `json:"pending"`
+}
+
+// LifecycleBatchEvent is one committed transaction's lifecycle events
+// (backend/apitypes.LifecycleEvent) plus the cursor a client checkpoints
+// after applying them — the payload of both the sync_batch replay answer
+// and the live lifecycle feed.
+type LifecycleBatchEvent struct {
+	Cursor string            `json:"cursor"`
+	Events []json.RawMessage `json:"events"`
 }

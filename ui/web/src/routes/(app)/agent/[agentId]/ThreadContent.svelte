@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { BrainCircuit } from '@lucide/svelte'
 	import { Separator } from '#components/ui/separator'
-	import { renderMarkdown } from '#lib/services/agent/markdown'
 	import { threadRowKey } from '#lib/services/agent/thread'
 	import type { ThreadItem } from '#lib/types/agent'
+	import MarkdownBody from './MarkdownBody.svelte'
 	import ToolLine from './ToolLine.svelte'
 
 	interface Props {
@@ -12,10 +12,21 @@
 
 	let { threadItems }: Props = $props()
 
-	// A persisted tool row carries the envelope as content; the
-	// fields ToolLine wants come out of it.
-	function toolEntry(message: ThreadItem) {
-		if (message.name !== undefined) return message
+	/** A tool row with the invocation's name resolved: a live row
+	 * carries it already, a persisted one parses it from the
+	 * envelope. */
+	type ToolRow = ThreadItem & { name: string }
+
+	// A persisted tool row carries the envelope as content; the fields
+	// ToolLine wants come out of it. Committed rows are immutable, so
+	// one parse per row serves every rebuild.
+	const parsedTools = new WeakMap<ThreadItem, ToolRow>()
+
+	function toolEntry(message: ThreadItem): ToolRow {
+		if (isNamedToolRow(message)) return message
+		const cached = parsedTools.get(message)
+		if (cached) return cached
+		let entry: ToolRow
 		try {
 			const env = JSON.parse(message.content) as {
 				name?: string
@@ -23,7 +34,7 @@
 				result?: unknown
 				error?: string | null
 			}
-			return {
+			entry = {
 				...message,
 				name: env.name ?? '',
 				args:
@@ -37,7 +48,7 @@
 				error: env.error ?? null
 			}
 		} catch {
-			return {
+			entry = {
 				...message,
 				name: message.content,
 				args: '',
@@ -45,6 +56,14 @@
 				error: null
 			}
 		}
+		parsedTools.set(message, entry)
+		return entry
+	}
+
+	/** A live tool row carries its invocation name already; persisted
+	 * ones recover theirs from the envelope parse. */
+	function isNamedToolRow(row: ThreadItem): row is ToolRow {
+		return row.name !== undefined
 	}
 </script>
 
@@ -100,10 +119,7 @@
 				</span>
 			</div>
 		{:else}
-			<div class="text-foreground mb-4 w-full text-[15px] leading-relaxed">
-				<!-- biome-ignore lint/nursery/noSvelteAtHtmlTags: model output is sanitized with dompurify inside renderMarkdown -->
-				{@html renderMarkdown(message.content)}
-			</div>
+			<MarkdownBody content={message.content} />
 		{/if}
 	{/each}
 {/if}
