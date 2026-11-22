@@ -20,7 +20,9 @@ export interface ProviderRow {
 }
 
 /** A tool row as the mock stores it — the backend's tools table.
- * kind is "builtin" or "mcp"; serverId names the owning MCP server. */
+ * kind is "builtin" or "mcp"; serverId names the owning MCP server.
+ * The definition is the sanitized listing entry the settings page
+ * inspects. */
 export interface ToolRow {
 	id: string
 	name: string
@@ -28,6 +30,7 @@ export interface ToolRow {
 	enabled: boolean
 	kind: 'builtin' | 'mcp'
 	serverId?: string
+	definitionJson?: string
 }
 
 /** One conversation boundary as the mock stores it. */
@@ -55,12 +58,13 @@ export interface MockStore {
 	tools: ToolRow[]
 	/** The MCP server rows; their tools live in tools by serverId. */
 	mcpServers: McpServerRow[]
-	/** Granted tool ids per agent — presence is the whole meaning,
-	 * seeded for built-ins like the database's insert rules. */
-	toolGrants: Map<string, Set<string>>
-	/** Per-agent MCP gate per server — present = configured, value =
-	 * enabled. Absent = never approved (default-deny), matching
-	 * agent_mcp_preferences' tri-state. */
+	/** Tool ids per agent that the agent explicitly disabled — absence is
+	 * inheritance. Mirrors agent_disabled_tools: presence is the whole
+	 * meaning. */
+	agentDisabledTools: Map<string, Set<string>>
+	/** Per-agent MCP gate per server: present = the stored row, value =
+	 * enabled. Absent reads as off — presence is the whole meaning,
+	 * matching agent_mcp_preferences. */
 	agentMcpGates: Map<string, Map<string, boolean>>
 	/**
 	 * Threads per agent id, newest (active) last. Each holds its own
@@ -151,8 +155,8 @@ export const PROVIDER_SEED_DATA: Array<{
 	}
 ]
 
-/** The installed catalog: the built-in search tool, default ON, plus
- * the seeded MCP server's tools — granted to no agent by default. */
+/** The installed catalog: the built-in search tool (default ON) plus the
+ * seeded MCP server's tools, which discovery installs globally OFF. */
 const TOOL_SEEDS: ToolRow[] = [
 	{
 		id: 'duckduckgo_search',
@@ -165,39 +169,38 @@ const TOOL_SEEDS: ToolRow[] = [
 		id: 'notes-mcp:search_notes',
 		name: 'search_notes',
 		description: 'Full-text search across the local notes store.',
-		enabled: true,
+		enabled: false,
 		kind: 'mcp',
-		serverId: 'notes-mcp'
+		serverId: 'notes-mcp',
+		definitionJson:
+			'{"name":"search_notes","description":"Full-text search across the local notes store.","inputSchema":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}}'
 	},
 	{
 		id: 'notes-mcp:fetch_note',
 		name: 'fetch_note',
 		description: 'Reads one note by id.',
-		enabled: true,
+		enabled: false,
 		kind: 'mcp',
-		serverId: 'notes-mcp'
+		serverId: 'notes-mcp',
+		definitionJson:
+			'{"name":"fetch_note","description":"Reads one note by id.","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}}'
 	}
 ]
 
-/** Built-in ids — the default grant every agent starts with. */
-export const BUILTIN_TOOL_IDS = TOOL_SEEDS.filter(
-	(tool) => tool.kind === 'builtin'
-).map((tool) => tool.id)
-
 /** An MCP server row as the mock stores it — the backend's
  * mcp_servers table. Secret values are never stored here either:
- * envKeys/headerKeys are names only. */
+ * headerKeys are names only. */
 export interface McpServerRow {
 	id: string
 	name: string
-	transport: 'stdio' | 'http'
-	command?: string
-	args: string[]
 	url?: string
-	envKeys: string[]
 	headerKeys: string[]
 	timeoutMs?: number
 	enabled: boolean
+	/** "active" | "paused" — a rejected generation pauses the catalog. */
+	catalogState: 'active' | 'paused'
+	allowPrivateNetwork: boolean
+	allowPlaintext: boolean
 	lastError?: string
 	refreshedAt?: number
 }
@@ -206,12 +209,12 @@ const MCP_SERVER_SEEDS: McpServerRow[] = [
 	{
 		id: 'notes-mcp',
 		name: 'Notes MCP',
-		transport: 'stdio',
-		command: 'notes-mcp',
-		args: ['--stdio'],
-		envKeys: ['NOTES_TOKEN'],
-		headerKeys: [],
+		url: 'http://127.0.0.1:3333/mcp',
+		headerKeys: ['Authorization'],
 		enabled: true,
+		catalogState: 'active',
+		allowPrivateNetwork: true,
+		allowPlaintext: true,
 		refreshedAt: ANCHOR
 	}
 ]
@@ -416,7 +419,7 @@ export function createSeedData(): MockStore {
 		])
 	])
 
-	return {
+	const store: MockStore = {
 		agents: [...AGENT_SEEDS],
 		configurations: new Map(CONFIGURATIONS),
 		heartbeats: new Map(Object.entries(HEARTBEATS)),
@@ -424,9 +427,9 @@ export function createSeedData(): MockStore {
 		providers: structuredClone(PROVIDER_SEEDS),
 		tools: structuredClone(TOOL_SEEDS),
 		mcpServers: structuredClone(MCP_SERVER_SEEDS),
-		toolGrants: new Map(
+		agentDisabledTools: new Map(
 			[SUPERAGENT_AGENT_ID, ...AGENT_SEEDS.map((agent) => agent.id)].map(
-				(id) => [id, new Set(BUILTIN_TOOL_IDS)]
+				(id) => [id, new Set<string>()]
 			)
 		),
 		agentMcpGates: new Map(
@@ -439,4 +442,12 @@ export function createSeedData(): MockStore {
 		activity: seedActivity(),
 		token: 'ava-mock-token'
 	}
+
+	// One explicit opt-out: scribe disabled fetch_note, so enabling that
+	// tool globally must still leave this agent without it.
+	store.agentDisabledTools.get('scribe')?.add('notes-mcp:fetch_note')
+	// Scribe also uses the notes server, so the opt-out is visible in an
+	// otherwise usable group.
+	store.agentMcpGates.get('scribe')?.set('notes-mcp', true)
+	return store
 }

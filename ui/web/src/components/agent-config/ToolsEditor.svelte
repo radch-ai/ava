@@ -4,6 +4,7 @@
 	import type {
 		ViewerEntry,
 		ViewerServerEntry,
+		ViewerStatus,
 		ViewerToolEntry
 	} from '#components/tools/viewer-types'
 	import { groupTools } from '#components/tools/viewer-types'
@@ -12,9 +13,7 @@
 		toggleAgentMcp,
 		toggleAgentTool
 	} from '#lib/services/agent/config'
-	import { getMcpServers } from '#lib/services/mcp'
 	import { FIELD_CONFIGS } from '#lib/types/agent'
-	import type { McpServer } from '#lib/types/mcp'
 	import type { AgentTool } from '#lib/types/tool'
 	import { errorMessage } from '#lib/utils/errors'
 	import { createToggleQueue } from '#lib/utils/toggle-queue.svelte'
@@ -31,22 +30,49 @@
 
 	let { agentId, value, onchange }: Props = $props()
 
-	// The tool list refetches on every panel open: global switches
-	// change on the MCP & Tools page, so a cache would need
+	// One server row carries everything this panel renders about its
+	// owning server: the listing supplies it, so no second fetch happens.
+	interface ServerRow {
+		id: string
+		name: string
+		enabled: boolean
+		catalogState: string
+	}
+
+	// The tool list refetches on every panel open: global switches and
+	// server state change on the MCP & Tools page, so a cache would need
 	// invalidation from there for a handful of rows.
 	let tools = $state<AgentTool[]>([])
-	let servers = $state<McpServer[]>([])
+	let servers = $state<ServerRow[]>([])
 	let gates = new SvelteMap<string, boolean>()
 	let isLoading = $state(false)
 	let loadError = $state<string | null>(null)
 	let fetchAgent: string | undefined
 
+	// Where every global blocker is managed: one page owns global
+	// switches, server state and definition inspection.
+	const manageUrl = resolve('/(app)/settings/tools')
+
 	function adoptListing(
 		rows: AgentTool[],
-		gateRows: { serverId: string; agentEnabled: boolean }[]
+		gateRows: {
+			serverId: string
+			name: string
+			agentEnabled: boolean
+			serverEnabled: boolean
+			catalogState: string
+		}[]
 	): void {
 		tools = rows
-		saved = new SvelteMap(rows.map((row) => [row.id, row.agentEnabled]))
+		servers = gateRows.map((gate) => ({
+			id: gate.serverId,
+			name: gate.name,
+			enabled: gate.serverEnabled,
+			catalogState: gate.catalogState
+		}))
+		// The switch means "available to this agent": inherited unless the
+		// agent holds an explicit opt-out.
+		saved = new SvelteMap(rows.map((row) => [row.id, !row.locallyDisabled]))
 		gates = new SvelteMap(
 			gateRows.map((gate) => [gate.serverId, gate.agentEnabled])
 		)
@@ -65,13 +91,9 @@
 		loadError = null
 		if (!id) return
 		isLoading = true
-		Promise.all([
-			getAgentTools(id),
-			getMcpServers().catch(() => [] as McpServer[])
-		])
-			.then(([listing, serverRows]) => {
+		getAgentTools(id)
+			.then((listing) => {
 				if (fetchAgent !== id) return
-				servers = serverRows
 				adoptListing(listing.tools, listing.servers)
 			})
 			.catch((error: unknown) => {
@@ -83,28 +105,29 @@
 			})
 	})
 
-	// Saved is the persisted grant per row; the shared queue holds a
-	// desired flip while its request is debounced or in flight.
+	// Saved is the persisted availability per row; the shared queue holds
+	// a desired flip while its request is debounced or in flight.
 	let saved = new SvelteMap<string, boolean>()
 	let actionError = $state<string | null>(null)
 
 	const queue = createToggleQueue<AgentTool>({
 		apply: async (tool, enabled) => {
-			if (!agentId) return tool.agentEnabled
+			if (!agentId) return !tool.locallyDisabled
 			const id = agentId
 			const row = await toggleAgentTool(id, tool.id, { enabled })
-			if (fetchAgent === id) saved.set(tool.id, row.agentEnabled)
-			return row.agentEnabled
+			if (fetchAgent === id) saved.set(tool.id, !row.locallyDisabled)
+			return !row.locallyDisabled
 		},
-		persisted: (tool) => saved.get(tool.id) ?? tool.agentEnabled,
+		persisted: (tool) => saved.get(tool.id) ?? !tool.locallyDisabled,
 		rowFor: (rowId) => tools.find((row) => row.id === rowId),
 		onError: (message) => (actionError = message)
 	})
 
-	// Server gates: the first enable approves the server's current
-	// tools; later toggles keep every per-tool choice. The response is
-	// the refreshed listing, so one round-trip re-renders everything.
-	const serverQueue = createToggleQueue<McpServer>({
+	// Server gates: the gate decides whether this agent uses the server's
+	// globally enabled tools; it never seeds or revokes a per-tool choice.
+	// The response is the refreshed listing, so one round-trip re-renders
+	// everything.
+	const serverQueue = createToggleQueue<ServerRow>({
 		apply: async (server, enabled) => {
 			if (!agentId) return false
 			const id = agentId
@@ -126,10 +149,47 @@
 	$effect(() => () => queue.teardown())
 	$effect(() => () => serverQueue.teardown())
 
+	// A global blocker is not the agent's choice: it renders as a label
+	// with the page that owns the switch.
+	function serverStatus(server: ServerRow): ViewerStatus | undefined {
+		if (!server.enabled) {
+			return {
+				kind: 'server-disabled',
+				text: 'Server disabled globally — Manage in MCP & Tools',
+				manageUrl
+			}
+		}
+		if (server.catalogState === 'paused') {
+			return {
+				kind: 'paused',
+				text: 'Unavailable globally — Manage in MCP & Tools',
+				manageUrl
+			}
+		}
+		return undefined
+	}
+
+	function toolStatus(
+		tool: AgentTool,
+		server: ServerRow | undefined
+	): ViewerStatus | undefined {
+		// A globally off tool carries its own switch as the blocker, even
+		// under a healthy server: the server row explains the server.
+		if (!tool.globalEnabled) {
+			return {
+				kind: 'globally-disabled',
+				text: 'Disabled globally — Manage in MCP & Tools',
+				manageUrl
+			}
+		}
+		if (server) return serverStatus(server)
+		return undefined
+	}
+
 	function toolEntry(
 		tool: AgentTool,
-		dimmed: boolean,
-		disabled: boolean
+		server: ServerRow | undefined,
+		dimmed: boolean
 	): ViewerToolEntry {
 		return {
 			row: {
@@ -139,14 +199,15 @@
 				badges: tool.globalEnabled ? [] : ['Disabled globally']
 			},
 			state: {
-				// A globally disabled tool renders off regardless of the
-				// grant; the switch, not the grant, gates use.
-				checked: tool.globalEnabled ? queue.displayed(tool) : false,
-				disabled: disabled || queue.flushing.has(tool.id),
+				// A blocked tool renders off: the agent's own switch cannot
+				// overcome a global one.
+				checked: dimmed ? false : queue.displayed(tool),
+				disabled: dimmed || queue.flushing.has(tool.id),
 				dimmed
 			},
 			label: `Enable ${tool.name} for this agent`,
-			ontoggle: () => queue.toggle(tool)
+			ontoggle: () => queue.toggle(tool),
+			status: toolStatus(tool, server)
 		}
 	}
 
@@ -158,24 +219,27 @@
 
 		const rows: ViewerEntry[] = builtins.map((tool) => ({
 			kind: 'tool',
-			entry: toolEntry(tool, !tool.globalEnabled, !tool.globalEnabled)
+			entry: toolEntry(tool, undefined, !tool.globalEnabled)
 		}))
 
 		for (const server of servers) {
 			const gateOn = serverQueue.displayed(server)
-			// A server disabled globally is inert here too — the gate
-			// renders off and inert (its saved state is untouched), so
-			// the agent page can never show a dead server as active.
-			const serverGloballyOn = server.enabled
+			// A server disabled globally, or a paused catalog, is inert here
+			// too — the gate renders off and inert (its saved state is
+			// untouched), so the agent page can never show a dead server as
+			// active.
+			const serverGloballyOn =
+				server.enabled && server.catalogState === 'active'
+			// The gate is the agent's own choice: off hides the nested rows
+			// without a blocker label (the viewer owns that collapse).
 			const entry: ViewerServerEntry = {
 				row: {
 					id: server.id,
 					name: server.name,
-					badges: serverGloballyOn ? [] : ['Disabled globally']
+					badges: server.enabled ? [] : ['Disabled globally']
 				},
-				transport: server.transport,
-				toolCount: server.toolCount,
-				lastError: server.lastError,
+				toolCount: (byServer.get(server.id) ?? []).length,
+				status: serverStatus(server),
 				state: {
 					checked: gateOn && serverGloballyOn,
 					disabled: !serverGloballyOn || serverQueue.flushing.has(server.id),
@@ -186,7 +250,7 @@
 				tools: (byServer.get(server.id) ?? []).map((tool) =>
 					toolEntry(
 						tool,
-						!gateOn || !tool.globalEnabled || !serverGloballyOn,
+						server,
 						!gateOn || !tool.globalEnabled || !serverGloballyOn
 					)
 				)
@@ -215,7 +279,7 @@
 					Tool access saves immediately — it is not part of Save/Cancel.
 				</p>
 				<a
-					href={resolve('/(app)/settings/tools')}
+					href={manageUrl}
 					class="text-primary shrink-0 text-sm underline-offset-4 hover:underline"
 				>
 					Manage MCP &amp; Tools

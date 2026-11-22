@@ -35,7 +35,6 @@ function serverEntry(overrides: {
 		kind: 'server',
 		entry: {
 			row: { id: 'notes-mcp', name: 'Notes MCP' },
-			transport: 'stdio',
 			toolCount: 1,
 			state: { checked: true, disabled: false },
 			label: 'Enable Notes MCP globally',
@@ -157,5 +156,65 @@ describe('ToolViewer', () => {
 		await expect
 			.element(page.getByRole('switch', { name: 'Enable search globally' }))
 			.not.toBeInTheDocument()
+	})
+})
+
+// Status lines surface policy state the switch cannot express: a paused
+// catalog blocks calls, and a global blocker is a link to where it is
+// managed.
+describe('ToolViewer status lines', () => {
+	afterEach(() => {
+		cleanup()
+	})
+
+	it('renders a server status line', async () => {
+		const entry = serverEntry({})
+		if (entry.kind !== 'server') throw new Error('server entry expected')
+		entry.entry.status = {
+			kind: 'paused',
+			text: 'Catalog paused after a rejected refresh — refresh to retry'
+		}
+		render(ToolViewer, { entries: [entry] })
+
+		await expect
+			.element(page.getByText(/Catalog paused after a rejected refresh/))
+			.toBeVisible()
+	})
+
+	it('renders a nested tool status and keeps it inert', async () => {
+		const entry = serverEntry({ toolDisabled: true })
+		if (entry.kind !== 'server') throw new Error('server entry expected')
+		entry.entry.tools[0].status = {
+			kind: 'globally-disabled',
+			text: 'Disabled globally — Manage in MCP & Tools',
+			manageUrl: '/settings/tools'
+		}
+		render(ToolViewer, { entries: [entry] })
+
+		// The nested rows live behind the collapse trigger.
+		await page.getByRole('heading', { name: 'Notes MCP' }).click()
+		await expect
+			.element(page.getByText(/Disabled globally — Manage in MCP & Tools/))
+			.toBeVisible()
+		await expect
+			.element(page.getByRole('switch', { name: 'Enable search globally' }))
+			.toBeDisabled()
+	})
+
+	it('renders a blocker status as a link when it has somewhere to go', async () => {
+		const entry = serverEntry({ toolDisabled: true })
+		if (entry.kind !== 'server') throw new Error('server entry expected')
+		entry.entry.status = {
+			kind: 'server-disabled',
+			text: 'Server disabled globally — Manage in MCP & Tools',
+			manageUrl: '/settings/tools'
+		}
+		render(ToolViewer, { entries: [entry] })
+
+		const link = page.getByRole('link', {
+			name: 'Server disabled globally — Manage in MCP & Tools'
+		})
+		await expect.element(link).toBeVisible()
+		await expect.element(link).toHaveAttribute('href', '/settings/tools')
 	})
 })

@@ -67,9 +67,8 @@ type LifecycleJournal interface {
 }
 
 // AgentConfigSource reads an agent's editable config — the prompt
-// texts and tool list a turn needs. An alias of backend
-// TurnService.GetAgentConfig, so the bound method value needs no
-// adapter.
+// texts a turn needs. An alias of backend TurnService.GetAgentConfig,
+// so the bound method value needs no adapter.
 type AgentConfigSource = func(ctx context.Context, agentID string) (*apitypes.AgentConfig, error)
 
 // AgentToolsFunc fetches an agent's effective tools for a turn —
@@ -77,6 +76,12 @@ type AgentConfigSource = func(ctx context.Context, agentID string) (*apitypes.Ag
 // backend TurnService.AgentTools, so the bound method value needs no
 // adapter.
 type AgentToolsFunc = func(ctx context.Context, agentID string) ([]tool.InvokableTool, error)
+
+// ToolCopyScrubber sanitizes one tool-call copy for persistence and
+// emission. An alias of backend TurnService.ScrubToolCopy, so the bound
+// method value needs no adapter. A nil scrubber falls back to the shared
+// pattern battery.
+type ToolCopyScrubber = func(ctx context.Context, agentID, content string) string
 
 // AgentThreadSource reads the agent's active thread as the turn's
 // model input. An alias of backend TurnService.GetAgentThread, so the
@@ -118,7 +123,12 @@ type UserAgentOptions struct {
 	// GetAgentThread reads one thread as the turn's model input;
 	// bound by the gateway at boot.
 	GetAgentThread AgentThreadSource
-	Logger         zerolog.Logger
+	// ScrubToolCopy sanitizes every observable copy of a tool call —
+	// arguments, results, error text — with the agent's known secrets
+	// plus the pattern battery; bound by the gateway at boot (nil keeps
+	// the pattern battery alone).
+	ScrubToolCopy ToolCopyScrubber
+	Logger        zerolog.Logger
 }
 
 // UserAgent is one agent's disposable runtime worker: it executes
@@ -156,6 +166,9 @@ type UserAgent struct {
 	tools          AgentToolsFunc
 	getAgentThread AgentThreadSource
 	journal        LifecycleJournal
+	// scrubToolCopy sanitizes observable copies; nil keeps the shared
+	// pattern battery alone.
+	scrubToolCopy ToolCopyScrubber
 }
 
 // newUserAgent creates a worker and starts its claim loop. Turn
@@ -170,11 +183,27 @@ func newUserAgent(opts UserAgentOptions) *UserAgent {
 		tools:          opts.Tools,
 		getAgentThread: opts.GetAgentThread,
 		journal:        opts.Journal,
+		scrubToolCopy:  opts.ScrubToolCopy,
 		onExit:         opts.OnExit,
 	}
 
 	go a.loop()
 	return a
+}
+
+// scrubCopy sanitizes one observable copy of tool-call content:
+// the agent's known secrets plus the pattern battery when the backend
+// seam is bound, the pattern battery alone otherwise. The copy is detached
+// from the invocation's cancel — a stopped call's text still needs its
+// credentials removed — and never fails the turn.
+func (a *UserAgent) scrubCopy(ctx context.Context, content string) string {
+	if content == "" {
+		return content
+	}
+	if a.scrubToolCopy == nil {
+		return fanOutScrubber(content)
+	}
+	return a.scrubToolCopy(context.WithoutCancel(ctx), a.state.agentID, content)
 }
 
 // prefixSnapshotLocked captures the live turn's replayable state, or
@@ -422,7 +451,7 @@ func (a *UserAgent) failEvent(emitCtx context.Context, claim *turnClaim, msgID s
 		return a.finishInterrupted(emitCtx, msgID, answer)
 	}
 	a.logger.Error().Err(err).Str("agent_id", a.state.agentID).Msg("model query")
-	text, toolName := turnError(err)
+	text, toolName := a.turnError(emitCtx, err)
 	if a.failTurn(emitCtx, msgID, text, toolName) {
 		// A tool-attributed failure already shows on its own row and
 		// must not pause the queue.

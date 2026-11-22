@@ -4,18 +4,26 @@
 	import type {
 		ViewerEntry,
 		ViewerServerEntry,
-		ViewerToolEntry
+		ViewerStatus,
+		ViewerToolEntry,
+		ViewerToolInspect
 	} from '#components/tools/viewer-types'
 	import { groupTools } from '#components/tools/viewer-types'
 	import * as AlertDialog from '#components/ui/alert-dialog'
 	import { Button } from '#components/ui/button'
 	import {
 		deleteMcpServer,
+		getMcpToolDefinition,
 		refreshMcpServer,
 		setMcpServerEnabled
 	} from '#lib/services/mcp'
 	import { toggleTool } from '#lib/services/tools'
-	import type { McpServer } from '#lib/types/mcp'
+	import type {
+		McpServer,
+		McpServerWithToolsResponse,
+		McpSkippedTool,
+		McpToolDefinitionResponse
+	} from '#lib/types/mcp'
 	import type { Tool } from '#lib/types/tool'
 	import { errorMessage } from '#lib/utils/errors'
 	import { createToggleQueue } from '#lib/utils/toggle-queue.svelte'
@@ -86,21 +94,85 @@
 	let deleting = $state<McpServer | null>(null)
 	let confirmDelete = $state(false)
 
-	function onsaved(): void {
+	// Tools a discovery pass reported but could not represent: visible
+	// reasons, never silent drops. Cleared on dismiss and replaced by the
+	// next save or refresh.
+	let skipped = $state<McpSkippedTool[] | null>(null)
+
+	function onsaved(result?: McpServerWithToolsResponse): void {
 		editing = null
+		skipped = result?.skippedTools ?? null
+		clearDefinitions()
 		void invalidateAll()
+	}
+
+	// Definition inspection: this page owns every global fact, so the
+	// agent editor stays switches and blocker labels. A re-listing
+	// invalidates every cached definition — a shown definition must never
+	// outlive the discovery pass that produced it.
+	let openDefinitions = new SvelteMap<string, boolean>()
+	let definitions = new SvelteMap<string, McpToolDefinitionResponse>()
+	let loadingDefinitions = new SvelteSet<string>()
+	let definitionError = $state<string | null>(null)
+
+	function clearDefinitions(): void {
+		openDefinitions = new SvelteMap()
+		definitions = new SvelteMap()
+	}
+
+	async function toggleDefinition(tool: Tool, serverId: string) {
+		if (openDefinitions.get(tool.id)) {
+			openDefinitions.delete(tool.id)
+			return
+		}
+		openDefinitions.set(tool.id, true)
+		if (definitions.has(tool.id)) return
+		definitionError = null
+		loadingDefinitions.add(tool.id)
+		try {
+			const definition = await getMcpToolDefinition(serverId, tool.id)
+			definitions.set(tool.id, definition)
+		} catch (e) {
+			openDefinitions.delete(tool.id)
+			definitionError = errorMessage(e, 'Failed to load the definition')
+		} finally {
+			loadingDefinitions.delete(tool.id)
+		}
+	}
+
+	function inspectFor(tool: Tool, serverId: string): ViewerToolInspect {
+		const definition = definitions.get(tool.id)
+		return {
+			loading: loadingDefinitions.has(tool.id),
+			json: openDefinitions.get(tool.id)
+				? (definition?.definitionJson ?? null)
+				: null,
+			meta: definition
+				? {
+						endpoint: definition.endpoint ?? '',
+						hasCredentials: definition.hasCredentials,
+						allowPlaintext: definition.allowPlaintext,
+						allowPrivateNetwork: definition.allowPrivateNetwork
+					}
+				: undefined,
+			ontoggle: () => void toggleDefinition(tool, serverId)
+		}
 	}
 
 	async function refresh(server: McpServer): Promise<void> {
 		actionError = null
 		refreshing.add(server.id)
 		try {
-			await refreshMcpServer(server.id)
-			void invalidateAll()
+			const result = await refreshMcpServer(server.id)
+			skipped = result.skippedTools ?? null
 		} catch (e) {
 			actionError = errorMessage(e, 'Failed to refresh server')
 		} finally {
 			refreshing.delete(server.id)
+			// A failed refresh still writes diagnostics — and may have
+			// paused the catalog — so the row is refetched either way.
+			clearDefinitions()
+			void invalidateAll()
 		}
 	}
 
@@ -116,7 +188,24 @@
 		}
 	}
 
-	function toolEntry(tool: Tool, dimmed = false): ViewerToolEntry {
+	// A server's catalog state is a policy fact the switch cannot
+	// express: a paused catalog resolves nothing no matter how the switch
+	// reads.
+	function serverStatus(server: McpServer): ViewerStatus | undefined {
+		if (server.catalogState === 'paused') {
+			return {
+				kind: 'paused',
+				text: 'Catalog paused after a rejected refresh — refresh to retry'
+			}
+		}
+		return undefined
+	}
+
+	function toolEntry(
+		tool: Tool,
+		serverId: string | undefined,
+		dimmed = false
+	): ViewerToolEntry {
 		return {
 			row: {
 				id: tool.id,
@@ -131,7 +220,8 @@
 				dimmed
 			},
 			label: `Enable ${tool.name} globally`,
-			ontoggle: () => queue.toggle(tool)
+			ontoggle: () => queue.toggle(tool),
+			inspect: serverId ? inspectFor(tool, serverId) : undefined
 		}
 	}
 
@@ -143,16 +233,19 @@
 
 		const rows: ViewerEntry[] = builtins.map((tool) => ({
 			kind: 'tool',
-			entry: toolEntry(tool)
+			entry: toolEntry(tool, undefined)
 		}))
 
 		for (const server of data.servers) {
 			const on = serverQueue.displayed(server)
+			// A paused catalog leaves the nested tools visible but inert:
+			// their switches are blocked.
+			const inert = server.catalogState === 'paused'
 			const entry: ViewerServerEntry = {
 				row: { id: server.id, name: server.name },
-				transport: server.transport,
 				toolCount: server.toolCount,
 				lastError: server.lastError,
+				status: serverStatus(server),
 				state: {
 					checked: on,
 					disabled: serverQueue.flushing.has(server.id)
@@ -160,7 +253,7 @@
 				label: `Enable ${server.name} globally`,
 				ontoggle: () => serverQueue.toggle(server),
 				tools: (byServer.get(server.id) ?? []).map((tool) =>
-					toolEntry(tool, !on)
+					toolEntry(tool, server.id, !on || inert)
 				),
 				manage: {
 					refreshing: refreshing.has(server.id),
@@ -185,14 +278,16 @@
 <div class="mx-auto max-w-[var(--content-max-width)] space-y-6 px-6 py-8">
 	<header class="space-y-3 border-b pb-4">
 		<p class="text-muted-foreground text-sm">
-			Tools your agents can use. Disabling a tool globally blocks access for all
-			agents without changing their preferences. Re-enabling it restores access
-			for agents that have it enabled.
+			Tools your agents can use. Disabling a tool globally blocks access for
+			every agent, whatever its own switch says. Enabling a tool makes it
+			available to every agent using that server, except agents that disabled
+			it.
 		</p>
 		<div class="flex items-center justify-between gap-4">
 			<p class="text-muted-foreground text-xs">
-				Only built-in tools are granted to agents by default — enable others per
-				agent in its Tools panel.
+				Built-in tools are enabled by default; a newly discovered MCP tool
+				starts off. Each agent can opt out of an enabled tool in its Tools
+				panel.
 			</p>
 			{#if editing !== 'new'}
 				<Button onclick={() => (editing = 'new')}>Add MCP server</Button>
@@ -212,6 +307,38 @@
 		<p class="bg-destructive/10 text-destructive rounded-lg p-4">
 			{actionError}
 		</p>
+	{/if}
+	{#if definitionError}
+		<p class="bg-destructive/10 text-destructive rounded-lg p-4">
+			{definitionError}
+		</p>
+	{/if}
+
+	{#if skipped?.length}
+		<div
+			class="space-y-1 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm"
+		>
+			<div class="flex items-start justify-between gap-4">
+				<p class="font-medium">
+					{skipped.length}
+					{skipped.length === 1 ? 'tool was' : 'tools were'}
+					skipped
+				</p>
+				<button
+					type="button"
+					class="text-muted-foreground text-xs underline-offset-4 hover:underline"
+					aria-label="Dismiss skipped tools"
+					onclick={() => (skipped = null)}
+				>
+					×
+				</button>
+			</div>
+			<ul class="text-muted-foreground space-y-0.5 text-xs">
+				{#each skipped as tool (tool.name)}
+					<li>{tool.name} — {tool.reason}</li>
+				{/each}
+			</ul>
+		</div>
 	{/if}
 
 	{#if editing === 'new'}
@@ -246,8 +373,8 @@
 		<AlertDialog.Header>
 			<AlertDialog.Title>Delete {deleting?.name}?</AlertDialog.Title>
 			<AlertDialog.Description>
-				Its tools and every agent's grants for them are removed with it. This
-				cannot be undone.
+				Its tools, and every agent's selection of those tools, are removed with
+				it. This cannot be undone.
 			</AlertDialog.Description>
 		</AlertDialog.Header>
 		<AlertDialog.Footer>

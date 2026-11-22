@@ -25,7 +25,7 @@ import (
 var testMasterKey = bytes.Repeat([]byte{0x42}, 32)
 
 func TestRoutes(t *testing.T) {
-	handler, _, _, err := backend.New(testdb.Open(t, true), zerolog.Nop(), testMasterKey)
+	handler, _, _, err := backend.New(testdb.Open(t, true), zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}
@@ -127,15 +127,16 @@ func tamperedVault(t *testing.T, vaultName string) *sql.DB {
 // keyset. No envelope walk runs — a tampered entry fails its own read,
 // not the plane.
 func TestNewBootChecksMasterKeyOnly(t *testing.T) {
-	if _, _, _, err := backend.New(tamperedVault(t, "runtime"), zerolog.Nop(), testMasterKey); err != nil {
+	if _, _, _, err := backend.New(tamperedVault(t, "runtime"), zerolog.Nop(), testMasterKey, backend.DefaultToolLimits()); err != nil {
 		t.Errorf("tampered entry must not fail boot: %v", err)
 	}
 
 	sqlDB := testdb.Open(t, true)
-	if _, _, _, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey); err != nil {
+	if _, _, _, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits()); err != nil {
 		t.Fatalf("first boot: %v", err)
 	}
-	if _, _, _, err := backend.New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x43}, 32)); err == nil {
+	if _, _, _, err := backend.New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x43}, 32),
+		backend.DefaultToolLimits()); err == nil {
 		t.Error("wrong master key: New succeeded, want boot failure")
 	}
 }

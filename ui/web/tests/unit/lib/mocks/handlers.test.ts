@@ -706,41 +706,59 @@ describe('mock API handlers', () => {
 	})
 
 	describe('agent tool endpoints', () => {
-		it('answers the seeded view: built-ins granted, global switch shown', async () => {
+		it('answers the seeded view: inherited tools, global switch shown', async () => {
 			const body = (await (
 				await fetch(`${BASE}/agent/research/tools`)
 			).json()) as {
 				tools: Array<{
 					id: string
 					globalEnabled: boolean
+					locallyDisabled: boolean
+				}>
+				servers: Array<{
+					serverId: string
+					name: string
 					agentEnabled: boolean
+					serverEnabled: boolean
+					catalogState: string
 				}>
 			}
 			// The view row carries display fields too; the switches are
-			// the contract under test.
-			// Built-ins arrive granted (the seed rule); the seeded MCP
-			// server's tools arrive un-granted — default-deny.
+			// the contract under test. Research inherited everything: the
+			// built-in is globally on, the seeded MCP tools are off, and no
+			// row holds an opt-out.
 			expect(
-				body.tools.map(({ id, globalEnabled, agentEnabled }) => ({
+				body.tools.map(({ id, globalEnabled, locallyDisabled }) => ({
 					id,
 					globalEnabled,
-					agentEnabled
+					locallyDisabled
 				}))
 			).toEqual([
 				{
 					id: 'duckduckgo_search',
 					globalEnabled: true,
-					agentEnabled: true
+					locallyDisabled: false
 				},
 				{
 					id: 'notes-mcp:search_notes',
-					globalEnabled: true,
-					agentEnabled: false
+					globalEnabled: false,
+					locallyDisabled: false
 				},
 				{
 					id: 'notes-mcp:fetch_note',
-					globalEnabled: true,
-					agentEnabled: false
+					globalEnabled: false,
+					locallyDisabled: false
+				}
+			])
+			// Every server is listed with its gate state (absent = off) and
+			// the global blockers the editor renders.
+			expect(body.servers).toEqual([
+				{
+					serverId: 'notes-mcp',
+					name: 'Notes MCP',
+					agentEnabled: false,
+					serverEnabled: true,
+					catalogState: 'active'
 				}
 			])
 
@@ -748,7 +766,7 @@ describe('mock API handlers', () => {
 			expect(unknownAgent.status).toBe(404)
 		})
 
-		it('toggles the grant live and validates the request', async () => {
+		it('writes and clears the opt-out and validates the request', async () => {
 			const off = await fetch(
 				`${BASE}/agent/research/tools/duckduckgo_search`,
 				{
@@ -758,13 +776,13 @@ describe('mock API handlers', () => {
 				}
 			)
 			expect(off.status).toBe(200)
-			const offBody = (await off.json()) as { agentEnabled: boolean }
-			expect(offBody.agentEnabled).toBe(false)
+			const offBody = (await off.json()) as { locallyDisabled: boolean }
+			expect(offBody.locallyDisabled).toBe(true)
 
 			const listed = (await (
 				await fetch(`${BASE}/agent/research/tools`)
-			).json()) as { tools: Array<{ id: string; agentEnabled: boolean }> }
-			expect(listed.tools[0].agentEnabled).toBe(false)
+			).json()) as { tools: Array<{ id: string; locallyDisabled: boolean }> }
+			expect(listed.tools[0].locallyDisabled).toBe(true)
 
 			const backOn = await fetch(
 				`${BASE}/agent/research/tools/duckduckgo_search`,
@@ -774,8 +792,8 @@ describe('mock API handlers', () => {
 					body: JSON.stringify({ enabled: true })
 				}
 			)
-			const onBody = (await backOn.json()) as { agentEnabled: boolean }
-			expect(onBody.agentEnabled).toBe(true)
+			const onBody = (await backOn.json()) as { locallyDisabled: boolean }
+			expect(onBody.locallyDisabled).toBe(false)
 
 			const unknownTool = await fetch(`${BASE}/agent/research/tools/nope`, {
 				method: 'PATCH',
@@ -795,7 +813,7 @@ describe('mock API handlers', () => {
 			expect(missing.status).toBe(400)
 		})
 
-		it('grants the built-ins to a newly created agent', async () => {
+		it('lets a newly created agent inherit the built-ins', async () => {
 			await fetch(`${BASE}/agent`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
@@ -803,16 +821,17 @@ describe('mock API handlers', () => {
 			})
 			const body = (await (
 				await fetch(`${BASE}/agent/toolcheck/tools`)
-			).json()) as { tools: Array<{ agentEnabled: boolean }> }
-			expect(body.tools[0].agentEnabled).toBe(true)
+			).json()) as { tools: Array<{ locallyDisabled: boolean }> }
+			// No per-agent row was written: the built-in is inherited.
+			expect(body.tools[0].locallyDisabled).toBe(false)
 		})
 	})
 
 	describe('mock agent MCP gate', () => {
-		it('first enable grants the server tools, later toggles preserve choices', async () => {
+		it('flips the gate only: the agent opt-out survives every toggle', async () => {
 			const listing = async () =>
 				(await (await fetch(`${BASE}/agent/research/tools`)).json()) as {
-					tools: Array<{ id: string; agentEnabled: boolean }>
+					tools: Array<{ id: string; locallyDisabled: boolean }>
 					servers: Array<{ serverId: string; agentEnabled: boolean }>
 				}
 			const gate = (enabled: boolean) =>
@@ -824,10 +843,10 @@ describe('mock API handlers', () => {
 
 			const before = await listing()
 			expect(
-				before.servers.find((row) => row.serverId === 'notes-mcp')
-			).toBeUndefined()
+				before.servers.find((row) => row.serverId === 'notes-mcp')?.agentEnabled
+			).toBe(false)
 
-			// First enable: every current tool of the server grants.
+			// The gate opens: no per-tool row is written either way.
 			const first = await gate(true)
 			expect(first.status).toBe(200)
 			const after = await listing()
@@ -835,13 +854,13 @@ describe('mock API handlers', () => {
 				after.servers.find((row) => row.serverId === 'notes-mcp')?.agentEnabled
 			).toBe(true)
 			for (const id of ['notes-mcp:search_notes', 'notes-mcp:fetch_note']) {
-				expect(after.tools.find((tool) => tool.id === id)?.agentEnabled).toBe(
-					true
-				)
+				expect(
+					after.tools.find((tool) => tool.id === id)?.locallyDisabled
+				).toBe(false)
 			}
 
-			// Revoke one, off -> on: the revoke survives.
-			const revoke = await fetch(
+			// Opt out of one tool, off -> on: the opt-out survives.
+			const optOut = await fetch(
 				`${BASE}/agent/research/tools/notes-mcp:fetch_note`,
 				{
 					method: 'PATCH',
@@ -849,18 +868,18 @@ describe('mock API handlers', () => {
 					body: JSON.stringify({ enabled: false })
 				}
 			)
-			expect(revoke.status).toBe(200)
+			expect(optOut.status).toBe(200)
 			expect((await gate(false)).status).toBe(200)
 			expect((await gate(true)).status).toBe(200)
 			const preserved = await listing()
 			expect(
 				preserved.tools.find((tool) => tool.id === 'notes-mcp:fetch_note')
-					?.agentEnabled
-			).toBe(false)
+					?.locallyDisabled
+			).toBe(true)
 			expect(
 				preserved.tools.find((tool) => tool.id === 'notes-mcp:search_notes')
-					?.agentEnabled
-			).toBe(true)
+					?.locallyDisabled
+			).toBe(false)
 		})
 
 		it('rejects an unknown server and a missing switch', async () => {
@@ -878,5 +897,185 @@ describe('mock API handlers', () => {
 			})
 			expect(missing.status).toBe(400)
 		})
+	})
+})
+
+// The mock mirrors the backend's policy rules so the UI exercises them
+// without a server.
+describe('mock API MCP policy', () => {
+	it('clears the destination approvals when the URL changes', async () => {
+		const created = await fetch(`${BASE}/mcp/servers`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Approval Test',
+				url: 'http://127.0.0.1:3333/mcp',
+				allowPrivateNetwork: true,
+				allowPlaintext: true
+			})
+		})
+		expect(created.status).toBe(201)
+		const { server: row } = (await created.json()) as {
+			server: {
+				id: string
+				allowPrivateNetwork: boolean
+				allowPlaintext: boolean
+			}
+		}
+		expect(row.allowPrivateNetwork).toBe(true)
+
+		const patched = await fetch(`${BASE}/mcp/servers/${row.id}`, {
+			method: 'PATCH',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ url: 'https://mcp.example.com/mcp' })
+		})
+		expect(patched.status).toBe(200)
+		const after = (await patched.json()) as {
+			server: { allowPrivateNetwork: boolean; allowPlaintext: boolean }
+		}
+		expect(after.server.allowPrivateNetwork).toBe(false)
+		expect(after.server.allowPlaintext).toBe(false)
+	})
+
+	it('reaches a gated agent on a global enable, except where it opted out', async () => {
+		// scribe uses the notes server and explicitly disabled fetch_note.
+		await fetch(`${BASE}/tools/notes-mcp:fetch_note`, {
+			method: 'PATCH',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ enabled: true })
+		})
+		await fetch(`${BASE}/tools/notes-mcp:search_notes`, {
+			method: 'PATCH',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ enabled: true })
+		})
+		const body = (await (await fetch(`${BASE}/agent/scribe/tools`)).json()) as {
+			tools: Array<{
+				id: string
+				globalEnabled: boolean
+				locallyDisabled: boolean
+			}>
+		}
+		expect(
+			body.tools.find((tool) => tool.id === 'notes-mcp:search_notes')
+		).toMatchObject({ globalEnabled: true, locallyDisabled: false })
+		expect(
+			body.tools.find((tool) => tool.id === 'notes-mcp:fetch_note')
+		).toMatchObject({ globalEnabled: true, locallyDisabled: true })
+	})
+
+	it('serves the stored definition and the authority behind it', async () => {
+		const res = await fetch(
+			`${BASE}/mcp/servers/notes-mcp/tools/notes-mcp:search_notes/definition`
+		)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as {
+			definitionJson: string
+			endpoint: string
+			hasCredentials: boolean
+			allowPlaintext: boolean
+		}
+		expect(JSON.parse(body.definitionJson).name).toBe('search_notes')
+		// The inspector needs the endpoint and whether the connection
+		// carries credentials or rides plaintext.
+		expect(body.endpoint).toBe('http://127.0.0.1:3333/mcp')
+		expect(body.hasCredentials).toBe(true)
+		expect(body.allowPlaintext).toBe(true)
+
+		const missing = await fetch(
+			`${BASE}/mcp/servers/notes-mcp/tools/duckduckgo_search/definition`
+		)
+		expect(missing.status).toBe(404)
+	})
+
+	it("answers the definition's 404s in the backend's order", async () => {
+		const noServer = await fetch(
+			`${BASE}/mcp/servers/ghost/tools/notes-mcp:search_notes/definition`
+		)
+		expect(noServer.status).toBe(404)
+		expect(((await noServer.json()) as { message: string }).message).toBe(
+			'MCP server "ghost" not found'
+		)
+
+		const noTool = await fetch(
+			`${BASE}/mcp/servers/notes-mcp/tools/ghost:tool/definition`
+		)
+		expect(noTool.status).toBe(404)
+		expect(((await noTool.json()) as { message: string }).message).toBe(
+			'Tool "ghost:tool" not found'
+		)
+
+		const wrongOwner = await fetch(
+			`${BASE}/mcp/servers/notes-mcp/tools/duckduckgo_search/definition`
+		)
+		expect(wrongOwner.status).toBe(404)
+		expect(((await wrongOwner.json()) as { message: string }).message).toBe(
+			'Tool "duckduckgo_search" not found on server "notes-mcp"'
+		)
+	})
+
+	it('reports the cosmetic skips of a discovery pass', async () => {
+		const created = await fetch(`${BASE}/mcp/servers`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Skip Sentinel',
+				url: 'http://127.0.0.1:3333/skip',
+				allowPrivateNetwork: true,
+				allowPlaintext: true
+			})
+		})
+		expect(created.status).toBe(201)
+		const body = (await created.json()) as {
+			server: { id: string }
+			skippedTools?: { name: string; reason: string }[]
+		}
+		expect(body.skippedTools).toHaveLength(1)
+		expect(body.skippedTools?.[0].reason).toMatch(/exceeds 64 characters/)
+
+		const refreshed = await fetch(
+			`${BASE}/mcp/servers/${body.server.id}/refresh`,
+			{ method: 'POST' }
+		)
+		const after = (await refreshed.json()) as {
+			skippedTools?: { name: string; reason: string }[]
+		}
+		expect(after.skippedTools).toHaveLength(1)
+
+		// A server without the sentinel reports no skips at all.
+		const clean = await fetch(`${BASE}/mcp/servers/notes-mcp/refresh`, {
+			method: 'POST'
+		})
+		const cleanBody = (await clean.json()) as { skippedTools?: unknown[] }
+		expect(cleanBody.skippedTools).toBeUndefined()
+	})
+
+	it('gate toggles never rewrite an existing opt-out', async () => {
+		// scribe explicitly disabled fetch_note. A gate off/on must not
+		// re-enable it: only the agent's own switch does.
+		const listed = async () =>
+			(await (await fetch(`${BASE}/agent/scribe/tools`)).json()) as {
+				tools: { id: string; locallyDisabled: boolean }[]
+			}
+		const before = await listed()
+		expect(
+			before.tools.find((tool) => tool.id === 'notes-mcp:fetch_note')
+				?.locallyDisabled
+		).toBe(true)
+
+		for (const enabled of [false, true]) {
+			const gate = await fetch(`${BASE}/agent/scribe/mcp/notes-mcp`, {
+				method: 'PATCH',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ enabled })
+			})
+			expect(gate.status).toBe(200)
+		}
+
+		const after = await listed()
+		expect(
+			after.tools.find((tool) => tool.id === 'notes-mcp:fetch_note')
+				?.locallyDisabled
+		).toBe(true)
 	})
 })

@@ -62,6 +62,10 @@ type Config struct {
 	// at boot. Required: the working context is the committed user
 	// row, so an unbound source fails the turn.
 	GetAgentThread agent.AgentThreadSource
+	// ScrubToolCopy sanitizes every observable tool-call copy with the
+	// agent's known secrets — bound to TurnService.ScrubToolCopy by the
+	// binary at boot. Zero keeps the pattern battery alone.
+	ScrubToolCopy agent.ToolCopyScrubber
 }
 
 // New builds the gateway. The gateway is a single WebSocket endpoint:
@@ -74,6 +78,7 @@ func New(cfg *Config, logger zerolog.Logger) (*Gateway, error) {
 	var getConfig agent.AgentConfigSource
 	var toolsFn agent.AgentToolsFunc
 	var getThread agent.AgentThreadSource
+	var scrubCopy agent.ToolCopyScrubber
 	if cfg != nil {
 		if cfg.PingInterval > 0 {
 			interval = cfg.PingInterval
@@ -83,6 +88,7 @@ func New(cfg *Config, logger zerolog.Logger) (*Gateway, error) {
 		getConfig = cfg.GetAgentConfig
 		toolsFn = cfg.Tools
 		getThread = cfg.GetAgentThread
+		scrubCopy = cfg.ScrubToolCopy
 	}
 	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{
 		ResolveModel:   resolve,
@@ -90,6 +96,7 @@ func New(cfg *Config, logger zerolog.Logger) (*Gateway, error) {
 		GetAgentConfig: getConfig,
 		Tools:          toolsFn,
 		GetAgentThread: getThread,
+		ScrubToolCopy:  scrubCopy,
 	})
 	return &Gateway{
 		handler: handleWS(interval, logger, mgr),

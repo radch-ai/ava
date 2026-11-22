@@ -1,9 +1,10 @@
 package apitypes
 
 // AgentEditableFields is every field the config endpoints carry for
-// editing: display identity (name, icon) plus the prompt texts and
-// the tool list. Pointers mark what a PATCH carries — absent fields
-// keep their stored value — and this same type is the PATCH body.
+// editing: display identity (name, icon) plus the prompt texts, the
+// tools-context note included. Pointers mark what a PATCH carries —
+// absent fields keep their stored value — and this same type is the
+// PATCH body. Tool availability is never edited here.
 type AgentEditableFields struct {
 	Name                  *string     `json:"name,omitempty"`
 	Icon                  *string     `json:"icon,omitempty"`

@@ -1,8 +1,9 @@
 // PATCH /api/mcp/servers/{id} - edit a server with absent-keeps
-// semantics: a present env/headers map replaces the stored one
+// semantics: a present headers map replaces the stored one
 // wholesale, an absent field keeps it. Connection-affecting edits are
 // re-verified before anything is written; a rename touches neither the
-// vault nor the server process.
+// vault nor the live connection. A URL change invalidates the destination
+// and plaintext approvals unless the same patch re-approves them.
 package mcpservers
 
 import (
@@ -12,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/radch-ai/ava/backend/apitypes"
@@ -28,7 +28,7 @@ import (
 // re-verify, the vault, and discovery; anything that changes what a dial
 // looks like proves the new config connects before a single write
 // happens.
-func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore *vault.Store) api.Handler {
+func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore *vault.Store, canceler api.Canceler) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		var req apitypes.UpdateMcpServerRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -36,31 +36,47 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 		}
 		id := r.PathValue("id")
 
-		row, err := readServer(r.Context(), queries, w, id)
-		if err != nil {
-			return err
+		row, ok, fault := readServer(r.Context(), queries, w, id)
+		if !ok {
+			return fault
 		}
 		if !throttle.Allow("mcp:" + id) {
 			return api.WriteError(w, http.StatusTooManyRequests,
 				"Editing too fast — try again in a moment")
 		}
 
-		rowArgs, err := decodeStrings(row.Args)
-		if err != nil {
-			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-			return fmt.Errorf("decode stored args for %q: %w", id, err)
-		}
-		next, problem := applyPatch(row, rowArgs, req)
+		next, problem := applyPatch(row, req)
 		if problem != "" {
 			return api.WriteError(w, http.StatusBadRequest, problem)
 		}
-		// Effective secrets change a dial too: replaced maps are a
-		// connection-affecting edit even when no config field moved.
-		connectionEdit := next.connectionChanged || req.Env != nil || req.Headers != nil
+
+		// A URL move invalidates the approvals bound to the old endpoint:
+		// the new endpoint's approvals are new authority even when the flag
+		// values themselves are unchanged.
+		urlMoved := !sameNullString(next.url, row.Url)
+		privateAdded := next.allowPrivateNetwork && (row.AllowPrivateNetwork == 0 || urlMoved)
+		plainAdded := next.allowPlaintext && (row.AllowPlaintext == 0 || urlMoved)
+		privateRemoved := row.AllowPrivateNetwork != 0 && !next.allowPrivateNetwork
+		plainRemoved := row.AllowPlaintext != 0 && !next.allowPlaintext
+		authorityAdded := privateAdded || plainAdded
+		// The connection shape excludes the two policy flags: a flag
+		// removal moves them, and must still persist without a dial.
+		shapeChanged := urlMoved || !sameNullInt64(next.timeout, row.TimeoutMs)
+		disabling := req.Enabled != nil && !*req.Enabled
+		enabling := req.Enabled != nil && *req.Enabled
+		// Narrowing authority — or switching the server off — needs no
+		// successful connection check: an unreachable or newly forbidden
+		// endpoint must not be able to block its own restriction. A patch
+		// that also re-enables takes the connection path, so the reconnect
+		// is never skipped.
+		withdrawalOnly := !authorityAdded && req.Headers == nil && !enabling &&
+			(disabling || ((privateRemoved || plainRemoved) && !shapeChanged))
+		connectionEdit := (next.connectionChanged || req.Headers != nil) && !withdrawalOnly
 
 		var secrets, storedSecrets mcpserver.Secrets
 		secretsReplaced := false
 		if connectionEdit {
+			var err error
 			if secrets, err = unsealSecrets(r.Context(), vaultStore, id); err != nil {
 				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 				return fmt.Errorf("unseal secrets for %q: %w", id, err)
@@ -68,19 +84,179 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 			// The stored values ride along in case the row write below
 			// fails after a successful re-seal and must be restored.
 			storedSecrets = secrets
-			if req.Env != nil {
-				secrets.Env = req.Env
-				secretsReplaced = true
-			}
 			if req.Headers != nil {
 				secrets.Headers = req.Headers
 				secretsReplaced = true
 			}
 		}
 
+		// The header key-name column follows the effective secrets; a
+		// rename passes the stored names through untouched.
+		headerKeys := row.HeaderKeys
+		if connectionEdit {
+			headerKeys = encodeKeyNames(secrets.Headers)
+		}
+		// A pure switch patch writes no config: enabled lives on its own
+		// query (mcp_servers.sql), and the row is otherwise untouched.
+		// Replaced secret maps do write: their key-name columns change.
+		configTouched := secretsReplaced || req.Name != nil ||
+			req.URL != nil || req.TimeoutMs != nil || req.ClearTimeoutMs ||
+			req.AllowPrivateNetwork != nil || req.AllowPlaintext != nil
+
+		// writeRow seals the replaced secrets and persists the row. The
+		// row write is the commit point; a failure restores the blob it
+		// replaced (the single-entry rule) and reports both.
+		writeRow := func() error {
+			if secretsReplaced {
+				if err := sealSecrets(r.Context(), vaultStore, id, secrets); err != nil {
+					return fmt.Errorf("seal secrets for %q: %w", id, err)
+				}
+			}
+			if !configTouched {
+				return nil
+			}
+			if err := queries.UpdateMcpServer(r.Context(), db.UpdateMcpServerParams{
+				Name:                next.name,
+				Url:                 next.url,
+				HeaderKeys:          headerKeys,
+				TimeoutMs:           next.timeout,
+				AllowPrivateNetwork: boolInt(next.allowPrivateNetwork),
+				AllowPlaintext:      boolInt(next.allowPlaintext),
+				ID:                  id,
+			}); err != nil {
+				var rollback error
+				if secretsReplaced {
+					if rbErr := sealSecrets(r.Context(), vaultStore, id, storedSecrets); rbErr != nil {
+						rollback = fmt.Errorf("restore sealed secrets for %q: %w", id, rbErr)
+					}
+				}
+				return errors.Join(fmt.Errorf("update mcp server %q: %w", id, err), rollback)
+			}
+			return nil
+		}
+
+		// toggleAudit carries a failed post-tightening record: the switch
+		// already moved, so its failure is logged, never turned into a
+		// denial of a completed save.
+		var toggleAudit error
+		// toggle applies the global switch and its revocation. Enabling is
+		// an activation — the switch and its record commit together, so no
+		// server goes live unrecorded. Disabling is a restriction: the
+		// switch, the client teardown and the revocation commit first, and
+		// the record is best-effort.
+		toggle := func() error {
+			if req.Enabled == nil {
+				return nil
+			}
+			if *req.Enabled {
+				tx, err := sqlDB.BeginTx(r.Context(), nil)
+				if err != nil {
+					return fmt.Errorf("begin mcp server enable %q: %w", id, err)
+				}
+				defer func() { _ = tx.Rollback() }()
+				txq := db.New(tx)
+				if _, err := txq.ToggleMcpServerEnabled(r.Context(), db.ToggleMcpServerEnabledParams{
+					Enabled: 1, ID: id,
+				}); err != nil {
+					return fmt.Errorf("toggle mcp server %q: %w", id, err)
+				}
+				if err := auditApproval(r.Context(), txq, id, "approval_change", "approve",
+					"server_enabled"); err != nil {
+					return fmt.Errorf("audit server enable for %q: %w", id, err)
+				}
+				if err := tx.Commit(); err != nil {
+					return fmt.Errorf("commit mcp server enable %q: %w", id, err)
+				}
+				return nil
+			}
+			if _, err := queries.ToggleMcpServerEnabled(r.Context(), db.ToggleMcpServerEnabledParams{
+				Enabled: 0, ID: id,
+			}); err != nil {
+				return fmt.Errorf("toggle mcp server %q: %w", id, err)
+			}
+			// Disabling revokes: admitted calls are cancelled and the live
+			// client goes. The record is written after the fact —
+			// the tightening already took effect, so failing it must not
+			// undo or deny the save.
+			manager.Close(id)
+			if canceler != nil {
+				canceler.CancelServerTools(id)
+			}
+			if err := auditApproval(r.Context(), queries, id, "approval_change", "revoke",
+				"server_disabled"); err != nil {
+				toggleAudit = fmt.Errorf("audit server disable for %q: %w", id, err)
+			}
+			return nil
+		}
+
+		// respond renders the saved row with the listing the pass knows.
+		respond := func(status int, listed []mcp.ListedTool, skipped []mcp.Skipped) error {
+			saved, err := queries.GetMcpServer(r.Context(), id)
+			if err != nil {
+				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+				return fmt.Errorf("read back mcp server %q: %w", id, err)
+			}
+			server, err := buildServer(r.Context(), queries, saved)
+			if err != nil {
+				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+				return fmt.Errorf("build server %q: %w", id, err)
+			}
+			return api.WriteJSON(w, status, apitypes.McpServerWithToolsResponse{
+				Server:       server,
+				Tools:        discoveredTools(id, listed),
+				SkippedTools: skippedTools(skipped),
+			})
+		}
+
+		if withdrawalOnly {
+			// The tightening persists with no dial at all, and the
+			// live client is closed so the next enable reconnects under
+			// the new policy. The restriction takes effect even when
+			// its audit record fails — the failure degrades the trail,
+			// surfaced through the joined error, never the save.
+			before := toolIDs(r.Context(), queries, id)
+			if err := writeRow(); err != nil {
+				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+				return err
+			}
+			manager.Close(id)
+			if canceler != nil {
+				canceler.CancelServerTools(id)
+			}
+			if err := toggle(); err != nil {
+				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+				return err
+			}
+			listed, err := catalogListing(r.Context(), queries, id)
+			if err != nil {
+				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+				return err
+			}
+			cancelRemovedTools(canceler, id, before, keptFromListing(id, listed))
+			return errors.Join(
+				respond(http.StatusOK, listed, nil),
+				revokeAuthority(r.Context(), queries, id, privateRemoved, plainRemoved),
+				toggleAudit)
+		}
+
+		// Newly granted authority is recorded before the credential it
+		// implies is transmitted — verification included.
+		if err := approveAuthority(r.Context(), queries, id, privateAdded, plainAdded); err != nil {
+			_ = api.WriteError(w, http.StatusInternalServerError, "audit unavailable")
+			return fmt.Errorf("audit approvals for %q: %w", id, err)
+		}
+		// Nothing of this patch installs on a rejection: authority that
+		// never activated is withdrawn with an explicit record.
+		withdraw := func() error {
+			if !authorityAdded {
+				return nil
+			}
+			return withdrawAuthority(r.Context(), queries, id, privateAdded, plainAdded)
+		}
+
 		// The candidate config dials with the effective secrets; the
-		// verified client is adopted after the writes so discovery reuses
-		// it instead of spawning a second process.
+		// verified client is installed after the catalog write so publication
+		// publishes the verified listing instead of listing twice.
 		var (
 			verified  *mcp.Client
 			verifyCfg mcp.ServerConfig
@@ -88,10 +264,11 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 		)
 		if connectionEdit {
 			verifyCfg = dialConfig(id, next, secrets)
-			client, _, err := verify(r.Context(), verifyCfg)
+			client, _, _, err := verify(r.Context(), verifyCfg)
 			if err != nil {
-				return api.WriteError(w, http.StatusBadRequest,
-					"Connection check failed: "+err.Error())
+				return errors.Join(
+					api.WriteError(w, http.StatusBadRequest, "Connection check failed: "+err.Error()),
+					withdraw())
 			}
 			verified = client
 			defer func() {
@@ -101,81 +278,14 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 			}()
 		}
 
-		// Key-name columns follow the effective secrets; a rename passes
-		// the stored names through untouched.
-		envKeys, headerKeys := row.EnvKeys, row.HeaderKeys
-		if connectionEdit {
-			envKeys, headerKeys = encodeKeyNames(secrets.Env), encodeKeyNames(secrets.Headers)
+		before := toolIDs(r.Context(), queries, id)
+		if err := writeRow(); err != nil {
+			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+			return errors.Join(err, withdraw())
 		}
-		// A pure switch patch writes no config: enabled lives on its own
-		// query (mcp_servers.sql), and the row is otherwise untouched.
-		// Replaced secret maps do write: their key-name columns change.
-		configTouched := secretsReplaced || req.Name != nil || req.Transport != nil ||
-			req.Command != nil || req.Args != nil || req.URL != nil ||
-			req.TimeoutMs != nil || req.ClearTimeoutMs
-		var argsJSON []byte
-		if configTouched {
-			if argsJSON, err = json.Marshal(next.args); err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("encode args for %q: %w", id, err)
-			}
-		}
-		// The blob is re-sealed before the row is written — the row is
-		// the commit point — with the kept map riding along unchanged:
-		// a failure between the two writes must never leave key-name
-		// columns promising values the vault lacks. If the row write
-		// then fails, the stored values go back.
-		if secretsReplaced {
-			if err := sealSecrets(r.Context(), vaultStore, id, secrets); err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("seal secrets for %q: %w", id, err)
-			}
-		}
-		if configTouched {
-			if err := queries.UpdateMcpServer(r.Context(), db.UpdateMcpServerParams{
-				Name:       next.name,
-				Transport:  next.transport,
-				Command:    next.command,
-				Args:       string(argsJSON),
-				Url:        next.url,
-				EnvKeys:    envKeys,
-				HeaderKeys: headerKeys,
-				TimeoutMs:  next.timeout,
-				ID:         id,
-			}); err != nil {
-				var rollback error
-				if secretsReplaced {
-					if rbErr := sealSecrets(r.Context(), vaultStore, id, storedSecrets); rbErr != nil {
-						rollback = fmt.Errorf("restore sealed secrets for %q: %w", id, rbErr)
-					}
-				}
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return errors.Join(fmt.Errorf("update mcp server %q: %w", id, err), rollback)
-			}
-		}
-		if verified != nil {
-			manager.Adopt(verifyCfg, verified)
-			adopted = true
-		}
-
-		// The global switch is a pure state flip. Disabling
-		// also tears the live client down -- no process serves a blocked
-		// server; the catalog rows stay, so re-enabling reconnects
-		// without a reinstall.
-		if req.Enabled != nil {
-			enabled := int64(0)
-			if *req.Enabled {
-				enabled = 1
-			}
-			if _, err := queries.ToggleMcpServerEnabled(r.Context(), db.ToggleMcpServerEnabledParams{
-				Enabled: enabled, ID: id,
-			}); err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("toggle mcp server %q: %w", id, err)
-			}
-			if !*req.Enabled {
-				manager.Close(id)
-			}
+		if err := toggle(); err != nil {
+			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+			return err
 		}
 
 		saved, err := queries.GetMcpServer(r.Context(), id)
@@ -185,7 +295,10 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 		}
 		discoverCtx, cancel := requestContext(r.Context())
 		defer cancel()
-		var listed []mcp.ListedTool
+		var (
+			listed  []mcp.ListedTool
+			skipped []mcp.Skipped
+		)
 		switch {
 		case saved.Enabled == 0:
 			// Disabled: the stored listing, no dial.
@@ -193,20 +306,46 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 				return err
 			}
-		case connectionEdit || (req.Enabled != nil && *req.Enabled):
-			// The verified client is adopted (a re-enable reconnects): one
-			// discovery covers both. A connection edit's failure is a
-			// server fault; a re-enable degrades to the stored listing with
-			// diagnostics recorded.
-			if listed, err = mcpserver.Discover(discoverCtx, sqlDB, queries, manager, vaultStore, saved); err != nil {
-				if connectionEdit {
-					_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-					return fmt.Errorf("discover mcp server %q: %w", id, err)
-				}
+		case verified != nil:
+			// One publish for definition, implementation and authority:
+			// the client the manager keeps and the listing the catalog
+			// accepts are installed together. Ownership transferred inside
+			// the call — a publish failure leaves the installed client
+			// with an empty committed cache, so its tools stay inert until
+			// the next refresh rather than diverging from the catalog.
+			listed, skipped, err = mcpserver.PublishVerified(discoverCtx, sqlDB, queries, manager, saved, verifyCfg, verified)
+			// Ownership moved into the manager when PublishVerified
+			// installed the verified client, so the deferred close must
+			// not run even when publication fails: closing here would
+			// shutter the live installed connection.
+			adopted = true
+			if err != nil {
+				// A failed publication leaves the row explaining itself,
+				// exactly like a refresh: diagnostics land, and a rejected
+				// generation would pause the catalog until a valid listing
+				// arrives (RecordPublishFailure decides).
+				_ = mcpserver.RecordPublishFailure(r.Context(), queries, id, err)
+				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+				return fmt.Errorf("discover mcp server %q: %w", id, err)
+			}
+			// An endpoint or credential change retires the admitted work:
+			// the old connection drains without aborting it, so its calls
+			// are revoked explicitly. Headers are write-only, so any
+			// resubmission counts as a credential change even when the
+			// map equals the stored one. A rename or a policy widening
+			// leaves them running — same endpoint, same credentials.
+			if (urlMoved || req.Headers != nil) && canceler != nil {
+				canceler.CancelServerTools(id)
+			}
+		case enabling:
+			// A re-enable reconnects through the manager: its failure
+			// degrades to the stored listing with diagnostics recorded.
+			if listed, skipped, err = mcpserver.Discover(discoverCtx, sqlDB, queries, manager, vaultStore, saved); err != nil {
 				if listed, err = catalogListing(r.Context(), queries, id); err != nil {
 					_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 					return err
 				}
+				skipped = nil
 			}
 		default:
 			// A rename skips discovery; the response still reports the
@@ -217,15 +356,17 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 			}
 		}
 
-		server, err := buildServer(r.Context(), queries, saved)
-		if err != nil {
-			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-			return fmt.Errorf("build server %q: %w", id, err)
-		}
-		return api.WriteJSON(w, http.StatusOK, apitypes.McpServerWithToolsResponse{
-			Server: server,
-			Tools:  discoveredTools(id, listed),
-		})
+		// Only tools the publish dropped lose their in-flight calls.
+		cancelRemovedTools(canceler, id, before, keptFromListing(id, listed))
+		// Authority removals are recorded after the tightening persisted —
+		// a URL move's revocation included: a failed verify leaves the old
+		// endpoint's approvals in force, so the trail must not claim
+		// otherwise.
+		writeErr := respond(http.StatusOK, listed, skipped)
+		return errors.Join(writeErr, toggleAudit,
+			revokeAuthority(r.Context(), queries, id,
+				privateRemoved || (urlMoved && row.AllowPrivateNetwork != 0),
+				plainRemoved || (urlMoved && row.AllowPlaintext != 0)))
 	}
 }
 
@@ -238,34 +379,36 @@ func catalogListing(ctx context.Context, queries *db.Queries, serverID string) (
 	}
 	out := make([]mcp.ListedTool, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, mcp.ListedTool{Remote: row.Name, Description: row.Description})
+		out = append(out, mcp.ListedTool{
+			Remote:         row.Name,
+			Description:    row.Description,
+			DefinitionJSON: row.DefinitionJson,
+		})
 	}
 	return out, nil
 }
 
 // serverPatch is the next row state, shaped for UpdateMcpServer.
 type serverPatch struct {
-	name              string
-	transport         string
-	command           sql.NullString
-	args              []string
-	url               sql.NullString
-	timeout           sql.NullInt64
-	connectionChanged bool
+	name                string
+	url                 sql.NullString
+	timeout             sql.NullInt64
+	allowPrivateNetwork bool
+	allowPlaintext      bool
+	connectionChanged   bool
 }
 
 // applyPatch folds a request into the row. Nil maps and slices keep
 // stored values; non-nil ones replace. A present field that equals
 // the stored value is not a connection change — a no-op patch stays a
 // cheap rename.
-func applyPatch(row db.McpServer, rowArgs []string, req apitypes.UpdateMcpServerRequest) (serverPatch, string) {
+func applyPatch(row db.McpServer, req apitypes.UpdateMcpServerRequest) (serverPatch, string) {
 	next := serverPatch{
-		name:      row.Name,
-		transport: row.Transport,
-		command:   row.Command,
-		args:      rowArgs,
-		url:       row.Url,
-		timeout:   row.TimeoutMs,
+		name:                row.Name,
+		url:                 row.Url,
+		timeout:             row.TimeoutMs,
+		allowPrivateNetwork: row.AllowPrivateNetwork != 0,
+		allowPlaintext:      row.AllowPlaintext != 0,
 	}
 
 	if req.Name != nil {
@@ -274,32 +417,27 @@ func applyPatch(row db.McpServer, rowArgs []string, req apitypes.UpdateMcpServer
 		}
 		next.name = strings.TrimSpace(*req.Name)
 	}
-	if req.Transport != nil {
-		if *req.Transport != mcp.TransportStdio && *req.Transport != mcp.TransportHTTP {
-			return next, `transport must be "stdio" or "http"`
-		}
-		if *req.Transport != row.Transport {
-			next.transport = *req.Transport
-			next.connectionChanged = true
-		}
-	}
-	if req.Command != nil {
-		v := strings.TrimSpace(*req.Command)
-		next.command = sql.NullString{String: v, Valid: v != ""}
-		if !sameNullString(next.command, row.Command) {
-			next.connectionChanged = true
-		}
-	}
-	if req.Args != nil {
-		if !slices.Equal(req.Args, rowArgs) {
-			next.args = req.Args
-			next.connectionChanged = true
-		}
-	}
 	if req.URL != nil {
 		v := strings.TrimSpace(*req.URL)
 		next.url = sql.NullString{String: v, Valid: v != ""}
 		if !sameNullString(next.url, row.Url) {
+			// A destination change invalidates its approvals: the new
+			// endpoint was never approved for private access or
+			// plaintext. The same patch may re-approve below.
+			next.connectionChanged = true
+			next.allowPrivateNetwork = false
+			next.allowPlaintext = false
+		}
+	}
+	if req.AllowPrivateNetwork != nil {
+		next.allowPrivateNetwork = *req.AllowPrivateNetwork
+		if next.allowPrivateNetwork != (row.AllowPrivateNetwork != 0) {
+			next.connectionChanged = true
+		}
+	}
+	if req.AllowPlaintext != nil {
+		next.allowPlaintext = *req.AllowPlaintext
+		if next.allowPlaintext != (row.AllowPlaintext != 0) {
 			next.connectionChanged = true
 		}
 	}
@@ -317,16 +455,11 @@ func applyPatch(row db.McpServer, rowArgs []string, req apitypes.UpdateMcpServer
 		}
 	}
 
-	// Cross-field validity on the next state: a transport switch needs
-	// the new transport's address field in the same patch.
-	command, rawURL := "", ""
-	if next.command.Valid {
-		command = next.command.String
-	}
+	rawURL := ""
 	if next.url.Valid {
 		rawURL = next.url.String
 	}
-	if msg := configProblem(next.transport, command, rawURL); msg != "" {
+	if msg := configProblem(rawURL); msg != "" {
 		return next, msg
 	}
 	return next, ""
@@ -366,21 +499,17 @@ func unsealSecrets(ctx context.Context, vaultStore *vault.Store, slug string) (m
 	return secrets, nil
 }
 
-// dialConfig builds the verification dial for the next row state.
+// dialConfig builds the verification dial for the next row state: the
+// candidate carries the policy flags, so verification, discovery and
+// refresh are denied exactly where the runtime is.
 func dialConfig(id string, next serverPatch, secrets mcpserver.Secrets) mcp.ServerConfig {
 	cfg := mcp.ServerConfig{
-		ID:        id,
-		Transport: next.transport,
-		Env:       secrets.Env,
-		Headers:   secrets.Headers,
+		ID:                  id,
+		URL:                 next.url.String,
+		Headers:             secrets.Headers,
+		AllowPrivateNetwork: next.allowPrivateNetwork,
+		AllowPlaintext:      next.allowPlaintext,
 	}
-	if next.command.Valid {
-		cfg.Command = next.command.String
-	}
-	if next.url.Valid {
-		cfg.URL = next.url.String
-	}
-	cfg.Args = next.args
 	if next.timeout.Valid && next.timeout.Int64 > 0 {
 		cfg.Timeout = msDuration(next.timeout.Int64)
 	}

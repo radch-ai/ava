@@ -1,9 +1,8 @@
 package agent
 
 // GetAgentConfig / UpdateAgentConfig handler tests over the real
-// store: the seeded bundle, shallow patch semantics, the system
-// identity guard, and the tool-preference replacement. Route
-// mounting is pinned in backend's tests.
+// store: the seeded bundle, shallow patch semantics, and the system
+// identity guard. Route mounting is pinned in backend's tests.
 
 import (
 	"net/http"
@@ -123,8 +122,6 @@ func TestUpdateAgentConfigAppliesPatch(t *testing.T) {
 		t.Errorf("operatingInstructions = %q, want verify twice", row.OperatingInstructions)
 	}
 }
-
-// A carried toolsEnabled replaces the preference rows for the whole
 
 func TestUpdateAgentConfigSoulReplacesWhole(t *testing.T) {
 	queries := configStore(t)

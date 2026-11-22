@@ -9,6 +9,7 @@ import type {
 	GetMcpServersResponse,
 	McpServer,
 	McpServerWithToolsResponse,
+	McpToolDefinitionResponse,
 	UpdateMcpServerRequest
 } from '#lib/types/mcp'
 import { api } from './api'
@@ -38,7 +39,7 @@ export async function updateMcpServer(
 		.json<McpServerWithToolsResponse>()
 }
 
-/** Remove a server; its tools and their grants cascade away. */
+/** Remove a server; its tools and their agent opt-outs cascade away. */
 export async function deleteMcpServer(id: string): Promise<void> {
 	await api.delete(`mcp/servers/${id}`)
 }
@@ -60,4 +61,18 @@ export async function refreshMcpServer(
 	return api
 		.post(`mcp/servers/${id}/refresh`)
 		.json<McpServerWithToolsResponse>()
+}
+
+/**
+ * One catalog tool's stored definition plus the authority behind it:
+ * the endpoint, and whether the connection carries credentials or rides
+ * plaintext.
+ */
+export async function getMcpToolDefinition(
+	serverId: string,
+	toolId: string
+): Promise<McpToolDefinitionResponse> {
+	return api
+		.get(`mcp/servers/${serverId}/tools/${toolId}/definition`)
+		.json<McpToolDefinitionResponse>()
 }

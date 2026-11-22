@@ -29,7 +29,6 @@ import (
 
 const (
 	maxTimeoutMs = 10 * 60 * 1000
-	maxModelName = 64 // OpenAI's stricter tool-name cap
 	// sqliteConstraintPrimaryKey / sqliteConstraintUnique are the two
 	// SQLITE_CONSTRAINT extended codes a duplicate slug insert can raise
 	// (mcp_servers.id is the primary key; TEXT keys report either).
@@ -48,32 +47,36 @@ func isDuplicateSlug(err error) bool {
 	return code == sqliteConstraintPrimaryKey || code == sqliteConstraintUnique
 }
 
+// boolInt maps a policy flag to its 0/1 column form.
+func boolInt(v bool) int64 {
+	if v {
+		return 1
+	}
+	return 0
+}
+
 // msDuration converts a timeoutMs column value to a duration.
 func msDuration(ms int64) time.Duration {
 	return time.Duration(ms) * time.Millisecond
 }
 
-// configProblem returns the 400 message for a malformed transport
-// config; "" when well formed.
-func configProblem(transport, command, rawURL string) string {
-	switch transport {
-	case mcp.TransportStdio:
-		if strings.TrimSpace(command) == "" {
-			return "stdio transport needs a command"
-		}
-	case mcp.TransportHTTP:
-		if !isValidHTTPURL(rawURL) {
-			return "http transport needs an http(s) url"
-		}
-	default:
-		return `transport must be "stdio" or "http"`
+// configProblem returns the 400 message for a malformed server config;
+// "" when well formed.
+func configProblem(rawURL string) string {
+	if !isValidHTTPURL(rawURL) {
+		return "url must be an http(s) URL without embedded credentials"
 	}
 	return ""
 }
 
+// isValidHTTPURL validates an endpoint: http(s), a non-empty host and no
+// userinfo — credentials ride the sealed header channel only.
 func isValidHTTPURL(raw string) bool {
 	u, err := url.Parse(strings.TrimSpace(raw))
-	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return false
+	}
+	return u.User == nil
 }
 
 func timeoutProblem(ms *int64) string {
@@ -94,31 +97,31 @@ func requestContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, mcp.VerifyTimeout)
 }
 
-// verify dials cfg directly — no manager, no cache — and syncs its
-// listing: the candidate must connect, initialize, and report only tools
-// whose composite model names fit the provider wire contract (a server
-// exposing a name the model cannot call is rejected by name, never
-// installed minus that tool). On success it returns the connected
-// client and the caller adopts it (Manager.Adopt), so the same process
-// serves discovery — no second dial; on any failure nothing is left
-// running.
-func verify(ctx context.Context, cfg mcp.ServerConfig) (*mcp.Client, []mcp.ListedTool, error) {
+// verify dials cfg directly — no manager, no cache — and stages the
+// candidate's catalog under the admission bounds: a server that cannot
+// connect, initialize or list a security-valid generation is rejected
+// before anything is written. A tool whose name the provider cannot carry
+// is reported as skipped, not rejected. On success it returns
+// the connected client with its staged listing, and the caller publishes
+// that listing instead of listing twice; on any failure nothing is
+// left running.
+//
+// The whole check shares one 10-second budget — DNS, TLS, initialization
+// and every listing page — so a slow server answers the request
+// instead of outliving the http.Server write deadline.
+func verify(ctx context.Context, cfg mcp.ServerConfig) (*mcp.Client, []mcp.ListedTool, []mcp.Skipped, error) {
+	ctx, cancel := context.WithTimeout(ctx, mcp.VerifyTimeout)
+	defer cancel()
 	client, err := mcp.BoundedDial(ctx, cfg)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	listed, rejected, err := client.Sync(ctx)
+	listed, skipped, err := client.SyncStaged(ctx)
 	if err != nil {
 		_ = client.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	if len(rejected) > 0 {
-		_ = client.Close()
-		return nil, nil, fmt.Errorf(
-			"tool %q cannot be represented as a model tool name (max %d chars, [a-zA-Z0-9_-])",
-			rejected[0], maxModelName)
-	}
-	return client, listed, nil
+	return client, listed, skipped, nil
 }
 
 // buildServer renders one server row with its tool count; secret
@@ -136,17 +139,18 @@ func buildServer(ctx context.Context, queries *db.Queries, row db.McpServer) (ap
 // policy across every reader).
 func serverView(row db.McpServer, toolCount int64) (apitypes.McpServer, error) {
 	out := apitypes.McpServer{
-		ID:        row.ID,
-		Name:      row.Name,
-		Transport: row.Transport,
-		Enabled:   row.Enabled != 0,
-		ToolCount: toolCount,
-	}
-	if row.Command.Valid {
-		out.Command = row.Command.String
+		ID:                  row.ID,
+		Name:                row.Name,
+		Enabled:             row.Enabled != 0,
+		ToolCount:           toolCount,
+		CatalogState:        row.CatalogState,
+		AllowPrivateNetwork: row.AllowPrivateNetwork != 0,
+		AllowPlaintext:      row.AllowPlaintext != 0,
 	}
 	if row.Url.Valid {
-		out.URL = row.Url.String
+		// A stored URL may carry credentials in its userinfo. The
+		// runtime rejects it; the view never echoes it either.
+		out.URL = maskedURL(row.Url.String)
 	}
 	if row.TimeoutMs.Valid {
 		ms := row.TimeoutMs.Int64
@@ -161,16 +165,22 @@ func serverView(row db.McpServer, toolCount int64) (apitypes.McpServer, error) {
 		out.RefreshedAt = &at
 	}
 	var err error
-	if out.Args, err = decodeStrings(row.Args); err != nil {
-		return apitypes.McpServer{}, fmt.Errorf("decode args for %q: %w", row.ID, err)
-	}
-	if out.EnvKeys, err = decodeStrings(row.EnvKeys); err != nil {
-		return apitypes.McpServer{}, fmt.Errorf("decode envKeys for %q: %w", row.ID, err)
-	}
 	if out.HeaderKeys, err = decodeStrings(row.HeaderKeys); err != nil {
 		return apitypes.McpServer{}, fmt.Errorf("decode headerKeys for %q: %w", row.ID, err)
 	}
 	return out, nil
+}
+
+// maskedURL hides userinfo in a stored endpoint: credentials ride the
+// sealed header channel only, so neither the runtime nor a view may show
+// them.
+func maskedURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	u.User = url.UserPassword("[redacted]", "[redacted]")
+	return u.String()
 }
 
 // discoveredTools renders a listing for create/refresh responses.
@@ -187,8 +197,8 @@ func discoveredTools(slug string, listed []mcp.ListedTool) []apitypes.McpDiscove
 }
 
 // sealSecrets seals the one runtime blob for a server. Called
-// with the full effective secrets: a patch that replaces only env
-// merges the stored headers in.
+// with the full effective secrets: a patch that replaces only the
+// header map clears the rest.
 func sealSecrets(ctx context.Context, vaultStore *vault.Store, slug string, secrets mcpserver.Secrets) error {
 	blob, err := json.Marshal(secrets)
 	if err != nil {
@@ -225,16 +235,32 @@ func encodeKeyNames(m map[string]string) string {
 	return string(b)
 }
 
-// readServer maps the row read to 404 or a server fault.
-func readServer(ctx context.Context, queries *db.Queries, w http.ResponseWriter, id string) (db.McpServer, error) {
+// skippedTools renders the cosmetic skips of one discovery pass.
+func skippedTools(skipped []mcp.Skipped) []apitypes.McpSkippedTool {
+	if len(skipped) == 0 {
+		return nil
+	}
+	out := make([]apitypes.McpSkippedTool, 0, len(skipped))
+	for _, s := range skipped {
+		out = append(out, apitypes.McpSkippedTool{Name: s.Remote, Reason: s.Reason})
+	}
+	return out
+}
+
+// readServer maps the row read to 404 or a server fault. The bool is the
+// "already answered" signal: the caller returns nil instead of running on
+// with a zero row, which would append a second body to the same response.
+// The error is the server fault the caller must log and report.
+func readServer(ctx context.Context, queries *db.Queries, w http.ResponseWriter, id string) (row db.McpServer, ok bool, fault error) {
 	row, err := queries.GetMcpServer(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return db.McpServer{}, api.WriteError(w, http.StatusNotFound,
+			_ = api.WriteError(w, http.StatusNotFound,
 				fmt.Sprintf("MCP server %q not found", id))
+			return db.McpServer{}, false, nil
 		}
 		_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-		return db.McpServer{}, fmt.Errorf("read mcp server %q: %w", id, err)
+		return db.McpServer{}, false, fmt.Errorf("read mcp server %q: %w", id, err)
 	}
-	return row, nil
+	return row, true, nil
 }

@@ -15,6 +15,7 @@ vi.mock('#lib/services/tools', () => ({
 }))
 
 vi.mock('#lib/services/mcp', () => ({
+	getMcpToolDefinition: vi.fn(),
 	getMcpServers: vi.fn(),
 	createMcpServer: vi.fn(),
 	updateMcpServer: vi.fn(),
@@ -80,42 +81,38 @@ describe('MCP & Tools page', () => {
 			.toBeVisible()
 	})
 
-	it('offers MCP server management with the built-ins-only note', async () => {
+	it('offers MCP server management with the inheritance note', async () => {
 		renderPage([ddg])
 
 		// Whitespace-tolerant: the copy wraps in the source template.
 		await expect
 			.element(
 				page.getByText(
-					/Disabling a tool globally blocks access for all\s+agents without changing their preferences\./
+					/Disabling a tool globally blocks access for\s+every agent, whatever its own switch says\./
 				)
 			)
 			.toBeVisible()
 		await expect
 			.element(page.getByRole('button', { name: 'Add MCP server' }))
 			.toBeEnabled()
-		// The default-grant copy names built-ins only, covering wasm and
-		// every future kind.
+		// The copy states the inheritance rule: a global enable reaches
+		// agents that did not opt out.
 		await expect
-			.element(
-				page.getByText(
-					/Only built-in tools are granted to agents by default — enable others per\s+agent/
-				)
-			)
+			.element(page.getByText(/except agents that disabled\s+it\./))
 			.toBeVisible()
 	})
 
 	const notesServer: McpServer = {
 		id: 'notes-mcp',
 		name: 'Notes MCP',
-		transport: 'stdio',
-		command: 'notes-mcp',
-		args: ['--stdio'],
-		envKeys: ['NOTES_TOKEN'],
-		headerKeys: [],
+		url: 'http://127.0.0.1:3333/mcp',
+		headerKeys: ['Authorization'],
 		enabled: true,
 		toolCount: 1,
-		lastError: 'mcp server notes-mcp: initialize: connection refused'
+		catalogState: 'active',
+		allowPrivateNetwork: true,
+		allowPlaintext: true,
+		lastError: 'transient: mcp server notes-mcp: initialize: connection refused'
 	}
 
 	const notesTool: Tool = {
@@ -128,13 +125,13 @@ describe('MCP & Tools page', () => {
 		serverId: 'notes-mcp'
 	}
 
-	it('renders a server as a collapsible row with transport, count, and diagnostics', async () => {
+	it('renders a server as a collapsible row with count and diagnostics', async () => {
 		renderPage([ddg, notesTool], null, [notesServer])
 
 		await expect
 			.element(page.getByRole('heading', { name: 'Notes MCP' }))
 			.toBeVisible()
-		await expect.element(page.getByText('MCP · stdio')).toBeVisible()
+		await expect.element(page.getByText('MCP', { exact: true })).toBeVisible()
 		await expect.element(page.getByText('1 tool')).toBeVisible()
 		await expect.element(page.getByText(/connection refused/)).toBeVisible()
 		await expect
@@ -310,5 +307,198 @@ describe('MCP & Tools page', () => {
 				page.getByRole('switch', { name: 'Enable DuckDuckGo Search globally' })
 			)
 			.toHaveAttribute('aria-checked', 'true')
+	})
+})
+
+// Policy state the switches cannot express: a paused catalog leaves its
+// tools visible but inert, and the definition inspector renders the
+// stored definition with the authority behind it.
+describe('MCP page policy statuses', () => {
+	// Local fixtures: the sibling block's consts are scoped to it.
+	const pausedTool: Tool = {
+		id: 'notes-mcp:search',
+		name: 'search',
+		description: 'Searches the notes server.',
+		builtin: false,
+		enabled: true,
+		kind: 'mcp',
+		serverId: 'notes-mcp'
+	}
+	const pausedServer: McpServer = {
+		id: 'notes-mcp',
+		name: 'Notes MCP',
+		url: 'http://127.0.0.1:3333/mcp',
+		headerKeys: [],
+		enabled: true,
+		toolCount: 1,
+		catalogState: 'paused',
+		allowPrivateNetwork: true,
+		allowPlaintext: true
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+	})
+
+	afterEach(() => {
+		cleanup()
+	})
+
+	it('marks a paused catalog and blocks its nested tools', async () => {
+		renderPage([ddg, pausedTool], null, [pausedServer])
+
+		await expect
+			.element(
+				page.getByText(
+					/Catalog paused after a rejected refresh — refresh to retry/
+				)
+			)
+			.toBeVisible()
+		// Expanded, the nested tool stays visible but inert.
+		await page.getByRole('heading', { name: 'Notes MCP' }).click()
+		await expect
+			.element(page.getByRole('switch', { name: 'Enable search globally' }))
+			.toBeDisabled()
+	})
+
+	it('shows a stored definition with its endpoint authority', async () => {
+		vi.mocked(mcpService.getMcpToolDefinition).mockResolvedValue({
+			definitionJson:
+				'{"name":"search","description":"Searches the notes server."}',
+			endpoint: 'http://127.0.0.1:3333/mcp',
+			hasCredentials: true,
+			allowPlaintext: true,
+			allowPrivateNetwork: true
+		})
+		renderPage([ddg, pausedTool], null, [
+			{ ...pausedServer, catalogState: 'active' }
+		])
+
+		await page.getByRole('heading', { name: 'Notes MCP' }).click()
+		await page
+			.getByRole('button', { name: 'Show definition of search' })
+			.click()
+
+		await vi.waitFor(() => {
+			expect(mcpService.getMcpToolDefinition).toHaveBeenCalledWith(
+				'notes-mcp',
+				'notes-mcp:search'
+			)
+		})
+		await expect
+			.element(
+				page.getByText(
+					/http:\/\/127\.0\.0\.1:3333\/mcp · credentials: yes · plaintext: yes · private network: yes/
+				)
+			)
+			.toBeVisible()
+		await expect
+			.element(page.getByText(/"description":"Searches the notes server\."/))
+			.toBeVisible()
+	})
+})
+
+// A discovery pass that leaves tools out reports them — a cosmetic skip
+// is visible with its reason, never a silent drop.
+describe('MCP & Tools page skipped tools', () => {
+	const skipServer: McpServer = {
+		id: 'notes-mcp',
+		name: 'Notes MCP',
+		url: 'http://127.0.0.1:3333/mcp',
+		headerKeys: ['Authorization'],
+		enabled: true,
+		toolCount: 1,
+		catalogState: 'active',
+		allowPrivateNetwork: true,
+		allowPlaintext: true
+	}
+	const skipTool: Tool = {
+		id: 'notes-mcp:search',
+		name: 'search',
+		description: 'Searches the notes server.',
+		builtin: false,
+		enabled: true,
+		kind: 'mcp',
+		serverId: 'notes-mcp'
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+	})
+
+	afterEach(() => {
+		cleanup()
+	})
+
+	it('lists the skipped tools after a refresh and dismisses them', async () => {
+		vi.mocked(mcpService.refreshMcpServer).mockResolvedValue({
+			server: skipServer,
+			tools: [],
+			skippedTools: [
+				{
+					name: 'oversized_discovery_tool_name_that_exceeds_the_provider_limit',
+					reason:
+						'model name "oversized_discovery_tool_name_that_exceeds_the_provider_limit" exceeds 64 characters'
+				}
+			]
+		})
+		renderPage([ddg, skipTool], null, [skipServer])
+
+		await page.getByRole('button', { name: 'Refresh tools' }).click()
+
+		await expect.element(page.getByText('1 tool was skipped')).toBeVisible()
+		await expect.element(page.getByText(/exceeds 64 characters/)).toBeVisible()
+
+		await page.getByRole('button', { name: 'Dismiss skipped tools' }).click()
+
+		await expect
+			.element(page.getByText('1 tool was skipped'))
+			.not.toBeInTheDocument()
+	})
+
+	it('clears a shown skipped banner on the next clean refresh', async () => {
+		vi.mocked(mcpService.refreshMcpServer)
+			.mockResolvedValueOnce({
+				server: skipServer,
+				tools: [],
+				skippedTools: [
+					{
+						name: 'oversized_discovery_tool_name_that_exceeds_the_provider_limit',
+						reason:
+							'model name "oversized_discovery_tool_name_that_exceeds_the_provider_limit" exceeds 64 characters'
+					}
+				]
+			})
+			.mockResolvedValueOnce({
+				server: skipServer,
+				tools: []
+			})
+		renderPage([ddg, skipTool], null, [skipServer])
+
+		await page.getByRole('button', { name: 'Refresh tools' }).click()
+
+		await expect.element(page.getByText('1 tool was skipped')).toBeVisible()
+
+		// The next refresh reports nothing skipped — a stale banner
+		// cannot survive a clean save.
+		await page.getByRole('button', { name: 'Refresh tools' }).click()
+
+		await expect
+			.element(page.getByText(/were skipped|was skipped/))
+			.not.toBeInTheDocument()
+	})
+
+	it('renders no panel when a refresh reports nothing skipped', async () => {
+		vi.mocked(mcpService.refreshMcpServer).mockResolvedValue({
+			server: skipServer,
+			tools: []
+		})
+		renderPage([ddg, skipTool], null, [skipServer])
+
+		await page.getByRole('button', { name: 'Refresh tools' }).click()
+
+		await expect
+			.element(page.getByText(/were skipped|was skipped/))
+			.not.toBeInTheDocument()
 	})
 })

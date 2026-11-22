@@ -27,7 +27,7 @@ import (
 func journalService(t *testing.T) (*backend.TurnService, *sql.DB) {
 	t.Helper()
 	sqlDB := testdb.Open(t, true)
-	_, _, turns, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey)
+	_, _, turns, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}
@@ -485,7 +485,7 @@ func TestSyncSnapshotPairsPageWithHead(t *testing.T) {
 
 func TestRestartRecoverySettlesUnfinishedItems(t *testing.T) {
 	sqlDB := testdb.Open(t, false)
-	_, _, first, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey)
+	_, _, first, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}
@@ -528,7 +528,7 @@ func TestRestartRecoverySettlesUnfinishedItems(t *testing.T) {
 
 	// Reopening the same database is the restart: recovery runs at boot.
 	reopened := testdb.Open(t, false)
-	_, _, turns, err := backend.New(reopened, zerolog.Nop(), testMasterKey)
+	_, _, turns, err := backend.New(reopened, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
 	if err != nil {
 		t.Fatalf("backend.New after restart: %v", err)
 	}
@@ -592,7 +592,7 @@ func TestRestartRecoverySettlesUnfinishedItems(t *testing.T) {
 		t.Fatalf("close reopened store: %v", err)
 	}
 	third := testdb.Open(t, false)
-	_, _, again, err := backend.New(third, zerolog.Nop(), testMasterKey)
+	_, _, again, err := backend.New(third, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
 	if err != nil {
 		t.Fatalf("backend.New after second restart: %v", err)
 	}

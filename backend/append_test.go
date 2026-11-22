@@ -332,7 +332,7 @@ func TestWatermarkSeededFromStore(t *testing.T) {
 	}
 
 	// A fresh service over the same store — the boot-time seed.
-	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey)
+	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}

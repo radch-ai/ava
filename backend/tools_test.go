@@ -1,9 +1,9 @@
 package backend_test
 
 // AgentTools pins the lane's per-turn fetch: the registry executables
-// an agent may use — globally enabled built-ins, default-granted by
-// the insert rules — matched by id, plus the boot sync that must
-// never reset a saved global switch or restore a deleted grant.
+// an agent may use — globally enabled built-ins, inherited unless the
+// agent opted out — matched by id, plus the boot sync that must never
+// reset a saved global switch or drop an agent's opt-out.
 
 import (
 	"context"
@@ -22,7 +22,7 @@ import (
 func toolsDB(t *testing.T, ephemeral bool) (*sql.DB, *db.Queries, *backend.TurnService) {
 	t.Helper()
 	sqlDB := testdb.Open(t, ephemeral)
-	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey)
+	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}
@@ -64,8 +64,8 @@ func fetchTools(t *testing.T, svc *backend.TurnService, agentID string) []string
 	return names
 }
 
-// Built-ins default ON: the insert rules seeded the fresh agent's
-// grant, so its first turn already sees the built-in.
+// Built-ins default ON and inherit: a fresh agent's first turn already
+// sees the built-in with no per-agent row written.
 func TestAgentToolsDefaultOnForFreshAgent(t *testing.T) {
 	_, _, svc := toolsDB(t, true)
 
@@ -74,14 +74,13 @@ func TestAgentToolsDefaultOnForFreshAgent(t *testing.T) {
 	}
 }
 
-// The global switch is the outer gate: OFF blocks every agent until
-// it is turned back on.
+// The global switch is the outer gate: OFF blocks every agent until it
+// is turned back on.
 func TestAgentToolsRespectsGlobalSwitch(t *testing.T) {
 	_, queries, svc := toolsDB(t, true)
 	id := builtinID(t, queries)
 
-	// The default grant from the insert rules is in place; the
-	// global switch gates it.
+	// The switch alone decides: nothing is written per agent.
 	if _, err := queries.ToggleToolEnabled(t.Context(), db.ToggleToolEnabledParams{Enabled: 0, ID: id}); err != nil {
 		t.Fatalf("disable %s: %v", id, err)
 	}
@@ -97,9 +96,9 @@ func TestAgentToolsRespectsGlobalSwitch(t *testing.T) {
 	}
 }
 
-// A granted catalog row the registry no longer knows yields nothing —
-// the fetch is the intersection of SQL permissions and executables.
-func TestAgentToolsUnknownGrantYieldsNothing(t *testing.T) {
+// A catalog row the registry no longer knows yields nothing — the fetch
+// is the intersection of SQL permissions and executables.
+func TestAgentToolsUnknownCatalogRowYieldsNothing(t *testing.T) {
 	_, queries, svc := toolsDB(t, true)
 	id := builtinID(t, queries)
 
@@ -110,39 +109,38 @@ func TestAgentToolsUnknownGrantYieldsNothing(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed ghost row: %v", err)
 	}
-	if _, err := queries.AddAgentTool(t.Context(), db.AddAgentToolParams{
-		AgentID: "research", ToolID: "ghost_tool",
+	if _, err := queries.ToggleToolEnabled(t.Context(), db.ToggleToolEnabledParams{
+		Enabled: 1, ID: "ghost_tool",
 	}); err != nil {
-		t.Fatalf("grant ghost_tool: %v", err)
+		t.Fatalf("enable ghost_tool: %v", err)
 	}
 	if names := fetchTools(t, svc, "research"); len(names) != 1 || names[0] != id {
 		t.Errorf("fetched = %v, want only the built-in [%s] — ghost_tool yields nothing", names, id)
 	}
 }
 
-// Removal opts out of the default grant; removing again is a
+// An explicit opt-out removes the inherited tool, and repeating it is a
 // harmless no-op.
-func TestAgentToolsRemoveDropsGrant(t *testing.T) {
+func TestAgentToolsOptOutDropsTool(t *testing.T) {
 	_, queries, svc := toolsDB(t, true)
 	id := builtinID(t, queries)
 
-	// The default grant is in place; removing it disables the tool.
-	if _, err := queries.RemoveAgentTool(t.Context(), db.RemoveAgentToolParams{
+	if err := queries.AddAgentDisabledTool(t.Context(), db.AddAgentDisabledToolParams{
 		AgentID: "research", ToolID: id,
 	}); err != nil {
-		t.Fatalf("remove %s: %v", id, err)
+		t.Fatalf("opt out %s: %v", id, err)
 	}
 	if names := fetchTools(t, svc, "research"); len(names) != 0 {
-		t.Errorf("fetched after removal = %v, want none", names)
+		t.Errorf("fetched after opt-out = %v, want none", names)
 	}
 
-	if _, err := queries.RemoveAgentTool(t.Context(), db.RemoveAgentToolParams{
+	if err := queries.AddAgentDisabledTool(t.Context(), db.AddAgentDisabledToolParams{
 		AgentID: "research", ToolID: id,
 	}); err != nil {
-		t.Fatalf("remove again: %v", err)
+		t.Fatalf("opt out again: %v", err)
 	}
 	if names := fetchTools(t, svc, "research"); len(names) != 0 {
-		t.Errorf("fetched after double removal = %v, want none", names)
+		t.Errorf("fetched after repeated opt-out = %v, want none", names)
 	}
 }
 
@@ -162,7 +160,7 @@ func TestSyncPreservesSavedGlobalSwitch(t *testing.T) {
 
 	// Reboot over the same file: metadata refreshes, the switch
 	// stays OFF.
-	if _, _, _, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey); err != nil {
+	if _, _, _, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits()); err != nil {
 		t.Fatalf("second boot: %v", err)
 	}
 	after, err := db.New(sqlDB).GetTool(t.Context(), id)
@@ -178,30 +176,30 @@ func TestSyncPreservesSavedGlobalSwitch(t *testing.T) {
 }
 
 // Restart re-syncs the catalog: the upsert's update path refreshes
-// metadata without reseeding a deleted grant, and an untouched
-// agent's default stays.
-func TestSyncDoesNotRestoreDeletedGrant(t *testing.T) {
+// metadata without restoring an agent's opt-out, and an untouched agent
+// keeps inheriting.
+func TestSyncDoesNotRestoreOptOut(t *testing.T) {
 	sqlDB, queries, _ := toolsDB(t, false)
 	id := builtinID(t, queries)
 
-	if _, err := queries.RemoveAgentTool(t.Context(), db.RemoveAgentToolParams{
+	if err := queries.AddAgentDisabledTool(t.Context(), db.AddAgentDisabledToolParams{
 		AgentID: "research", ToolID: id,
 	}); err != nil {
 		t.Fatalf("opt out %s: %v", id, err)
 	}
 
-	if _, _, _, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey); err != nil {
+	if _, _, _, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits()); err != nil {
 		t.Fatalf("second boot: %v", err)
 	}
 	queries = db.New(sqlDB)
-	if ids, err := queries.ResolveAgentTools(t.Context(), db.ResolveAgentToolsParams{AgentID: "research", AgentID_2: "research"}); err != nil {
+	if rows, err := queries.ResolveAgentToolsDetailed(t.Context(), db.ResolveAgentToolsDetailedParams{AgentID: "research", AgentID_2: "research"}); err != nil {
 		t.Fatal(err)
-	} else if len(ids) != 0 {
-		t.Errorf("research tools after reboot = %v, want none — the opt-out survives", ids)
+	} else if len(rows) != 0 {
+		t.Errorf("research tools after reboot = %v, want none — the opt-out survives", rows)
 	}
-	if ids, err := queries.ResolveAgentTools(t.Context(), db.ResolveAgentToolsParams{AgentID: "_superagent", AgentID_2: "_superagent"}); err != nil {
+	if rows, err := queries.ResolveAgentToolsDetailed(t.Context(), db.ResolveAgentToolsDetailedParams{AgentID: "_superagent", AgentID_2: "_superagent"}); err != nil {
 		t.Fatal(err)
-	} else if len(ids) != 1 || ids[0] != id {
-		t.Errorf("superagent tools after reboot = %v, want [%s]", ids, id)
+	} else if len(rows) != 1 || rows[0].ID != id {
+		t.Errorf("superagent tools after reboot = %v, want [%s]", rows, id)
 	}
 }

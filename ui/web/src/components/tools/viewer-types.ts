@@ -18,11 +18,46 @@ export interface ToggleState {
 	dimmed?: boolean
 }
 
+/** One status line: what the row is waiting for, not why it was toggled. */
+export interface ViewerStatus {
+	/** "paused" (catalog rejected), "globally-disabled" (a built-in's
+	 *  global switch), "server-disabled" (the owning server's global
+	 *  switch). The last two are managed elsewhere. */
+	kind: 'paused' | 'globally-disabled' | 'server-disabled'
+	text: string
+	/** Where the blocker is managed; renders the text as a link. */
+	manageUrl?: string
+}
+
+/** The authority behind one MCP tool, shown beside its definition. */
+export interface ViewerToolAuthority {
+	endpoint: string
+	hasCredentials: boolean
+	allowPlaintext: boolean
+	allowPrivateNetwork: boolean
+}
+
+/**
+ * The stored definition of one MCP tool, fetched on demand: what the
+ * tool actually advertises, which the row's name and description cannot
+ * convey.
+ */
+export interface ViewerToolInspect {
+	loading: boolean
+	/** The sanitized definition JSON, or null while nothing is loaded. */
+	json: string | null
+	meta?: ViewerToolAuthority
+	ontoggle: () => void
+}
+
 export interface ViewerToolEntry {
 	row: ViewerRow
 	state: ToggleState
 	label: string
 	ontoggle: () => void
+	status?: ViewerStatus
+	/** Present on MCP tools: the definition/authority disclosure. */
+	inspect?: ViewerToolInspect
 }
 
 export interface ViewerManage {
@@ -34,9 +69,10 @@ export interface ViewerManage {
 
 export interface ViewerServerEntry {
 	row: ViewerRow
-	transport: string
 	toolCount: number
 	lastError?: string | null
+	/** Present when the server needs attention beyond its switch. */
+	status?: ViewerStatus
 	state: ToggleState
 	label: string
 	ontoggle: () => void

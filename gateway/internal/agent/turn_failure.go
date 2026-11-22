@@ -37,6 +37,14 @@ func turnError(err error) (text, toolName string) {
 	return cause, tool
 }
 
+// turnError is turnError with the observable copy sanitized by the lane's
+// scrubber: the error row is persisted and broadcast, so it must not carry
+// a credential the admission chain scrubbed everywhere else.
+func (a *UserAgent) turnError(ctx context.Context, err error) (text, toolName string) {
+	text, toolName = turnError(err)
+	return a.scrubCopy(ctx, text), toolName
+}
+
 // invokeHarnessFrame prefixes every error eino's tool adapter wraps
 // around a LocalFunc's failure (components/tool/utils/invokable_func.go).
 const invokeHarnessFrame = "[LocalFunc] "
@@ -52,9 +60,18 @@ func cleanToolError(err error) string {
 		err = terr.err
 	}
 	if inner := errors.Unwrap(err); inner != nil && strings.HasPrefix(err.Error(), invokeHarnessFrame) {
-		return inner.Error()
+		return fanOutScrubber(inner.Error())
 	}
-	return err.Error()
+	return fanOutScrubber(err.Error())
+}
+
+// fanOutScrubber applies the shared pattern battery to text on its way to
+// a consumer: the gateway is the final fan-out boundary, so
+// a credential shape that survived the admission chain still cannot reach
+// the wire, the transcript row or a log.
+func fanOutScrubber(text string) string {
+	scrubbed, _ := backend.NewPatternScrubber().ScrubString(text)
+	return scrubbed
 }
 
 // failTurn ends a failed turn and settles its item, reporting whether

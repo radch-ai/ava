@@ -7,6 +7,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/radch-ai/ava/backend/internal/db"
+	"github.com/radch-ai/ava/backend/internal/tooladmission"
 	"github.com/radch-ai/ava/backend/internal/tools"
 	"github.com/radch-ai/ava/backend/internal/vault"
 )
@@ -21,7 +22,10 @@ type TurnService struct {
 	sqlDB      *sql.DB
 	vaultStore *vault.Store
 	registry   *tools.Registry
-	logger     zerolog.Logger
+logger     zerolog.Logger
+	admitter   *tooladmission.Admitter
+	// stopPrune ends the audit retention ticker on shutdown.
+	stopPrune func()
 
 	// Journal writer state — see item_journal.go. The mutex serializes
 	// message batches, item transitions, thread switches, and retention,

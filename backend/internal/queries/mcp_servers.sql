@@ -4,8 +4,9 @@
 -- name: CreateMcpServer :exec
 -- id (slug) is stamped by the caller; created_at defaults in the DB.
 -- Connection is verified by the API before this runs.
-INSERT INTO mcp_servers (id, name, transport, command, args, url, env_keys, header_keys, timeout_ms)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO mcp_servers (id, name, url, header_keys, timeout_ms,
+                         allow_private_network, allow_plaintext)
+VALUES (?, ?, ?, ?, ?, ?, ?);
 
 -- name: ListMcpServers :many
 -- Servers in creation order, diagnostics included so a down server's
@@ -21,7 +22,8 @@ SELECT * FROM mcp_servers WHERE id = ?;
 -- by the API before this runs. enabled is deliberately not here --
 -- the kill switch has its own query.
 UPDATE mcp_servers
-SET name = ?, transport = ?, command = ?, args = ?, url = ?, env_keys = ?, header_keys = ?, timeout_ms = ?
+SET name = ?, url = ?, header_keys = ?, timeout_ms = ?,
+    allow_private_network = ?, allow_plaintext = ?
 WHERE id = ?;
 
 -- name: ToggleMcpServerEnabled :execrows
@@ -29,8 +31,13 @@ WHERE id = ?;
 UPDATE mcp_servers SET enabled = ? WHERE id = ?;
 
 -- name: DeleteMcpServer :execrows
--- Cascades the server's tools and, through them, every grant they held.
+-- Cascades the server's tools and, through them, every agent opt-out.
 DELETE FROM mcp_servers WHERE id = ?;
+
+-- name: SetMcpServerState :execrows
+-- Catalog admission state: paused after a security-rejected
+-- generation, active after a valid one. The tools themselves stay put.
+UPDATE mcp_servers SET catalog_state = ? WHERE id = ?;
 
 -- name: SetMcpServerDiagnostics :exec
 -- Post-discovery state: last error (NULL = healthy) and when the

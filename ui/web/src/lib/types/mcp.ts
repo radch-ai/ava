@@ -5,8 +5,9 @@
  * #lib/types/gen/apitypes.gen (gitignored) via `just typegen` —
  * regenerate, never edit.
  *
- * Secret values are write-only: requests accept env/headers maps, any
- * response lists key names only.
+ * Secret values are write-only: requests accept a headers map, any
+ * response lists key names only. Servers connect over streamable HTTP
+ * only: there is no command/argv/env field to send.
  */
 
 export type {
@@ -15,5 +16,7 @@ export type {
 	McpDiscoveredTool,
 	McpServer,
 	McpServerWithToolsResponse,
+	McpSkippedTool,
+	McpToolDefinitionResponse,
 	UpdateMcpServerRequest
 } from '#lib/types/gen/apitypes.gen'

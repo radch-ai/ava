@@ -30,7 +30,7 @@ func TestJournalRetentionPrunesPrefixAndProtectsUnresolved(t *testing.T) {
 	t.Cleanup(func() { journalPruneEvery, journalRetainPerAgent = oldEvery, oldRetain })
 
 	sqlDB := testdb.Open(t, true)
-	_, _, turns, err := New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x42}, 32))
+	_, _, turns, err := New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x42}, 32), DefaultToolLimits())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestJournalRetentionPrunesPrefixAndProtectsUnresolved(t *testing.T) {
 // never closes answers an error, never a partial page.
 func TestReplayFailsOnOpenBatchTail(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
-	_, _, turns, err := New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x42}, 32))
+	_, _, turns, err := New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x42}, 32), DefaultToolLimits())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestReplayFailsOnOpenBatchTail(t *testing.T) {
 // read instead of extending across an unbounded journal.
 func TestReplayFailsOnUnboundedPage(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
-	_, _, turns, err := New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x42}, 32))
+	_, _, turns, err := New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x42}, 32), DefaultToolLimits())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

@@ -1,7 +1,9 @@
-// POST /api/mcp/servers/{id}/refresh - reconnect and re-discover:
-// upsert the server's current listing, prune vanished tools, update
-// diagnostics. A dead server answers 502 with its cause; the row's
-// last_error says the same thing for later.
+// POST /api/mcp/servers/{id}/refresh - re-discover: upsert the server's
+// current listing, prune vanished tools, update diagnostics. The healthy
+// cached connection is reused, so a refresh never interrupts calls
+// already on the wire; only a broken connection is replaced. A dead
+// server answers 502 with its cause; the row's last_error says the same
+// thing for later.
 package mcpservers
 
 import (
@@ -18,13 +20,13 @@ import (
 )
 
 // Refresh re-runs discovery for one enabled server.
-func Refresh(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore *vault.Store) api.Handler {
+func Refresh(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore *vault.Store, canceler api.Canceler) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		id := r.PathValue("id")
 
-		row, err := readServer(r.Context(), queries, w, id)
-		if err != nil {
-			return err
+		row, ok, fault := readServer(r.Context(), queries, w, id)
+		if !ok {
+			return fault
 		}
 		if !throttle.Allow("mcp:" + id) {
 			return api.WriteError(w, http.StatusTooManyRequests,
@@ -35,13 +37,18 @@ func Refresh(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, querie
 				"Server is disabled — enable it before refreshing")
 		}
 
+		// The expected survivors before the publish: only the tools that
+		// vanished have their in-flight calls canceled.
+		before := toolIDs(r.Context(), queries, id)
 		discoverCtx, cancel := requestContext(r.Context())
-		listed, err := mcpserver.Discover(discoverCtx, sqlDB, queries, manager, vaultStore, row)
+		listed, skipped, err := mcpserver.Discover(discoverCtx, sqlDB, queries, manager, vaultStore, row)
 		cancel()
 		if err != nil {
 			return api.WriteError(w, http.StatusBadGateway,
 				"Connection check failed: "+err.Error())
 		}
+
+		cancelRemovedTools(canceler, id, before, keptFromListing(id, listed))
 
 		saved, err := queries.GetMcpServer(r.Context(), id)
 		if err != nil {
@@ -54,8 +61,9 @@ func Refresh(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, querie
 			return fmt.Errorf("build server %q: %w", id, err)
 		}
 		return api.WriteJSON(w, http.StatusOK, apitypes.McpServerWithToolsResponse{
-			Server: server,
-			Tools:  discoveredTools(id, listed),
+			Server:       server,
+			Tools:        discoveredTools(id, listed),
+			SkippedTools: skippedTools(skipped),
 		})
 	}
 }

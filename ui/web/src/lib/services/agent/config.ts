@@ -96,8 +96,9 @@ export async function toggleAgentTool(
 		.json<AgentTool>()
 }
 
-/** Flip the agent's parent gate over one MCP server; first enable
- * approves the server's current tools, later toggles keep choices. */
+/** Flip the agent's parent gate over one MCP server; the gate decides
+ * whether the agent uses that server's globally enabled tools and never
+ * touches a per-tool choice. */
 export async function toggleAgentMcp(
 	agentId: string,
 	serverId: string,

@@ -14,17 +14,18 @@ type Tool struct {
 	ServerID    *string `json:"serverId,omitempty"`
 }
 
-// AgentTool is one installed tool as one agent sees it: GlobalEnabled
-// is the global switch, AgentEnabled whether the agent holds a
-// preference row -- presence is the whole grant.
+// AgentTool is one installed tool as one agent sees it: GlobalEnabled is
+// the global switch, LocallyDisabled whether this agent opted out of it.
+// Availability is the two switches plus the owning server's gate and
+// health; only an explicit opt-out is agent-local state.
 type AgentTool struct {
-	ID            string  `json:"id"`
-	Name          string  `json:"name"`
-	Description   string  `json:"description"`
-	GlobalEnabled bool    `json:"globalEnabled"`
-	AgentEnabled  bool    `json:"agentEnabled"`
-	Kind          string  `json:"kind"`
-	ServerID      *string `json:"serverId,omitempty"`
+	ID              string  `json:"id"`
+	Name            string  `json:"name"`
+	Description     string  `json:"description"`
+	GlobalEnabled   bool    `json:"globalEnabled"`
+	LocallyDisabled bool    `json:"locallyDisabled"`
+	Kind            string  `json:"kind"`
+	ServerID        *string `json:"serverId,omitempty"`
 }
 
 // GetToolsResponse is GET /api/tools' body: the whole catalog.
@@ -33,12 +34,18 @@ type GetToolsResponse struct {
 }
 
 // AgentMcpPreference is one agent's parent gate over one MCP server
-// (agent_mcp_preferences). Absent from the list = never approved --
-// distinct from a configured off, which round-trips as
-// AgentEnabled=false.
+// (agent_mcp_preferences). AgentEnabled=false means off, whether the row
+// is absent or stored disabled: the gate decides only whether the agent
+// uses that server's globally enabled tools. Name, ServerEnabled and
+// CatalogState carry the facts the editor renders its server rows and
+// global blockers from, so it explains availability without a second
+// fetch. No endpoint, credential or approval facts are exposed here.
 type AgentMcpPreference struct {
-	ServerID     string `json:"serverId"`
-	AgentEnabled bool   `json:"agentEnabled"`
+	ServerID      string `json:"serverId"`
+	Name          string `json:"name"`
+	AgentEnabled  bool   `json:"agentEnabled"`
+	ServerEnabled bool   `json:"serverEnabled"`
+	CatalogState  string `json:"catalogState"`
 }
 
 // GetAgentToolsResponse is GET /api/agent/{id}/tools' body: the

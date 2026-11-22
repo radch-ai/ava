@@ -16,11 +16,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
+
+	"github.com/radch-ai/ava/backend"
 )
 
 // wrapTools rides every fetched implementation on the capture
@@ -32,6 +35,10 @@ func (a *UserAgent) wrapTools(ctx context.Context, rec *turnRecorder, impls []to
 	if len(impls) == 0 {
 		return nil, nil
 	}
+	// One attempt budget per turn, shared by every tool: denials and
+	// failures count, and exhaustion stops further execution with a
+	// visible outcome.
+	budget := &toolBudget{}
 	wrapped := make([]tool.BaseTool, 0, len(impls))
 	for _, impl := range impls {
 		info, err := impl.Info(ctx)
@@ -41,9 +48,25 @@ func (a *UserAgent) wrapTools(ctx context.Context, rec *turnRecorder, impls []to
 		if info == nil || info.Name == "" {
 			return nil, errors.New("tool metadata: missing name")
 		}
-		wrapped = append(wrapped, &capturingTool{inner: impl, info: info, rec: rec})
+		wrapped = append(wrapped, &capturingTool{
+			inner: impl, info: info, rec: rec, budget: budget, scrub: a.scrubCopy,
+		})
 	}
 	return wrapped, nil
+}
+
+// toolAttemptsPerTurn is the fixed per-turn attempt ceiling: the
+// turn engine owns this bound, so it is not environment-configurable.
+const toolAttemptsPerTurn = 32
+
+// toolBudget counts one turn's tool attempts, denials included.
+type toolBudget struct {
+	used atomic.Int32
+}
+
+// take reserves one attempt; false means the turn is out of budget.
+func (b *toolBudget) take() bool {
+	return b.used.Add(1) <= toolAttemptsPerTurn
 }
 
 // capturingTool delegates to the wrapped implementation and reports
@@ -54,9 +77,13 @@ func (a *UserAgent) wrapTools(ctx context.Context, rec *turnRecorder, impls []to
 // outlives the turn's cancel — a failed or stopped turn still reports
 // its last tool's outcome.
 type capturingTool struct {
-	inner tool.InvokableTool
-	info  *schema.ToolInfo
-	rec   *turnRecorder
+	inner  tool.InvokableTool
+	info   *schema.ToolInfo
+	rec    *turnRecorder
+	budget *toolBudget
+	// scrub sanitizes every observable copy — arguments, result, error
+	// text — with the agent's known secrets.
+	scrub func(context.Context, string) string
 }
 
 func (t *capturingTool) Info(context.Context) (*schema.ToolInfo, error) {
@@ -71,11 +98,26 @@ func (t *capturingTool) InvokableRun(ctx context.Context, args string, opts ...t
 	if callID == "" {
 		return "", errors.New("tool call has no id")
 	}
+	// The admission chain keys its audit rows on this id.
+	ctx = backend.WithToolCallID(ctx, callID)
+	// Every consumer sees a scrubbed copy of the arguments and the result;
+	// the dispatched arguments stay byte-identical.
+	displayArgs := t.cleanCopy(ctx, args)
 	invocationID := uuid.NewString()
 	// Recorded intent precedes the external effect: a journal that cannot
 	// hold it stops the invocation before the tool runs.
-	if err := t.rec.recordStart(invocationID, callID, t.info.Name, args); err != nil {
+	if err := t.rec.recordStart(invocationID, callID, t.info.Name, displayArgs); err != nil {
 		return "", err
+	}
+	// The attempt budget precedes execution: a call past the ceiling is a
+	// structured outcome that still reaches the wire and the transcript,
+	// so exhaustion is visible rather than silent.
+	if t.budget != nil && !t.budget.take() {
+		denial := `{"error":{"code":"budget_exceeded"}}`
+		if perr := t.rec.recordOutcome(invocationID, callID, t.info.Name, denial, nil); perr != nil {
+			return denial, perr
+		}
+		return denial, nil
 	}
 	result, err := t.inner.InvokableRun(ctx, args, opts...)
 	invocationErr := err
@@ -87,10 +129,19 @@ func (t *capturingTool) InvokableRun(ctx context.Context, args string, opts ...t
 	// The required outcome write wins over the invocation's own error:
 	// the transcript must not lose the row. The returned error is not
 	// tool-attributed, so the turn fails at message level.
-	if perr := t.rec.recordOutcome(invocationID, callID, t.info.Name, result, invocationErr); perr != nil {
+	if perr := t.rec.recordOutcome(invocationID, callID, t.info.Name, t.cleanCopy(ctx, result), invocationErr); perr != nil {
 		return result, perr
 	}
 	return result, err
+}
+
+// cleanCopy sanitizes one observable copy. A wrapper without a bound
+// scrubber keeps the pattern battery alone.
+func (t *capturingTool) cleanCopy(ctx context.Context, content string) string {
+	if t.scrub == nil {
+		return fanOutScrubber(content)
+	}
+	return t.scrub(ctx, content)
 }
 
 // toolError carries the name of a tool invocation failed in.

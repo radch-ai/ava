@@ -1,7 +1,7 @@
 -- Agents: identity (name, icon) and the five prompt-text fields,
 -- one typed column each; user_context is the superagent's, NULL on
 -- regular agents. Heartbeat and cron jobs live in their own
--- agent-keyed tables, tool permissions in agent_tool_preferences,
+-- agent-keyed tables, tool opt-outs in agent_disabled_tools,
 -- user-installed MCP servers in mcp_servers -- parent of the
 -- catalog's kind='mcp' rows.
 --   - ids derive from display names (lowercase-hyphen); "_"-prefixed
@@ -56,27 +56,32 @@ CREATE TABLE IF NOT EXISTS threads (
 -- User-installed MCP servers: the parent entity of kind='mcp' catalog
 -- rows. Ids are slugs minted from the name at creation (agent
 -- convention) and stay immutable while the name is editable. Secrets
--- never touch this table: env/header VALUES live sealed in the
+-- never touch this table: header VALUES live sealed in the
 -- runtime vault under mcp-server/{slug}; only key NAMES are recorded,
 -- so the wire can render them redacted. A disabled server's tools
--- resolve to nothing at turn time (ResolveAgentTools joins this
--- switch) -- same inertness as the global tool switch.
+-- resolve to nothing at turn time (ResolveAgentToolsDetailed joins
+-- this switch) -- same inertness as the global tool switch.
 CREATE TABLE IF NOT EXISTS mcp_servers (
     id           TEXT NOT NULL PRIMARY KEY,
     name         TEXT NOT NULL,
-    transport    TEXT NOT NULL CHECK (transport IN ('stdio', 'http')),
-    -- stdio: executable + JSON array of argv entries.
-    command      TEXT NULL,
-    args         TEXT NOT NULL DEFAULT '[]',
-    -- http: streamable HTTP endpoint (http(s), validated in the API).
+    -- Streamable HTTP endpoint (http(s), validated in the API).
     url          TEXT NULL,
-    -- JSON arrays of secret key names; values sealed in the vault.
-    env_keys     TEXT NOT NULL DEFAULT '[]',
+    -- JSON array of secret key names; values sealed in the vault.
     header_keys  TEXT NOT NULL DEFAULT '[]',
     -- Per-call deadline; NULL = global default.
     timeout_ms   INTEGER NULL,
     -- Server-level kill switch.
     enabled      INTEGER NOT NULL DEFAULT 1,
+    -- Catalog admission state: 'paused' after a
+    -- security-rejected discovery generation -- prior metadata stays
+    -- readable, new calls are denied until a valid refresh succeeds.
+    catalog_state TEXT NOT NULL DEFAULT 'active'
+        CHECK (catalog_state IN ('active', 'paused')),
+    -- Destination authority: administrator-approved
+    -- exceptions for one server's canonical endpoint. Both default
+    -- deny; a destination change resets them.
+    allow_private_network INTEGER NOT NULL DEFAULT 0,
+    allow_plaintext       INTEGER NOT NULL DEFAULT 0,
     -- Discovery diagnostics, so inert tools are explainable.
     last_error   TEXT NULL,
     refreshed_at BIGINT NULL,
@@ -96,9 +101,12 @@ CREATE TABLE IF NOT EXISTS tools (
     -- Global availability: the outer permission gate.
     enabled     INTEGER NOT NULL DEFAULT 1,
     -- Provenance: shipped built-in vs MCP-discovered; a tool dies
-    -- with its owning server (delete cascades rows and grants).
+    -- with its owning server (delete cascades rows and opt-outs).
     kind      TEXT NOT NULL DEFAULT 'builtin',
     server_id TEXT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+    -- The advertised definition exactly as discovered (bounded,
+    -- sanitized): the UI's definition source. Never executed.
+    definition_json   TEXT NOT NULL DEFAULT '',
     created_at  BIGINT NOT NULL
         DEFAULT (CAST((julianday('now') - 2440587.5) * 86400000000 AS INTEGER))
 );
@@ -106,22 +114,15 @@ CREATE TABLE IF NOT EXISTS tools (
 -- Server-owned rows by parent.
 CREATE INDEX IF NOT EXISTS idx_tools_server_id ON tools (server_id);
 
--- Per-agent tool preferences: a row means the tool is enabled for
--- that agent -- presence is the whole meaning, no per-agent switch.
--- The global switch lives on tools.enabled alone.
-CREATE TABLE IF NOT EXISTS agent_tool_preferences (
+-- row presence = this agent explicitly disabled this tool; absence = inherit
+CREATE TABLE IF NOT EXISTS agent_disabled_tools (
     agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     tool_id  TEXT NOT NULL REFERENCES tools(id) ON DELETE CASCADE,
     PRIMARY KEY (agent_id, tool_id)
 );
 
 -- Per-agent MCP server gate: the parent switch over a server's tools.
--- Tri-state by design -- no row means "never approved" (default-deny),
--- a row with enabled=0 means "configured, off" -- so switching a
--- server off and back on never re-derives which tools the agent had
--- picked; only the first enable seeds the grants. A turn
--- resolves a tool only when this gate, the server switch, the tool
--- switch and the grant all agree.
+-- absent = off; enabled = agent uses this server's globally enabled tools.
 CREATE TABLE IF NOT EXISTS agent_mcp_preferences (
     agent_id  TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     server_id TEXT NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
@@ -132,36 +133,28 @@ CREATE TABLE IF NOT EXISTS agent_mcp_preferences (
 CREATE INDEX IF NOT EXISTS idx_agent_mcp_preferences_server
     ON agent_mcp_preferences (server_id);
 
--- Pre-existing grants imply an approved server: the upgrade derivation
--- (no-op on a fresh database) turns "agent holds >=1 grant of this
--- server's tools" into a parent row, expanding nothing -- the grants
--- themselves stay untouched.
-INSERT OR IGNORE INTO agent_mcp_preferences (agent_id, server_id, enabled)
-SELECT DISTINCT p.agent_id, t.server_id, 1
-FROM agent_tool_preferences p
-JOIN tools t ON t.id = p.tool_id
-WHERE t.server_id IS NOT NULL;
+-- Durable, payload-free security audit. Columns are validated
+-- identifiers, timestamps, decisions, static reason codes
+-- and bounded counts -- there is deliberately no payload column, so
+-- arguments, results, credentials, URLs and schemas cannot be stored
+-- here even by mistake. 'admitted' rows are the pre-dispatch record
+-- (protected until terminal); 'terminal' rows are outcomes and
+-- point-in-time decisions.
+CREATE TABLE IF NOT EXISTS tool_audit_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    occurred_at BIGINT NOT NULL,
+    event TEXT NOT NULL CHECK (event IN (
+        'admission', 'outcome', 'approval_change',
+        'plaintext_exception', 'denial', 'redaction')),
+    agent_id   TEXT,
+    server_id  TEXT,
+    tool_id    TEXT,
+    tool_call_id TEXT,
+    decision    TEXT NOT NULL,
+    reason_code TEXT NOT NULL,
+    count       INTEGER,
+    state TEXT NOT NULL CHECK (state IN ('admitted', 'terminal'))
+);
 
--- Built-ins default ON, as two insert rules: a new built-in reaches
--- every existing agent, a new agent reaches every installed built-in
--- -- globally disabled ones included, so a saved choice is
--- independent of availability. Only genuine inserts seed grants:
--- catalog re-sync takes the upsert's update path and toggles are
--- updates, so a deleted grant (the opt-out) never comes back.
--- A failed grant fails its owning insertion -- no half-initialized
--- defaults.
-CREATE TRIGGER IF NOT EXISTS tools_seed_agent_grants
-AFTER INSERT ON tools
-FOR EACH ROW
-WHEN NEW.builtin = 1
-BEGIN
-    INSERT INTO agent_tool_preferences (agent_id, tool_id)
-    SELECT id, NEW.id FROM agents;
-END;
-
-CREATE TRIGGER IF NOT EXISTS agents_seed_tool_grants
-AFTER INSERT ON agents
-BEGIN
-    INSERT INTO agent_tool_preferences (agent_id, tool_id)
-    SELECT NEW.id, id FROM tools WHERE builtin = 1;
-END;
+CREATE INDEX IF NOT EXISTS idx_tool_audit_occurred ON tool_audit_events (occurred_at);
+CREATE INDEX IF NOT EXISTS idx_tool_audit_agent ON tool_audit_events (agent_id, occurred_at);

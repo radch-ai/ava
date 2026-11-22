@@ -5,11 +5,13 @@
  * #lib/types/gen/apitypes.gen (gitignored) via `just typegen` —
  * regenerate, never edit.
  *
- * Tools are installed globally (MCP & Tools); agents hold only a
- * per-agent preference referencing the catalog id.
+ * Tools are installed globally (MCP & Tools): `enabled` is the global
+ * switch. An agent inherits every enabled tool unless it holds an explicit
+ * opt-out (`locallyDisabled`) for that catalog id.
  */
 
 export type {
+	AgentMcpPreference,
 	AgentTool,
 	GetAgentToolsResponse,
 	GetToolsResponse,

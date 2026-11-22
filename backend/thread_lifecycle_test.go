@@ -92,7 +92,7 @@ func TestExecuteThreadSwitchLinksPredecessor(t *testing.T) {
 	// A file-backed store: the restart below closes the handle and
 	// reopens the same database.
 	sqlDB := testdb.Open(t, false)
-	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey)
+	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestExecuteThreadSwitchLinksPredecessor(t *testing.T) {
 		t.Fatalf("close store: %v", err)
 	}
 	reopenedDB := testdb.Open(t, false)
-	_, _, reopened, err := backend.New(reopenedDB, zerolog.Nop(), testMasterKey)
+	_, _, reopened, err := backend.New(reopenedDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
 	if err != nil {
 		t.Fatalf("backend.New (reopen): %v", err)
 	}
@@ -255,7 +255,7 @@ func TestGetAgentThreadIsScopedToActiveThread(t *testing.T) {
 
 func TestActiveThreadSurvivesRestart(t *testing.T) {
 	sqlDB := testdb.Open(t, false)
-	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey)
+	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestActiveThreadSurvivesRestart(t *testing.T) {
 		t.Fatalf("close store: %v", err)
 	}
 	reopenedDB := testdb.Open(t, false)
-	_, _, reopened, err := backend.New(reopenedDB, zerolog.Nop(), testMasterKey)
+	_, _, reopened, err := backend.New(reopenedDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
 	if err != nil {
 		t.Fatalf("backend.New (reopen): %v", err)
 	}

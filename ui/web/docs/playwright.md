@@ -6,7 +6,7 @@
 
 - E2E is integration testing: the specs run against the **real backend** through the preview server's `/api` proxy (derived from the backend's `AVA_ADDR`, like `AVA_UI_TOKEN` — the same env the backend reads) and a real browser, authenticated via `AVA_UI_TOKEN`. They never use mocks.
 - Unit-level correctness against the mock API belongs in Vitest — see `docs/vitest.md`.
-- To author or debug a spec without a backend, run `VITE_USE_MOCKS=true bun run test:e2e`: the mock middleware answers `/api` on the preview server itself, and the shared fixtures exchange the seeded token for a session cookie so specs enter the app directly.
+- The MCP lifecycle spec is self-contained in real-backend mode: it starts its own streamable-HTTP MCP fixture (`tests/e2e/fixtures/mcp-server.ts`) on an ephemeral port, including the `/__fixture/pause` control its paused-catalog flow drives. Set `AVA_E2E_MCP_URL` to point the suite at an external MCP server instead.
 
 ## Coverage Model
 

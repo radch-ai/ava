@@ -22,6 +22,7 @@ import (
 	"github.com/radch-ai/ava/backend/internal/api/vaults"
 	"github.com/radch-ai/ava/backend/internal/db"
 	mcpserver "github.com/radch-ai/ava/backend/internal/mcpserver"
+	"github.com/radch-ai/ava/backend/internal/tooladmission"
 	toolreg "github.com/radch-ai/ava/backend/internal/tools"
 	"github.com/radch-ai/ava/backend/internal/vault"
 )
@@ -49,9 +50,12 @@ import (
 // masterKey unlocks the secret vault: a key that does not unwrap the
 // stored keyset fails here, at boot.
 //
+// limits is the admission budget: operator-set starting defaults,
+// never model- or server-influenced.
+//
 // Wire types live in backend/apitypes — the UI's TypeScript types are
 // generated from it (`just typegen`).
-func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte) (http.Handler, auth.Sessions, *TurnService, error) {
+func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte, limits ToolLimits) (http.Handler, auth.Sessions, *TurnService, error) {
 	master, err := vault.NewMasterAEAD(masterKey)
 	if err != nil {
 		return nil, nil, nil, err
@@ -78,23 +82,30 @@ func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte) (http.Handler, 
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("read sync history: %w", err)
 	}
+	// The invocation boundary: one admitter and one cancellation
+	// registry per process, shared by every turn.
+	registry2 := tooladmission.NewCancelRegistry()
+	admitter := tooladmission.New(queries, limits, registry2, logger)
 	turns := &TurnService{
 		queries:         queries,
 		sqlDB:           sqlDB,
 		vaultStore:      vaultStore,
 		registry:        registry,
 		logger:          logger,
+		admitter:        admitter,
 		lastPersistedMs: watermark,
 		historyID:       historyID,
 	}
 	if err := turns.recoverUnfinished(context.Background()); err != nil {
 		return nil, nil, nil, err
 	}
+	// Retention must expire by age without waiting for traffic.
+	turns.stopPrune = admitter.StartPrune(time.Hour)
 	if err := syncToolCatalog(queries, registry.Catalog()); err != nil {
 		return nil, nil, nil, err
 	}
-// MCP discovery is best-effort per server: a down server's tools stay
-// listed but inert; boot never fails on it.
+	// MCP discovery is best-effort per server: a down server's
+	// tools stay listed but inert; boot never fails on it.
 	if err := mcpserver.SyncEnabled(context.Background(), sqlDB, queries, registry.MCP(), vaultStore, logger); err != nil {
 		return nil, nil, nil, err
 	}
@@ -125,24 +136,26 @@ func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte) (http.Handler, 
 	// Per-agent tool preferences — live toggles, like cron jobs.
 	mux.Handle("GET /agent/{id}/tools", api.Log(logger, agent.GetAgentTools(queries)))
 	mux.Handle("PATCH /agent/{id}/mcp/{serverId}",
-		api.Log(logger, agent.ToggleAgentMcp(toggleThrottle, sqlDB, queries)))
+		api.Log(logger, agent.ToggleAgentMcp(toggleThrottle, sqlDB, queries, turns)))
 	mux.Handle("PATCH /agent/{id}/tools/{toolId}",
-		api.Log(logger, agent.ToggleAgentTool(toggleThrottle, queries)))
+		api.Log(logger, agent.ToggleAgentTool(toggleThrottle, sqlDB, queries, turns)))
 
 	// Tool catalog.
 	mux.Handle("GET /tools", api.Log(logger, tools.GetTools(queries)))
-	mux.Handle("PATCH /tools/{id}", api.Log(logger, tools.ToggleTool(toggleThrottle, queries)))
+	mux.Handle("PATCH /tools/{id}", api.Log(logger, tools.ToggleTool(toggleThrottle, sqlDB, queries, turns)))
 
 	// MCP servers: CRUD + refresh; writes throttled per server.
 	mcpThrottle := api.NewThrottle(500 * time.Millisecond)
 	mux.Handle("GET /mcp/servers", api.Log(logger, mcpservers.List(queries)))
-	mux.Handle("POST /mcp/servers", api.Log(logger, mcpservers.Create(registry.MCP(), sqlDB, queries, vaultStore)))
+	mux.Handle("POST /mcp/servers", api.Log(logger, mcpservers.Create(registry.MCP(), sqlDB, queries, vaultStore, turns)))
 	mux.Handle("PATCH /mcp/servers/{id}",
-		api.Log(logger, mcpservers.Update(mcpThrottle, registry.MCP(), sqlDB, queries, vaultStore)))
+		api.Log(logger, mcpservers.Update(mcpThrottle, registry.MCP(), sqlDB, queries, vaultStore, turns)))
 	mux.Handle("DELETE /mcp/servers/{id}",
-		api.Log(logger, mcpservers.Delete(mcpThrottle, registry.MCP(), queries, vaultStore)))
+		api.Log(logger, mcpservers.Delete(mcpThrottle, registry.MCP(), queries, vaultStore, turns)))
 	mux.Handle("POST /mcp/servers/{id}/refresh",
-		api.Log(logger, mcpservers.Refresh(mcpThrottle, registry.MCP(), sqlDB, queries, vaultStore)))
+		api.Log(logger, mcpservers.Refresh(mcpThrottle, registry.MCP(), sqlDB, queries, vaultStore, turns)))
+	mux.Handle("GET /mcp/servers/{id}/tools/{toolId}/definition",
+		api.Log(logger, mcpservers.ToolDefinition(queries)))
 
 	// Providers.
 	mux.Handle("GET /providers", api.Log(logger, providers.GetProviders(queries, vaultStore)))

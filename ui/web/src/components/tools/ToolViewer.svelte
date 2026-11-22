@@ -9,14 +9,19 @@
 	import { Switch } from '#components/ui/switch'
 	import { cn } from '#lib/utils.js'
 
-	import type { ViewerEntry } from './viewer-types'
+	import type {
+		ViewerEntry,
+		ViewerStatus,
+		ViewerToolEntry
+	} from './viewer-types'
 
 	/**
 	 * Shared tool list: builtins as flat switch rows, MCP servers as
 	 * collapsible parents whose nested tools carry their own switches.
 	 * Both surfaces render this component — the MCP & Tools page (global
 	 * switches, manage buttons) and the per-agent editor (compact,
-	 * grants only) — so grouping and collapse behavior cannot drift.
+	 * per-agent opt-outs) — so grouping and collapse behavior cannot
+	 * drift.
 	 */
 
 	interface Props {
@@ -26,7 +31,69 @@
 	}
 
 	let { entries, compact = false }: Props = $props()
+
+	/** The authority line beside a definition: where a call would go. */
+	function authorityLine(tool: ViewerToolEntry): string {
+		const meta = tool.inspect?.meta
+		if (!meta) return ''
+		const parts = [
+			meta.endpoint,
+			`credentials: ${meta.hasCredentials ? 'yes' : 'no'}`,
+			`plaintext: ${meta.allowPlaintext ? 'yes' : 'no'}`,
+			`private network: ${meta.allowPrivateNetwork ? 'yes' : 'no'}`
+		]
+		return parts.filter((part) => part !== '').join(' · ')
+	}
 </script>
+
+{#snippet statusLine(status: ViewerStatus)}
+	<p
+		class="text-xs {status.kind === 'paused'
+			? 'text-amber-600'
+			: 'text-muted-foreground'}"
+	>
+		{#if status.manageUrl}
+			<a
+				href={status.manageUrl}
+				class="text-primary underline-offset-4 hover:underline"
+			>
+				{status.text}
+			</a>
+		{:else}
+			{status.text}
+		{/if}
+	</p>
+{/snippet}
+
+{#snippet definitionPanel(tool: ViewerToolEntry)}
+	{#if tool.inspect}
+		{@const inspect = tool.inspect}
+		<div class="space-y-1.5">
+			<button
+				type="button"
+				class="text-primary text-xs underline-offset-4 hover:underline"
+				aria-expanded={inspect.json !== null}
+				onclick={() => inspect.ontoggle()}
+			>
+				{inspect.loading
+					? `Loading definition of ${tool.row.name}…`
+					: inspect.json === null
+						? `Show definition of ${tool.row.name}`
+						: `Hide definition of ${tool.row.name}`}
+			</button>
+			{#if inspect.json !== null}
+				{#if inspect.meta}
+					<p class="text-muted-foreground font-mono text-xs break-all">
+						{authorityLine(tool)}
+					</p>
+				{/if}
+				<pre
+					class="bg-muted/40 max-h-64 overflow-auto rounded-md p-2 font-mono text-xs break-all whitespace-pre-wrap"
+				>{inspect.json}</pre>
+			{/if}
+		</div>
+	{/if}
+{/snippet}
 
 <div class="divide-y rounded-lg border">
 	{#each entries as item (item.kind === 'tool'
@@ -55,6 +122,10 @@
 							{tool.row.description}
 						</p>
 					{/if}
+					{#if tool.status}
+						{@render statusLine(tool.status)}
+					{/if}
+					{@render definitionPanel(tool)}
 				</div>
 				<Switch
 					id="tool-{tool.row.id}"
@@ -87,7 +158,7 @@
 							<span
 								class="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs font-medium"
 							>
-								MCP · {server.transport}
+								MCP
 							</span>
 							<span class="text-muted-foreground text-xs">
 								{server.toolCount}
@@ -101,6 +172,9 @@
 								</span>
 							{/each}
 						</div>
+						{#if server.status}
+							{@render statusLine(server.status)}
+						{/if}
 						{#if server.lastError}
 							<p
 								class="text-destructive truncate text-xs"
@@ -176,6 +250,10 @@
 												{tool.row.description}
 											</p>
 										{/if}
+										{#if tool.status}
+											{@render statusLine(tool.status)}
+										{/if}
+										{@render definitionPanel(tool)}
 									</div>
 									<Switch
 										id="nested-tool-{tool.row.id}"

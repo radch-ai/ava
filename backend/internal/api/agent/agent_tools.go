@@ -1,9 +1,10 @@
 // The per-agent tool endpoints: GET /agent/{id}/tools and PATCH
-// /agent/{id}/tools/{toolId} — live toggles over the preference
-// rows, kept out of the config save the way cron jobs are.
+// /agent/{id}/tools/{toolId} — live opt-outs over the inheritance model,
+// kept out of the config save the way cron jobs are.
 package agent
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -13,10 +14,16 @@ import (
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/backend/internal/api"
 	"github.com/radch-ai/ava/backend/internal/db"
+	"github.com/radch-ai/ava/backend/internal/tooladmission"
 )
 
+// auditGrant writes one approval-change record.
+func auditGrant(ctx context.Context, queries *db.Queries, decision tooladmission.Decision) error {
+	return tooladmission.NewAuditor(queries).Record(ctx, decision)
+}
+
 // GetAgentTools answers the catalog as this agent sees it: every
-// installed tool with its global switch and the agent's preference.
+// installed tool with its global switch and this agent's opt-out.
 func GetAgentTools(queries *db.Queries) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		id := r.PathValue("id")
@@ -29,7 +36,9 @@ func GetAgentTools(queries *db.Queries) api.Handler {
 
 // writeAgentTools answers the agent's tool listing plus its MCP gate
 // state -- the one shape every tool-mutating endpoint returns, so the
-// editor re-renders from a single source of truth.
+// editor re-renders from a single source of truth. Every server is
+// listed with its gate state (absent = off), so the editor can explain
+// a global blocker and link to where it is managed.
 func writeAgentTools(w http.ResponseWriter, r *http.Request, queries *db.Queries, id string) error {
 	rows, err := queries.ListAgentTools(r.Context(), id)
 	if err != nil {
@@ -41,25 +50,37 @@ func writeAgentTools(w http.ResponseWriter, r *http.Request, queries *db.Queries
 		_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 		return fmt.Errorf("list agent mcp gates for %q: %w", id, err)
 	}
+	servers, err := queries.ListMcpServers(r.Context())
+	if err != nil {
+		_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+		return fmt.Errorf("list mcp servers: %w", err)
+	}
+	enabled := make(map[string]bool, len(gates))
+	for _, gate := range gates {
+		enabled[gate.ServerID] = gate.Enabled != 0
+	}
 	out := apitypes.GetAgentToolsResponse{
 		Tools:   make([]apitypes.AgentTool, 0, len(rows)),
-		Servers: make([]apitypes.AgentMcpPreference, 0, len(gates)),
+		Servers: make([]apitypes.AgentMcpPreference, 0, len(servers)),
 	}
 	for _, row := range rows {
 		out.Tools = append(out.Tools, agentToolFromRow(row))
 	}
-	for _, gate := range gates {
+	for _, server := range servers {
 		out.Servers = append(out.Servers, apitypes.AgentMcpPreference{
-			ServerID:     gate.ServerID,
-			AgentEnabled: gate.Enabled != 0,
+			ServerID:      server.ID,
+			Name:          server.Name,
+			AgentEnabled:  enabled[server.ID],
+			ServerEnabled: server.Enabled != 0,
+			CatalogState:  server.CatalogState,
 		})
 	}
 	return api.WriteJSON(w, http.StatusOK, out)
 }
 
-// ToggleAgentTool toggles one agent's preference for one tool and
+// ToggleAgentTool writes or clears one agent's opt-out for one tool and
 // answers the saved view. Bursts on the same target draw a 429.
-func ToggleAgentTool(throttle *api.Throttle, queries *db.Queries) api.Handler {
+func ToggleAgentTool(throttle *api.Throttle, sqlDB *sql.DB, queries *db.Queries, canceler api.Canceler) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		var req apitypes.ToggleAgentToolRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -74,7 +95,8 @@ func ToggleAgentTool(throttle *api.Throttle, queries *db.Queries) api.Handler {
 		if _, err := queries.GetAgentConfig(r.Context(), id); err != nil {
 			return agentLookupErr(w, id, err)
 		}
-		if _, err := queries.GetTool(r.Context(), toolID); err != nil {
+		tool, err := queries.GetTool(r.Context(), toolID)
+		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return api.WriteError(w, http.StatusNotFound, fmt.Sprintf("Tool %q not found", toolID))
 			}
@@ -88,19 +110,63 @@ func ToggleAgentTool(throttle *api.Throttle, queries *db.Queries) api.Handler {
 				"Toggling too fast — try again in a moment")
 		}
 
+		var auditFail error
 		if *req.Enabled {
-			if _, err := queries.AddAgentTool(r.Context(), db.AddAgentToolParams{
+			// Enabling means dropping the opt-out: inheritance resumes.
+			// The change and its record commit together, so no activation
+			// goes unrecorded.
+			tx, err := sqlDB.BeginTx(r.Context(), nil)
+			if err != nil {
+				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+				return fmt.Errorf("begin opt-in %q for %q: %w", toolID, id, err)
+			}
+			defer func() { _ = tx.Rollback() }()
+			txq := db.New(tx)
+			if err := txq.RemoveAgentDisabledTool(r.Context(), db.RemoveAgentDisabledToolParams{
 				AgentID: id, ToolID: toolID,
 			}); err != nil {
 				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("add tool %q for %q: %w", toolID, id, err)
+				return fmt.Errorf("remove opt-out %q for %q: %w", toolID, id, err)
+			}
+			if err := auditGrant(r.Context(), txq, tooladmission.Decision{
+				Event:   tooladmission.EventApprovalChange,
+				AgentID: id,
+				ToolID:  toolID,
+				Outcome: "approve",
+				Reason:  "locally_enabled",
+			}); err != nil {
+				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+				return fmt.Errorf("audit opt-in %q for %q: %w", toolID, id, err)
+			}
+			if err := tx.Commit(); err != nil {
+				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+				return fmt.Errorf("commit opt-in %q for %q: %w", toolID, id, err)
 			}
 		} else {
-			if _, err := queries.RemoveAgentTool(r.Context(), db.RemoveAgentToolParams{
+			if err := queries.AddAgentDisabledTool(r.Context(), db.AddAgentDisabledToolParams{
 				AgentID: id, ToolID: toolID,
 			}); err != nil {
 				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("remove tool %q for %q: %w", toolID, id, err)
+				return fmt.Errorf("add opt-out %q for %q: %w", toolID, id, err)
+			}
+			// The opt-out takes effect even when its record fails; the
+			// cancellation is best-effort by nature. It is agent-scoped,
+			// and builtin entries (no server) match too.
+			if canceler != nil {
+				serverIDStr := ""
+				if serverID, ok := tool.ServerID.(string); ok {
+					serverIDStr = serverID
+				}
+				canceler.CancelAgentToolCalls(id, serverIDStr, toolID)
+			}
+			if err := auditGrant(r.Context(), queries, tooladmission.Decision{
+				Event:   tooladmission.EventApprovalChange,
+				AgentID: id,
+				ToolID:  toolID,
+				Outcome: "revoke",
+				Reason:  "locally_disabled",
+			}); err != nil {
+				auditFail = fmt.Errorf("audit opt-out %q for %q: %w", toolID, id, err)
 			}
 		}
 
@@ -109,7 +175,7 @@ func ToggleAgentTool(throttle *api.Throttle, queries *db.Queries) api.Handler {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return fmt.Errorf("read tool %q for %q after save: %w", toolID, id, err)
 		}
-		return api.WriteJSON(w, http.StatusOK, agentToolFromOne(row))
+		return errors.Join(api.WriteJSON(w, http.StatusOK, agentToolFromOne(row)), auditFail)
 	}
 }
 
@@ -124,25 +190,25 @@ func agentLookupErr(w http.ResponseWriter, id string, err error) error {
 
 func agentToolFromRow(row db.ListAgentToolsRow) apitypes.AgentTool {
 	return apitypes.AgentTool{
-		ID:            row.ID,
-		Name:          row.Name,
-		Description:   row.Description,
-		GlobalEnabled: row.GloballyEnabled != 0,
-		AgentEnabled:  row.AgentEnabled != 0,
-		Kind:          row.Kind,
-		ServerID:      serverIDPtr(row.ServerID),
+		ID:              row.ID,
+		Name:            row.Name,
+		Description:     row.Description,
+		GlobalEnabled:   row.GloballyEnabled != 0,
+		LocallyDisabled: row.LocallyDisabled,
+		Kind:            row.Kind,
+		ServerID:        serverIDPtr(row.ServerID),
 	}
 }
 
 func agentToolFromOne(row db.GetAgentToolRow) apitypes.AgentTool {
 	return apitypes.AgentTool{
-		ID:            row.ID,
-		Name:          row.Name,
-		Description:   row.Description,
-		GlobalEnabled: row.GloballyEnabled != 0,
-		AgentEnabled:  row.AgentEnabled != 0,
-		Kind:          row.Kind,
-		ServerID:      serverIDPtr(row.ServerID),
+		ID:              row.ID,
+		Name:            row.Name,
+		Description:     row.Description,
+		GlobalEnabled:   row.GloballyEnabled != 0,
+		LocallyDisabled: row.LocallyDisabled,
+		Kind:            row.Kind,
+		ServerID:        serverIDPtr(row.ServerID),
 	}
 }
 

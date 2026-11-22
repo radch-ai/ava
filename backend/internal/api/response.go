@@ -44,3 +44,14 @@ func Log(logger zerolog.Logger, h Handler) http.HandlerFunc {
 		}
 	}
 }
+
+// Canceler stops in-flight tool calls when authority changes: a disabled
+// server, a disabled tool, a closed agent selection or a removed tool
+// cancels the calls it already admitted. Cancellation is best-effort — the
+// remote outcome stays unknown and nothing is retried.
+type Canceler interface {
+	CancelServerTools(serverID string) int
+	CancelToolCalls(serverID, toolID string) int
+	CancelAgentServerTools(agentID, serverID string) int
+	CancelAgentToolCalls(agentID, serverID, toolID string) int
+}

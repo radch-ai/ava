@@ -25,7 +25,7 @@ import (
 func resolverDB(t *testing.T) (*sql.DB, *backend.TurnService) {
 	t.Helper()
 	sqlDB := testdb.Open(t, true)
-	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey)
+	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}

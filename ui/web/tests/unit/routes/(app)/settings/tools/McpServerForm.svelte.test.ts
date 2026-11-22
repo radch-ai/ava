@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	type Mock,
+	vi
+} from 'vitest'
 import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
 import * as mcpService from '#lib/services/mcp'
@@ -11,23 +19,32 @@ vi.mock('#lib/services/mcp', () => ({
 	updateMcpServer: vi.fn()
 }))
 
+// One HTTP server with a loopback endpoint and both approvals granted:
+// the state an operator reaches by editing the flags.
 const server: McpServer = {
 	id: 'notes-mcp',
 	name: 'Notes MCP',
-	transport: 'stdio',
-	command: 'notes-mcp',
-	args: ['--stdio'],
-	envKeys: ['NOTES_TOKEN'],
+	url: 'http://127.0.0.1:3333/mcp',
+	headerKeys: ['Authorization'],
 	enabled: true,
-	toolCount: 2
+	toolCount: 2,
+	catalogState: 'active',
+	allowPrivateNetwork: true,
+	allowPlaintext: true
 }
 
-function renderForm(oncancel = vi.fn()): {
-	onsaved: ReturnType<typeof vi.fn>
-	oncancel: ReturnType<typeof vi.fn>
-} {
+/** The two callbacks the form reports through. */
+interface FormCallbacks {
+	onsaved: Mock
+	oncancel: Mock
+}
+
+function renderForm(
+	row: McpServer = server,
+	oncancel = vi.fn()
+): FormCallbacks {
 	const onsaved = vi.fn()
-	render(McpServerForm, { server, onsaved, oncancel })
+	render(McpServerForm, { server: row, onsaved, oncancel })
 	return { onsaved, oncancel }
 }
 
@@ -42,14 +59,14 @@ describe('McpServerForm edit patch', () => {
 
 	it('sends only the name for a rename — the connection fields stay absent', async () => {
 		const { onsaved } = renderForm()
-		const input = page.getByLabelText('Name')
-		await input.fill('Notes MCP Renamed')
+		await page.getByLabelText('Name').fill('Notes MCP Renamed')
 		await page.getByRole('button', { name: 'Save changes' }).click()
 
-		expect(mcpService.updateMcpServer).toHaveBeenCalledExactlyOnceWith(
-			'notes-mcp',
-			{ name: 'Notes MCP Renamed' }
-		)
+		// The patch shape is the claim: a rename carries no connection
+		// fields, whatever the shared browser page's render count.
+		expect(mcpService.updateMcpServer).toHaveBeenCalledWith('notes-mcp', {
+			name: 'Notes MCP Renamed'
+		})
 		expect(onsaved).toHaveBeenCalledOnce()
 	})
 
@@ -62,15 +79,15 @@ describe('McpServerForm edit patch', () => {
 		expect(oncancel).toHaveBeenCalledOnce()
 	})
 
-	it('replaces typed env and sends the empty map when the clear box is checked', async () => {
+	it('replaces typed headers and sends the empty map when the clear box is checked', async () => {
 		renderForm()
 		await page
-			.getByLabelText('Environment — KEY: VALUE per line')
-			.fill('NOTES_TOKEN: abc')
+			.getByLabelText('Headers — KEY: VALUE per line')
+			.fill('Authorization: Bearer abc')
 		await page.getByRole('button', { name: 'Save changes' }).click()
 		expect(mcpService.updateMcpServer).toHaveBeenCalledExactlyOnceWith(
 			'notes-mcp',
-			{ env: { NOTES_TOKEN: 'abc' } }
+			{ headers: { Authorization: 'Bearer abc' } }
 		)
 
 		vi.clearAllMocks()
@@ -80,7 +97,22 @@ describe('McpServerForm edit patch', () => {
 		await page.getByRole('button', { name: 'Save changes' }).click()
 		expect(mcpService.updateMcpServer).toHaveBeenCalledExactlyOnceWith(
 			'notes-mcp',
-			{ env: {} }
+			{ headers: {} }
+		)
+	})
+
+	it('lets a ticked clear win over leftover header text', async () => {
+		renderForm()
+		await page
+			.getByLabelText('Headers — KEY: VALUE per line')
+			.fill('Authorization: Bearer abc')
+		// The textarea keeps its state while disabled: the tick is the
+		// operator's latest word, so the clear must win.
+		await page.getByRole('checkbox', { name: /Clear the 1 sealed/ }).click()
+		await page.getByRole('button', { name: 'Save changes' }).click()
+		expect(mcpService.updateMcpServer).toHaveBeenCalledExactlyOnceWith(
+			'notes-mcp',
+			{ headers: {} }
 		)
 	})
 
@@ -99,8 +131,8 @@ describe('McpServerForm edit patch', () => {
 		)
 	})
 
-	// Out-of-range input is blocked before any request: the input's native
-	// min/max plus the form's own range guard (mirroring the backend rule).
+	// Out-of-range input is blocked before any request: the form's own
+	// range guard mirrors the backend rule.
 	it('never sends an out-of-range timeout', async () => {
 		const { oncancel } = renderForm()
 		const field = page.getByLabelText('Per-call timeout (ms, optional)')
@@ -117,14 +149,145 @@ describe('McpServerForm edit patch', () => {
 
 	it('names malformed secret lines instead of dropping them', async () => {
 		renderForm()
-		await page
-			.getByLabelText('Environment — KEY: VALUE per line')
-			.fill('TOKEN=abc')
+		await page.getByLabelText('Headers — KEY: VALUE per line').fill('TOKEN=abc')
 		await page.getByRole('button', { name: 'Save changes' }).click()
 
 		expect(mcpService.updateMcpServer).not.toHaveBeenCalled()
 		await expect
-			.element(page.getByText(/Environment: "TOKEN=abc" needs "KEY: VALUE"/))
+			.element(page.getByText(/Headers: "TOKEN=abc" needs "KEY: VALUE"/))
 			.toBeInTheDocument()
+	})
+
+	it('diffs both approvals, including an explicit clear', async () => {
+		renderForm()
+		await page
+			.getByRole('checkbox', {
+				name: /Allow non-public destinations/
+			})
+			.click()
+		await page.getByRole('button', { name: 'Save changes' }).click()
+		expect(mcpService.updateMcpServer).toHaveBeenCalledExactlyOnceWith(
+			'notes-mcp',
+			{ allowPrivateNetwork: false }
+		)
+
+		vi.clearAllMocks()
+		cleanup()
+		renderForm({ ...server, allowPlaintext: false })
+		await page.getByRole('checkbox', { name: /Allow insecure HTTP/ }).click()
+		await page.getByRole('button', { name: 'Save changes' }).click()
+		expect(mcpService.updateMcpServer).toHaveBeenCalledExactlyOnceWith(
+			'notes-mcp',
+			{ allowPlaintext: true }
+		)
+	})
+
+	// A destination change invalidates its approvals: the UI mirrors the
+	// server's reset instead of sending an approval it would drop.
+	it('resets both approvals when the URL changes', async () => {
+		renderForm()
+		await page.getByLabelText('URL').fill('https://mcp.example.com/mcp')
+		await page.getByRole('button', { name: 'Save changes' }).click()
+		expect(mcpService.updateMcpServer).toHaveBeenCalledExactlyOnceWith(
+			'notes-mcp',
+			{
+				url: 'https://mcp.example.com/mcp',
+				allowPrivateNetwork: false,
+				allowPlaintext: false
+			}
+		)
+	})
+
+	it('re-approves a changed destination in the same save', async () => {
+		renderForm()
+		await page.getByLabelText('URL').fill('https://mcp.example.com/mcp')
+		// The reset ran on input; the operator approves the new endpoint.
+		await page.getByRole('checkbox', { name: /Allow non-public/ }).click()
+		await page.getByRole('button', { name: 'Save changes' }).click()
+		expect(mcpService.updateMcpServer).toHaveBeenCalledExactlyOnceWith(
+			'notes-mcp',
+			{
+				url: 'https://mcp.example.com/mcp',
+				allowPrivateNetwork: true,
+				allowPlaintext: false
+			}
+		)
+	})
+})
+
+// The create path asks for an endpoint only: no process is ever spawned.
+describe('McpServerForm create', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+	})
+
+	afterEach(() => {
+		cleanup()
+	})
+
+	it('creates an HTTP server with headers and approvals', async () => {
+		const onsaved = vi.fn()
+		render(McpServerForm, { onsaved, oncancel: vi.fn() })
+
+		await page.getByLabelText('Name').fill('Search MCP')
+		await page.getByLabelText('URL').fill('http://192.168.1.50/mcp')
+		await page
+			.getByLabelText('Headers — KEY: VALUE per line')
+			.fill('Authorization: Bearer abc')
+		await page.getByRole('checkbox', { name: /Allow non-public/ }).click()
+		await page.getByRole('checkbox', { name: /Allow insecure HTTP/ }).click()
+		await page.getByRole('button', { name: 'Add server' }).click()
+
+		expect(mcpService.createMcpServer).toHaveBeenCalledExactlyOnceWith({
+			name: 'Search MCP',
+			url: 'http://192.168.1.50/mcp',
+			allowPrivateNetwork: true,
+			allowPlaintext: true,
+			headers: { Authorization: 'Bearer abc' }
+		})
+		expect(onsaved).toHaveBeenCalledOnce()
+	})
+
+	it('offers no process fields', () => {
+		render(McpServerForm, { onsaved: vi.fn(), oncancel: vi.fn() })
+		expect(page.getByLabelText('Transport').elements()).toHaveLength(0)
+		expect(page.getByLabelText('Command').elements()).toHaveLength(0)
+		expect(
+			page.getByLabelText('Arguments — one per line').elements()
+		).toHaveLength(0)
+		expect(
+			page.getByLabelText('Environment — KEY: VALUE per line').elements()
+		).toHaveLength(0)
+	})
+})
+
+// The save response carries the listing and its cosmetic skips, so the
+// form hands it back to the page instead of dropping it.
+describe('McpServerForm saved response', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+	})
+
+	afterEach(() => {
+		cleanup()
+	})
+
+	it('passes the created listing back to the page', async () => {
+		const created = {
+			server: { ...server, id: 'new-mcp', name: 'New MCP' },
+			tools: [],
+			skippedTools: [{ name: 'too_long', reason: 'exceeds 64 characters' }]
+		}
+		vi.mocked(mcpService.createMcpServer).mockResolvedValue(created)
+		const onsaved = vi.fn()
+		render(McpServerForm, { onsaved, oncancel: vi.fn() })
+
+		await page.getByLabelText('Name').fill('New MCP')
+		await page.getByLabelText('URL').fill('http://127.0.0.1:4444/mcp')
+		await page.getByRole('button', { name: 'Add server' }).click()
+
+		await vi.waitFor(() => {
+			expect(onsaved).toHaveBeenCalledWith(created)
+		})
 	})
 })

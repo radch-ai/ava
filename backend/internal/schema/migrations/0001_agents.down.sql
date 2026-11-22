@@ -1,8 +1,9 @@
-DROP TRIGGER IF EXISTS agents_seed_tool_grants;
-DROP TRIGGER IF EXISTS tools_seed_agent_grants;
+DROP INDEX IF EXISTS idx_tool_audit_agent;
+DROP INDEX IF EXISTS idx_tool_audit_occurred;
+DROP TABLE IF EXISTS tool_audit_events;
 DROP INDEX IF EXISTS idx_agent_mcp_preferences_server;
 DROP TABLE IF EXISTS agent_mcp_preferences;
-DROP TABLE IF EXISTS agent_tool_preferences;
+DROP TABLE IF EXISTS agent_disabled_tools;
 DROP INDEX IF EXISTS idx_tools_server_id;
 DROP TABLE IF EXISTS tools;
 DROP TABLE IF EXISTS mcp_servers;

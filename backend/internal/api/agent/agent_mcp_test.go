@@ -1,12 +1,14 @@
 package agent
 
-// Per-agent MCP gate endpoint tests: the first enable approves the
-// server's current tools, later toggles preserve per-tool choices,
-// and the tools listing carries the gate state for the editor.
+// Per-agent MCP gate endpoint tests: the gate decides whether the agent
+// uses a server's globally enabled tools — it never seeds or revokes a
+// per-tool choice — and the tools listing carries the gate state for the
+// editor.
 
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -18,7 +20,8 @@ import (
 )
 
 // mcpStore seeds one agent, one MCP server and two of its catalog
-// tools, granted to no one.
+// tools, switched on globally and inherited by no one yet (the gate is
+// off).
 func mcpStore(t *testing.T) (*db.Queries, *sql.DB) {
 	t.Helper()
 	sqlDB := testdb.Open(t, true)
@@ -27,9 +30,9 @@ func mcpStore(t *testing.T) (*db.Queries, *sql.DB) {
 		ID: "research", Name: "Research", Icon: "globe",
 	})
 	if err := queries.CreateMcpServer(t.Context(), db.CreateMcpServerParams{
-		ID: "github", Name: "GitHub", Transport: "stdio",
-		Command: sql.NullString{String: "go", Valid: true},
-		Args:    "[]", EnvKeys: "[]", HeaderKeys: "[]",
+		ID: "github", Name: "GitHub",
+		Url:        sql.NullString{String: "https://github.example/mcp", Valid: true},
+		HeaderKeys: "[]",
 	}); err != nil {
 		t.Fatalf("seed server: %v", err)
 	}
@@ -39,6 +42,11 @@ func mcpStore(t *testing.T) (*db.Queries, *sql.DB) {
 			ServerID: sql.NullString{String: "github", Valid: true},
 		}); err != nil {
 			t.Fatalf("seed tool %q: %v", id, err)
+		}
+		if _, err := queries.ToggleToolEnabled(t.Context(), db.ToggleToolEnabledParams{
+			Enabled: 1, ID: id,
+		}); err != nil {
+			t.Fatalf("enable tool %q: %v", id, err)
 		}
 	}
 	return queries, sqlDB
@@ -55,11 +63,15 @@ func decodeTools(t *testing.T, rec *json.RawMessage) apitypes.GetAgentToolsRespo
 
 func resolveIDs(t *testing.T, queries *db.Queries, agentID string) []string {
 	t.Helper()
-	ids, err := queries.ResolveAgentTools(t.Context(), db.ResolveAgentToolsParams{
+	rows, err := queries.ResolveAgentToolsDetailed(t.Context(), db.ResolveAgentToolsDetailedParams{
 		AgentID: agentID, AgentID_2: agentID,
 	})
 	if err != nil {
 		t.Fatalf("resolve tools: %v", err)
+	}
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
 	}
 	return ids
 }
@@ -70,7 +82,7 @@ func toggleMcp(t *testing.T, queries *db.Queries, sqlDB *sql.DB, enabled bool) *
 	if enabled {
 		body = `{"enabled":true}`
 	}
-	rec, err := serve(t, "PATCH /agent/{id}/mcp/{serverId}", ToggleAgentMcp(api.NewThrottle(0), sqlDB, queries),
+	rec, err := serve(t, "PATCH /agent/{id}/mcp/{serverId}", ToggleAgentMcp(api.NewThrottle(0), sqlDB, queries, nil),
 		http.MethodPatch, "/agent/research/mcp/github", body)
 	if err != nil {
 		t.Fatalf("toggle mcp: %v", err)
@@ -83,9 +95,9 @@ func toggleMcp(t *testing.T, queries *db.Queries, sqlDB *sql.DB, enabled bool) *
 	return &out
 }
 
-// First enable (no gate row) approves exactly the server's current
-// tools and turns the listing switches on.
-func TestAgentMcpFirstEnableSeedsTools(t *testing.T) {
+// Enable (no gate row) inherits the server's globally enabled tools
+// and writes no per-tool row at all.
+func TestAgentMcpEnableInheritsTools(t *testing.T) {
 	queries, sqlDB := mcpStore(t)
 
 	if got := resolveIDs(t, queries, "research"); len(got) != 0 {
@@ -99,28 +111,28 @@ func TestAgentMcpFirstEnableSeedsTools(t *testing.T) {
 	if len(out.Servers) != 1 || out.Servers[0].ServerID != "github" || !out.Servers[0].AgentEnabled {
 		t.Fatalf("servers in response = %+v, want github enabled", out.Servers)
 	}
-	var granted int
+	var rows int
 	if err := sqlDB.QueryRowContext(t.Context(),
-		`SELECT COUNT(*) FROM agent_tool_preferences WHERE agent_id = 'research'`).Scan(&granted); err != nil {
-		t.Fatalf("grant count: %v", err)
+		`SELECT COUNT(*) FROM agent_disabled_tools WHERE agent_id = 'research'`).Scan(&rows); err != nil {
+		t.Fatalf("opt-out count: %v", err)
 	}
-	if granted != 2 {
-		t.Fatalf("first enable granted %d tools, want 2", granted)
+	if rows != 0 {
+		t.Fatalf("first enable wrote %d per-tool rows, want 0 (inheritance)", rows)
 	}
 }
 
-// Off -> on flips only the gate: a tool revoked while the gate was on
-// stays revoked. Off answers with the gates array still present,
-// agentEnabled false, and tool rows still listing their grants.
+// Off -> on flips only the gate: an opt-out recorded while the gate was
+// on survives every toggle. Off answers with the gates array still
+// present and agentEnabled false.
 func TestAgentMcpTogglePreservesChoices(t *testing.T) {
 	queries, sqlDB := mcpStore(t)
 	toggleMcp(t, queries, sqlDB, true)
 
-	// Revoke one tool through the per-tool endpoint.
-	rec, err := serve(t, "PATCH /agent/{id}/tools/{toolId}", ToggleAgentTool(api.NewThrottle(0), queries),
+	// Opt out of one tool through the per-tool endpoint.
+	rec, err := serve(t, "PATCH /agent/{id}/tools/{toolId}", ToggleAgentTool(api.NewThrottle(0), sqlDB, queries, nil),
 		http.MethodPatch, "/agent/research/tools/github:issues", `{"enabled":false}`)
 	if err != nil || rec.Code != http.StatusOK {
-		t.Fatalf("revoke: err=%v status=%d", err, rec.Code)
+		t.Fatalf("opt out: err=%v status=%d", err, rec.Code)
 	}
 
 	off := toggleMcp(t, queries, sqlDB, false)
@@ -140,10 +152,10 @@ func TestAgentMcpTogglePreservesChoices(t *testing.T) {
 	}
 	byID := map[string]bool{}
 	for _, tool := range on.Tools {
-		byID[tool.ID] = tool.AgentEnabled
+		byID[tool.ID] = tool.LocallyDisabled
 	}
-	if !byID["github:search"] || byID["github:issues"] {
-		t.Fatalf("listing switches after re-enable = %v, want search on, issues off", byID)
+	if byID["github:search"] || !byID["github:issues"] {
+		t.Fatalf("listing opt-outs after re-enable = %v, want search on, issues opted out", byID)
 	}
 }
 
@@ -171,15 +183,78 @@ func TestGetAgentToolsIncludesServers(t *testing.T) {
 func TestAgentMcpRejectsUnknownAndMissingFields(t *testing.T) {
 	queries, sqlDB := mcpStore(t)
 
-	rec, err := serve(t, "PATCH /agent/{id}/mcp/{serverId}", ToggleAgentMcp(api.NewThrottle(0), sqlDB, queries),
+	rec, err := serve(t, "PATCH /agent/{id}/mcp/{serverId}", ToggleAgentMcp(api.NewThrottle(0), sqlDB, queries, nil),
 		http.MethodPatch, "/agent/research/mcp/ghost", `{"enabled":true}`)
 	if err != nil || rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown server: err=%v status=%d, want 404", err, rec.Code)
 	}
 
-	rec, err = serve(t, "PATCH /agent/{id}/mcp/{serverId}", ToggleAgentMcp(api.NewThrottle(0), sqlDB, queries),
+	rec, err = serve(t, "PATCH /agent/{id}/mcp/{serverId}", ToggleAgentMcp(api.NewThrottle(0), sqlDB, queries, nil),
 		http.MethodPatch, "/agent/research/mcp/github", `{}`)
 	if err != nil || rec.Code != http.StatusBadRequest {
 		t.Fatalf("missing enabled: err=%v status=%d, want 400", err, rec.Code)
+	}
+}
+
+// An enable whose approval record cannot be written activates
+// nothing — no gate row, no per-tool writes.
+func TestEnableAuditFailureBlocks(t *testing.T) {
+	queries, sqlDB := mcpStore(t)
+	if _, err := sqlDB.Exec(`CREATE TRIGGER fail_audit BEFORE INSERT ON tool_audit_events
+		BEGIN SELECT RAISE(ABORT, 'audit down'); END;`); err != nil {
+		t.Fatalf("install trigger: %v", err)
+	}
+
+	rec, err := serve(t, "PATCH /agent/{id}/mcp/{serverId}", ToggleAgentMcp(api.NewThrottle(0), sqlDB, queries, nil),
+		http.MethodPatch, "/agent/research/mcp/github", `{"enabled":true}`)
+	if err == nil {
+		t.Fatal("unauditable first enable returned no error")
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d body %s, want 500", rec.Code, rec.Body.String())
+	}
+	if _, err := queries.GetAgentMcp(t.Context(), db.GetAgentMcpParams{
+		AgentID: "research", ServerID: "github",
+	}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("unaudited enable left a gate row: %v", err)
+	}
+	var rows int
+	if err := sqlDB.QueryRowContext(t.Context(),
+		`SELECT COUNT(*) FROM agent_disabled_tools WHERE agent_id = 'research'`).Scan(&rows); err != nil {
+		t.Fatalf("opt-out count: %v", err)
+	}
+	if rows != 0 {
+		t.Fatalf("unaudited enable wrote %d per-tool rows, want 0", rows)
+	}
+}
+
+// Re-opening a configured gate is new authority: an unauditable
+// record activates nothing — the gate stays closed and choices stay.
+func TestReEnableAuditFailureBlocks(t *testing.T) {
+	queries, sqlDB := mcpStore(t)
+	toggleMcp(t, queries, sqlDB, true)  // gate on
+	toggleMcp(t, queries, sqlDB, false) // gate off; choices kept
+
+	if _, err := sqlDB.Exec(`CREATE TRIGGER fail_audit BEFORE INSERT ON tool_audit_events
+		BEGIN SELECT RAISE(ABORT, 'audit down'); END;`); err != nil {
+		t.Fatalf("install trigger: %v", err)
+	}
+
+	rec, err := serve(t, "PATCH /agent/{id}/mcp/{serverId}", ToggleAgentMcp(api.NewThrottle(0), sqlDB, queries, nil),
+		http.MethodPatch, "/agent/research/mcp/github", `{"enabled":true}`)
+	if err == nil {
+		t.Fatal("unauditable re-enable returned no error")
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	gate, err := queries.GetAgentMcp(t.Context(), db.GetAgentMcpParams{
+		AgentID: "research", ServerID: "github",
+	})
+	if err != nil || gate.Enabled != 0 {
+		t.Fatalf("gate after failed re-enable = %+v err %v, want enabled=0", gate, err)
+	}
+	if got := resolveIDs(t, queries, "research"); len(got) != 0 {
+		t.Fatalf("effective tools after blocked re-enable = %v, want none", got)
 	}
 }

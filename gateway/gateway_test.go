@@ -267,7 +267,7 @@ func journalBackend(t *testing.T, agentIDs ...string) (*sql.DB, *backend.TurnSer
 		t.Fatalf("opening store failed: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	_, _, turns, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey)
+	_, _, turns, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
 	if err != nil {
 		t.Fatalf("building backend failed: %v", err)
 	}

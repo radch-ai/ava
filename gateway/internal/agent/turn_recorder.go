@@ -57,6 +57,8 @@ type turnRecorder struct {
 	turnID  string
 	emitCtx context.Context
 	lane    *UserAgent
+	// scrub sanitizes the copies this recorder persists.
+	scrub func(context.Context, string) string
 
 	mu     sync.Mutex
 	closed bool
@@ -77,6 +79,7 @@ func newTurnRecorder(lane *UserAgent, turnID string, emitCtx context.Context) *t
 		emitCtx:                           emitCtx,
 		lane:                              lane,
 		invocations:                       make(map[string]*invState),
+		scrub:                             lane.scrubCopy,
 	}
 }
 
@@ -121,11 +124,12 @@ func (r *turnRecorder) AfterModelRewriteState(
 			return ctx, state, fmt.Errorf("assistant message repeats call id %q", tc.ID)
 		}
 		seen[tc.ID] = struct{}{}
-		// Arguments stay the model-authored JSON text, verbatim.
+		// The dispatched arguments are the model's bytes, untouched; the
+		// persisted copy is sanitized.
 		calls = append(calls, backend.AgentThreadCall{
 			ID:        tc.ID,
 			Name:      tc.Function.Name,
-			Arguments: tc.Function.Arguments,
+			Arguments: r.cleanCopy(tc.Function.Arguments),
 		})
 	}
 	group, err := json.Marshal(calls)
@@ -134,13 +138,22 @@ func (r *turnRecorder) AfterModelRewriteState(
 	}
 	if err := r.persist([]backend.ThreadMessageDraft{{
 		Role:      apitypes.ThreadRoleAssistant,
-		Content:   msg.Content,
+		Content:   r.cleanCopy(msg.Content),
 		TurnID:    r.turnID,
 		ToolCalls: group,
 	}}); err != nil {
 		return ctx, state, err
 	}
 	return ctx, state, nil
+}
+
+// cleanCopy sanitizes one persisted copy. A recorder without a bound
+// scrubber keeps the pattern battery alone.
+func (r *turnRecorder) cleanCopy(content string) string {
+	if r.scrub == nil {
+		return fanOutScrubber(content)
+	}
+	return r.scrub(r.emitCtx, content)
 }
 
 // persist writes one required batch and publishes the event that carries
@@ -210,9 +223,10 @@ func (r *turnRecorder) recordStart(invocationID, callID, name, args string) erro
 func (r *turnRecorder) recordOutcome(invocationID, callID, name, result string, invocationErr error) error {
 	errText := ""
 	if invocationErr != nil {
-		// One rendered cause for the row and the live bubble, so live
-		// and reloaded state never disagree on wording.
-		errText = cleanToolError(invocationErr)
+		// One rendered cause, sanitized like every persisted copy, for
+		// the row and the live bubble, so live and reloaded state never
+		// disagree on wording.
+		errText = r.cleanCopy(cleanToolError(invocationErr))
 	}
 	r.mu.Lock()
 	closed := r.closed

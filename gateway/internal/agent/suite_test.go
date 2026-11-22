@@ -35,7 +35,7 @@ func journalFor(t *testing.T) (*sql.DB, *backend.TurnService) {
 	sqlDB, err := sqlstore.OpenSQLite(":memory:")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	_, _, turns, err := backend.New(sqlDB, zerolog.Nop(), testKey)
+	_, _, turns, err := backend.New(sqlDB, zerolog.Nop(), testKey, backend.DefaultToolLimits())
 	require.NoError(t, err)
 	return sqlDB, turns
 }

@@ -1,18 +1,18 @@
 // Tools-table rules: the catalog's DB-enforced shape — unique ids,
-// preference rows that die with their owner, and the insert rules
-// that keep built-ins ON for agents.
+// opt-out rows that die with their owner, and the insert rule that keeps
+// built-ins ON while a discovered MCP tool lands globally off.
 package schema_test
 
 import (
 	"database/sql"
+	"slices"
 	"testing"
 
 	"github.com/radch-ai/ava/backend/internal/db"
 	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
-// seedBuiltinAndAgent inserts one built-in tool and one agent; the
-// insert rules seed their preference row.
+// seedBuiltinAndAgent inserts one built-in tool and one agent.
 func seedBuiltinAndAgent(t *testing.T, sqlDB *sql.DB, toolID, agentID string) {
 	t.Helper()
 	queries := db.New(sqlDB)
@@ -26,22 +26,43 @@ func seedBuiltinAndAgent(t *testing.T, sqlDB *sql.DB, toolID, agentID string) {
 	})
 }
 
-func countAgentGrants(t *testing.T, sqlDB *sql.DB, agentID string) int {
+// disableTool records one agent's explicit opt-out.
+func disableTool(t *testing.T, sqlDB *sql.DB, agentID, toolID string) {
+	t.Helper()
+	if err := db.New(sqlDB).AddAgentDisabledTool(t.Context(), db.AddAgentDisabledToolParams{
+		AgentID: agentID, ToolID: toolID,
+	}); err != nil {
+		t.Fatalf("disable %s/%s: %v", agentID, toolID, err)
+	}
+}
+
+func isDisabled(t *testing.T, sqlDB *sql.DB, agentID, toolID string) bool {
 	t.Helper()
 	var n int
 	if err := sqlDB.QueryRowContext(t.Context(),
-		`SELECT COUNT(*) FROM agent_tool_preferences WHERE agent_id = ?`, agentID).Scan(&n); err != nil {
-		t.Fatalf("count grants for %s: %v", agentID, err)
+		`SELECT COUNT(*) FROM agent_disabled_tools WHERE agent_id = ? AND tool_id = ?`,
+		agentID, toolID).Scan(&n); err != nil {
+		t.Fatalf("opt-out lookup %s/%s: %v", agentID, toolID, err)
+	}
+	return n > 0
+}
+
+func countAgentOptOuts(t *testing.T, sqlDB *sql.DB, agentID string) int {
+	t.Helper()
+	var n int
+	if err := sqlDB.QueryRowContext(t.Context(),
+		`SELECT COUNT(*) FROM agent_disabled_tools WHERE agent_id = ?`, agentID).Scan(&n); err != nil {
+		t.Fatalf("count opt-outs for %s: %v", agentID, err)
 	}
 	return n
 }
 
-func countToolGrants(t *testing.T, sqlDB *sql.DB, toolID string) int {
+func countToolOptOuts(t *testing.T, sqlDB *sql.DB, toolID string) int {
 	t.Helper()
 	var n int
 	if err := sqlDB.QueryRowContext(t.Context(),
-		`SELECT COUNT(*) FROM agent_tool_preferences WHERE tool_id = ?`, toolID).Scan(&n); err != nil {
-		t.Fatalf("count grants for %s: %v", toolID, err)
+		`SELECT COUNT(*) FROM agent_disabled_tools WHERE tool_id = ?`, toolID).Scan(&n); err != nil {
+		t.Fatalf("count opt-outs for %s: %v", toolID, err)
 	}
 	return n
 }
@@ -60,136 +81,118 @@ func TestToolIDDuplicateInsertRejected(t *testing.T) {
 	}
 }
 
-// A new built-in reaches every agent that already exists — the
-// superagent included, no runtime exception.
-func TestBuiltinInsertGrantsExistingAgents(t *testing.T) {
+// Built-ins install globally ON: the column default is the only switch
+// a shipped tool needs.
+func TestBuiltinInsertDefaultsOn(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
-	queries := db.New(sqlDB)
-	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
-		ID: "research", Name: "Research", Icon: "globe",
-	})
-	if err := queries.UpsertTool(t.Context(), db.UpsertToolParams{
+	if err := db.New(sqlDB).UpsertTool(t.Context(), db.UpsertToolParams{
 		ID: "ddg", Name: "DuckDuckGo Search", Builtin: 1,
 	}); err != nil {
 		t.Fatalf("seed builtin: %v", err)
 	}
-
-	for _, agent := range []string{"research", "_superagent"} {
-		if n := countAgentGrants(t, sqlDB, agent); n != 1 {
-			t.Errorf("%s grants = %d, want the new built-in's 1", agent, n)
-		}
-	}
-}
-
-// A user-installed tool grants nothing on insert — default-ON is a
-// built-in-only rule.
-func TestNonBuiltinInsertGrantsNothing(t *testing.T) {
-	sqlDB := testdb.Open(t, true)
-	if _, err := sqlDB.ExecContext(t.Context(),
-		`INSERT INTO tools (id, name, builtin) VALUES ('custom', 'Custom', 0)`); err != nil {
-		t.Fatalf("insert non-builtin: %v", err)
-	}
-	if n := countToolGrants(t, sqlDB, "custom"); n != 0 {
-		t.Errorf("non-builtin grants = %d, want 0", n)
-	}
-}
-
-// A new agent reaches every installed built-in — globally disabled
-// ones included, user-installed ones never.
-func TestAgentInsertGrantsInstalledBuiltins(t *testing.T) {
-	sqlDB := testdb.Open(t, true)
-	queries := db.New(sqlDB)
-	for _, seed := range []struct {
-		id      string
-		builtin int64
-	}{{"ddg", 1}, {"dark", 1}, {"custom", 0}} {
-		if err := queries.UpsertTool(t.Context(), db.UpsertToolParams{
-			ID: seed.id, Name: seed.id, Builtin: seed.builtin,
-		}); err != nil {
-			t.Fatalf("seed tool %q: %v", seed.id, err)
-		}
-	}
-	if _, err := queries.ToggleToolEnabled(t.Context(), db.ToggleToolEnabledParams{Enabled: 0, ID: "dark"}); err != nil {
-		t.Fatalf("disable dark: %v", err)
-	}
-	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
-		ID: "research", Name: "Research", Icon: "globe",
-	})
-
-	rows, err := sqlDB.QueryContext(t.Context(),
-		`SELECT tool_id FROM agent_tool_preferences WHERE agent_id = 'research' ORDER BY tool_id`)
+	row, err := db.New(sqlDB).GetTool(t.Context(), "ddg")
 	if err != nil {
-		t.Fatalf("list research grants: %v", err)
+		t.Fatalf("get tool: %v", err)
 	}
-	defer func() { _ = rows.Close() }()
-	var got []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			t.Fatalf("scan grant: %v", err)
-		}
-		got = append(got, id)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("iterate grants: %v", err)
-	}
-	want := []string{"dark", "ddg"}
-	if len(got) != len(want) || got[0] != want[0] || got[len(got)-1] != want[len(want)-1] {
-		t.Errorf("research grants = %v, want builtins only %v", got, want)
+	if row.Enabled != 1 {
+		t.Errorf("builtin enabled = %d, want 1", row.Enabled)
 	}
 }
 
-// Catalog re-sync takes the upsert's update path: the metadata
-// refresh neither seeds nor restores a deleted grant.
-func TestCatalogResyncKeepsDeletedGrant(t *testing.T) {
+// A discovered MCP tool lands globally OFF: its switch is opted in, and
+// a re-sync of the same tool never touches the saved switch.
+func TestMcpToolInsertStartsGloballyOff(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
-	seedBuiltinAndAgent(t, sqlDB, "ddg", "research")
 	queries := db.New(sqlDB)
-
-	if _, err := queries.RemoveAgentTool(t.Context(), db.RemoveAgentToolParams{
-		AgentID: "research", ToolID: "ddg",
+	seedMcpServer(t, sqlDB, "github")
+	if err := queries.UpsertMcpTool(t.Context(), db.UpsertMcpToolParams{
+		ID: "github:search", Name: "search", ServerID: sql.NullString{String: "github", Valid: true},
 	}); err != nil {
-		t.Fatalf("opt out: %v", err)
+		t.Fatalf("insert mcp tool: %v", err)
 	}
-	if err := queries.UpsertTool(t.Context(), db.UpsertToolParams{
-		ID: "ddg", Name: "DuckDuckGo Search 2", Builtin: 1,
+	row, err := queries.GetTool(t.Context(), "github:search")
+	if err != nil {
+		t.Fatalf("get mcp tool: %v", err)
+	}
+	if row.Enabled != 0 {
+		t.Fatalf("new mcp tool enabled = %d, want 0", row.Enabled)
+	}
+	if _, err := queries.ToggleToolEnabled(t.Context(), db.ToggleToolEnabledParams{
+		Enabled: 1, ID: "github:search",
 	}); err != nil {
-		t.Fatalf("resync: %v", err)
+		t.Fatalf("enable mcp tool: %v", err)
 	}
-
-	if n := countAgentGrants(t, sqlDB, "research"); n != 0 {
-		t.Errorf("research grants after resync = %d, want 0 — the opt-out survives", n)
+	if err := queries.UpsertMcpTool(t.Context(), db.UpsertMcpToolParams{
+		ID: "github:search", Name: "search-v2", Description: "newer",
+		ServerID: sql.NullString{String: "github", Valid: true},
+	}); err != nil {
+		t.Fatalf("re-sync mcp tool: %v", err)
 	}
-	if n := countAgentGrants(t, sqlDB, "_superagent"); n != 1 {
-		t.Errorf("superagent grants after resync = %d, want 1 — untouched grants stay", n)
+	row, err = queries.GetTool(t.Context(), "github:search")
+	if err != nil {
+		t.Fatalf("get re-synced tool: %v", err)
+	}
+	if row.Enabled != 1 {
+		t.Errorf("re-sync reset the saved switch: enabled = %d, want 1", row.Enabled)
+	}
+	if row.Name != "search-v2" {
+		t.Errorf("re-sync kept stale metadata: name = %q, want search-v2", row.Name)
 	}
 }
 
-// Preference rows die with their agent — no orphans accumulate.
-func TestPreferencesCascadeOnAgentDelete(t *testing.T) {
+// Inheritance is the default: a globally enabled builtin resolves with
+// zero per-agent rows, and an explicit opt-out is the only thing that
+// removes it.
+func TestResolveInheritsUntilOptOut(t *testing.T) {
+	sqlDB := testdb.Open(t, true)
+	seedBuiltinAndAgent(t, sqlDB, "ddg", "a1")
+
+	if got, want := resolveIDs(t, sqlDB, "a1"), []string{"ddg"}; !slices.Equal(got, want) {
+		t.Fatalf("resolve with no per-agent rows: %v, want %v", got, want)
+	}
+
+	disableTool(t, sqlDB, "a1", "ddg")
+	if got := resolveIDs(t, sqlDB, "a1"); len(got) != 0 {
+		t.Fatalf("resolve with an opt-out: %v, want none", got)
+	}
+
+	if err := db.New(sqlDB).RemoveAgentDisabledTool(t.Context(), db.RemoveAgentDisabledToolParams{
+		AgentID: "a1", ToolID: "ddg",
+	}); err != nil {
+		t.Fatalf("re-inherit: %v", err)
+	}
+	if got, want := resolveIDs(t, sqlDB, "a1"), []string{"ddg"}; !slices.Equal(got, want) {
+		t.Fatalf("resolve after re-inherit: %v, want %v", got, want)
+	}
+}
+
+// Opt-out rows die with their agent — no orphans accumulate.
+func TestOptOutsCascadeOnAgentDelete(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
 	seedBuiltinAndAgent(t, sqlDB, "ddg", "research")
+	disableTool(t, sqlDB, "research", "ddg")
 
 	if _, err := sqlDB.ExecContext(t.Context(),
 		`DELETE FROM agents WHERE id = 'research'`); err != nil {
 		t.Fatalf("delete agent: %v", err)
 	}
-	if n := countAgentGrants(t, sqlDB, "research"); n != 0 {
-		t.Errorf("preferences after agent delete = %d, want 0", n)
+	if n := countAgentOptOuts(t, sqlDB, "research"); n != 0 {
+		t.Errorf("opt-outs after agent delete = %d, want 0", n)
 	}
 }
 
-// Preference rows die with their tool — a future uninstall leaves
-// nothing behind.
-func TestPreferencesCascadeOnToolDelete(t *testing.T) {
+// Opt-out rows die with their tool — a future uninstall leaves nothing
+// behind.
+func TestOptOutsCascadeOnToolDelete(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
 	seedBuiltinAndAgent(t, sqlDB, "ddg", "research")
+	disableTool(t, sqlDB, "research", "ddg")
 
 	if _, err := sqlDB.ExecContext(t.Context(),
 		`DELETE FROM tools WHERE id = 'ddg'`); err != nil {
 		t.Fatalf("delete tool: %v", err)
 	}
-	if n := countToolGrants(t, sqlDB, "ddg"); n != 0 {
-		t.Errorf("preferences after tool delete = %d, want 0", n)
+	if n := countToolOptOuts(t, sqlDB, "ddg"); n != 0 {
+		t.Errorf("opt-outs after tool delete = %d, want 0", n)
 	}
 }

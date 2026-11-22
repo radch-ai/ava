@@ -24,10 +24,11 @@ var Version = "dev"
 
 // config holds the server-level values the binary itself consumes.
 type config struct {
-	Addr      string
-	DBPath    string
-	MasterKey []byte
-	Token     string
+	Addr       string
+	DBPath     string
+	MasterKey  []byte
+	Token      string
+	ToolLimits backend.ToolLimits
 }
 
 // loadConfig binds env vars onto the config — all env reading lives here.
@@ -40,12 +41,37 @@ type config struct {
 //
 // AVA_UI_TOKEN: the UI access token exchanged at login for a session
 // cookie, required.
+// The AVA_MCP_CONCURRENCY_PER_SERVER and AVA_TOOL_CONCURRENCY_GLOBAL
+// bindings are the invocation capacity budget: operator-set limits that
+// neither a model nor a server can raise.
 func loadConfig(logger zerolog.Logger) config {
 	return config{
-		Addr:      utils.GetEnv("AVA_ADDR", ":8080"),
-		DBPath:    utils.GetEnvRequired("AVA_DB", logger),
-		MasterKey: masterKeyFromEnv(logger, "AVA_SECRETS_MASTER_KEY"),
-		Token:     utils.GetEnvRequired("AVA_UI_TOKEN", logger),
+		Addr:       utils.GetEnv("AVA_ADDR", ":8080"),
+		DBPath:     utils.GetEnvRequired("AVA_DB", logger),
+		MasterKey:  masterKeyFromEnv(logger, "AVA_SECRETS_MASTER_KEY"),
+		Token:      utils.GetEnvRequired("AVA_UI_TOKEN", logger),
+		ToolLimits: loadToolLimits(logger),
+	}
+}
+
+// loadToolLimits binds the capacity budget, fatally answering a malformed
+// value: a silently defaulted limit would weaken a policy bound.
+func loadToolLimits(logger zerolog.Logger) backend.ToolLimits {
+	defaults := backend.DefaultToolLimits()
+	value := func(key string, fallback int) int {
+		v, err := utils.GetEnvInt(key, fallback)
+		if err != nil {
+			logger.Fatal().Err(err).Str("env_var", key).Msg("invalid integer environment variable")
+		}
+		if v <= 0 {
+			logger.Fatal().Str("env_var", key).Int("value", v).
+				Msg("tool concurrency limits must be positive")
+		}
+		return v
+	}
+	return backend.ToolLimits{
+		ConcurrencyPerServer: value("AVA_MCP_CONCURRENCY_PER_SERVER", defaults.ConcurrencyPerServer),
+		ConcurrencyGlobal:    value("AVA_TOOL_CONCURRENCY_GLOBAL", defaults.ConcurrencyGlobal),
 	}
 }
 
@@ -144,7 +170,7 @@ func serve(logger zerolog.Logger) {
 		logger.Fatal().Err(err).Msg("Failed to open store")
 	}
 
-	apiRouter, authSessions, turnSvc, err := backend.New(sqlDB, logger, cfg.MasterKey)
+	apiRouter, authSessions, turnSvc, err := backend.New(sqlDB, logger, cfg.MasterKey, cfg.ToolLimits)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Vault bootstrap failed")
 	}
@@ -160,6 +186,7 @@ func serve(logger zerolog.Logger) {
 		GetAgentConfig: turnSvc.GetAgentConfig,
 		Tools:          turnSvc.AgentTools,
 		GetAgentThread: turnSvc.GetAgentThread,
+		ScrubToolCopy:  turnSvc.ScrubToolCopy,
 	}, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Failed to create gateway handler")
@@ -185,7 +212,7 @@ func serve(logger zerolog.Logger) {
 	// thread before the process exits.
 	gw.Drain(10 * time.Second)
 
-	// stdio MCP servers are our children: kill their process groups
-	// before exit instead of orphaning them.
+	// Close the tool layer: live MCP clients are torn down and the audit
+	// retention ticker stops.
 	turnSvc.CloseTools()
 }

@@ -1,29 +1,22 @@
 package utils
 
-import (
-	"os"
-	"testing"
-)
+import "testing"
 
-func TestGetEnv(t *testing.T) {
-	t.Run("returns value when set", func(t *testing.T) {
-		t.Setenv("AVA_TEST_GETENV", "hello")
-		if got := GetEnv("AVA_TEST_GETENV", "default"); got != "hello" {
-			t.Errorf("expected hello, got %s", got)
-		}
-	})
+// A malformed limit is an error, never a silent default: the caller must
+// answer it (a defaulted bound would weaken the policy).
+func TestGetEnvInt(t *testing.T) {
+	t.Setenv("AVA_TEST_LIMIT", "")
+	if got, err := GetEnvInt("AVA_TEST_LIMIT", 30); err != nil || got != 30 {
+		t.Fatalf("unset = %d, %v; want 30, nil", got, err)
+	}
 
-	t.Run("returns default when unset", func(t *testing.T) {
-		_ = os.Unsetenv("AVA_TEST_GETENV_MISSING")
-		if got := GetEnv("AVA_TEST_GETENV_MISSING", "default"); got != "default" {
-			t.Errorf("expected default, got %s", got)
-		}
-	})
+	t.Setenv("AVA_TEST_LIMIT", "45")
+	if got, err := GetEnvInt("AVA_TEST_LIMIT", 30); err != nil || got != 45 {
+		t.Fatalf("set = %d, %v; want 45, nil", got, err)
+	}
 
-	t.Run("returns default when empty", func(t *testing.T) {
-		t.Setenv("AVA_TEST_GETENV_EMPTY", "")
-		if got := GetEnv("AVA_TEST_GETENV_EMPTY", "default"); got != "default" {
-			t.Errorf("expected default for empty value, got %s", got)
-		}
-	})
+	t.Setenv("AVA_TEST_LIMIT", "many")
+	if _, err := GetEnvInt("AVA_TEST_LIMIT", 30); err == nil {
+		t.Fatal("malformed value accepted")
+	}
 }

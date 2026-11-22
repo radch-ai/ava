@@ -1,59 +1,29 @@
-//go:build unix
-
 package backend_test
 
 // MCP boot discovery pins the wiring: registry routing, catalog
-// upsert/prune, default-deny grants, diagnostics, and the shutdown kill
-// of stdio children. The helper binary is the same one internal/mcp
-// drives (backend/testdata/mcpserver).
+// upsert/prune, globally-off discovery, diagnostics. The server is the
+// in-process streamable-HTTP fixture (backend/internal/mcptest).
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strconv"
 	"strings"
-	"syscall"
 	"testing"
-	"time"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/rs/zerolog"
 
 	"github.com/radch-ai/ava/backend"
 	"github.com/radch-ai/ava/backend/internal/db"
+	"github.com/radch-ai/ava/backend/internal/mcptest"
 	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
-// mcpHelperBin is the compiled testdata server, built once per run.
-var mcpHelperBin string
-
-func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "backend-mcpserver-*")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "temp dir:", err)
-		os.Exit(1)
-	}
-	mcpHelperBin = filepath.Join(dir, "mcpserver")
-	if out, err := exec.Command("go", "build", "-o", mcpHelperBin, "./testdata/mcpserver").CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "build helper: %v\n%s\n", err, out)
-		_ = os.RemoveAll(dir)
-		os.Exit(1)
-	}
-	code := m.Run()
-	_ = os.RemoveAll(dir)
-	os.Exit(code)
-}
-
 // bootBackend boots over an already-seeded database; every boot owns its
-// MCP children, so each one registers its own teardown.
+// MCP clients, so each one registers its own teardown.
 func bootBackend(t *testing.T, sqlDB *sql.DB) *backend.TurnService {
 	t.Helper()
-	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey)
+	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}
@@ -61,93 +31,34 @@ func bootBackend(t *testing.T, sqlDB *sql.DB) *backend.TurnService {
 	return svc
 }
 
-func seedMcpServer(t *testing.T, queries *db.Queries, id, command string, args []string, timeoutMs int64) {
+// seedMcpServer inserts one HTTP server row pointing at url; the fixture
+// listens on loopback, so the destination approval is part of the row.
+func seedMcpServer(t *testing.T, queries *db.Queries, id, url string, timeoutMs int64) {
 	t.Helper()
-	argsJSON, err := json.Marshal(args)
-	if err != nil {
-		t.Fatalf("marshal args: %v", err)
-	}
 	if err := queries.CreateMcpServer(t.Context(), db.CreateMcpServerParams{
 		ID:         id,
 		Name:       "Test " + id,
-		Transport:  "stdio",
-		Command:    sql.NullString{String: command, Valid: true},
-		Args:       string(argsJSON),
-		EnvKeys:    "[]",
+		Url:        sql.NullString{String: url, Valid: true},
 		HeaderKeys: "[]",
 		TimeoutMs:  sql.NullInt64{Int64: timeoutMs, Valid: true},
+
+		AllowPrivateNetwork: 1,
+		AllowPlaintext:      1,
 	}); err != nil {
 		t.Fatalf("seed server: %v", err)
 	}
 }
 
-func readPids(t *testing.T, path string) []int {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		data, err := os.ReadFile(path)
-		if err == nil && len(data) > 0 {
-			fields := strings.Fields(string(data))
-			pids := make([]int, 0, len(fields))
-			for _, f := range fields {
-				pid, err := strconv.Atoi(f)
-				if err != nil {
-					t.Fatalf("pidfile %q unparsable: %v", data, err)
-				}
-				pids = append(pids, pid)
-			}
-			return pids
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatalf("pidfile %s never appeared", path)
-	return nil
-}
-
-func processGone(pid int) bool {
-	if err := syscall.Kill(pid, 0); err != nil {
-		return true
-	}
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if err != nil {
-		return false
-	}
-	s := string(data)
-	if i := strings.LastIndexByte(s, ')'); i >= 0 && i+2 < len(s) {
-		return s[i+2] == 'Z'
-	}
-	return false
-}
-
-func waitPidsGone(t *testing.T, pids []int) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		alive := false
-		for _, pid := range pids {
-			if !processGone(pid) {
-				alive = true
-				break
-			}
-		}
-		if !alive {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatalf("processes %v still alive after CloseTools", pids)
-}
-
-// A live server's tools land in the catalog un-granted, run for the
-// agent once granted, keep their grants semantics through a re-sync
+// A live server's tools land in the catalog globally off, run for the
+// agent once switched on and gated, keep that state through a re-sync
 // prune, and die with the service on CloseTools.
 func TestMcpBootDiscoveryLiveServer(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
 	queries := db.New(sqlDB)
 	ctx := t.Context()
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "research", Name: "Research", Icon: "globe"})
-	pidfile := filepath.Join(t.TempDir(), "pid")
-	seedMcpServer(t, queries, "helper", mcpHelperBin, []string{"-pidfile", pidfile}, 5000)
+	srv := mcptest.Start(t)
+	seedMcpServer(t, queries, "helper", srv.URL, 5000)
 
 	svc := bootBackend(t, sqlDB)
 
@@ -160,20 +71,25 @@ func TestMcpBootDiscoveryLiveServer(t *testing.T) {
 		t.Fatalf("tool row = kind %q server %v", echo.Kind, echo.ServerID)
 	}
 
-	// Default-deny: the agent sees the tool but holds no grant.
+	// The new tool is globally off; the agent inherits it once the
+	// switch is on, with no per-agent row of its own.
+	if echo.Enabled != 0 {
+		t.Fatal("mcp tool installed globally on")
+	}
 	row, err := queries.GetAgentTool(ctx, db.GetAgentToolParams{AgentID: "research", ID: "helper:echo"})
 	if err != nil {
 		t.Fatalf("agent view: %v", err)
 	}
-	if row.AgentEnabled != 0 {
-		t.Fatal("mcp tool installed granted")
+	if row.LocallyDisabled {
+		t.Fatal("fresh tool holds a per-agent opt-out")
 	}
 
-	// Grant it and approve the agent's server gate (resolution needs
-	// the grant and the parent gate), then the turn's fetch runs it under
-	// the composite name.
-	if _, err := queries.AddAgentTool(ctx, db.AddAgentToolParams{AgentID: "research", ToolID: "helper:echo"}); err != nil {
-		t.Fatalf("grant: %v", err)
+	// Switch it on and open the agent's server gate (resolution needs
+	// both), then the turn's fetch runs it under the composite name.
+	if _, err := queries.ToggleToolEnabled(ctx, db.ToggleToolEnabledParams{
+		Enabled: 1, ID: "helper:echo",
+	}); err != nil {
+		t.Fatalf("enable tool: %v", err)
 	}
 	if _, err := queries.SetAgentMcpEnabled(ctx, db.SetAgentMcpEnabledParams{
 		AgentID: "research", ServerID: "helper", Enabled: 1,
@@ -195,14 +111,15 @@ func TestMcpBootDiscoveryLiveServer(t *testing.T) {
 		}
 	}
 	if found == nil {
-		t.Fatalf("granted mcp tool not in the turn set: %d tools", len(impls))
+		t.Fatalf("enabled mcp tool not in the turn set: %d tools", len(impls))
 	}
 	out, err := found.InvokableRun(ctx, `{"text":"boot round"}`)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if !strings.Contains(out, `"text":"boot round"`) {
-		t.Fatalf("result = %q", out)
+	// A single text block arrives as text, not JSON-enveloped.
+	if out != "boot round" {
+		t.Fatalf("result = %q, want the bare text", out)
 	}
 
 	// Diagnostics: healthy sync recorded, no error.
@@ -218,14 +135,17 @@ func TestMcpBootDiscoveryLiveServer(t *testing.T) {
 	}
 
 	// Prune: a row the server no longer reports cascades away with its
-	// grant on the next boot's sync.
+	// agent opt-out on the next boot's sync.
 	if err := queries.UpsertMcpTool(ctx, db.UpsertMcpToolParams{
-		ID: "helper:ghost", Name: "ghost", Description: "stale", ServerID: "helper",
+		ID: "helper:ghost", Name: "ghost", Description: "stale",
+		ServerID: sql.NullString{String: "helper", Valid: true},
 	}); err != nil {
 		t.Fatalf("seed stale tool: %v", err)
 	}
-	if _, err := queries.AddAgentTool(ctx, db.AddAgentToolParams{AgentID: "research", ToolID: "helper:ghost"}); err != nil {
-		t.Fatalf("grant stale tool: %v", err)
+	if err := queries.AddAgentDisabledTool(ctx, db.AddAgentDisabledToolParams{
+		AgentID: "research", ToolID: "helper:ghost",
+	}); err != nil {
+		t.Fatalf("opt out of stale tool: %v", err)
 	}
 	svc.CloseTools()
 	bootBackend(t, sqlDB)
@@ -244,26 +164,12 @@ func TestMcpBootDiscoveryLiveServer(t *testing.T) {
 	}
 }
 
-// The kill assertion lives in its own test so the ordering stays
-// honest: boot, then CloseTools, then the child must be gone.
-func TestMcpCloseToolsKillsChildren(t *testing.T) {
-	sqlDB := testdb.Open(t, true)
-	queries := db.New(sqlDB)
-	pidfile := filepath.Join(t.TempDir(), "pid")
-	seedMcpServer(t, queries, "helper", mcpHelperBin, []string{"-pidfile", pidfile}, 5000)
-
-	svc := bootBackend(t, sqlDB)
-	pids := readPids(t, pidfile)
-	svc.CloseTools()
-	waitPidsGone(t, pids)
-}
-
 // A dead server never fails boot: its row explains itself, and no tools
 // are listed.
 func TestMcpBootSurvivesDeadServer(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
 	queries := db.New(sqlDB)
-	seedMcpServer(t, queries, "dead", "/nonexistent-ava-mcp-helper", nil, 300)
+	seedMcpServer(t, queries, "dead", "http://127.0.0.1:1/mcp", 300)
 
 	bootBackend(t, sqlDB)
 
@@ -288,7 +194,8 @@ func TestMcpBootSurvivesDeadServer(t *testing.T) {
 func TestMcpDisabledServerNeverAttempted(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
 	queries := db.New(sqlDB)
-	seedMcpServer(t, queries, "off", mcpHelperBin, nil, 5000)
+	srv := mcptest.Start(t)
+	seedMcpServer(t, queries, "off", srv.URL, 5000)
 	if _, err := queries.ToggleMcpServerEnabled(t.Context(), db.ToggleMcpServerEnabledParams{Enabled: 0, ID: "off"}); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
@@ -302,11 +209,10 @@ func TestMcpDisabledServerNeverAttempted(t *testing.T) {
 	if server.RefreshedAt.Valid {
 		t.Fatal("disabled server was discovered at boot")
 	}
-	count, err := queries.CountMcpServerTools(t.Context(), "off")
-	if err != nil {
-		t.Fatalf("count tools: %v", err)
+	if count, err := queries.CountMcpServerTools(t.Context(), "off"); err != nil || count != 0 {
+		t.Fatalf("disabled server listed %d tools (err %v)", count, err)
 	}
-	if count != 0 {
-		t.Fatalf("disabled server listed %d tools", count)
+	if srv.Initializes() != 0 {
+		t.Fatalf("disabled server was dialed %d times", srv.Initializes())
 	}
 }
