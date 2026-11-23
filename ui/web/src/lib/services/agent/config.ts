@@ -8,7 +8,6 @@ import type {
 	HeartbeatConfig
 } from '#lib/types/agent'
 import type {
-	AgentTool,
 	GetAgentToolsResponse,
 	ToggleAgentMcpRequest,
 	ToggleAgentToolRequest
@@ -25,14 +24,9 @@ export async function updateAgentConfig(
 	agentId: string,
 	patch: AgentEditableFields
 ): Promise<AgentConfigWithIdentity> {
-	const response = await api
+	return api
 		.patch(`agent/${agentId}/config`, { json: patch })
-		.json<{ data?: AgentConfigWithIdentity } | AgentConfigWithIdentity>()
-
-	if (response && typeof response === 'object' && 'data' in response) {
-		return response.data as AgentConfigWithIdentity
-	}
-	return response as AgentConfigWithIdentity
+		.json<AgentConfigWithIdentity>()
 }
 
 /** Save the agent's single heartbeat row. */
@@ -85,15 +79,16 @@ export async function getAgentTools(
 	return api.get(`agent/${agentId}/tools`).json<GetAgentToolsResponse>()
 }
 
-/** Flip one tool's agent preference; answers the saved view row. */
+/** Flip one tool's agent preference; answers the full saved listing,
+ * the same shape as getAgentTools. */
 export async function toggleAgentTool(
 	agentId: string,
 	toolId: string,
 	body: ToggleAgentToolRequest
-): Promise<AgentTool> {
+): Promise<GetAgentToolsResponse> {
 	return api
 		.patch(`agent/${agentId}/tools/${toolId}`, { json: body })
-		.json<AgentTool>()
+		.json<GetAgentToolsResponse>()
 }
 
 /** Flip the agent's parent gate over one MCP server; the gate decides

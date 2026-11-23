@@ -49,16 +49,12 @@ func builtinID(t *testing.T, queries *db.Queries) string {
 // fetchTools returns the tool names AgentTools handed the lane.
 func fetchTools(t *testing.T, svc *backend.TurnService, agentID string) []string {
 	t.Helper()
-	impls, err := svc.AgentTools(context.Background(), agentID)
+	resolved, err := svc.AgentTools(context.Background(), agentID)
 	if err != nil {
 		t.Fatalf("AgentTools: %v", err)
 	}
 	var names []string
-	for _, impl := range impls {
-		info, err := impl.Info(context.Background())
-		if err != nil {
-			t.Fatalf("tool info: %v", err)
-		}
+	for _, info := range resolved.Infos {
 		names = append(names, info.Name)
 	}
 	return names
@@ -192,12 +188,12 @@ func TestSyncDoesNotRestoreOptOut(t *testing.T) {
 		t.Fatalf("second boot: %v", err)
 	}
 	queries = db.New(sqlDB)
-	if rows, err := queries.ResolveAgentToolsDetailed(t.Context(), db.ResolveAgentToolsDetailedParams{AgentID: "research", AgentID_2: "research"}); err != nil {
+	if rows, err := queries.ResolveAgentToolsDetailed(t.Context(), "research"); err != nil {
 		t.Fatal(err)
 	} else if len(rows) != 0 {
 		t.Errorf("research tools after reboot = %v, want none — the opt-out survives", rows)
 	}
-	if rows, err := queries.ResolveAgentToolsDetailed(t.Context(), db.ResolveAgentToolsDetailedParams{AgentID: "_superagent", AgentID_2: "_superagent"}); err != nil {
+	if rows, err := queries.ResolveAgentToolsDetailed(t.Context(), "_superagent"); err != nil {
 		t.Fatal(err)
 	} else if len(rows) != 1 || rows[0].ID != id {
 		t.Errorf("superagent tools after reboot = %v, want [%s]", rows, id)

@@ -13,8 +13,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"slices"
-	"strings"
 	"time"
 
 	"modernc.org/sqlite"
@@ -24,11 +22,14 @@ import (
 	"github.com/radch-ai/ava/backend/internal/db"
 	"github.com/radch-ai/ava/backend/internal/mcp"
 	"github.com/radch-ai/ava/backend/internal/mcpserver"
+	"github.com/radch-ai/ava/backend/internal/tooladmission"
 	"github.com/radch-ai/ava/backend/internal/vault"
 )
 
 const (
-	maxTimeoutMs = 10 * 60 * 1000
+	// maxTimeoutMs is the administrator's call ceiling in
+	// milliseconds — one source for the bound.
+	maxTimeoutMs = int64(tooladmission.MaxCallTimeout / time.Millisecond)
 	// sqliteConstraintPrimaryKey / sqliteConstraintUnique are the two
 	// SQLITE_CONSTRAINT extended codes a duplicate slug insert can raise
 	// (mcp_servers.id is the primary key; TEXT keys report either).
@@ -61,22 +62,12 @@ func msDuration(ms int64) time.Duration {
 }
 
 // configProblem returns the 400 message for a malformed server config;
-// "" when well formed.
+// "" when well formed. The rule itself is mcp's one validator.
 func configProblem(rawURL string) string {
-	if !isValidHTTPURL(rawURL) {
+	if err := mcp.ValidateURL(rawURL); err != nil {
 		return "url must be an http(s) URL without embedded credentials"
 	}
 	return ""
-}
-
-// isValidHTTPURL validates an endpoint: http(s), a non-empty host and no
-// userinfo — credentials ride the sealed header channel only.
-func isValidHTTPURL(raw string) bool {
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return false
-	}
-	return u.User == nil
 }
 
 func timeoutProblem(ms *int64) string {
@@ -84,7 +75,7 @@ func timeoutProblem(ms *int64) string {
 		return ""
 	}
 	if *ms <= 0 || *ms > maxTimeoutMs {
-		return "timeoutMs must be between 1 and 600000"
+		return fmt.Sprintf("timeoutMs must be between 1 and %d", maxTimeoutMs)
 	}
 	return ""
 }
@@ -109,25 +100,26 @@ func requestContext(ctx context.Context) (context.Context, context.CancelFunc) {
 // The whole check shares one 10-second budget — DNS, TLS, initialization
 // and every listing page — so a slow server answers the request
 // instead of outliving the http.Server write deadline.
-func verify(ctx context.Context, cfg mcp.ServerConfig) (*mcp.Client, []mcp.ListedTool, []mcp.Skipped, error) {
+func verify(ctx context.Context, cfg mcp.ServerConfig) (*mcp.Client, error) {
 	ctx, cancel := context.WithTimeout(ctx, mcp.VerifyTimeout)
 	defer cancel()
 	client, err := mcp.BoundedDial(ctx, cfg)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
-	listed, skipped, err := client.SyncStaged(ctx)
-	if err != nil {
+	// Stage the listing here: the caller publishes the staged generation
+	// instead of listing twice, and publication re-reads it.
+	if _, _, err := client.SyncStaged(ctx); err != nil {
 		_ = client.Close()
-		return nil, nil, nil, err
+		return nil, err
 	}
-	return client, listed, skipped, nil
+	return client, nil
 }
 
 // buildServer renders one server row with its tool count; secret
 // values never appear, only the key names the row stores.
 func buildServer(ctx context.Context, queries *db.Queries, row db.McpServer) (apitypes.McpServer, error) {
-	count, err := queries.CountMcpServerTools(ctx, row.ID)
+	count, err := queries.CountMcpServerTools(ctx, sql.NullString{String: row.ID, Valid: true})
 	if err != nil {
 		return apitypes.McpServer{}, fmt.Errorf("count tools for %q: %w", row.ID, err)
 	}
@@ -159,10 +151,6 @@ func serverView(row db.McpServer, toolCount int64) (apitypes.McpServer, error) {
 	if row.LastError.Valid {
 		msg := row.LastError.String
 		out.LastError = &msg
-	}
-	if row.RefreshedAt.Valid {
-		at := row.RefreshedAt.Int64
-		out.RefreshedAt = &at
 	}
 	var err error
 	if out.HeaderKeys, err = decodeStrings(row.HeaderKeys); err != nil {
@@ -223,18 +211,6 @@ func decodeStrings(s string) ([]string, error) {
 	return out, nil
 }
 
-// encodeKeyNames writes a secrets map's key names, canonically
-// sorted, as the column shape.
-func encodeKeyNames(m map[string]string) string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	b, _ := json.Marshal(keys)
-	return string(b)
-}
-
 // skippedTools renders the cosmetic skips of one discovery pass.
 func skippedTools(skipped []mcp.Skipped) []apitypes.McpSkippedTool {
 	if len(skipped) == 0 {
@@ -263,4 +239,25 @@ func readServer(ctx context.Context, queries *db.Queries, w http.ResponseWriter,
 		return db.McpServer{}, false, fmt.Errorf("read mcp server %q: %w", id, err)
 	}
 	return row, true, nil
+}
+
+// respondServer answers one saved server with the listing its pass
+// knows: the rebuilt row plus the discovery view (tools and skips).
+func respondServer(ctx context.Context, w http.ResponseWriter, status int, queries *db.Queries, id string,
+	listed []mcp.ListedTool, skipped []mcp.Skipped) error {
+	saved, err := queries.GetMcpServer(ctx, id)
+	if err != nil {
+		_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+		return fmt.Errorf("read back mcp server %q: %w", id, err)
+	}
+	server, err := buildServer(ctx, queries, saved)
+	if err != nil {
+		_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+		return fmt.Errorf("build server %q: %w", id, err)
+	}
+	return api.WriteJSON(w, status, apitypes.McpServerWithToolsResponse{
+		Server:       server,
+		Tools:        discoveredTools(id, listed),
+		SkippedTools: skippedTools(skipped),
+	})
 }

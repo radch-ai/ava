@@ -7,8 +7,8 @@ import {
 	toggleAgentMcp,
 	toggleAgentTool
 } from '#lib/services/agent/config'
-import { getMcpServers, getMcpToolDefinition } from '#lib/services/mcp'
-import type { AgentTool } from '#lib/types/tool'
+import { getMcpToolDefinition } from '#lib/services/mcp'
+import type { AgentMcpPreference, AgentTool } from '#lib/types/tool'
 
 // Mock the agent config + MCP services — the panel never hits the
 // network. The MCP service stays in the mock on purpose: the editor must
@@ -42,20 +42,12 @@ const blocked: AgentTool = {
 	kind: 'builtin'
 }
 
-type ServerListing = {
-	serverId: string
-	name: string
-	agentEnabled: boolean
-	serverEnabled: boolean
-	catalogState: string
-}
-
 // Mocks are set before render — the fetch effect runs on mount. One
 // listing supplies the tools and every server fact the panel renders.
 function renderEditor(
 	tools: AgentTool[] = [available],
 	agentId = 'research',
-	servers: ServerListing[] = []
+	servers: AgentMcpPreference[] = []
 ) {
 	vi.mocked(getAgentTools).mockResolvedValue({ tools, servers })
 	render(ToolsEditor, { agentId, value: '', onchange: () => {} })
@@ -64,7 +56,7 @@ function renderEditor(
 	})
 }
 
-const notesServer: ServerListing = {
+const notesServer: AgentMcpPreference = {
 	serverId: 'notes-mcp',
 	name: 'Notes MCP',
 	agentEnabled: false,
@@ -118,8 +110,8 @@ describe('ToolsEditor', () => {
 	it('saves a toggle through the service once the debounce settles', async () => {
 		const sw = renderEditor()
 		vi.mocked(toggleAgentTool).mockResolvedValue({
-			...available,
-			locallyDisabled: true
+			tools: [{ ...available, locallyDisabled: true }],
+			servers: []
 		})
 
 		await sw.click()
@@ -158,8 +150,8 @@ describe('ToolsEditor', () => {
 			const sw = renderEditor()
 			await vi.advanceTimersByTimeAsync(0)
 			vi.mocked(toggleAgentTool).mockResolvedValue({
-				...available,
-				locallyDisabled: true
+				tools: [{ ...available, locallyDisabled: true }],
+				servers: []
 			})
 
 			const handle = await sw.element()
@@ -415,16 +407,5 @@ describe('ToolsEditor listing-derived server facts', () => {
 		})
 		await expect.element(link).toBeVisible()
 		await expect.element(link).toHaveAttribute('href', '/settings/tools')
-	})
-
-	it('renders server rows from the tool listing without a second fetch', async () => {
-		renderEditor([available, notesTool], 'research', [
-			{ ...notesServer, agentEnabled: true }
-		])
-
-		await expect
-			.element(page.getByRole('heading', { name: 'Notes MCP' }))
-			.toBeVisible()
-		expect(getMcpServers).not.toHaveBeenCalled()
 	})
 })

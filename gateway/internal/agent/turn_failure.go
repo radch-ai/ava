@@ -28,21 +28,15 @@ func toolFailure(err error) (tool, cause string, ok bool) {
 
 // turnError renders a turn failure for the wire: a tool failure
 // names its tool and shows its clean cause; anything else keeps its
-// own text.
+// own text. Rendering is unscrubbed — every caller scrubs exactly once
+// at the failing sink (failTurn at its entry; emitError's contract is
+// pre-scrubbed input), so error text takes one scrubbing pass.
 func turnError(err error) (text, toolName string) {
 	tool, cause, ok := toolFailure(err)
 	if !ok {
 		return err.Error(), ""
 	}
 	return cause, tool
-}
-
-// turnError is turnError with the observable copy sanitized by the lane's
-// scrubber: the error row is persisted and broadcast, so it must not carry
-// a credential the admission chain scrubbed everywhere else.
-func (a *UserAgent) turnError(ctx context.Context, err error) (text, toolName string) {
-	text, toolName = turnError(err)
-	return a.scrubCopy(ctx, text), toolName
 }
 
 // invokeHarnessFrame prefixes every error eino's tool adapter wraps
@@ -54,21 +48,26 @@ const invokeHarnessFrame = "[LocalFunc] "
 // harness's frame peels off, so the text shows why the tool failed
 // rather than how it was invoked. Any other wrapping keeps its
 // context — a tool's own "fetch customer record: ..." survives.
+// The rendering is unscrubbed; its sinks scrub — the recorder's
+// outcome row applies cleanCopy, failTurn scrubs at entry, and
+// emitError requires pre-scrubbed input.
 func cleanToolError(err error) string {
 	var terr *toolError
 	if errors.As(err, &terr) {
 		err = terr.err
 	}
 	if inner := errors.Unwrap(err); inner != nil && strings.HasPrefix(err.Error(), invokeHarnessFrame) {
-		return fanOutScrubber(inner.Error())
+		return inner.Error()
 	}
-	return fanOutScrubber(err.Error())
+	return err.Error()
 }
 
 // fanOutScrubber applies the shared pattern battery to text on its way to
 // a consumer: the gateway is the final fan-out boundary, so
 // a credential shape that survived the admission chain still cannot reach
-// the wire, the transcript row or a log.
+// the wire, the transcript row or a log. The package rule that keeps the
+// last claim true: every error-log site scrubs through UserAgent.scrubCopy
+// — no site logs a raw err.Error().
 func fanOutScrubber(text string) string {
 	scrubbed, _ := backend.NewPatternScrubber().ScrubString(text)
 	return scrubbed
@@ -85,6 +84,10 @@ func fanOutScrubber(text string) string {
 // the durable write itself fails, the client gets the transient notice
 // and the caller knows the outcome is unrecorded.
 func (a *UserAgent) failTurn(ctx context.Context, msgID, message, toolName string) bool {
+	// The sink is the one scrub boundary: whether the text lands in a
+	// durable error row or a transient broadcast, it must not carry a
+	// credential the admission chain scrubbed everywhere else.
+	message = a.scrubCopy(message)
 	if a.journal != nil {
 		var drafts []backend.ThreadMessageDraft
 		if toolName == "" {
@@ -102,7 +105,7 @@ func (a *UserAgent) failTurn(ctx context.Context, msgID, message, toolName strin
 			a.clearTurnPrefix()
 			return true
 		}
-		a.logger.Warn().Err(err).Str("agent_id", a.state.agentID).Msg("persist item outcome")
+		a.logger.Warn().Str("error", a.scrubCopy(err.Error())).Str("agent_id", a.state.agentID).Msg("persist item outcome")
 	}
 	a.emitError(ctx, message, toolName, msgID)
 	return false
@@ -110,7 +113,9 @@ func (a *UserAgent) failTurn(ctx context.Context, msgID, message, toolName strin
 
 // emitError reports a transient failure to the lane's connections. The
 // replay prefix retires first: nothing replays after the turn is over.
-// Durable failures arrive as lifecycle events instead.
+// Durable failures arrive as lifecycle events instead. Callers hand over
+// already-scrubbed text — the boundary rule is one scrubbing pass at the
+// failing sink's caller, exactly as failTurn does.
 func (a *UserAgent) emitError(ctx context.Context, message, tool, turnID string) {
 	a.clearTurnPrefix()
 	_ = a.state.conns.WriteJSON(ctx, wstypes.Event{

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cloudwego/eino/components/tool"
@@ -16,12 +15,7 @@ import (
 	mcpsdk "github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/radch-ai/ava/backend/internal/security"
-	"github.com/radch-ai/ava/backend/internal/tooladmission"
 )
-
-// mcpListRequestBase offsets the discovery listing's request ids into a
-// range mcp-go's own counter never reaches.
-const mcpListRequestBase = 1 << 32
 
 // errClientClosed refuses a dispatch on a connection that is already
 // torn down: a live one is resolved from the manager, never resurrected.
@@ -67,9 +61,6 @@ type Client struct {
 	stagedSkipped  []Skipped
 	stagedComplete bool
 
-	// listIDs numbers the discovery listing's own JSON-RPC requests.
-	listIDs atomic.Uint64
-
 	closeOnce sync.Once
 	closeErr  error
 }
@@ -80,20 +71,24 @@ func Dial(ctx context.Context, cfg ServerConfig) (*Client, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("mcp server %s: %w", cfg.ID, err)
 	}
-	tr, err := newTransport(cfg)
+	// One scrubber per connection build: transport, protocol logging
+	// and the client itself share it.
+	scrub := security.NewScrubber(cfg.KnownSecrets())
+	tr, err := newTransport(cfg, scrub)
 	if err != nil {
 		return nil, err
 	}
-	return newClient(ctx, cfg, tr)
+	return newClient(ctx, cfg, tr, scrub)
 }
 
 // newTransport builds the streamable-HTTP transport over the hardened
 // client: no proxy, no redirects, pinned dial, bounded body, scrubbed
-// protocol logging.
-func newTransport(cfg ServerConfig) (transport.Interface, error) {
+// protocol logging. The scrubber is the caller's — one per connection
+// build, shared by transport, logging and the invokables.
+func newTransport(cfg ServerConfig, scrub *security.Scrubber) (transport.Interface, error) {
 	opts := []transport.StreamableHTTPCOption{
-		transport.WithHTTPBasicClient(newHTTPClient(cfg)),
-		transport.WithHTTPLogger(scrubLogger{scrub: security.NewScrubber(cfg.KnownSecrets())}),
+		transport.WithHTTPBasicClient(newHTTPClient(cfg, scrub)),
+		transport.WithHTTPLogger(scrubLogger{scrub: scrub, log: transportLog}),
 	}
 	if len(cfg.Headers) > 0 {
 		opts = append(opts, transport.WithHTTPHeaders(cfg.Headers))
@@ -108,7 +103,7 @@ func newTransport(cfg ServerConfig) (transport.Interface, error) {
 // newClient starts a client over an already-built transport and completes
 // the MCP initialize handshake. The transport's lifetime context is
 // manager-owned (not the caller's request context).
-func newClient(ctx context.Context, cfg ServerConfig, tr transport.Interface) (*Client, error) {
+func newClient(ctx context.Context, cfg ServerConfig, tr transport.Interface, scrub *security.Scrubber) (*Client, error) {
 	lifetime, cancel := context.WithCancel(context.Background())
 	c := &Client{
 		id:      cfg.ID,
@@ -117,7 +112,7 @@ func newClient(ctx context.Context, cfg ServerConfig, tr transport.Interface) (*
 		tr:      tr,
 		cli:     client.NewClient(tr),
 		cancel:  cancel,
-		scrub:   security.NewScrubber(cfg.KnownSecrets()),
+		scrub:   scrub,
 	}
 	if err := c.cli.Start(lifetime); err != nil {
 		_ = c.teardown()
@@ -146,7 +141,10 @@ func newClient(ctx context.Context, cfg ServerConfig, tr transport.Interface) (*
 // their error chains survive for errors.Is callers.
 func (c *Client) wrapStartupError(stage string, err error) error {
 	if errors.Is(err, ErrDestinationDenied) || errors.Is(err, ErrLinkLocalDenied) ||
-		errors.Is(err, security.ErrUnspecifiedDenied) || errors.Is(err, ErrInsecureCredentials) {
+		errors.Is(err, security.ErrReservedDenied) ||
+		errors.Is(err, security.ErrUnspecifiedDenied) ||
+		errors.Is(err, security.ErrUnresolved) ||
+		errors.Is(err, ErrInsecureCredentials) {
 		return fmt.Errorf("%s: %w", stage, err)
 	}
 	return fmt.Errorf("%s: %s", stage, c.scrubText(err))
@@ -175,13 +173,17 @@ type Skipped struct {
 }
 
 // ListedTool is one of a server's tools after discovery: everything the
-// catalog stores and every consumer needs — the identity and the
-// sanitized definition.
+// catalog stores and every consumer needs — the identity, the
+// sanitized definition, and the decoded input tree the runtime's
+// adapter reuses (one decode per schema, shared by validation, the
+// stored definition and the number-repair walk).
 type ListedTool struct {
 	Remote      string
 	Description string
 	// DefinitionJSON is the stored, sanitized definition the UI renders.
 	DefinitionJSON string
+	// input is the UseNumber-decoded input schema; in-package only.
+	input any
 }
 
 // rawTool is one entry of a raw tools/list page: the schema and
@@ -190,23 +192,17 @@ type ListedTool struct {
 // the listing is parsed here — the stored definition must be the
 // advertised one, not a lossy re-encoding.
 type rawTool struct {
-	Name         string
-	Description  string
-	InputSchema  json.RawMessage
-	OutputSchema json.RawMessage
-	Annotations  json.RawMessage
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	InputSchema  json.RawMessage `json:"inputSchema"`
+	OutputSchema json.RawMessage `json:"outputSchema"`
+	Annotations  json.RawMessage `json:"annotations"`
 }
 
 // listingPage is one decoded tools/list response.
 type listingPage struct {
-	Tools []struct {
-		Name         string          `json:"name"`
-		Description  string          `json:"description"`
-		InputSchema  json.RawMessage `json:"inputSchema"`
-		OutputSchema json.RawMessage `json:"outputSchema"`
-		Annotations  json.RawMessage `json:"annotations"`
-	} `json:"tools"`
-	NextCursor string `json:"nextCursor"`
+	Tools      []rawTool `json:"tools"`
+	NextCursor string    `json:"nextCursor"`
 }
 
 // listTools reads the server's complete listing under the catalog
@@ -223,26 +219,19 @@ func (c *Client) listTools(ctx context.Context) ([]rawTool, error) {
 		if page > MaxCatalogPages {
 			return nil, fmt.Errorf("%w: more than %d pages", errCatalogTooLarge, MaxCatalogPages)
 		}
-		res, err := c.listPage(ctx, cursor)
+		res, err := c.listPage(ctx, cursor, page)
 		if err != nil {
 			return nil, err
 		}
 		for _, tool := range res.Tools {
-			encoded, err := json.Marshal(tool)
-			if err != nil {
-				return nil, fmt.Errorf("encode tool %q: %w", tool.Name, err)
-			}
-			bytes += len(encoded)
+			// The advertised size is the raw bytes the server sent —
+			// no re-encode just to count.
+			bytes += len(tool.Name) + len(tool.Description) +
+				len(tool.InputSchema) + len(tool.OutputSchema) + len(tool.Annotations)
 			if bytes > MaxCatalogBytes {
 				return nil, fmt.Errorf("%w: more than %d bytes", errCatalogTooLarge, MaxCatalogBytes)
 			}
-			out = append(out, rawTool{
-				Name:         tool.Name,
-				Description:  tool.Description,
-				InputSchema:  tool.InputSchema,
-				OutputSchema: tool.OutputSchema,
-				Annotations:  tool.Annotations,
-			})
+			out = append(out, tool)
 			if len(out) > MaxCatalogTools {
 				return nil, fmt.Errorf("%w: more than %d tools", errCatalogTooLarge, MaxCatalogTools)
 			}
@@ -259,16 +248,17 @@ func (c *Client) listTools(ctx context.Context) ([]rawTool, error) {
 }
 
 // listPage issues one raw tools/list request over the live transport.
-// The request id comes from a range mcp-go's own counter never reaches,
-// so the two cannot pair a response wrongly.
-func (c *Client) listPage(ctx context.Context, cursor string) (*listingPage, error) {
+// The request id names its page ("ava-list-<page>"): syncMu serializes
+// passes, so page numbers never collide with each other, and the string
+// form never collides with mcp-go's own numeric counter.
+func (c *Client) listPage(ctx context.Context, cursor string, page int) (*listingPage, error) {
 	params := map[string]any{}
 	if cursor != "" {
 		params["cursor"] = cursor
 	}
 	resp, err := c.tr.SendRequest(ctx, transport.JSONRPCRequest{
 		JSONRPC: "2.0",
-		ID:      mcpsdk.NewRequestId(mcpListRequestBase + c.listIDs.Add(1)),
+		ID:      mcpsdk.NewRequestId(fmt.Sprintf("ava-list-%d", page)),
 		Method:  "tools/list",
 		Params:  params,
 	})
@@ -281,11 +271,11 @@ func (c *Client) listPage(ctx context.Context, cursor string) (*listingPage, err
 		message, _ := c.scrub.ScrubString(resp.Error.Message)
 		return nil, fmt.Errorf("tools/list: %s", message)
 	}
-	var page listingPage
-	if err := json.Unmarshal(resp.Result, &page); err != nil {
+	var out listingPage
+	if err := json.Unmarshal(resp.Result, &out); err != nil {
 		return nil, fmt.Errorf("decode tools/list: %w", err)
 	}
-	return &page, nil
+	return &out, nil
 }
 
 // CatalogError is a rejected discovery generation: a security-invalid or
@@ -400,6 +390,7 @@ func (c *Client) buildListing(raw []rawTool) ([]ListedTool, []Skipped, error) {
 			Remote:         tool.Name,
 			Description:    description,
 			DefinitionJSON: string(definitionJSON),
+			input:          inputSchema,
 		})
 	}
 	return listed, skipped, nil
@@ -474,26 +465,6 @@ func decodeJSONValue(data []byte) (any, error) {
 	return value, nil
 }
 
-// errUnrepresentable marks a tool whose composite model name violates
-// the provider wire contract: discovery skips it with a reason —
-// cosmetic, never a rename — so it never reaches the runtime.
-var errUnrepresentable = errors.New("unrepresentable model tool name")
-
-// wrap adapts one listed tool under the composite model name: Info
-// reports `{slug}_{remote}`, and the invokable carries the catalog
-// identity it was discovered under.
-func (c *Client) wrap(base tool.BaseTool, entry ListedTool) (tool.InvokableTool, error) {
-	if reason := c.nameProblem(entry.Remote); reason != "" {
-		return nil, fmt.Errorf("%w: mcp server %s: %s", errUnrepresentable, c.id, reason)
-	}
-	return &wrappedTool{
-		id:     c.id,
-		remote: entry.Remote,
-		base:   base,
-		model:  ModelName(c.id, entry.Remote),
-	}, nil
-}
-
 // Config reports the connection config this client was built from.
 func (c *Client) Config() ServerConfig { return c.cfg }
 
@@ -507,8 +478,12 @@ func (c *Client) SyncStaged(ctx context.Context) ([]ListedTool, []Skipped, error
 	return c.stage(ctx)
 }
 
-// stage is SyncStaged's body under syncMu.
+// stage is SyncStaged's body under syncMu. A failed pass leaves no
+// staged generation behind: the previous pass's staging is dropped on
+// entry, so StagedListing never reports a generation this pass did not
+// validate.
 func (c *Client) stage(ctx context.Context) ([]ListedTool, []Skipped, error) {
+	c.staged, c.stagedListing, c.stagedSkipped, c.stagedComplete = nil, nil, nil, false
 	raw, err := c.listTools(ctx)
 	if err != nil {
 		if errors.Is(err, errCatalogTooLarge) {
@@ -531,15 +506,14 @@ func (c *Client) stage(ctx context.Context) ([]ListedTool, []Skipped, error) {
 	}
 	wrapped := make(map[string]tool.InvokableTool, len(listed))
 	for _, entry := range listed {
-		base, err := newRemoteTool(c, byName[entry.Remote], entry.Description)
+		// buildListing already skipped names the provider cannot carry,
+		// so every listed entry wraps under its composite model name.
+		inner, err := newRemoteTool(c, byName[entry.Remote], entry.Description, entry.input,
+			ModelName(c.id, entry.Remote))
 		if err != nil {
 			return nil, nil, &CatalogError{Code: CodeCatalogInvalidSchema, Err: err}
 		}
-		impl, err := c.wrap(base, entry)
-		if err != nil {
-			return nil, nil, &CatalogError{Code: CodeCatalogInvalidSchema, Err: err}
-		}
-		wrapped[entry.Remote] = impl
+		wrapped[entry.Remote] = inner
 	}
 	c.staged = wrapped
 	c.stagedListing = listed
@@ -620,8 +594,8 @@ func (c *Client) release() {
 }
 
 // waitDrained blocks until every borrowed call on this connection returns,
-// bounded by the administrator's call ceiling: every dispatch is bounded by
-// it, so a retired connection cannot be pinned forever.
+// bounded by the connection's own call ceiling: every dispatch is bounded
+// by it, so a retired connection cannot be pinned forever.
 func (c *Client) waitDrained() {
 	c.callsMu.Lock()
 	if c.calls == 0 {
@@ -634,12 +608,22 @@ func (c *Client) waitDrained() {
 	drained := c.drained
 	c.callsMu.Unlock()
 
-	timer := time.NewTimer(tooladmission.MaxCallTimeout)
+	timer := time.NewTimer(c.timeout)
 	defer timer.Stop()
 	select {
 	case <-drained:
 	case <-timer.C:
 	}
+}
+
+// refuseBorrows seals the connection against new dispatches; in-flight
+// borrows keep running. It closes retire's race window: once it
+// returns, waitDrained observes every borrow that can ever exist, so
+// no dispatch starts on a connection about to be torn down.
+func (c *Client) refuseBorrows() {
+	c.callsMu.Lock()
+	c.closed = true
+	c.callsMu.Unlock()
 }
 
 // Close tears the connection down. Safe to call more than once.

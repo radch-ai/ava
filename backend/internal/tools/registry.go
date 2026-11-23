@@ -68,7 +68,6 @@ func New() (*Registry, error) {
 			ID:          info.Name,
 			Name:        "DuckDuckGo Search",
 			Description: info.Desc,
-			Builtin:     true,
 			Enabled:     true,
 		}},
 		invokables: map[string]tool.InvokableTool{info.Name: ddg},

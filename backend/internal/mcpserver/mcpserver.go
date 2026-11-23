@@ -11,7 +11,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -62,7 +64,7 @@ func SyncEnabled(ctx context.Context, sqlDB *sql.DB, queries *db.Queries, manage
 			// every protocol exchange share the discovery budget.
 			discoverCtx, cancel := context.WithTimeout(ctx, mcp.DiscoveryTimeout)
 			defer cancel()
-			if _, _, err := Discover(discoverCtx, sqlDB, queries, manager, vaultStore, server); err != nil {
+			if _, _, err := Discover(discoverCtx, sqlDB, queries, manager, vaultStore, logger, server); err != nil {
 				logger.Warn().Err(err).Str("server", server.ID).Msg("mcp discovery failed")
 			}
 			return nil
@@ -80,13 +82,20 @@ func SyncEnabled(ctx context.Context, sqlDB *sql.DB, queries *db.Queries, manage
 // previous tool rows stay inspectable, new calls resolve nothing, and a
 // valid refresh unpauses. A transient failure leaves the
 // last validated generation active.
-func Discover(ctx context.Context, sqlDB *sql.DB, queries *db.Queries, manager *mcp.Manager, vaultStore *vault.Store, server db.McpServer) ([]mcp.ListedTool, []mcp.Skipped, error) {
+func Discover(ctx context.Context, sqlDB *sql.DB, queries *db.Queries, manager *mcp.Manager, vaultStore *vault.Store, logger zerolog.Logger, server db.McpServer) ([]mcp.ListedTool, []mcp.Skipped, error) {
 	defer pubLocks.Lock(server.ID)()
 	listed, skipped, err := discover(ctx, sqlDB, queries, manager, vaultStore, server)
 	if err != nil {
 		return nil, nil, RecordPublishFailure(ctx, queries, server.ID, err)
 	}
-	return listed, skipped, SetDiagnostics(ctx, queries, server.ID, nil)
+	// The listing is committed and serving: a diagnostics write that
+	// fails after it degrades the row's explanation, not the publish.
+	// Only pre-publish failures reach the caller as errors.
+	if diagErr := SetDiagnostics(ctx, queries, server.ID, nil); diagErr != nil {
+		logger.Warn().Err(diagErr).Str("server", server.ID).
+			Msg("mcp diagnostics write failed after a committed publish")
+	}
+	return listed, skipped, nil
 }
 
 // isCatalogRejection reports whether err rejects the generation itself
@@ -131,7 +140,7 @@ func discover(ctx context.Context, sqlDB *sql.DB, queries *db.Queries, manager *
 	if err != nil {
 		return nil, nil, err
 	}
-	listed, skipped, err := Publish(ctx, sqlDB, queries, server, client)
+	listed, skipped, err := Publish(ctx, sqlDB, vaultStore, server, client)
 	if err == nil {
 		return listed, skipped, nil
 	}
@@ -150,10 +159,22 @@ func discover(ctx context.Context, sqlDB *sql.DB, queries *db.Queries, manager *
 	if dialErr != nil {
 		return nil, nil, errors.Join(err, fmt.Errorf("reconnect mcp server %s: %w", server.ID, dialErr))
 	}
+	// The catalog write commits before the replacement is installed —
+	// the same order PublishVerified holds: a failed re-publish keeps
+	// the previous client answering from its committed generation (dead
+	// session, live cache) instead of stranding an empty replacement.
+	// Discover holds this server's pubLock across the whole pass, so
+	// the publish and the Replace below are serialized as one critical
+	// section exactly like PublishVerified's.
+	listed, skipped, pubErr := Publish(ctx, sqlDB, vaultStore, server, replacement)
+	if pubErr != nil {
+		_ = replacement.Close()
+		return nil, nil, pubErr
+	}
 	// Replace retires the dead client without aborting its dispatched
-	// work (Adopt would keep it: the config is equivalent); publication
-	// re-fences the row before anything is written.
-	return Publish(ctx, sqlDB, queries, server, manager.Replace(cfg, replacement))
+	// work (Adopt would keep it: the config is equivalent).
+	manager.Replace(cfg, replacement)
+	return listed, skipped, nil
 }
 
 // Publish writes one already-connected client's listing into the catalog
@@ -163,8 +184,17 @@ func discover(ctx context.Context, sqlDB *sql.DB, queries *db.Queries, manager *
 // advances after the catalog write succeeds, so a failed or overlapping
 // publication never exposes a replacement implementation under an older
 // approved definition. The client's config is the authority the write
-// fence re-checks.
-func Publish(ctx context.Context, sqlDB *sql.DB, queries *db.Queries, server db.McpServer, client *mcp.Client) ([]mcp.ListedTool, []mcp.Skipped, error) {
+// fence re-checks, values included (vaultStore unseals the stored set).
+func Publish(ctx context.Context, sqlDB *sql.DB, vaultStore *vault.Store, server db.McpServer, client *mcp.Client) ([]mcp.ListedTool, []mcp.Skipped, error) {
+	return publishStaged(ctx, sqlDB, vaultStore, server.ID, client)
+}
+
+// publishStaged stages the client's listing when it carries none, commits
+// the catalog generation, and only then makes it live. A rejected
+// generation discards the staging and leaves the previous one serving:
+// nothing is live that the catalog did not accept. The client's own
+// config is the single authority the fence validates.
+func publishStaged(ctx context.Context, sqlDB *sql.DB, vaultStore *vault.Store, serverID string, client *mcp.Client) ([]mcp.ListedTool, []mcp.Skipped, error) {
 	listed, skipped, staged := client.StagedListing()
 	if !staged {
 		var err error
@@ -173,7 +203,7 @@ func Publish(ctx context.Context, sqlDB *sql.DB, queries *db.Queries, server db.
 			return nil, nil, fmt.Errorf("%w: %w", errStaging, err)
 		}
 	}
-	if err := UpsertListing(ctx, sqlDB, server.ID, client.Config(), listed); err != nil {
+	if err := UpsertListing(ctx, sqlDB, vaultStore, serverID, client.Config(), listed); err != nil {
 		// Nothing was committed: the live generation keeps serving.
 		client.Discard()
 		return nil, nil, err
@@ -209,21 +239,25 @@ func (k *keyedMutex) Lock(key string) func() {
 	return lock.Unlock
 }
 
-// PublishVerified installs a verification client and publishes the
-// listing it staged as one critical section: the client the manager keeps
-// and the catalog generation the database accepts come from the same
-// pass, and the pass lists the catalog exactly once.
-//
-// The verified client wins over a cached one even for an equivalent
-// config: Adopt would keep the cache, whose committed generation may be
-// older than the listing verification just validated, and publishing the
-// fresh listing under the older implementation would split definition
-// from implementation. Replace retires the previous client by draining
-// it, so work already on the wire finishes. Ownership of client
-// transfers either way.
-func PublishVerified(ctx context.Context, sqlDB *sql.DB, queries *db.Queries, manager *mcp.Manager, server db.McpServer, cfg mcp.ServerConfig, client *mcp.Client) ([]mcp.ListedTool, []mcp.Skipped, error) {
+// PublishVerified publishes the listing a verification client staged and
+// installs that client as one critical section: the catalog generation
+// the database accepts and the client the manager keeps come from the
+// same pass, and the pass lists the catalog exactly once. The catalog
+// write commits first: a rejected publication leaves the manager
+// untouched — the previous generation keeps serving — and ownership of
+// the client stays with the caller, who must close it. Only a committed
+// generation transfers ownership, and Replace then retires the previous
+// client by draining it, so work already on the wire finishes.
+func PublishVerified(ctx context.Context, sqlDB *sql.DB, vaultStore *vault.Store, manager *mcp.Manager, server db.McpServer, client *mcp.Client) ([]mcp.ListedTool, []mcp.Skipped, error) {
 	defer pubLocks.Lock(server.ID)()
-	return Publish(ctx, sqlDB, queries, server, manager.Replace(cfg, client))
+	listed, skipped, err := publishStaged(ctx, sqlDB, vaultStore, server.ID, client)
+	if err != nil {
+		// Nothing committed, nothing installed: the candidate's staged
+		// generation is dropped and the live one keeps serving.
+		return nil, nil, err
+	}
+	manager.Replace(client.Config(), client)
+	return listed, skipped, nil
 }
 
 // Catalog states.
@@ -239,7 +273,7 @@ const (
 // the server no longer reports, and marks the
 // catalog active — one transaction, so readers (the catalog page, a
 // turn's tool resolution) never see a torn or half-published listing.
-func UpsertListing(ctx context.Context, sqlDB *sql.DB, serverID string, cfg mcp.ServerConfig, listed []mcp.ListedTool) error {
+func UpsertListing(ctx context.Context, sqlDB *sql.DB, vaultStore *vault.Store, serverID string, cfg mcp.ServerConfig, listed []mcp.ListedTool) error {
 	tx, err := sqlDB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin listing sync: %w", err)
@@ -257,6 +291,26 @@ func UpsertListing(ctx context.Context, sqlDB *sql.DB, serverID string, cfg mcp.
 	if !sameAuthority(row, cfg) {
 		return errStaleGeneration{serverID: serverID, reason: "configuration changed during discovery"}
 	}
+	// Credential values, not just key names: a rotation between
+	// discovery and this write must reject the generation. The blob is
+	// unsealed through this transaction — same connection, same
+	// snapshot as the row read above.
+	var storedHeaders map[string]string
+	blob, _, err := vaultStore.GetThrough(ctx, queries, vault.NameRuntime, EntryName(serverID))
+	switch {
+	case errors.Is(err, vault.ErrNotFound):
+	case err != nil:
+		return fmt.Errorf("unseal stored credentials to fence %q: %w", serverID, err)
+	default:
+		var secrets Secrets
+		if err := json.Unmarshal(blob, &secrets); err != nil {
+			return fmt.Errorf("decode stored credentials to fence %q: %w", serverID, err)
+		}
+		storedHeaders = secrets.Headers
+	}
+	if !maps.Equal(storedHeaders, cfg.Headers) {
+		return errStaleGeneration{serverID: serverID, reason: "credentials changed during discovery"}
+	}
 
 	others, err := queries.ListOtherServerToolNames(ctx, sql.NullString{String: serverID, Valid: true})
 	if err != nil {
@@ -264,10 +318,10 @@ func UpsertListing(ctx context.Context, sqlDB *sql.DB, serverID string, cfg mcp.
 	}
 	taken := make(map[string]string, len(others))
 	for _, other := range others {
-		server, ok := other.ServerID.(string)
-		if !ok {
+		if !other.ServerID.Valid {
 			continue
 		}
+		server := other.ServerID.String
 		taken[mcp.ModelName(server, other.Name)] = server
 	}
 	for _, tool := range listed {
@@ -280,26 +334,39 @@ func UpsertListing(ctx context.Context, sqlDB *sql.DB, serverID string, cfg mcp.
 		}
 	}
 
+	// Chunked multi-row upsert: 1,024 single inserts cost ~50ms of
+	// round-trips per refresh; 100-row statements (500 bind params,
+	// under SQLite's 999 limit) cut that by an order of magnitude.
+	// sqlc cannot express variable-arity VALUES, so the statement is
+	// built here — every value is a bound parameter, never spliced.
 	kept := make([]string, 0, len(listed))
-	for _, tool := range listed {
-		id := mcp.CatalogID(serverID, tool.Remote)
-		if err := queries.UpsertMcpTool(ctx, db.UpsertMcpToolParams{
-			ID:             id,
-			Name:           tool.Remote,
-			Description:    tool.Description,
-			ServerID:       serverID,
-			DefinitionJson: tool.DefinitionJSON,
-		}); err != nil {
-			return fmt.Errorf("upsert tool %q: %w", id, err)
+	const chunkRows = 100
+	for start := 0; start < len(listed); start += chunkRows {
+		end := min(start+chunkRows, len(listed))
+		rows := listed[start:end]
+		var stmt strings.Builder
+		stmt.WriteString("INSERT INTO tools (id, name, description, enabled, kind, server_id, definition_json) VALUES ")
+		args := make([]any, 0, len(rows)*5)
+		for i, tool := range rows {
+			if i > 0 {
+				stmt.WriteByte(',')
+			}
+			stmt.WriteString("(?, ?, ?, 0, 'mcp', ?, ?)")
+			id := mcp.CatalogID(serverID, tool.Remote)
+			args = append(args, id, tool.Remote, tool.Description, serverID, tool.DefinitionJSON)
+			kept = append(kept, id)
 		}
-		kept = append(kept, id)
+		stmt.WriteString(" ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, definition_json = excluded.definition_json")
+		if _, err := tx.ExecContext(ctx, stmt.String(), args...); err != nil {
+			return fmt.Errorf("upsert tools %d..%d for %q: %w", start, end-1, serverID, err)
+		}
 	}
 	keptJSON, err := json.Marshal(kept)
 	if err != nil {
 		return fmt.Errorf("encode kept ids: %w", err)
 	}
 	if _, err := queries.DeleteVanishedMcpTools(ctx, db.DeleteVanishedMcpToolsParams{
-		ServerID: serverID,
+		ServerID: sql.NullString{String: serverID, Valid: true},
 		KeptIds:  string(keptJSON),
 	}); err != nil {
 		return fmt.Errorf("prune vanished tools: %w", err)
@@ -328,8 +395,9 @@ func (e errStaleGeneration) Error() string {
 }
 
 // sameAuthority reports whether the row still describes the endpoint the
-// discovery pass actually talked to: destination, approvals, credential
-// key set and effective timeout.
+// discovery pass actually talked to: destination, approvals and effective
+// timeout. Credential values are fenced separately, inside the write
+// transaction, against the unsealed stored set.
 func sameAuthority(row db.McpServer, cfg mcp.ServerConfig) bool {
 	if row.Url.String != cfg.URL || row.Url.Valid != (cfg.URL != "") {
 		return false
@@ -340,9 +408,6 @@ func sameAuthority(row db.McpServer, cfg mcp.ServerConfig) bool {
 	if (row.AllowPlaintext != 0) != cfg.AllowPlaintext {
 		return false
 	}
-	if row.HeaderKeys != headerKeysJSON(cfg.Headers) {
-		return false
-	}
 	var timeout time.Duration
 	if row.TimeoutMs.Valid && row.TimeoutMs.Int64 > 0 {
 		timeout = time.Duration(row.TimeoutMs.Int64) * time.Millisecond
@@ -350,9 +415,9 @@ func sameAuthority(row db.McpServer, cfg mcp.ServerConfig) bool {
 	return timeout == cfg.Timeout
 }
 
-// headerKeysJSON renders a credential map's key names the way the row
-// stores them: canonically sorted.
-func headerKeysJSON(headers map[string]string) string {
+// HeaderKeys renders a secrets map's key names the way the row stores
+// them: canonically sorted.
+func HeaderKeys(headers map[string]string) string {
 	keys := make([]string, 0, len(headers))
 	for key := range headers {
 		keys = append(keys, key)
@@ -408,13 +473,10 @@ func Config(ctx context.Context, server db.McpServer, vaultStore *vault.Store) (
 const maxDiagnosticDetail = 1 << 10
 
 // SetDiagnostics records the post-discovery state: a static reason code
-// plus a sanitized, bounded detail (NULL = healthy) and when the sync
-// attempt ran. The message never carries a raw error body or a secret.
+// plus a sanitized, bounded detail (NULL = healthy). The message never
+// carries a raw error body or a secret.
 func SetDiagnostics(ctx context.Context, queries *db.Queries, id string, lastErr error) error {
-	params := db.SetMcpServerDiagnosticsParams{
-		ID:          id,
-		RefreshedAt: sql.NullInt64{Int64: time.Now().UnixMicro(), Valid: true},
-	}
+	params := db.SetMcpServerDiagnosticsParams{ID: id}
 	if lastErr != nil {
 		params.LastError = sql.NullString{String: diagnosticMessage(lastErr), Valid: true}
 	}
@@ -448,6 +510,7 @@ func Classify(err error) (code, detail string) {
 	case errors.Is(err, mcp.ErrResponseTooLarge):
 		return mcp.CodeResponseTooLarge, err.Error()
 	case errors.Is(err, security.ErrLinkLocalDenied),
+		errors.Is(err, security.ErrReservedDenied),
 		errors.Is(err, security.ErrUnspecifiedDenied),
 		errors.Is(err, security.ErrPrivateDenied),
 		errors.Is(err, security.ErrUnresolved):

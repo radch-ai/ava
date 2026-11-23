@@ -23,7 +23,7 @@ import (
 
 // Create installs one MCP server. A candidate that fails to connect,
 // initialize, or fit the provider name contract writes nothing.
-func Create(manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore *vault.Store, canceler api.Canceler) api.Handler {
+func Create(manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore *vault.Store) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		var req apitypes.CreateMcpServerRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -74,7 +74,7 @@ func Create(manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore
 		withdraw := func() error {
 			return withdrawAuthority(r.Context(), queries, slug, allowPrivate, allowPlain)
 		}
-		client, _, _, err := verify(r.Context(), cfg)
+		client, err := verify(r.Context(), cfg)
 		if err != nil {
 			return errors.Join(
 				api.WriteError(w, http.StatusBadRequest, "Connection check failed: "+err.Error()),
@@ -94,15 +94,29 @@ func Create(manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore
 		if req.TimeoutMs != nil {
 			timeout = sql.NullInt64{Int64: *req.TimeoutMs, Valid: true}
 		}
-		if err := queries.CreateMcpServer(r.Context(), db.CreateMcpServerParams{
+		// Install and its enable-record commit together: creation is an
+		// activation, exactly like PATCH-enable, so no server goes live
+		// unrecorded. A failure here leaves no row and no record.
+		tx, err := sqlDB.BeginTx(r.Context(), nil)
+		if err != nil {
+			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+			return errors.Join(fmt.Errorf("begin install %q: %w", slug, err), withdraw())
+		}
+		defer func() { _ = tx.Rollback() }()
+		txq := db.New(tx)
+		if err := txq.CreateMcpServer(r.Context(), db.CreateMcpServerParams{
 			ID:                  slug,
 			Name:                strings.TrimSpace(req.Name),
 			Url:                 rawURL,
-			HeaderKeys:          encodeKeyNames(req.Headers),
+			HeaderKeys:          mcpserver.HeaderKeys(req.Headers),
 			TimeoutMs:           timeout,
 			AllowPrivateNetwork: boolInt(allowPrivate),
 			AllowPlaintext:      boolInt(allowPlain),
 		}); err != nil {
+			// Release the transaction before any error arm runs: withdraw()
+			// and rollbackInstall() use the connection pool, which a
+			// still-open transaction holds.
+			_ = tx.Rollback()
 			// Two installs of the same name race past the pre-check; the
 			// loser's insert hits the primary-key constraint and must read
 			// as the same 409, never a 500. Nothing activated on any
@@ -114,19 +128,30 @@ func Create(manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return errors.Join(fmt.Errorf("insert mcp server %q: %w", slug, err), withdraw())
 		}
+		if err := auditApproval(r.Context(), txq, slug, "approve",
+			"server_enabled"); err != nil {
+			_ = tx.Rollback()
+			_ = api.WriteError(w, http.StatusInternalServerError, "audit unavailable")
+			return errors.Join(fmt.Errorf("audit server enable for %q: %w", slug, err), withdraw())
+		}
+		if err := tx.Commit(); err != nil {
+			_ = tx.Rollback()
+			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+			return errors.Join(fmt.Errorf("commit install %q: %w", slug, err), withdraw())
+		}
 
-		if len(req.Headers) > 0 {
-			if err := sealSecrets(r.Context(), vaultStore, slug, mcpserver.Secrets{
-				Headers: req.Headers,
-			}); err != nil {
-				// The row without its secrets is unusable and blocks the
-				// name; nothing was adopted and Put cannot have partially
-				// written, so those rollback arms are no-ops. The
-				// approvals never activated either — withdrawn with the row.
-				rollback := rollbackInstall(r.Context(), queries, vaultStore, manager, slug)
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return errors.Join(fmt.Errorf("seal secrets for %q: %w", slug, err), rollback, withdraw())
-			}
+		// Always seal the effective set, even when empty: a reused slug
+		// must never inherit a previous install's credentials.
+		if err := sealSecrets(r.Context(), vaultStore, slug, mcpserver.Secrets{
+			Headers: req.Headers,
+		}); err != nil {
+			// The row without its secrets is unusable and blocks the
+			// name; nothing was adopted and Put cannot have partially
+			// written, so those rollback arms are no-ops. The
+			// approvals never activated either — withdrawn with the row.
+			rollback := rollbackInstall(r.Context(), queries, vaultStore, manager, slug)
+			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+			return errors.Join(fmt.Errorf("seal secrets for %q: %w", slug, err), rollback, withdraw())
 		}
 		// The catalog write publishes the listing verification already
 		// staged — one listing, no second pass — and installs the same
@@ -139,7 +164,7 @@ func Create(manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore
 			return errors.Join(fmt.Errorf("read back mcp server %q: %w", slug, err), rollback, withdraw())
 		}
 		discoverCtx, cancel := requestContext(r.Context())
-		listed, skipped, err := mcpserver.PublishVerified(discoverCtx, sqlDB, queries, manager, row, cfg, client)
+		listed, skipped, err := mcpserver.PublishVerified(discoverCtx, sqlDB, vaultStore, manager, row, client)
 		cancel()
 		if err != nil {
 			// The row and its secrets are written; a retry would collide
@@ -151,16 +176,7 @@ func Create(manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore
 		}
 		adopted = true
 
-		server, err := buildServer(r.Context(), queries, row)
-		if err != nil {
-			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-			return fmt.Errorf("build server %q: %w", slug, err)
-		}
-		return api.WriteJSON(w, http.StatusCreated, apitypes.McpServerWithToolsResponse{
-			Server:       server,
-			Tools:        discoveredTools(slug, listed),
-			SkippedTools: skippedTools(skipped),
-		})
+		return respondServer(r.Context(), w, http.StatusCreated, queries, slug, listed, skipped)
 	}
 }
 
@@ -171,6 +187,11 @@ func Create(manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore
 // failure path never wrote stay silent.
 func rollbackInstall(ctx context.Context, queries *db.Queries, vaultStore *vault.Store, manager *mcp.Manager, slug string) error {
 	manager.Close(slug)
+	// The committed install recorded server_enabled: its rollback
+	// revokes that enablement — same shape as Delete — so the trail
+	// never shows a live server that no longer exists. Best effort,
+	// never masking the rollback's own failures.
+	_ = auditApproval(ctx, queries, slug, "revoke", "server_deleted")
 	var rollback error
 	if _, err := queries.DeleteMcpServer(ctx, slug); err != nil {
 		rollback = fmt.Errorf("rollback row: %w", err)

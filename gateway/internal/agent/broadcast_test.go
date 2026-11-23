@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -26,7 +25,7 @@ func submitConn(mgr *agent.UserAgentManager, agentID, connID string, conn *webso
 }
 
 func TestMultipleConnectionsAttach(t *testing.T) {
-	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{GetAgentThread: emptyThread})
+	mgr := hookedManager(t, &agent.UserAgentManagerOptions{GetAgentThread: emptyThread}, nil)
 
 	s1 := newMockWSserver(t)
 	defer s1.Close()
@@ -55,7 +54,7 @@ func TestMultipleConnectionsAttach(t *testing.T) {
 }
 
 func TestRemoveConnectionDropsFromState(t *testing.T) {
-	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{GetAgentThread: emptyThread})
+	mgr := hookedManager(t, &agent.UserAgentManagerOptions{GetAgentThread: emptyThread}, nil)
 
 	s1 := newMockWSserver(t)
 	defer s1.Close()
@@ -80,7 +79,7 @@ func TestRemoveConnectionDropsFromState(t *testing.T) {
 }
 
 func TestRemoveNonExistentConnectionIsSafe(t *testing.T) {
-	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{GetAgentThread: emptyThread})
+	mgr := hookedManager(t, &agent.UserAgentManagerOptions{GetAgentThread: emptyThread}, nil)
 
 	s := newMockWSserver(t)
 	defer s.Close()
@@ -96,7 +95,7 @@ func TestRemoveNonExistentConnectionIsSafe(t *testing.T) {
 }
 
 func TestReplaceConnectionWithSameID(t *testing.T) {
-	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{GetAgentThread: emptyThread})
+	mgr := hookedManager(t, &agent.UserAgentManagerOptions{GetAgentThread: emptyThread}, nil)
 
 	s1 := newMockWSserver(t)
 	defer s1.Close()
@@ -120,7 +119,7 @@ func TestReplaceConnectionWithSameID(t *testing.T) {
 }
 
 func TestConcurrentConnectionOps(t *testing.T) {
-	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{GetAgentThread: emptyThread})
+	mgr := hookedManager(t, &agent.UserAgentManagerOptions{GetAgentThread: emptyThread}, nil)
 
 	agentID := "agent-concurrent"
 	submitConn(mgr, agentID, "conn-init", nil)

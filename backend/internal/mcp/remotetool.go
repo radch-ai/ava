@@ -6,7 +6,6 @@ package mcp
 // place where a remote name, its definition and its connection agree.
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,8 +17,9 @@ import (
 )
 
 // remoteTool is one listed MCP tool as an eino invokable. Its Info carries
-// the remote name and the advertised schema; wrappedTool renames it. The
-// dispatch target is resolved through the owner's manager at call time,
+// the advertised (composite) name and schema captured at listing time; the
+// remote name is kept for tools/call dispatch. The dispatch target is
+// resolved through the owner's manager at call time,
 // so a refresh that replaces the connection never leaves a live tool
 // holding a dead client — and a listing staged before adoption (the
 // install-time verification pass) still dispatches on the owner.
@@ -31,10 +31,12 @@ type remoteTool struct {
 
 var _ tool.InvokableTool = (*remoteTool)(nil)
 
-// newRemoteTool builds the adapter for one raw listing entry. A schema
-// that cannot become eino's JSON-schema form is a security-invalid
-// generation: the tool would be advertised without its argument contract.
-func newRemoteTool(owner *Client, remote rawTool, description string) (*remoteTool, error) {
+// newRemoteTool builds the adapter for one raw listing entry. model is the
+// advertised name — a built-in is advertised under its own, an MCP tool
+// under ModelName(slug, remote). A schema that cannot become eino's
+// JSON-schema form is a security-invalid generation: the tool would be
+// advertised without its argument contract.
+func newRemoteTool(owner *Client, remote rawTool, description string, inputTree any, model string) (*remoteTool, error) {
 	raw := remote.InputSchema
 	if len(raw) == 0 {
 		raw = json.RawMessage(`{"type":"object","properties":{}}`)
@@ -46,21 +48,17 @@ func newRemoteTool(owner *Client, remote rawTool, description string) (*remoteTo
 	// The struct's own UnmarshalJSON re-decodes with plain
 	// encoding/json, which flattens the any-typed fields (default, const,
 	// enum, examples) to float64 — values past 2^53 would silently round
-	// in the advertised schema. The raw tree decoded with UseNumber is
-	// authoritative; walk both and restore the exact literals.
-	rawDec := json.NewDecoder(bytes.NewReader(raw))
-	rawDec.UseNumber()
-	var tree any
-	if err := rawDec.Decode(&tree); err == nil {
-		if obj, ok := tree.(map[string]any); ok {
-			repairSchemaNumbers(js, obj)
-		}
+	// in the advertised schema. The UseNumber tree the listing already
+	// decoded is authoritative; walk both and restore the exact
+	// literals — one decode per schema, reused from the listing pass.
+	if obj, ok := inputTree.(map[string]any); ok {
+		repairSchemaNumbers(js, obj)
 	}
 	return &remoteTool{
 		owner: owner,
 		name:  remote.Name,
 		info: &schema.ToolInfo{
-			Name:        remote.Name,
+			Name:        model,
 			Desc:        description,
 			ParamsOneOf: schema.NewParamsOneOfByJSONSchema(js),
 		},
@@ -183,7 +181,7 @@ func (t *remoteTool) InvokableRun(ctx context.Context, argumentsInJSON string, _
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to call mcp tool: %w", err)
+		return "", fmt.Errorf("mcp server %s: failed to call mcp tool: %w", t.owner.id, err)
 	}
 	// A native text result is delivered as text, so the admission
 	// chain's plain-text scrub and 64 KiB ceiling apply to what the model
@@ -191,20 +189,20 @@ func (t *remoteTool) InvokableRun(ctx context.Context, argumentsInJSON string, _
 	text, isText := singleTextContent(result)
 	if result.IsError {
 		if isText {
-			return "", fmt.Errorf("failed to call mcp tool, mcp server return error: %s", text)
+			return "", fmt.Errorf("mcp server %s: failed to call mcp tool, mcp server return error: %s", t.owner.id, text)
 		}
 		encoded, err := json.Marshal(result)
 		if err != nil {
-			return "", fmt.Errorf("failed to marshal mcp tool result: %w", err)
+			return "", fmt.Errorf("mcp server %s: failed to marshal mcp tool result: %w", t.owner.id, err)
 		}
-		return "", fmt.Errorf("failed to call mcp tool, mcp server return error: %s", encoded)
+		return "", fmt.Errorf("mcp server %s: failed to call mcp tool, mcp server return error: %s", t.owner.id, encoded)
 	}
 	if isText {
 		return text, nil
 	}
 	encoded, err := json.Marshal(result)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal mcp tool result: %w", err)
+		return "", fmt.Errorf("mcp server %s: failed to marshal mcp tool result: %w", t.owner.id, err)
 	}
 	return string(encoded), nil
 }

@@ -32,52 +32,30 @@ const (
 	stateTerminal       = "terminal"
 	auditRetention      = 30 * 24 * time.Hour
 	auditMaxRecords     = 100_000
-	auditPruneEvery     = 64
 )
 
 // insertAdmission writes the pre-dispatch record and returns its id. A
 // failure here denies the call: no execution without a durable record.
-func (a *Admitter) insertAdmission(ctx context.Context, opts Options, callID string) (int64, error) {
-	id, err := a.queries.InsertAuditEvent(ctx, db.InsertAuditEventParams{
-		OccurredAt: time.Now().UnixMicro(),
-		Event:      EventAdmission,
-		AgentID:    nullString(opts.AgentID),
-		ServerID:   nullString(opts.ServerID),
-		ToolID:     nullString(opts.CatalogID),
-		ToolCallID: nullString(auditCallID(callID, security.NewScrubber(opts.KnownSecrets))),
-		Decision:   "admit",
-		ReasonCode: "ok",
-		State:      stateAdmitted,
-	})
+func (a *Admitter) insertAdmission(ctx context.Context, opts Options, callID string, scrub *security.Scrubber) (int64, error) {
+	id, err := a.queries.InsertAuditEvent(ctx,
+		auditParams(opts.AgentID, opts.ServerID, opts.CatalogID, callID, EventAdmission, "admit", "ok", stateAdmitted, scrub))
 	if err != nil {
 		return 0, err
 	}
-	a.noteInsert(ctx)
 	return id, nil
-}
-
-// noteInsert advances the admission retention cadence: every 64th
-// write sweeps. The sweep runs on a detached, bounded context so it never
-// eats the invocation's own deadline.
-func (a *Admitter) noteInsert(ctx context.Context) {
-	if a.queries == nil {
-		return
-	}
-	if n := a.inserts.Add(1); n%auditPruneEvery == 0 {
-		pruneCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		a.prune(pruneCtx)
-	}
 }
 
 // auditCallID bounds and validates a model-supplied call id: the id
 // is a correlation handle, never trusted text. Anything longer than 64
 // characters, outside [A-Za-z0-9_.-], or carrying a known secret value is
 // replaced by a deterministic host-derived handle, so a correlation is
-// observable but a payload is not storable.
+// observable but a payload is not storable. An empty id means no
+// invocation exists (an operator decision) and stays NULL — the
+// invocation boundary (callIDFrom) is what records "unknown" for a
+// missing id during a call.
 func auditCallID(id string, scrubber *security.Scrubber) string {
 	if id == "" {
-		return "unknown"
+		return ""
 	}
 	if len(id) <= 64 {
 		valid := true
@@ -113,16 +91,24 @@ type pendingOutcome struct {
 	count    sql.NullInt64
 }
 
-// closeAudit records the observed outcome. A failure here degrades the
-// audit trail but must not rewrite what happened: the caller keeps the
-// truthful result, and the pending write blocks further admissions.
-func (a *Admitter) closeAudit(id int64, decision, reason string, count int64) {
+// closeAudit records a failed call's observed outcome: no result count
+// exists to record.
+func (a *Admitter) closeAudit(id int64, decision, reason string) {
+	a.writeOutcome(id, decision, reason, sql.NullInt64{})
+}
+
+// closeAuditComplete records a completed call's outcome with its bounded
+// result count.
+func (a *Admitter) closeAuditComplete(id int64, count int64) {
+	a.writeOutcome(id, "complete", "ok", sql.NullInt64{Int64: count, Valid: true})
+}
+
+// writeOutcome lands one outcome row. A failure here degrades the audit
+// trail but must not rewrite what happened: the caller keeps the truthful
+// result, and the pending write blocks further admissions.
+func (a *Admitter) writeOutcome(id int64, decision, reason string, bounded sql.NullInt64) {
 	if id == 0 {
 		return
-	}
-	var bounded sql.NullInt64
-	if decision == "complete" {
-		bounded = sql.NullInt64{Int64: count, Valid: true}
 	}
 	// The outcome write must survive the invocation's cancel: it is part
 	// of the record, not of the call.
@@ -170,47 +156,44 @@ func (a *Admitter) recoverAudit(ctx context.Context) error {
 	return nil
 }
 
-// record writes one point-in-time event (denial, redaction) with the same
-// payload-free shape.
-func (a *Admitter) record(ctx context.Context, opts Options, callID, event, reason string, count *int64) {
-	var bounded sql.NullInt64
-	if count != nil {
-		bounded = sql.NullInt64{Int64: *count, Valid: true}
-	}
-	if _, err := a.queries.InsertAuditEvent(ctx, db.InsertAuditEventParams{
+// auditParams assembles the payload-free record shape every audit write
+// shares — admission, point-in-time events, and operator decisions:
+// bounded identifiers, one static code, a state.
+func auditParams(agent, server, tool, callID, event, decision, reason, state string, scrub *security.Scrubber) db.InsertAuditEventParams {
+	return db.InsertAuditEventParams{
 		OccurredAt: time.Now().UnixMicro(),
 		Event:      event,
-		AgentID:    nullString(opts.AgentID),
-		ServerID:   nullString(opts.ServerID),
-		ToolID:     nullString(opts.CatalogID),
-		ToolCallID: nullString(auditCallID(callID, security.NewScrubber(opts.KnownSecrets))),
-		Decision:   "deny",
+		AgentID:    nullString(agent),
+		ServerID:   nullString(server),
+		ToolID:     nullString(tool),
+		ToolCallID: nullString(auditCallID(callID, scrub)),
+		Decision:   decision,
 		ReasonCode: reason,
-		Count:      bounded,
-		State:      stateTerminal,
-	}); err != nil {
+		State:      state,
+	}
+}
+
+// record writes one point-in-time event (denial, redaction) with the same
+// payload-free shape.
+func (a *Admitter) record(ctx context.Context, opts Options, callID, event, reason string, scrub *security.Scrubber) {
+	if _, err := a.queries.InsertAuditEvent(ctx,
+		auditParams(opts.AgentID, opts.ServerID, opts.CatalogID, callID, event, "deny", reason, stateTerminal, scrub)); err != nil {
 		a.logger.Error().Err(err).Str("event", event).Msg("tool audit event failed")
 	}
-	a.noteInsert(ctx)
 }
 
-// recordDetached writes a point-in-time event whose invocation context is
-// already spent — a capacity wait that hit its deadline. The record is
-// part of the trail, not of the call, so it gets its own bounded context.
-func (a *Admitter) recordDetached(opts Options, callID, event, reason string) {
+// recordDetached writes one point-in-time event through its own bounded
+// context, independent of the invocation: capacity waits that hit their
+// deadline, and redactions recorded after the result is delivered. The
+// record is part of the trail, not of the call.
+func (a *Admitter) recordDetached(opts Options, callID, event, reason string, scrub *security.Scrubber) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	a.record(ctx, opts, callID, event, reason, nil)
+	a.record(ctx, opts, callID, event, reason, scrub)
 }
 
-// prune applies the retention bounds: age first, then the record
-// cap. Admitted rows awaiting their outcome are never deleted.
-func (a *Admitter) prune(ctx context.Context) {
-	pruneAudit(ctx, a.queries, a.logger)
-}
-
-// pruneAudit is the shared retention sweep: age expiry first, then the
-// cap on completed records.
+// pruneAudit is the retention sweep, run only by the StartPrune
+// ticker: age expiry first, then the cap on completed records.
 func pruneAudit(ctx context.Context, queries *db.Queries, logger zerolog.Logger) {
 	if queries == nil {
 		return
@@ -242,25 +225,12 @@ func (a *Admitter) StartPrune(interval time.Duration) (stop func()) {
 				return
 			case <-ticker.C:
 				sweepCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				a.prune(sweepCtx)
+				pruneAudit(sweepCtx, a.queries, a.logger)
 				cancel()
 			}
 		}
 	}()
 	return func() { once.Do(func() { close(done) }) }
-}
-
-// Auditor records the point-in-time security decisions the API makes:
-// approval changes, revocations and plaintext exceptions. It shares the
-// admission records' shape and durability.
-type Auditor struct {
-	queries *db.Queries
-	logger  zerolog.Logger
-}
-
-// NewAuditor builds the decision recorder over the query layer.
-func NewAuditor(queries *db.Queries) *Auditor {
-	return &Auditor{queries: queries, logger: zerolog.Nop()}
 }
 
 // Decision is one point-in-time record: identifiers, a static reason code
@@ -272,40 +242,19 @@ type Decision struct {
 	ToolID   string
 	Outcome  string
 	Reason   string
-	Count    int64
-	HasCount bool
 }
 
-// Record writes one decision. A failure is returned for the caller to
-// answer: a privilege increase that cannot be audited must not be reported
-// as committed.
-func (a *Auditor) Record(ctx context.Context, decision Decision) error {
-	var count sql.NullInt64
-	if decision.HasCount {
-		count = sql.NullInt64{Int64: decision.Count, Valid: true}
-	}
-	_, err := a.queries.InsertAuditEvent(ctx, db.InsertAuditEventParams{
-		OccurredAt: time.Now().UnixMicro(),
-		Event:      decision.Event,
-		AgentID:    nullString(decision.AgentID),
-		ServerID:   nullString(decision.ServerID),
-		ToolID:     nullString(decision.ToolID),
-		Decision:   decision.Outcome,
-		ReasonCode: decision.Reason,
-		Count:      count,
-		State:      stateTerminal,
-	})
-	if err != nil {
-		return err
-	}
-	// Approval and exception traffic drives retention too: these
-	// writes are rare operator actions, so every one sweeps. The sweep
-	// is detached and bounded — it cannot eat the caller's request
-	// deadline.
-	pruneCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-	pruneAudit(pruneCtx, a.queries, a.logger)
-	return nil
+// RecordDecision writes one point-in-time security decision the API
+// makes: approval changes, revocations and plaintext exceptions, in the
+// admission records' shape. A failure is returned for the caller to
+// answer: a privilege increase that cannot be audited must not be
+// reported as committed. Retention runs only on the prune ticker —
+// operator writes never pay the sweep inline.
+func RecordDecision(ctx context.Context, queries *db.Queries, decision Decision) error {
+	_, err := queries.InsertAuditEvent(ctx, auditParams(
+		decision.AgentID, decision.ServerID, decision.ToolID, "",
+		decision.Event, decision.Outcome, decision.Reason, stateTerminal, nil))
+	return err
 }
 
 // nullString maps an empty identifier to a NULL column.

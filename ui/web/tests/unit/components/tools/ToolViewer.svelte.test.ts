@@ -90,13 +90,13 @@ describe('ToolViewer', () => {
 			.toBeVisible()
 	})
 
-	it('shows the chevron only while the row is on', async () => {
+	it('carries the open state on the trigger semantics, not just the chevron', async () => {
 		const on = serverEntry({})
 		render(ToolViewer, { entries: [on] })
 		const onTrigger = await page
 			.getByRole('button', { name: 'Notes MCP' })
 			.element()
-		expect(onTrigger.querySelector('svg')).not.toBeNull()
+		expect(onTrigger.getAttribute('aria-expanded')).not.toBeNull()
 
 		cleanup()
 		const off = serverEntry({})
@@ -105,7 +105,7 @@ describe('ToolViewer', () => {
 		const offTrigger = await page
 			.getByRole('button', { name: 'Notes MCP' })
 			.element()
-		expect(offTrigger.querySelector('svg')).toBeNull()
+		expect(offTrigger.getAttribute('aria-expanded')).toBe('false')
 	})
 
 	it('shows manage buttons only when the surface provides them', async () => {

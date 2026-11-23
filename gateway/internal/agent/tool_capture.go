@@ -15,7 +15,6 @@ package agent
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync/atomic"
 
 	"github.com/cloudwego/eino/components/tool"
@@ -26,25 +25,27 @@ import (
 	"github.com/radch-ai/ava/backend"
 )
 
-// wrapTools rides every fetched implementation on the capture
+// wrapTools rides every resolved implementation on the capture
 // wrapper, once per turn — the fetch already applied permissions and
-// global switches. Metadata is read here, not per invocation, and a
-// selected tool that cannot describe itself fails the turn: a tool
-// the model was promised must never vanish silently.
-func (a *UserAgent) wrapTools(ctx context.Context, rec *turnRecorder, impls []tool.InvokableTool) ([]tool.BaseTool, error) {
-	if len(impls) == 0 {
+// global switches, and resolved the metadata beside them: no Info
+// re-reads here. A selected tool that cannot describe itself fails the
+// turn: a tool the model was promised must never vanish silently.
+func (a *UserAgent) wrapTools(rec *turnRecorder, resolved backend.TurnTools) ([]tool.BaseTool, error) {
+	if len(resolved.Impls) == 0 {
 		return nil, nil
+	}
+	if len(resolved.Infos) != len(resolved.Impls) {
+		// backend.TurnTools crosses the module boundary as two parallel
+		// slices; a mismatched pair would panic mid-turn below.
+		return nil, errors.New("tool resolution: impl/info length mismatch")
 	}
 	// One attempt budget per turn, shared by every tool: denials and
 	// failures count, and exhaustion stops further execution with a
 	// visible outcome.
 	budget := &toolBudget{}
-	wrapped := make([]tool.BaseTool, 0, len(impls))
-	for _, impl := range impls {
-		info, err := impl.Info(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("tool metadata: %w", err)
-		}
+	wrapped := make([]tool.BaseTool, 0, len(resolved.Impls))
+	for i, impl := range resolved.Impls {
+		info := resolved.Infos[i]
 		if info == nil || info.Name == "" {
 			return nil, errors.New("tool metadata: missing name")
 		}
@@ -83,7 +84,7 @@ type capturingTool struct {
 	budget *toolBudget
 	// scrub sanitizes every observable copy — arguments, result, error
 	// text — with the agent's known secrets.
-	scrub func(context.Context, string) string
+	scrub func(string) string
 }
 
 func (t *capturingTool) Info(context.Context) (*schema.ToolInfo, error) {
@@ -102,7 +103,7 @@ func (t *capturingTool) InvokableRun(ctx context.Context, args string, opts ...t
 	ctx = backend.WithToolCallID(ctx, callID)
 	// Every consumer sees a scrubbed copy of the arguments and the result;
 	// the dispatched arguments stay byte-identical.
-	displayArgs := t.cleanCopy(ctx, args)
+	displayArgs := t.cleanCopy(args)
 	invocationID := uuid.NewString()
 	// Recorded intent precedes the external effect: a journal that cannot
 	// hold it stops the invocation before the tool runs.
@@ -112,9 +113,9 @@ func (t *capturingTool) InvokableRun(ctx context.Context, args string, opts ...t
 	// The attempt budget precedes execution: a call past the ceiling is a
 	// structured outcome that still reaches the wire and the transcript,
 	// so exhaustion is visible rather than silent.
-	if t.budget != nil && !t.budget.take() {
+	if !t.budget.take() {
 		denial := `{"error":{"code":"budget_exceeded"}}`
-		if perr := t.rec.recordOutcome(invocationID, callID, t.info.Name, denial, nil); perr != nil {
+		if perr := t.rec.recordOutcome(invocationID, denial, nil); perr != nil {
 			return denial, perr
 		}
 		return denial, nil
@@ -129,19 +130,15 @@ func (t *capturingTool) InvokableRun(ctx context.Context, args string, opts ...t
 	// The required outcome write wins over the invocation's own error:
 	// the transcript must not lose the row. The returned error is not
 	// tool-attributed, so the turn fails at message level.
-	if perr := t.rec.recordOutcome(invocationID, callID, t.info.Name, t.cleanCopy(ctx, result), invocationErr); perr != nil {
+	if perr := t.rec.recordOutcome(invocationID, t.cleanCopy(result), invocationErr); perr != nil {
 		return result, perr
 	}
 	return result, err
 }
 
-// cleanCopy sanitizes one observable copy. A wrapper without a bound
-// scrubber keeps the pattern battery alone.
-func (t *capturingTool) cleanCopy(ctx context.Context, content string) string {
-	if t.scrub == nil {
-		return fanOutScrubber(content)
-	}
-	return t.scrub(ctx, content)
+// cleanCopy sanitizes one observable copy through the lane's scrubber.
+func (t *capturingTool) cleanCopy(content string) string {
+	return t.scrub(content)
 }
 
 // toolError carries the name of a tool invocation failed in.

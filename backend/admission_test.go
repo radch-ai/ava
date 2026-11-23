@@ -40,16 +40,9 @@ func newAdmissionSetup(t *testing.T, limits backend.ToolLimits, opts ...mcptest.
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
 		ID: "research", Name: "Research", Icon: "globe",
 	})
-	if err := queries.CreateMcpServer(t.Context(), db.CreateMcpServerParams{
-		ID: "helper", Name: "Helper",
-		Url:                 sql.NullString{String: srv.URL, Valid: true},
-		HeaderKeys:          "[]",
-		TimeoutMs:           sql.NullInt64{Int64: 5000, Valid: true},
-		AllowPrivateNetwork: 1,
-		AllowPlaintext:      1,
-	}); err != nil {
-		t.Fatalf("seed server: %v", err)
-	}
+	testdb.SeedMcpServer(t, sqlDB, "helper", srv.URL, func(params *db.CreateMcpServerParams) {
+		params.TimeoutMs = sql.NullInt64{Int64: 5000, Valid: true}
+	})
 	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, limits)
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
@@ -63,7 +56,7 @@ func newAdmissionSetup(t *testing.T, limits backend.ToolLimits, opts ...mcptest.
 		t.Fatalf("list tools: %v", err)
 	}
 	for _, row := range rows {
-		if row.ServerID != "helper" {
+		if !row.ServerID.Valid || row.ServerID.String != "helper" {
 			continue
 		}
 		if _, err := queries.ToggleToolEnabled(t.Context(), db.ToggleToolEnabledParams{
@@ -83,20 +76,16 @@ func newAdmissionSetup(t *testing.T, limits backend.ToolLimits, opts ...mcptest.
 // toolNamed returns the wrapped invokable the turn would attach.
 func (s *admissionSetup) toolNamed(t *testing.T, modelName string) tool.InvokableTool {
 	t.Helper()
-	impls, err := s.svc.AgentTools(t.Context(), "research")
+	resolved, err := s.svc.AgentTools(t.Context(), "research")
 	if err != nil {
 		t.Fatalf("agent tools: %v", err)
 	}
-	for _, impl := range impls {
-		info, err := impl.Info(t.Context())
-		if err != nil {
-			t.Fatalf("tool info: %v", err)
-		}
-		if info.Name == modelName {
+	for i, impl := range resolved.Impls {
+		if resolved.Infos[i].Name == modelName {
 			return impl
 		}
 	}
-	t.Fatalf("tool %q not in the turn set (%d tools)", modelName, len(impls))
+	t.Fatalf("tool %q not in the turn set (%d tools)", modelName, len(resolved.Impls))
 	return nil
 }
 

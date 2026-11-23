@@ -267,7 +267,7 @@ func (s *agentState) nextSlotCount() int {
 // explicit selection, which also clears the pause gate — then the FIFO
 // head when not paused. The claim publishes nothing: the
 // waiting→executing projection lands after the backend commits the
-// item's start (markStarted), so no subscriber ever sees a running item
+// item's start (startItem), so no subscriber ever sees a running item
 // whose user row does not exist. The turn context is installed with the
 // claim so an interrupt can land before streaming starts. Returns nil
 // when nothing may run now.
@@ -276,11 +276,7 @@ func (s *agentState) claim() *turnClaim {
 	defer s.pubMu.Unlock()
 
 	s.mu.Lock()
-	if s.drainingNow() || s.halted {
-		s.mu.Unlock()
-		return nil
-	}
-	if s.active != nil {
+	if !s.runnableLocked() {
 		s.mu.Unlock()
 		return nil
 	}
@@ -290,13 +286,9 @@ func (s *agentState) claim() *turnClaim {
 		s.next = nil
 		s.paused = false
 		s.pauseModel = nil
-	} else if !s.paused && len(s.pending) > 0 {
+	} else {
 		item = s.pending[0]
 		s.pending = s.pending[1:]
-	}
-	if item == nil {
-		s.mu.Unlock()
-		return nil
 	}
 	claim := s.activateLocked(item)
 	// Every claim is settled by exactly one finish: Drain waits on this
@@ -347,7 +339,7 @@ func (s *agentState) finish(outcome turnOutcome) bool {
 		s.paused = true
 		s.pauseModel = pauseModel
 	}
-	canRun := !s.halted && (s.next != nil || (len(s.pending) > 0 && !s.paused))
+	canRun := s.runnableLocked()
 	snapshot := s.snapshotLocked()
 	s.mu.Unlock()
 
@@ -545,13 +537,18 @@ func (s *agentState) stateSnapshot() wstypes.QueueStateEvent {
 	return s.snapshotLocked()
 }
 
-// canRunNow reports whether claim() would return an item right now:
-// a reserved send-now, or FIFO head while not paused. The worker
-// exit path uses it to respawn only for work that can actually run,
-// so a paused queue keeps its state without a respawn loop.
-func (s *agentState) canRunNow() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// runnableLocked reports whether claim() would hand out an item right
+// now: not draining, not halted, no active turn, and either a reserved
+// send-now or a FIFO head past the pause gate. claim and the respawn
+// path share this one predicate by construction — two hand-kept
+// copies of "may run" drift (a copy missing the halt gate
+// respawn-loops a halted lane against its reserved item, burning a
+// core and flooding subscribers with lane-status frames). Caller
+// holds s.mu.
+func (s *agentState) runnableLocked() bool {
+	if s.drainingNow() || s.halted || s.active != nil {
+		return false
+	}
 	return s.next != nil || (!s.paused && len(s.pending) > 0)
 }
 

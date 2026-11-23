@@ -6,6 +6,7 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 
@@ -43,6 +44,15 @@ func Log(logger zerolog.Logger, h Handler) http.HandlerFunc {
 				Msg("request failed")
 		}
 	}
+}
+
+// ServerIDPtr maps a nullable server_id column to its wire pointer.
+func ServerIDPtr(v sql.NullString) *string {
+	if !v.Valid {
+		return nil
+	}
+	s := v.String
+	return &s
 }
 
 // Canceler stops in-flight tool calls when authority changes: a disabled

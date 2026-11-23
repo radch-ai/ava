@@ -44,16 +44,6 @@ export async function deleteMcpServer(id: string): Promise<void> {
 	await api.delete(`mcp/servers/${id}`)
 }
 
-/** Flip one server's global switch; disabling closes its live client. */
-export async function setMcpServerEnabled(
-	id: string,
-	enabled: boolean
-): Promise<McpServerWithToolsResponse> {
-	return api
-		.patch(`mcp/servers/${id}`, { json: { enabled } })
-		.json<McpServerWithToolsResponse>()
-}
-
 /** Reconnect and re-discover one server's tools. */
 export async function refreshMcpServer(
 	id: string

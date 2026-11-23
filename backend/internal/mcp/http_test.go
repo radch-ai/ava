@@ -15,6 +15,7 @@ import (
 	"time"
 
 	mcpsdk "github.com/mark3labs/mcp-go/mcp"
+	"github.com/rs/zerolog"
 
 	"github.com/radch-ai/ava/backend/internal/mcptest"
 	"github.com/radch-ai/ava/backend/internal/security"
@@ -233,7 +234,7 @@ func TestErrorBodyScrubbed(t *testing.T) {
 	if !strings.Contains(err.Error(), "[REDACTED:secret]") {
 		t.Fatalf("error %q carries no redaction for the reflected credential", err)
 	}
-	for _, leaked := range []string{"canary-token", "sk-abcdefghijklmnop1234"} {
+	for _, leaked := range []string{"canary-token", mcptest.PatternCanary} {
 		if strings.Contains(err.Error(), leaked) {
 			t.Fatalf("raw %q surfaced in error %q", leaked, err)
 		}
@@ -246,7 +247,7 @@ func TestTransportPosture(t *testing.T) {
 	c := newHTTPClient(ServerConfig{
 		ID: "posture", URL: "https://example.test/mcp",
 		Headers: map[string]string{"Authorization": "Bearer x"},
-	})
+	}, security.NewPatternScrubber())
 	rt, ok := c.Transport.(*limitRT)
 	if !ok {
 		t.Fatalf("client transport = %T, want *limitRT", c.Transport)
@@ -275,7 +276,7 @@ func TestTransportPosture(t *testing.T) {
 	plain := newHTTPClient(ServerConfig{
 		ID: "plain", URL: "http://example.test/mcp",
 		Headers: map[string]string{"X-Api-Key": "x"},
-	})
+	}, security.NewPatternScrubber())
 	if prt := plain.Transport.(*limitRT); !prt.plaintext {
 		t.Fatal("http client not flagged plaintext")
 	}
@@ -482,7 +483,7 @@ func TestResponseExactlyAtLimitAccepted(t *testing.T) {
 		client := newHTTPClient(ServerConfig{
 			ID: "ceiling", URL: srv.URL,
 			AllowPrivateNetwork: true, AllowPlaintext: true,
-		})
+		}, security.NewPatternScrubber())
 		resp, err := client.Get(srv.URL)
 		if err != nil {
 			t.Fatalf("size %d: request: %v", tc.size, err)
@@ -688,7 +689,7 @@ func TestGzipOversizedAborts(t *testing.T) {
 	client := newHTTPClient(ServerConfig{
 		ID: "gzip", URL: srv.URL,
 		AllowPrivateNetwork: true, AllowPlaintext: true,
-	})
+	}, security.NewPatternScrubber())
 	resp, err := client.Get(srv.URL)
 	if err != nil {
 		t.Fatalf("request: %v", err)
@@ -700,5 +701,63 @@ func TestGzipOversizedAborts(t *testing.T) {
 	}
 	if len(body) > MaxResponseBytes {
 		t.Fatalf("over-limit read surfaced %d bytes", len(body))
+	}
+}
+
+// stuckReader yields neither bytes nor an error: a bounded body over it
+// must answer ErrNoProgress instead of letting the consumer spin.
+type stuckReader struct{}
+
+func (stuckReader) Read([]byte) (int, error) { return 0, nil }
+
+func TestBoundedBodyStuckReaderErrors(t *testing.T) {
+	b := &boundedBody{inner: io.NopCloser(stuckReader{}), remaining: 0}
+	if _, err := io.ReadAll(b); !errors.Is(err, io.ErrNoProgress) {
+		t.Fatalf("err = %v, want ErrNoProgress", err)
+	}
+}
+
+// The protocol logger actually reaches a sink: mcp-go's error lines
+// arrive at error level, informational lines at info, and the server's
+// known values are scrubbed before the write.
+func TestScrubLogger(t *testing.T) {
+	var buf bytes.Buffer
+	l := scrubLogger{scrub: security.NewScrubber([]string{"canary-token"}), log: zerolog.New(&buf)}
+
+	l.Errorf("sse decode failed: Bearer %s", "canary-token")
+	errLine := buf.String()
+	if !strings.Contains(errLine, `"level":"error"`) {
+		t.Fatalf("Errorf did not reach the sink at error level: %s", errLine)
+	}
+	if strings.Contains(errLine, "canary-token") {
+		t.Fatalf("raw credential reached the sink: %s", errLine)
+	}
+	if !strings.Contains(errLine, "[REDACTED:secret]") {
+		t.Fatalf("no redaction marker in %s", errLine)
+	}
+
+	buf.Reset()
+	l.Infof("connected to %s", "example.test")
+	infoLine := buf.String()
+	if !strings.Contains(infoLine, `"level":"info"`) || !strings.Contains(infoLine, "example.test") {
+		t.Fatalf("Infof did not reach the sink at info level: %s", infoLine)
+	}
+}
+
+// The hardened transport keeps a bounded idle pool: concurrent calls on
+// one server reuse connections instead of re-dialing (and re-fencing)
+// per call.
+func TestTransportKeepsIdlePool(t *testing.T) {
+	c := newHTTPClient(ServerConfig{ID: "pool"}, security.NewPatternScrubber())
+	lrt, ok := c.Transport.(*limitRT)
+	if !ok {
+		t.Fatalf("transport = %T, want *limitRT", c.Transport)
+	}
+	rt := lrt.rt
+	if rt.MaxIdleConns != 16 || rt.MaxIdleConnsPerHost != 16 {
+		t.Fatalf("idle pool = %d/%d, want 16/16", rt.MaxIdleConns, rt.MaxIdleConnsPerHost)
+	}
+	if rt.IdleConnTimeout != 90*time.Second {
+		t.Fatalf("idle timeout = %s, want 90s", rt.IdleConnTimeout)
 	}
 }

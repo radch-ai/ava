@@ -84,7 +84,6 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     allow_plaintext       INTEGER NOT NULL DEFAULT 0,
     -- Discovery diagnostics, so inert tools are explainable.
     last_error   TEXT NULL,
-    refreshed_at BIGINT NULL,
     created_at   BIGINT NOT NULL
         DEFAULT (CAST((julianday('now') - 2440587.5) * 86400000000 AS INTEGER))
 );
@@ -96,8 +95,6 @@ CREATE TABLE IF NOT EXISTS tools (
     id          TEXT NOT NULL PRIMARY KEY,
     name        TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
-    -- 1 = shipped with the app (default-ON); 0 = user-installed.
-    builtin     INTEGER NOT NULL DEFAULT 1,
     -- Global availability: the outer permission gate.
     enabled     INTEGER NOT NULL DEFAULT 1,
     -- Provenance: shipped built-in vs MCP-discovered; a tool dies
@@ -132,6 +129,23 @@ CREATE TABLE IF NOT EXISTS agent_mcp_preferences (
 
 CREATE INDEX IF NOT EXISTS idx_agent_mcp_preferences_server
     ON agent_mcp_preferences (server_id);
+
+-- One definition of the effective-tool predicate: (tool x agent) rows
+-- with the folded gate/opt-out columns. Both consumers bind the agent
+-- in the outer WHERE; SQLite inlines views into the caller's plan.
+CREATE VIEW IF NOT EXISTS agent_effective_tools AS
+SELECT t.id, t.server_id,
+       t.enabled AS tool_enabled,
+       CAST(COALESCE(s.enabled, 1) AS INTEGER) AS server_enabled,
+       CAST(COALESCE(s.catalog_state, 'active') AS TEXT) AS catalog_state,
+       CAST(CASE WHEN t.server_id IS NULL THEN 1 ELSE COALESCE(ap.enabled, 0) END AS INTEGER) AS gate_on,
+       EXISTS(SELECT 1 FROM agent_disabled_tools d
+              WHERE d.agent_id = a.id AND d.tool_id = t.id) AS locally_disabled,
+       a.id AS agent_id
+FROM tools t
+CROSS JOIN agents a
+LEFT JOIN mcp_servers s ON s.id = t.server_id
+LEFT JOIN agent_mcp_preferences ap ON ap.server_id = t.server_id AND ap.agent_id = a.id;
 
 -- Durable, payload-free security audit. Columns are validated
 -- identifiers, timestamps, decisions, static reason codes

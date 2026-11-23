@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cloudwego/eino/components/tool"
+	"github.com/cloudwego/eino/schema"
 
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/backend/internal/db"
@@ -27,24 +28,41 @@ const MaxAdvertisedToolsetBytes = 128 << 10
 // global switches, per-agent opt-outs and MCP gates applied — matched
 // against the registry's executables, each wrapped in the admission chain.
 // An error fails the turn; an empty set is the honest no-tools turn.
-func (s *TurnService) AgentTools(ctx context.Context, agentID string) ([]tool.InvokableTool, error) {
-	rows, err := s.queries.ResolveAgentToolsDetailed(ctx, db.ResolveAgentToolsDetailedParams{
-		AgentID:   agentID,
-		AgentID_2: agentID,
-	})
+//
+// TurnTools carries the whole resolution: the admitted invokables, each
+// tool's metadata, and the scrubber for every observable copy of the
+// turn's traffic (the agent's servers' known values plus the pattern
+// battery). One resolution pass per turn — the gateway never re-reads
+// metadata or credentials.
+type TurnTools struct {
+	Impls    []tool.InvokableTool
+	Infos    []*schema.ToolInfo
+	Scrubber *Scrubber
+}
+
+// Scrubber is the secret scrubber re-exported for the public surface:
+// TurnTools.Scrubber's type, so the gateway can name it without
+// reaching into the backend's internals.
+type Scrubber = tooladmission.Scrubber
+
+func (s *TurnService) AgentTools(ctx context.Context, agentID string) (TurnTools, error) {
+	rows, err := s.queries.ResolveAgentToolsDetailed(ctx, agentID)
 	if err != nil {
-		return nil, fmt.Errorf("resolve tools for %q: %w", agentID, err)
+		return TurnTools{}, fmt.Errorf("resolve tools for %q: %w", agentID, err)
 	}
 	if len(rows) == 0 {
-		return nil, nil
+		return TurnTools{}, nil
 	}
 
 	impls := make([]tool.InvokableTool, 0, len(rows))
+	infos := make([]*schema.ToolInfo, 0, len(rows))
 	sizes := make(map[string]int, len(rows))
 	total := 0
-	// One credential read per server per turn: the scrubber's known values
-	// and the call deadline both come from the row.
+	// One credential read per server per turn: the scrubber's known
+	// values and the call deadline both come from the row.
 	configs := make(map[string]mcp.ServerConfig)
+	forms := make(map[string][]string)
+	var values []string
 	for _, row := range rows {
 		// A resolved row without an executable behind it is an
 		// intersection miss, not a failure: the registry returns what it
@@ -55,37 +73,45 @@ func (s *TurnService) AgentTools(ctx context.Context, agentID string) ([]tool.In
 		}
 		info, err := impl.Info(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("tool metadata for %q: %w", row.ID, err)
+			return TurnTools{}, fmt.Errorf("tool metadata for %q: %w", row.ID, err)
 		}
 		opts := tooladmission.Options{
 			AgentID:   agentID,
 			CatalogID: row.ID,
 		}
-		if serverID, isMCP := row.ServerID.(string); isMCP && serverID != "" {
+		if row.ServerID.Valid && row.ServerID.String != "" {
+			serverID := row.ServerID.String
 			cfg, err := s.serverConfig(ctx, serverID, configs)
 			if err != nil {
-				return nil, err
+				return TurnTools{}, err
 			}
 			opts.ServerID = serverID
-			opts.KnownSecrets = cfg.KnownSecrets()
 			opts.Timeout = tooladmission.ResolveTimeout(cfg.Timeout)
+			known, seen := forms[serverID]
+			if !seen {
+				known = cfg.KnownSecrets()
+				forms[serverID] = known
+				values = append(values, known...)
+			}
+			opts.KnownSecrets = known
 		}
 		encoded, err := json.Marshal(info)
 		if err != nil {
-			return nil, fmt.Errorf("encode tool metadata for %q: %w", row.ID, err)
+			return TurnTools{}, fmt.Errorf("encode tool metadata for %q: %w", row.ID, err)
 		}
 		sizes[row.ID] = len(encoded)
 		total += len(encoded)
+		infos = append(infos, info)
 		impls = append(impls, s.admitter.Wrap(impl, info, opts))
 	}
 	if total > MaxAdvertisedToolsetBytes {
-		return nil, fmt.Errorf("toolset budget exceeded (%d KiB > %d KiB): %s",
+		return TurnTools{}, fmt.Errorf("toolset budget exceeded (%d KiB > %d KiB): %s",
 			total>>10, MaxAdvertisedToolsetBytes>>10, largestTools(sizes))
 	}
 	if len(impls) == 0 {
-		return nil, nil
+		return TurnTools{}, nil
 	}
-	return impls, nil
+	return TurnTools{Impls: impls, Infos: infos, Scrubber: security.NewScrubber(values)}, nil
 }
 
 // serverConfig resolves (once per turn) one server's connection config:
@@ -106,60 +132,6 @@ func (s *TurnService) serverConfig(ctx context.Context, serverID string, cache m
 	}
 	cache[serverID] = cfg
 	return cfg, nil
-}
-
-// ScrubToolCopy returns a sanitized copy of tool-call content for
-// persistence and emission: the union of the agent's MCP servers'
-// known secrets plus the shared pattern battery, so a consumer copy never
-// carries a credential the admission chain's own copy would not. It is a
-// copy scrubber only — dispatched arguments are never rewritten.
-//
-// Resolution failure degrades to the pattern-only scrubber; it never
-// fails the turn.
-func (s *TurnService) ScrubToolCopy(ctx context.Context, agentID, content string) string {
-	if content == "" {
-		return content
-	}
-	values, err := s.agentKnownSecrets(ctx, agentID)
-	if err != nil {
-		values = nil
-	}
-	sanitized, _ := security.NewScrubber(values).ScrubString(content)
-	return sanitized
-}
-
-// agentKnownSecrets lists the credential spellings behind every server the
-// agent may call: the values that can legitimately appear in that agent's
-// traffic, and therefore the ones a copy must not.
-func (s *TurnService) agentKnownSecrets(ctx context.Context, agentID string) ([]string, error) {
-	rows, err := s.queries.ResolveAgentToolsDetailed(ctx, db.ResolveAgentToolsDetailedParams{
-		AgentID:   agentID,
-		AgentID_2: agentID,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("resolve tools for %q: %w", agentID, err)
-	}
-	cache := make(map[string]mcp.ServerConfig)
-	seen := make(map[string]struct{}, len(rows))
-	var values []string
-	for _, row := range rows {
-		serverID, isMCP := row.ServerID.(string)
-		if !isMCP || serverID == "" {
-			continue
-		}
-		if _, done := seen[serverID]; done {
-			continue
-		}
-		seen[serverID] = struct{}{}
-		cfg, err := s.serverConfig(ctx, serverID, cache)
-		if err != nil {
-			// One unreadable server does not blind every other server's
-			// redaction: keep going with the values already collected.
-			continue
-		}
-		values = append(values, cfg.KnownSecrets()...)
-	}
-	return values, nil
 }
 
 // largestTools names the biggest advertised definitions, so a budget
@@ -229,15 +201,10 @@ func (s *TurnService) CloseTools() {
 func syncToolCatalog(queries *db.Queries, builtinTools []apitypes.Tool) error {
 	ctx := context.Background()
 	for _, t := range builtinTools {
-		builtin := int64(0)
-		if t.Builtin {
-			builtin = 1
-		}
 		if err := queries.UpsertTool(ctx, db.UpsertToolParams{
 			ID:          t.ID,
 			Name:        t.Name,
 			Description: t.Description,
-			Builtin:     builtin,
 		}); err != nil {
 			return fmt.Errorf("sync tool %q: %w", t.ID, err)
 		}

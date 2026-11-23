@@ -1,16 +1,8 @@
 // tests/e2e/specs/navigation.spec.ts
-import type { Page } from '@playwright/test'
-import { expect, test } from '../setup/fixtures'
 
-/** Create an agent via the UI and land on its page (real backends seed no scratch agents). */
-async function createAgentViaUi(page: Page, name: string) {
-	await page.goto('/agent/new')
-	await page.getByLabel(/name/i).fill(name)
-	await page.getByRole('button', { name: /create|submit/i }).click()
-	const agentId = name.toLowerCase().replace(/ +/g, '-')
-	await expect(page).toHaveURL(new RegExp(`/agent/${agentId}$`))
-	return agentId
-}
+import type { Page } from '@playwright/test'
+import { createAgentViaUi } from '../fixtures/ui'
+import { expect, test } from '../setup/fixtures'
 
 test.describe('navigation', () => {
 	test.describe('unsaved changes protection', () => {

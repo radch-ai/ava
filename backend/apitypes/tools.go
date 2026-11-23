@@ -8,7 +8,6 @@ type Tool struct {
 	ID          string  `json:"id"`
 	Name        string  `json:"name"`
 	Description string  `json:"description"`
-	Builtin     bool    `json:"builtin"`
 	Enabled     bool    `json:"enabled"`
 	Kind        string  `json:"kind"`
 	ServerID    *string `json:"serverId,omitempty"`

@@ -24,7 +24,6 @@ type McpServer struct {
 	AllowPrivateNetwork bool    `json:"allowPrivateNetwork"`
 	AllowPlaintext      bool    `json:"allowPlaintext"`
 	LastError           *string `json:"lastError,omitempty"`
-	RefreshedAt         *int64  `json:"refreshedAt,omitempty"`
 }
 
 // McpDiscoveredTool is one tool a server reported, in create/refresh

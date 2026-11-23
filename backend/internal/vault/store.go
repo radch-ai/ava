@@ -80,7 +80,14 @@ func (s *Store) Put(ctx context.Context, vaultName, name, kind string, plaintext
 // Get returns the plaintext and metadata for the entry. A tampered or
 // copied envelope fails here, for this entry only.
 func (s *Store) Get(ctx context.Context, vaultName, name string) (plaintext, meta []byte, err error) {
-	row, err := s.q.GetVaultEntry(ctx, db.GetVaultEntryParams{Vault: vaultName, Name: name})
+	return s.GetThrough(ctx, s.q, vaultName, name)
+}
+
+// GetThrough unseals the entry through caller-supplied queries — the
+// caller's open transaction — so a fence can read the blob snapshot its
+// own row read sees, without borrowing a second pooled connection.
+func (s *Store) GetThrough(ctx context.Context, queries *db.Queries, vaultName, name string) (plaintext, meta []byte, err error) {
+	row, err := queries.GetVaultEntry(ctx, db.GetVaultEntryParams{Vault: vaultName, Name: name})
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil, ErrNotFound
 	}

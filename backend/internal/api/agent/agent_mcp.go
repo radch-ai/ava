@@ -60,59 +60,36 @@ func ToggleAgentMcp(throttle *api.Throttle, sqlDB *sql.DB, queries *db.Queries, 
 			params.Enabled = 1
 		}
 
-		// auditFail carries a post-tightening record that could not be
-		// written: the change stands, the failure is logged.
-		var auditFail error
+		outcome, reason := "revoke", "mcp_disabled"
 		if *req.Enabled {
-			// Opening the gate grants authority: the gate and its record
-			// commit together, so no approval activates unrecorded.
-			tx, err := sqlDB.BeginTx(r.Context(), nil)
-			if err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("begin mcp gate %q/%q: %w", id, serverID, err)
-			}
-			defer func() { _ = tx.Rollback() }()
-			txq := db.New(tx)
-			if _, err := txq.SetAgentMcpEnabled(r.Context(), params); err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("set mcp gate %q/%q: %w", id, serverID, err)
-			}
-			if err := auditGrant(r.Context(), txq, tooladmission.Decision{
+			outcome, reason = "approve", "mcp_enabled"
+		}
+		auditErr, err := api.ApplyToggle(r.Context(), sqlDB, queries, *req.Enabled,
+			tooladmission.Decision{
 				Event:    tooladmission.EventApprovalChange,
 				AgentID:  id,
 				ServerID: serverID,
-				Outcome:  "approve",
-				Reason:   "mcp_enabled",
-			}); err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("audit mcp gate %q/%q: %w", id, serverID, err)
-			}
-			if err := tx.Commit(); err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("commit mcp gate %q/%q: %w", id, serverID, err)
-			}
-		} else {
-			if _, err := queries.SetAgentMcpEnabled(r.Context(), params); err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("set mcp gate %q/%q: %w", id, serverID, err)
-			}
+				Outcome:  outcome,
+				Reason:   reason,
+			},
+			// The upsert always writes a row; missing targets were
+			// answered by the reads above.
+			func(runner *db.Queries) error {
+				_, err := runner.SetAgentMcpEnabled(r.Context(), params)
+				return err
+			},
 			// Closing the gate revokes: cancel this server's admitted
-			// calls. The tightening stands whether or not its record
-			// lands.
-			if canceler != nil {
-				canceler.CancelAgentServerTools(id, serverID)
-			}
-			if err := auditGrant(r.Context(), queries, tooladmission.Decision{
-				Event:    tooladmission.EventApprovalChange,
-				AgentID:  id,
-				ServerID: serverID,
-				Outcome:  "revoke",
-				Reason:   "mcp_disabled",
-			}); err != nil {
-				auditFail = fmt.Errorf("audit mcp gate %q/%q: %w", id, serverID, err)
-			}
+			// calls for this agent.
+			func() {
+				if canceler != nil {
+					canceler.CancelAgentServerTools(id, serverID)
+				}
+			})
+		if err != nil {
+			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+			return fmt.Errorf("toggle mcp gate %q/%q: %w", id, serverID, err)
 		}
 
-		return errors.Join(writeAgentTools(w, r, queries, id), auditFail)
+		return errors.Join(writeAgentTools(w, r, queries, id), auditErr)
 	}
 }

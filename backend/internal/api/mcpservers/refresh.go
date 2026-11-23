@@ -8,10 +8,10 @@ package mcpservers
 
 import (
 	"database/sql"
-	"fmt"
 	"net/http"
 
-	"github.com/radch-ai/ava/backend/apitypes"
+	"github.com/rs/zerolog"
+
 	"github.com/radch-ai/ava/backend/internal/api"
 	"github.com/radch-ai/ava/backend/internal/db"
 	"github.com/radch-ai/ava/backend/internal/mcp"
@@ -20,7 +20,7 @@ import (
 )
 
 // Refresh re-runs discovery for one enabled server.
-func Refresh(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore *vault.Store, canceler api.Canceler) api.Handler {
+func Refresh(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore *vault.Store, canceler api.Canceler, logger zerolog.Logger) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		id := r.PathValue("id")
 
@@ -41,7 +41,7 @@ func Refresh(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, querie
 		// vanished have their in-flight calls canceled.
 		before := toolIDs(r.Context(), queries, id)
 		discoverCtx, cancel := requestContext(r.Context())
-		listed, skipped, err := mcpserver.Discover(discoverCtx, sqlDB, queries, manager, vaultStore, row)
+		listed, skipped, err := mcpserver.Discover(discoverCtx, sqlDB, queries, manager, vaultStore, logger, row)
 		cancel()
 		if err != nil {
 			return api.WriteError(w, http.StatusBadGateway,
@@ -50,20 +50,6 @@ func Refresh(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, querie
 
 		cancelRemovedTools(canceler, id, before, keptFromListing(id, listed))
 
-		saved, err := queries.GetMcpServer(r.Context(), id)
-		if err != nil {
-			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-			return fmt.Errorf("read back mcp server %q: %w", id, err)
-		}
-		server, err := buildServer(r.Context(), queries, saved)
-		if err != nil {
-			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-			return fmt.Errorf("build server %q: %w", id, err)
-		}
-		return api.WriteJSON(w, http.StatusOK, apitypes.McpServerWithToolsResponse{
-			Server:       server,
-			Tools:        discoveredTools(id, listed),
-			SkippedTools: skippedTools(skipped),
-		})
+		return respondServer(r.Context(), w, http.StatusOK, queries, id, listed, skipped)
 	}
 }

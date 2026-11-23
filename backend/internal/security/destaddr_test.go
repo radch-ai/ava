@@ -28,6 +28,23 @@ func TestClassifyAddr(t *testing.T) {
 		"::":                                 ClassUnspecified,
 		"::ffff:192.168.1.50":                ClassPrivate, // IPv4-mapped
 		"::ffff:169.254.169.254":             ClassLinkLocal,
+		// Reserved ranges never classify public: one address per range.
+		// (Mapped forms are normalized by ResolveClass before
+		// classification, so ClassifyAddr only ever sees the unmapped
+		// family.)
+		"0.0.0.5":             ClassReserved, // 0.0.0.0/8
+		"192.0.0.8":           ClassReserved, // 192.0.0.0/24
+		"198.18.0.5":          ClassReserved, // 198.18.0.0/15
+		"240.0.0.1":           ClassReserved, // 240.0.0.0/4
+		"255.255.255.255":     ClassReserved, // broadcast
+		"64:ff9b::7f00:1":     ClassReserved, // NAT64
+		"2002:cb00:71::1":     ClassReserved, // 6to4
+		"2001:db8::dead:beef": ClassReserved, // documentation
+		"100::1":              ClassReserved, // discard
+	}
+	// The zero address names no destination: reserved, never public.
+	if got := ClassifyAddr(netip.Addr{}); got != ClassReserved {
+		t.Errorf("ClassifyAddr(zero) = %s, want %s", got, ClassReserved)
 	}
 	for raw, want := range cases {
 		addr := netip.MustParseAddr(raw)
@@ -56,6 +73,8 @@ func TestDestinationAllowed(t *testing.T) {
 		{"mixed default", []AddrClass{ClassPublic, ClassPrivate}, false, ErrPrivateDenied},
 		{"mixed approved", []AddrClass{ClassPublic, ClassPrivate}, true, nil},
 		{"link-local always", []AddrClass{ClassLinkLocal}, true, ErrLinkLocalDenied},
+		{"reserved always", []AddrClass{ClassReserved}, true, ErrReservedDenied},
+		{"reserved mixed", []AddrClass{ClassPublic, ClassReserved}, true, ErrReservedDenied},
 		{"link-local mixed", []AddrClass{ClassPublic, ClassLinkLocal}, true, ErrLinkLocalDenied},
 		{"unspecified always", []AddrClass{ClassUnspecified}, true, ErrUnspecifiedDenied},
 		{"no candidates", nil, true, ErrUnresolved},

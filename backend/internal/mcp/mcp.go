@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -108,6 +109,13 @@ func (c ServerConfig) validate() error {
 	return nil
 }
 
+// ValidateURL applies validate to one raw endpoint string, trimming
+// surrounding whitespace first: the single rule every endpoint input
+// passes through, whatever its caller answers on failure.
+func ValidateURL(raw string) error {
+	return ServerConfig{URL: strings.TrimSpace(raw)}.validate()
+}
+
 // errURLCredentials rejects stored endpoints that carry userinfo:
 // stdlib would turn it into an unapproved Basic-auth header.
 var errURLCredentials = errors.New(
@@ -142,10 +150,6 @@ func NewManager() *Manager {
 // the returned client's context is safe: the transport lifetime is
 // manager-owned, not derived from the dial context.
 func BoundedDial(ctx context.Context, cfg ServerConfig) (*Client, error) {
-	// The runtime entry point validates too, not only new API writes.
-	if err := cfg.validate(); err != nil {
-		return nil, fmt.Errorf("mcp server %s: %w", cfg.ID, err)
-	}
 	dialCtx, cancel := context.WithTimeout(ctx, min(cfg.timeout(), VerifyTimeout))
 	defer cancel()
 	return Dial(dialCtx, cfg)
@@ -160,9 +164,6 @@ func BoundedDial(ctx context.Context, cfg ServerConfig) (*Client, error) {
 // other servers. A race between two dials for the same id resolves in Adopt:
 // the first installed client wins and the loser is closed.
 func (m *Manager) Connect(ctx context.Context, cfg ServerConfig) (*Client, error) {
-	if err := cfg.validate(); err != nil {
-		return nil, fmt.Errorf("mcp server %s: %w", cfg.ID, err)
-	}
 	if cached, ok := m.Get(cfg.ID); ok && sameConfig(cached.cfg, cfg) {
 		return cached, nil
 	}
@@ -203,10 +204,12 @@ func (m *Manager) Adopt(cfg ServerConfig, c *Client) *Client {
 }
 
 // retire waits for a replaced client's borrowed calls — bounded by the
-// administrator's call ceiling, since every dispatch is bounded by it —
+// connection's own call ceiling, since every dispatch is bounded by it —
 // and only then tears the connection down. A refresh therefore never
-// aborts work already on the wire.
+// aborts work already on the wire. Borrows are refused first: no
+// dispatch can start between the drain and the teardown.
 func retire(c *Client) {
+	c.refuseBorrows()
 	c.waitDrained()
 	_ = c.Close()
 }
@@ -236,6 +239,8 @@ func (m *Manager) Get(id string) (*Client, bool) {
 }
 
 // Close drops and tears down the client for id. Unknown ids are a no-op.
+// Unlike the retirement paths, shutdown owns the abort: teardown is
+// immediate, without refuse-then-drain.
 func (m *Manager) Close(id string) {
 	m.mu.Lock()
 	client, ok := m.clients[id]

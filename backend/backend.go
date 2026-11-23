@@ -99,14 +99,18 @@ func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte, limits ToolLimi
 	if err := turns.recoverUnfinished(context.Background()); err != nil {
 		return nil, nil, nil, err
 	}
-	// Retention must expire by age without waiting for traffic.
+	// Retention must expire by age without waiting for traffic. Each
+	// later boot step stops the ticker on its failure — a rejected boot
+	// leaks nothing.
 	turns.stopPrune = admitter.StartPrune(time.Hour)
 	if err := syncToolCatalog(queries, registry.Catalog()); err != nil {
+		turns.stopPrune()
 		return nil, nil, nil, err
 	}
 	// MCP discovery is best-effort per server: a down server's
 	// tools stay listed but inert; boot never fails on it.
 	if err := mcpserver.SyncEnabled(context.Background(), sqlDB, queries, registry.MCP(), vaultStore, logger); err != nil {
+		turns.stopPrune()
 		return nil, nil, nil, err
 	}
 	// Toggle endpoints absorb bursts: one accepted write per target
@@ -147,13 +151,13 @@ func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte, limits ToolLimi
 	// MCP servers: CRUD + refresh; writes throttled per server.
 	mcpThrottle := api.NewThrottle(500 * time.Millisecond)
 	mux.Handle("GET /mcp/servers", api.Log(logger, mcpservers.List(queries)))
-	mux.Handle("POST /mcp/servers", api.Log(logger, mcpservers.Create(registry.MCP(), sqlDB, queries, vaultStore, turns)))
+	mux.Handle("POST /mcp/servers", api.Log(logger, mcpservers.Create(registry.MCP(), sqlDB, queries, vaultStore)))
 	mux.Handle("PATCH /mcp/servers/{id}",
-		api.Log(logger, mcpservers.Update(mcpThrottle, registry.MCP(), sqlDB, queries, vaultStore, turns)))
+		api.Log(logger, mcpservers.Update(mcpThrottle, registry.MCP(), sqlDB, queries, vaultStore, turns, logger)))
 	mux.Handle("DELETE /mcp/servers/{id}",
 		api.Log(logger, mcpservers.Delete(mcpThrottle, registry.MCP(), queries, vaultStore, turns)))
 	mux.Handle("POST /mcp/servers/{id}/refresh",
-		api.Log(logger, mcpservers.Refresh(mcpThrottle, registry.MCP(), sqlDB, queries, vaultStore, turns)))
+		api.Log(logger, mcpservers.Refresh(mcpThrottle, registry.MCP(), sqlDB, queries, vaultStore, turns, logger)))
 	mux.Handle("GET /mcp/servers/{id}/tools/{toolId}/definition",
 		api.Log(logger, mcpservers.ToolDefinition(queries)))
 

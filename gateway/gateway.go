@@ -36,7 +36,9 @@ const (
 	pongTimeout = 10 * time.Second
 )
 
-// Config is the gateway's runtime configuration.
+// Config is the gateway's runtime configuration. A nil config or a
+// zero field keeps that seam unbound: turns fail closed, not with a
+// crash.
 type Config struct {
 	// PingInterval overrides pingInterval. Zero keeps the default; the
 	// field exists for tests to shrink the wait.
@@ -62,41 +64,25 @@ type Config struct {
 	// at boot. Required: the working context is the committed user
 	// row, so an unbound source fails the turn.
 	GetAgentThread agent.AgentThreadSource
-	// ScrubToolCopy sanitizes every observable tool-call copy with the
-	// agent's known secrets — bound to TurnService.ScrubToolCopy by the
-	// binary at boot. Zero keeps the pattern battery alone.
-	ScrubToolCopy agent.ToolCopyScrubber
 }
 
 // New builds the gateway. The gateway is a single WebSocket endpoint:
 // the caller owns the path it is mounted on, and Drain is the
 // shutdown half — call it after the HTTP server has drained.
 func New(cfg *Config, logger zerolog.Logger) (*Gateway, error) {
+	if cfg == nil {
+		cfg = &Config{}
+	}
 	interval := pingInterval
-	resolve := agent.ModelResolver(nil)
-	var journal agent.LifecycleJournal
-	var getConfig agent.AgentConfigSource
-	var toolsFn agent.AgentToolsFunc
-	var getThread agent.AgentThreadSource
-	var scrubCopy agent.ToolCopyScrubber
-	if cfg != nil {
-		if cfg.PingInterval > 0 {
-			interval = cfg.PingInterval
-		}
-		resolve = cfg.ResolveModel
-		journal = cfg.Journal
-		getConfig = cfg.GetAgentConfig
-		toolsFn = cfg.Tools
-		getThread = cfg.GetAgentThread
-		scrubCopy = cfg.ScrubToolCopy
+	if cfg.PingInterval > 0 {
+		interval = cfg.PingInterval
 	}
 	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{
-		ResolveModel:   resolve,
-		Journal:        journal,
-		GetAgentConfig: getConfig,
-		Tools:          toolsFn,
-		GetAgentThread: getThread,
-		ScrubToolCopy:  scrubCopy,
+		ResolveModel:   cfg.ResolveModel,
+		Journal:        cfg.Journal,
+		GetAgentConfig: cfg.GetAgentConfig,
+		Tools:          cfg.Tools,
+		GetAgentThread: cfg.GetAgentThread,
 	})
 	return &Gateway{
 		handler: handleWS(interval, logger, mgr),

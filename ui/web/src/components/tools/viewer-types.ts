@@ -1,3 +1,5 @@
+import type { McpToolDefinitionResponse } from '#lib/types/mcp'
+
 /**
  * Shared tool-viewer types. The MCP & Tools page and the per-agent
  * editor both build these entries from their own data and hand them to
@@ -29,13 +31,14 @@ export interface ViewerStatus {
 	manageUrl?: string
 }
 
-/** The authority behind one MCP tool, shown beside its definition. */
-export interface ViewerToolAuthority {
-	endpoint: string
-	hasCredentials: boolean
-	allowPlaintext: boolean
-	allowPrivateNetwork: boolean
-}
+/**
+ * The authority behind one MCP tool, shown beside its definition: the
+ * wire response's own fields, so the two cannot drift.
+ */
+export type ViewerToolAuthority = Pick<
+	McpToolDefinitionResponse,
+	'endpoint' | 'hasCredentials' | 'allowPlaintext' | 'allowPrivateNetwork'
+>
 
 /**
  * The stored definition of one MCP tool, fetched on demand: what the
@@ -105,4 +108,57 @@ export function groupTools<
 		}
 	}
 	return { builtins, byServer }
+}
+
+/**
+ * Per-surface policy for the shared entries builder: each surface keeps
+ * its own badges, switch rules and statuses, and the builder owns the
+ * one structure — builtins flat, then servers with their nested tools.
+ */
+export interface ViewerEntryHooks<
+	TTool extends { kind?: string; serverId?: string | null },
+	TServer
+> {
+	/** One tool's entry under the surface's dimming rule. */
+	toolEntry: (tool: TTool, dimmed: boolean) => ViewerToolEntry
+	/** A nested tool's dimming under its owning server. */
+	toolDimmed: (tool: TTool, server: TServer) => boolean
+	/** A builtin's dimming (false on the page; global-off in the editor). */
+	builtinDimmed: (tool: TTool) => boolean
+	/** One server's entry without its nested tools. */
+	serverEntry: (server: TServer) => Omit<ViewerServerEntry, 'tools'>
+	/** The id a server's nested tools key on — each surface names its own
+	 * field (McpServer.id, AgentMcpPreference.serverId), so the builder
+	 * never forces a fabricated copy. */
+	serverIdOf: (server: TServer) => string
+}
+
+/**
+ * Build the viewer's entries: builtins flat, then every server in the
+ * listing's order with its tools nested. The hooks carry each surface's
+ * policy; the structure is shared once.
+ */
+export function buildViewerEntries<
+	TTool extends { kind?: string; serverId?: string | null },
+	TServer
+>(
+	tools: TTool[],
+	servers: TServer[],
+	hooks: ViewerEntryHooks<TTool, TServer>
+): ViewerEntry[] {
+	const { builtins, byServer } = groupTools(tools)
+	const rows: ViewerEntry[] = builtins.map((tool) => ({
+		kind: 'tool' as const,
+		entry: hooks.toolEntry(tool, hooks.builtinDimmed(tool))
+	}))
+	for (const server of servers) {
+		const entry: ViewerServerEntry = {
+			...hooks.serverEntry(server),
+			tools: (byServer.get(hooks.serverIdOf(server)) ?? []).map((tool) =>
+				hooks.toolEntry(tool, hooks.toolDimmed(tool, server))
+			)
+		}
+		rows.push({ kind: 'server', entry })
+	}
+	return rows
 }

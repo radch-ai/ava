@@ -36,7 +36,7 @@ func seedAgentAndBuiltins(t *testing.T, sqlDB *sql.DB) *db.Queries {
 		enabled int64
 	}{{"ddg", 1}, {"notes", 0}} {
 		if err := queries.UpsertTool(t.Context(), db.UpsertToolParams{
-			ID: seed.id, Name: seed.id + " name", Description: "", Builtin: 1,
+			ID: seed.id, Name: seed.id + " name", Description: "",
 		}); err != nil {
 			t.Fatalf("seed tool %q: %v", seed.id, err)
 		}
@@ -77,13 +77,7 @@ func TestGetAgentToolsListsAllServers(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
 	queries := seedAgentAndBuiltins(t, sqlDB)
 	for _, id := range []string{"gated", "ungated"} {
-		if err := queries.CreateMcpServer(t.Context(), db.CreateMcpServerParams{
-			ID: id, Name: id,
-			Url:        sql.NullString{String: "https://" + id + ".example/mcp", Valid: true},
-			HeaderKeys: "[]",
-		}); err != nil {
-			t.Fatalf("seed server %q: %v", id, err)
-		}
+		testdb.SeedMcpServer(t, sqlDB, id, "https://"+id+".example/mcp")
 	}
 	if _, err := queries.SetAgentMcpEnabled(t.Context(), db.SetAgentMcpEnabledParams{
 		AgentID: "research", ServerID: "gated", Enabled: 1,
@@ -130,7 +124,7 @@ func TestSetAgentToolAddsAndRemovesOptOut(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	want := `{"id":"ddg","name":"ddg name","description":"","globalEnabled":true,"locallyDisabled":true,"kind":"builtin"}`
+	want := `{"tools":[{"id":"ddg","name":"ddg name","description":"","globalEnabled":true,"locallyDisabled":true,"kind":"builtin"},{"id":"notes","name":"notes name","description":"","globalEnabled":false,"locallyDisabled":false,"kind":"builtin"}],"servers":[]}`
 	if got := strings.TrimSpace(rec.Body.String()); got != want {
 		t.Errorf("body = %s, want %s", got, want)
 	}
@@ -146,7 +140,7 @@ func TestSetAgentToolAddsAndRemovesOptOut(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	want = `{"id":"ddg","name":"ddg name","description":"","globalEnabled":true,"locallyDisabled":false,"kind":"builtin"}`
+	want = `{"tools":[{"id":"ddg","name":"ddg name","description":"","globalEnabled":true,"locallyDisabled":false,"kind":"builtin"},{"id":"notes","name":"notes name","description":"","globalEnabled":false,"locallyDisabled":false,"kind":"builtin"}],"servers":[]}`
 	if got := strings.TrimSpace(rec.Body.String()); got != want {
 		t.Errorf("body = %s, want %s", got, want)
 	}
@@ -277,17 +271,9 @@ func TestGlobalEnableReachesGatedAgentWithoutWrites(t *testing.T) {
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
 		ID: "other", Name: "Other", Icon: "globe",
 	})
-	if err := queries.CreateMcpServer(t.Context(), db.CreateMcpServerParams{
-		ID: "gh", Name: "GitHub",
-		Url:        sql.NullString{String: "https://example.test/mcp", Valid: true},
-		HeaderKeys: "[]",
-	}); err != nil {
-		t.Fatalf("seed server: %v", err)
-	}
-	if err := queries.UpsertMcpTool(t.Context(), db.UpsertMcpToolParams{
-		ID: "gh:search", Name: "search", Description: "search",
-		ServerID: sql.NullString{String: "gh", Valid: true}, DefinitionJson: `{}`,
-	}); err != nil {
+	testdb.SeedMcpServer(t, sqlDB, "gh", "https://example.test/mcp")
+	if _, err := sqlDB.Exec(
+		`INSERT INTO tools (id, name, description, enabled, kind, server_id, definition_json) VALUES ('gh:search', 'search', 'search', 0, 'mcp', 'gh', '{}')`); err != nil {
 		t.Fatalf("seed tool: %v", err)
 	}
 	for _, agent := range []string{"research", "other"} {
@@ -367,9 +353,7 @@ func TestClearingOptOutAuditFailureBlocks(t *testing.T) {
 // resolveAgent lists one agent's effective tool ids.
 func resolveAgent(t *testing.T, queries *db.Queries, agentID string) []string {
 	t.Helper()
-	rows, err := queries.ResolveAgentToolsDetailed(t.Context(), db.ResolveAgentToolsDetailedParams{
-		AgentID: agentID, AgentID_2: agentID,
-	})
+	rows, err := queries.ResolveAgentToolsDetailed(t.Context(), agentID)
 	if err != nil {
 		t.Fatalf("resolve %s: %v", agentID, err)
 	}

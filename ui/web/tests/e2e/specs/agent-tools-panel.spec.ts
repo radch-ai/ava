@@ -1,5 +1,6 @@
 // tests/e2e/specs/agent-tools-panel.spec.ts
 import type { Locator, Page } from '@playwright/test'
+import { createAgentViaUi, openToolsPanel } from '../fixtures/ui'
 import { expect, test } from '../setup/fixtures'
 
 /**
@@ -13,25 +14,6 @@ test.describe.configure({ mode: 'serial' })
 
 const useMocks = process.env.VITE_USE_MOCKS === 'true'
 const toolSwitchName = 'Enable DuckDuckGo Search for this agent'
-
-/** Create an agent through the UI; answers the id the app derived. */
-async function createAgentViaUi(page: Page, name: string): Promise<string> {
-	const agentId = name.toLowerCase().replace(/ +/g, '-')
-	await page.goto('/agent/new')
-	await page.getByLabel(/name/i).fill(name)
-	await page.getByRole('button', { name: 'Create Agent' }).click()
-	await expect(page).toHaveURL(new RegExp(`/agent/${agentId}$`))
-	return agentId
-}
-
-/** Open the agent config sheet on its Tools tab. */
-async function openToolsPanel(page: Page): Promise<Locator> {
-	await page.getByRole('button', { name: 'Open agent configuration' }).click()
-	const sheet = page.getByRole('dialog', { name: /agent configuration/i })
-	await expect(sheet).toBeVisible({ timeout: 10000 })
-	await sheet.getByRole('button', { name: 'Tools' }).click()
-	return sheet
-}
 
 /** Close the sheet; tool rows save live, so no unsaved-changes guard. */
 async function closeSheet(sheet: Locator): Promise<void> {

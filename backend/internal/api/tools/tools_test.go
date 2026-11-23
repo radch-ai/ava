@@ -43,7 +43,7 @@ func toolStore(t *testing.T) (*sql.DB, *db.Queries) {
 	queries := db.New(sqlDB)
 	for i, id := range []string{"ddg", "notes"} {
 		if err := queries.UpsertTool(t.Context(), db.UpsertToolParams{
-			ID: id, Name: id + " name", Description: id + " does things", Builtin: 1,
+			ID: id, Name: id + " name", Description: id + " does things",
 		}); err != nil {
 			t.Fatalf("seed tool %q: %v", id, err)
 		}
@@ -65,7 +65,7 @@ func TestGetToolsListsCatalog(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	want := `{"tools":[{"id":"ddg","name":"ddg name","description":"ddg does things","builtin":true,"enabled":false,"kind":"builtin"},{"id":"notes","name":"notes name","description":"notes does things","builtin":true,"enabled":true,"kind":"builtin"}]}`
+	want := `{"tools":[{"id":"ddg","name":"ddg name","description":"ddg does things","enabled":false,"kind":"builtin"},{"id":"notes","name":"notes name","description":"notes does things","enabled":true,"kind":"builtin"}]}`
 	if got := strings.TrimSpace(rec.Body.String()); got != want {
 		t.Errorf("body = %s, want %s", got, want)
 	}
@@ -79,7 +79,7 @@ func TestToggleToolFlipsGlobalSwitch(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	want := `{"id":"ddg","name":"ddg name","description":"ddg does things","builtin":true,"enabled":true,"kind":"builtin"}`
+	want := `{"id":"ddg","name":"ddg name","description":"ddg does things","enabled":true,"kind":"builtin"}`
 	if got := strings.TrimSpace(rec.Body.String()); got != want {
 		t.Errorf("body = %s, want %s", got, want)
 	}

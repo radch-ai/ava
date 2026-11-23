@@ -135,7 +135,7 @@ func TestTurnAttemptBudgetStopsExecution(t *testing.T) {
 // A credential shape in a tool's result is redacted before the wire and
 // the transcript see it.
 func TestFanOutScrubRedactsResult(t *testing.T) {
-	const raw = "sk-abcdefghijklmnop1234"
+	const raw = "sk-abcdefghijklmnop1234" // matches mcptest.PatternCanary
 	leaky := &fakeTool{name: "echo_tool", result: `{"echo":"` + raw + `"}`}
 	llm := newScriptedLLM(t,
 		toolCallChunk("echo_tool")+toolCallDone(),

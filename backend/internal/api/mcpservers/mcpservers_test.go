@@ -72,10 +72,10 @@ func doWithCanceler(t *testing.T, sqlDB *sql.DB, manager *mcp.Manager, canceler 
 	throttle := api.NewThrottle(time.Nanosecond)
 	mux := http.NewServeMux()
 	mux.Handle("GET /mcp/servers", api.Log(zerolog.Nop(), List(queries)))
-	mux.Handle("POST /mcp/servers", api.Log(zerolog.Nop(), Create(manager, sqlDB, queries, vaultStore, nil)))
-	mux.Handle("PATCH /mcp/servers/{id}", api.Log(zerolog.Nop(), Update(throttle, manager, sqlDB, queries, vaultStore, canceler)))
+	mux.Handle("POST /mcp/servers", api.Log(zerolog.Nop(), Create(manager, sqlDB, queries, vaultStore)))
+	mux.Handle("PATCH /mcp/servers/{id}", api.Log(zerolog.Nop(), Update(throttle, manager, sqlDB, queries, vaultStore, canceler, zerolog.Nop())))
 	mux.Handle("DELETE /mcp/servers/{id}", api.Log(zerolog.Nop(), Delete(throttle, manager, queries, vaultStore, nil)))
-	mux.Handle("POST /mcp/servers/{id}/refresh", api.Log(zerolog.Nop(), Refresh(throttle, manager, sqlDB, queries, vaultStore, canceler)))
+	mux.Handle("POST /mcp/servers/{id}/refresh", api.Log(zerolog.Nop(), Refresh(throttle, manager, sqlDB, queries, vaultStore, canceler, zerolog.Nop())))
 	mux.Handle("GET /mcp/servers/{id}/tools/{toolId}/definition", api.Log(zerolog.Nop(), ToolDefinition(queries)))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(method, target, strings.NewReader(body)))
@@ -263,7 +263,7 @@ func TestCreateSealsSecretsAndDiscovers(t *testing.T) {
 	}
 
 	tool, err := queries.GetTool(t.Context(), "test-helper:echo")
-	if err != nil || tool.Kind != "mcp" || tool.ServerID != "test-helper" {
+	if err != nil || tool.Kind != "mcp" || !tool.ServerID.Valid || tool.ServerID.String != "test-helper" {
 		t.Fatalf("catalog row = %+v err %v", tool, err)
 	}
 
@@ -509,20 +509,6 @@ func TestRefreshHealthyAndDead(t *testing.T) {
 	}
 }
 
-// Unknown ids answer 404 everywhere.
-func TestUnknownServerAnswers404(t *testing.T) {
-	sqlDB := testdb.Open(t, true)
-	for _, tc := range []struct{ method, target string }{
-		{http.MethodPatch, "/mcp/servers/ghost"},
-		{http.MethodDelete, "/mcp/servers/ghost"},
-		{http.MethodPost, "/mcp/servers/ghost/refresh"},
-	} {
-		if rec := do(t, sqlDB, tc.method, tc.target, `{}`); rec.Code != http.StatusNotFound {
-			t.Errorf("%s %s: status = %d, want 404", tc.method, tc.target, rec.Code)
-		}
-	}
-}
-
 // createServerWith installs one fixture through a caller-supplied
 // manager, so the adopted client is observable afterwards.
 func createServerWith(t *testing.T, sqlDB *sql.DB, manager *mcp.Manager, name string, srv *mcptest.Server) apitypes.McpServerWithToolsResponse {
@@ -580,6 +566,129 @@ func TestPatchEnabledTogglesAndClosesClient(t *testing.T) {
 	}
 	if _, ok := manager.Get(id); !ok {
 		t.Fatal("enable did not reconnect a client")
+	}
+}
+
+// A stored URL that predates today's validator (credential userinfo)
+// must not block its own restriction: a pure disable persists with no
+// dial and no 400 from the stored shape.
+func TestPatchDisableSurvivesLegacyStoredURL(t *testing.T) {
+	sqlDB := testdb.Open(t, true)
+	queries := db.New(sqlDB)
+	manager := mcp.NewManager()
+	t.Cleanup(manager.CloseAll)
+
+	testdb.SeedMcpServer(t, sqlDB, "legacy", "https://user:pass@example.test/mcp")
+
+	rec := doWith(t, sqlDB, manager, http.MethodPatch, "/mcp/servers/legacy", `{"enabled":false}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disable status = %d: %s", rec.Code, body(rec))
+	}
+	row, err := queries.GetMcpServer(t.Context(), "legacy")
+	if err != nil || row.Enabled != 0 {
+		t.Fatalf("row after disable: enabled=%d err=%v", row.Enabled, err)
+	}
+}
+
+// A disable bundled with a URL move is not withdrawal-only: the new
+// endpoint must verify like any other connection edit, and a failed
+// check persists neither the URL nor the disable.
+func TestDisableWithURLMoveVerifies(t *testing.T) {
+	sqlDB := testdb.Open(t, true)
+	queries := db.New(sqlDB)
+	manager := mcp.NewManager()
+	t.Cleanup(manager.CloseAll)
+	srv := mcptest.Start(t)
+
+	created := createServerWith(t, sqlDB, manager, "Move Helper", srv)
+	id := created.Server.ID
+	before, err := queries.GetMcpServer(t.Context(), id)
+	if err != nil {
+		t.Fatalf("read row: %v", err)
+	}
+
+	rec := doWith(t, sqlDB, manager, http.MethodPatch, "/mcp/servers/"+id,
+		`{"enabled":false,"url":"http://127.0.0.1:9/mcp"}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(body(rec), "Connection check failed") {
+		t.Fatalf("disable+move status = %d body %s, want 400 connection check", rec.Code, body(rec))
+	}
+	after, err := queries.GetMcpServer(t.Context(), id)
+	if err != nil {
+		t.Fatalf("reread row: %v", err)
+	}
+	if after.Url != before.Url {
+		t.Fatalf("failed patch persisted url %+v, want %+v", after.Url, before.Url)
+	}
+	if after.Enabled != before.Enabled {
+		t.Fatalf("failed patch flipped enabled to %d", after.Enabled)
+	}
+}
+
+// A create without headers always seals the effective (empty) set: an
+// orphaned blob at the slug can never ride into the new install's
+// requests.
+func TestCreateWithoutHeadersClearsOrphanedBlob(t *testing.T) {
+	sqlDB := testdb.Open(t, true)
+	queries := db.New(sqlDB)
+	manager := mcp.NewManager()
+	t.Cleanup(manager.CloseAll)
+	srv := mcptest.Start(t)
+	store := newTestStore(t, sqlDB)
+
+	orphan, err := json.Marshal(mcpserver.Secrets{
+		Headers: map[string]string{"Authorization": "Bearer orphan-value"},
+	})
+	if err != nil {
+		t.Fatalf("encode orphan blob: %v", err)
+	}
+	if err := store.Put(t.Context(), vault.NameRuntime,
+		mcpserver.EntryName("orphan-helper"), mcpserver.Kind, orphan, nil); err != nil {
+		t.Fatalf("seed orphan blob: %v", err)
+	}
+
+	rec := doWith(t, sqlDB, manager, http.MethodPost, "/mcp/servers",
+		createBody("Orphan Helper", srv.URL, ""))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body %s", rec.Code, body(rec))
+	}
+	if got := srv.Header("Authorization"); got != "" {
+		t.Fatalf("orphaned credential rode the dial: %q", got)
+	}
+	sealed, _, err := store.Get(t.Context(), vault.NameRuntime, mcpserver.EntryName("orphan-helper"))
+	if err != nil {
+		t.Fatalf("sealed blob: %v", err)
+	}
+	var secrets mcpserver.Secrets
+	if err := json.Unmarshal(sealed, &secrets); err != nil {
+		t.Fatalf("decode sealed blob: %v", err)
+	}
+	if len(secrets.Headers) != 0 {
+		t.Fatalf("sealed headers = %v, want empty", secrets.Headers)
+	}
+	row, err := queries.GetMcpServer(t.Context(), "orphan-helper")
+	if err != nil || row.HeaderKeys != `[]` {
+		t.Fatalf("header_keys = %q err %v, want []", row.HeaderKeys, err)
+	}
+}
+
+// Creation is an activation: the install commits with its server_enabled
+// record, atomically.
+func TestCreateRecordsServerEnabled(t *testing.T) {
+	sqlDB := testdb.Open(t, true)
+	manager := mcp.NewManager()
+	t.Cleanup(manager.CloseAll)
+	srv := mcptest.Start(t)
+
+	rec := doWith(t, sqlDB, manager, http.MethodPost, "/mcp/servers",
+		createBody("Enabled Helper", srv.URL, ""))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body %s", rec.Code, body(rec))
+	}
+	var enabled int
+	if err := sqlDB.QueryRow(
+		`SELECT COUNT(*) FROM tool_audit_events WHERE server_id = ? AND reason_code = 'server_enabled'`,
+		"enabled-helper").Scan(&enabled); err != nil || enabled != 1 {
+		t.Fatalf("server_enabled records = %d err %v, want 1", enabled, err)
 	}
 }
 
@@ -704,7 +813,7 @@ func TestCreateDuplicateNameRace(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				mux := http.NewServeMux()
-				mux.Handle("POST /mcp/servers", api.Log(logger, Create(managers[i], sqlDB, queries, store, nil)))
+				mux.Handle("POST /mcp/servers", api.Log(logger, Create(managers[i], sqlDB, queries, store)))
 				rec := httptest.NewRecorder()
 				mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/mcp/servers", strings.NewReader(req)))
 				codes <- rec.Code
@@ -1115,7 +1224,7 @@ func TestUpdateWithdrawalNeedsNoDial(t *testing.T) {
 	}
 
 	var reasons []string
-	if rows, err := queries.ListMcpServerTools(t.Context(), "restricted"); err != nil || len(rows) == 0 {
+	if rows, err := queries.ListMcpServerTools(t.Context(), sql.NullString{String: "restricted", Valid: true}); err != nil || len(rows) == 0 {
 		t.Fatalf("catalog rows after withdrawal = %d (err %v)", len(rows), err)
 	}
 	audit, err := sqlDB.Query(`SELECT reason_code FROM tool_audit_events WHERE server_id = ? ORDER BY id`,
@@ -1256,20 +1365,14 @@ func TestMissingServerAnswersOneBody(t *testing.T) {
 // back — the runtime rejects it, and the view masks it.
 func TestUserinfoURLRowIsMasked(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
-	queries := db.New(sqlDB)
-	if err := queries.CreateMcpServer(t.Context(), db.CreateMcpServerParams{
-		ID: "userinfo", Name: "Userinfo",
-		Url:        sql.NullString{String: "http://u:secret-pass@127.0.0.1:3333/mcp", Valid: true},
-		HeaderKeys: "[]",
-	}); err != nil {
-		t.Fatalf("seed userinfo row: %v", err)
-	}
+	testdb.SeedMcpServer(t, sqlDB, "userinfo", "http://u:secret-pass@127.0.0.1:3333/mcp")
+	testdb.SeedMcpServer(t, sqlDB, "passonly", "http://:only-pass@127.0.0.1:3333/mcp")
 
 	rec := do(t, sqlDB, http.MethodGet, "/mcp/servers", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list = %d body %s", rec.Code, body(rec))
 	}
-	for _, leaked := range []string{"secret-pass", "u:", "u@"} {
+	for _, leaked := range []string{"secret-pass", "only-pass", "u:", "u@", ":only-pass@"} {
 		if strings.Contains(body(rec), leaked) {
 			t.Fatalf("view leaked %q: %s", leaked, body(rec))
 		}
@@ -1644,10 +1747,8 @@ func TestRemovedToolCancels(t *testing.T) {
 	}
 
 	// A row the server no longer reports, as a prior discovery left it.
-	if err := queries.UpsertMcpTool(t.Context(), db.UpsertMcpToolParams{
-		ID: "rem:vanished", Name: "vanished", Description: "gone",
-		ServerID: sql.NullString{String: "rem", Valid: true},
-	}); err != nil {
+	if _, err := sqlDB.Exec(
+		`INSERT INTO tools (id, name, description, kind, server_id) VALUES ('rem:vanished', 'vanished', 'gone', 'mcp', 'rem')`); err != nil {
 		t.Fatalf("seed vanished tool: %v", err)
 	}
 

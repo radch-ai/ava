@@ -3,9 +3,10 @@ import { page } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-svelte'
 import * as mcpService from '#lib/services/mcp'
 import * as toolsService from '#lib/services/tools'
-import type { McpServer } from '#lib/types/mcp'
+import type { McpServer, McpToolDefinitionResponse } from '#lib/types/mcp'
 import type { Tool } from '#lib/types/tool'
 import ToolsPage from '#routes/settings/tools/+page.svelte'
+import { invalidateAll } from '$app/navigation'
 
 // Mock the tool catalog + MCP server services — the page never hits
 // the network.
@@ -20,8 +21,7 @@ vi.mock('#lib/services/mcp', () => ({
 	createMcpServer: vi.fn(),
 	updateMcpServer: vi.fn(),
 	deleteMcpServer: vi.fn(),
-	refreshMcpServer: vi.fn(),
-	setMcpServerEnabled: vi.fn()
+	refreshMcpServer: vi.fn()
 }))
 
 // Mock SvelteKit navigation: the page invalidates after every mutation.
@@ -33,9 +33,32 @@ const ddg: Tool = {
 	id: 'duckduckgo_search',
 	name: 'DuckDuckGo Search',
 	description: 'Searches the web and returns the top results.',
-	builtin: true,
 	enabled: true,
 	kind: 'builtin'
+}
+
+// The notes server and its one tool, shared by every describe below:
+// each block spreads the base and states only its own delta.
+const notesServer: McpServer = {
+	id: 'notes-mcp',
+	name: 'Notes MCP',
+	url: 'http://127.0.0.1:3333/mcp',
+	headerKeys: ['Authorization'],
+	enabled: true,
+	toolCount: 1,
+	catalogState: 'active',
+	allowPrivateNetwork: true,
+	allowPlaintext: true,
+	lastError: 'transient: mcp server notes-mcp: initialize: connection refused'
+}
+
+const notesTool: Tool = {
+	id: 'notes-mcp:search',
+	name: 'search',
+	description: 'Searches the notes server.',
+	enabled: true,
+	kind: 'mcp',
+	serverId: 'notes-mcp'
 }
 
 // PageData folds in the (app) layout's load — agents fields arrive
@@ -102,29 +125,6 @@ describe('MCP & Tools page', () => {
 			.toBeVisible()
 	})
 
-	const notesServer: McpServer = {
-		id: 'notes-mcp',
-		name: 'Notes MCP',
-		url: 'http://127.0.0.1:3333/mcp',
-		headerKeys: ['Authorization'],
-		enabled: true,
-		toolCount: 1,
-		catalogState: 'active',
-		allowPrivateNetwork: true,
-		allowPlaintext: true,
-		lastError: 'transient: mcp server notes-mcp: initialize: connection refused'
-	}
-
-	const notesTool: Tool = {
-		id: 'notes-mcp:search',
-		name: 'search',
-		description: 'Searches the notes server.',
-		builtin: false,
-		enabled: true,
-		kind: 'mcp',
-		serverId: 'notes-mcp'
-	}
-
 	it('renders a server as a collapsible row with count and diagnostics', async () => {
 		renderPage([ddg, notesTool], null, [notesServer])
 
@@ -154,7 +154,7 @@ describe('MCP & Tools page', () => {
 	})
 
 	it('saves the server switch through the service', async () => {
-		vi.mocked(mcpService.setMcpServerEnabled).mockResolvedValue({
+		vi.mocked(mcpService.updateMcpServer).mockResolvedValue({
 			server: { ...notesServer, enabled: false },
 			tools: []
 		})
@@ -165,10 +165,9 @@ describe('MCP & Tools page', () => {
 			.click()
 
 		await vi.waitFor(() => {
-			expect(mcpService.setMcpServerEnabled).toHaveBeenCalledWith(
-				'notes-mcp',
-				false
-			)
+			expect(mcpService.updateMcpServer).toHaveBeenCalledWith('notes-mcp', {
+				enabled: false
+			})
 		})
 	})
 
@@ -314,26 +313,12 @@ describe('MCP & Tools page', () => {
 // tools visible but inert, and the definition inspector renders the
 // stored definition with the authority behind it.
 describe('MCP page policy statuses', () => {
-	// Local fixtures: the sibling block's consts are scoped to it.
-	const pausedTool: Tool = {
-		id: 'notes-mcp:search',
-		name: 'search',
-		description: 'Searches the notes server.',
-		builtin: false,
-		enabled: true,
-		kind: 'mcp',
-		serverId: 'notes-mcp'
-	}
+	// A rejected generation: paused, no credentials, nothing to explain.
 	const pausedServer: McpServer = {
-		id: 'notes-mcp',
-		name: 'Notes MCP',
-		url: 'http://127.0.0.1:3333/mcp',
+		...notesServer,
 		headerKeys: [],
-		enabled: true,
-		toolCount: 1,
 		catalogState: 'paused',
-		allowPrivateNetwork: true,
-		allowPlaintext: true
+		lastError: undefined
 	}
 
 	beforeEach(() => {
@@ -345,7 +330,7 @@ describe('MCP page policy statuses', () => {
 	})
 
 	it('marks a paused catalog and blocks its nested tools', async () => {
-		renderPage([ddg, pausedTool], null, [pausedServer])
+		renderPage([ddg, notesTool], null, [pausedServer])
 
 		await expect
 			.element(
@@ -370,7 +355,7 @@ describe('MCP page policy statuses', () => {
 			allowPlaintext: true,
 			allowPrivateNetwork: true
 		})
-		renderPage([ddg, pausedTool], null, [
+		renderPage([ddg, notesTool], null, [
 			{ ...pausedServer, catalogState: 'active' }
 		])
 
@@ -396,31 +381,63 @@ describe('MCP page policy statuses', () => {
 			.element(page.getByText(/"description":"Searches the notes server\."/))
 			.toBeVisible()
 	})
+
+	// A fetch that started before a refresh must not repopulate the
+	// cache when it resolves after — the listing it served is dead.
+	it('drops a definition fetch that resolves after the cache was cleared', async () => {
+		const definition = {
+			definitionJson: '{"name":"search"}',
+			endpoint: 'http://127.0.0.1:3333/mcp',
+			hasCredentials: false,
+			allowPlaintext: true,
+			allowPrivateNetwork: true
+		} satisfies McpToolDefinitionResponse
+		let resolveFirst!: (value: McpToolDefinitionResponse) => void
+		const firstFetch = new Promise<McpToolDefinitionResponse>((resolve) => {
+			resolveFirst = resolve
+		})
+		vi.mocked(mcpService.getMcpToolDefinition)
+			.mockReturnValueOnce(firstFetch)
+			.mockResolvedValueOnce(definition)
+		vi.mocked(mcpService.refreshMcpServer).mockResolvedValue({
+			server: { ...pausedServer, catalogState: 'active' },
+			tools: []
+		})
+		renderPage([ddg, notesTool], null, [
+			{ ...pausedServer, catalogState: 'active' }
+		])
+
+		// The fetch starts, then the refresh clears the cache under it.
+		await page.getByRole('heading', { name: 'Notes MCP' }).click()
+		await page
+			.getByRole('button', { name: 'Show definition of search' })
+			.click()
+		await page.getByRole('button', { name: 'Refresh tools' }).click()
+		// invalidateAll runs beside the clear in the refresh's finally,
+		// so it firing proves the generation already bumped.
+		await vi.waitFor(() => expect(invalidateAll).toHaveBeenCalled())
+		resolveFirst({
+			...definition,
+			definitionJson: '{"name":"stale"}'
+		})
+
+		// A repopulated cache would answer from memory; the honest
+		// page fetches again for the live listing.
+		await page
+			.getByRole('button', { name: 'Show definition of search' })
+			.click()
+		await vi.waitFor(() => {
+			expect(mcpService.getMcpToolDefinition).toHaveBeenCalledTimes(2)
+		})
+		await expect.element(page.getByText(/"name":"search"/)).toBeVisible()
+	})
 })
 
 // A discovery pass that leaves tools out reports them — a cosmetic skip
 // is visible with its reason, never a silent drop.
 describe('MCP & Tools page skipped tools', () => {
-	const skipServer: McpServer = {
-		id: 'notes-mcp',
-		name: 'Notes MCP',
-		url: 'http://127.0.0.1:3333/mcp',
-		headerKeys: ['Authorization'],
-		enabled: true,
-		toolCount: 1,
-		catalogState: 'active',
-		allowPrivateNetwork: true,
-		allowPlaintext: true
-	}
-	const skipTool: Tool = {
-		id: 'notes-mcp:search',
-		name: 'search',
-		description: 'Searches the notes server.',
-		builtin: false,
-		enabled: true,
-		kind: 'mcp',
-		serverId: 'notes-mcp'
-	}
+	// A healthy server, so the skips are the only thing to explain.
+	const skipServer: McpServer = { ...notesServer, lastError: undefined }
 
 	beforeEach(() => {
 		vi.clearAllMocks()
@@ -428,32 +445,6 @@ describe('MCP & Tools page skipped tools', () => {
 
 	afterEach(() => {
 		cleanup()
-	})
-
-	it('lists the skipped tools after a refresh and dismisses them', async () => {
-		vi.mocked(mcpService.refreshMcpServer).mockResolvedValue({
-			server: skipServer,
-			tools: [],
-			skippedTools: [
-				{
-					name: 'oversized_discovery_tool_name_that_exceeds_the_provider_limit',
-					reason:
-						'model name "oversized_discovery_tool_name_that_exceeds_the_provider_limit" exceeds 64 characters'
-				}
-			]
-		})
-		renderPage([ddg, skipTool], null, [skipServer])
-
-		await page.getByRole('button', { name: 'Refresh tools' }).click()
-
-		await expect.element(page.getByText('1 tool was skipped')).toBeVisible()
-		await expect.element(page.getByText(/exceeds 64 characters/)).toBeVisible()
-
-		await page.getByRole('button', { name: 'Dismiss skipped tools' }).click()
-
-		await expect
-			.element(page.getByText('1 tool was skipped'))
-			.not.toBeInTheDocument()
 	})
 
 	it('clears a shown skipped banner on the next clean refresh', async () => {
@@ -473,7 +464,7 @@ describe('MCP & Tools page skipped tools', () => {
 				server: skipServer,
 				tools: []
 			})
-		renderPage([ddg, skipTool], null, [skipServer])
+		renderPage([ddg, notesTool], null, [skipServer])
 
 		await page.getByRole('button', { name: 'Refresh tools' }).click()
 
@@ -488,12 +479,41 @@ describe('MCP & Tools page skipped tools', () => {
 			.not.toBeInTheDocument()
 	})
 
+	it('drops the skipped banner when the next refresh fails', async () => {
+		vi.mocked(mcpService.refreshMcpServer)
+			.mockResolvedValueOnce({
+				server: skipServer,
+				tools: [],
+				skippedTools: [
+					{
+						name: 'oversized_discovery_tool_name_that_exceeds_the_provider_limit',
+						reason:
+							'model name "oversized_discovery_tool_name_that_exceeds_the_provider_limit" exceeds 64 characters'
+					}
+				]
+			})
+			.mockRejectedValueOnce(new Error('refresh refused'))
+		renderPage([ddg, notesTool], null, [skipServer])
+
+		await page.getByRole('button', { name: 'Refresh tools' }).click()
+		await expect.element(page.getByText('1 tool was skipped')).toBeVisible()
+
+		// A failed pass replaces the banner with its own error: the
+		// stale skips do not survive it.
+		await page.getByRole('button', { name: 'Refresh tools' }).click()
+
+		await expect
+			.element(page.getByText(/were skipped|was skipped/))
+			.not.toBeInTheDocument()
+		await expect.element(page.getByText('refresh refused')).toBeVisible()
+	})
+
 	it('renders no panel when a refresh reports nothing skipped', async () => {
 		vi.mocked(mcpService.refreshMcpServer).mockResolvedValue({
 			server: skipServer,
 			tools: []
 		})
-		renderPage([ddg, skipTool], null, [skipServer])
+		renderPage([ddg, notesTool], null, [skipServer])
 
 		await page.getByRole('button', { name: 'Refresh tools' }).click()
 

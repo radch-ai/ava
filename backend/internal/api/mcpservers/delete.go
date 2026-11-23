@@ -47,7 +47,7 @@ func Delete(throttle *api.Throttle, manager *mcp.Manager, queries *db.Queries, v
 		if canceler != nil {
 			canceler.CancelServerTools(id)
 		}
-		_ = auditApproval(r.Context(), queries, id, "approval_change", "revoke", "server_deleted")
+		_ = auditApproval(r.Context(), queries, id, "revoke", "server_deleted")
 		return api.WriteJSON(w, http.StatusOK,
 			apitypes.DeleteMcpServerResponse{Message: "MCP server deleted"})
 	}

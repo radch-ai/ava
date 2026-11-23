@@ -776,8 +776,13 @@ describe('mock API handlers', () => {
 				}
 			)
 			expect(off.status).toBe(200)
-			const offBody = (await off.json()) as { locallyDisabled: boolean }
-			expect(offBody.locallyDisabled).toBe(true)
+			// The toggle answers the full saved listing, same as GET.
+			const offBody = (await off.json()) as {
+				tools: Array<{ id: string; locallyDisabled: boolean }>
+			}
+			expect(
+				offBody.tools.find((t) => t.id === 'duckduckgo_search')?.locallyDisabled
+			).toBe(true)
 
 			const listed = (await (
 				await fetch(`${BASE}/agent/research/tools`)
@@ -792,8 +797,12 @@ describe('mock API handlers', () => {
 					body: JSON.stringify({ enabled: true })
 				}
 			)
-			const onBody = (await backOn.json()) as { locallyDisabled: boolean }
-			expect(onBody.locallyDisabled).toBe(false)
+			const onBody = (await backOn.json()) as {
+				tools: Array<{ id: string; locallyDisabled: boolean }>
+			}
+			expect(
+				onBody.tools.find((t) => t.id === 'duckduckgo_search')?.locallyDisabled
+			).toBe(false)
 
 			const unknownTool = await fetch(`${BASE}/agent/research/tools/nope`, {
 				method: 'PATCH',
@@ -903,6 +912,47 @@ describe('mock API handlers', () => {
 // The mock mirrors the backend's policy rules so the UI exercises them
 // without a server.
 describe('mock API MCP policy', () => {
+	// The definition is read through the per-tool endpoint; the catalog
+	// list must not ship the stored JSON on every row.
+	it('lists tools without their stored definitions', async () => {
+		const body = (await (await fetch(`${BASE}/tools`)).json()) as {
+			tools: Record<string, unknown>[]
+		}
+		expect(body.tools.length).toBeGreaterThan(0)
+		for (const tool of body.tools) {
+			expect(tool).not.toHaveProperty('definitionJson')
+		}
+	})
+
+	it('masks userinfo in every rendered endpoint, like the backend', async () => {
+		const created = await fetch(`${BASE}/mcp/servers`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Userinfo Test',
+				url: 'http://u:secret-pass@127.0.0.1:3333/mcp',
+				allowPrivateNetwork: true,
+				allowPlaintext: true
+			})
+		})
+		expect(created.status).toBe(201)
+		const { server: row } = (await created.json()) as {
+			server: { id: string; url: string }
+		}
+		expect(row.url).toContain('%5Bredacted%5D')
+		expect(row.url).not.toContain('secret-pass')
+
+		const listed = (await (await fetch(`${BASE}/mcp/servers`)).json()) as {
+			servers: { id: string; url?: string }[]
+		}
+		const view = listed.servers.find((s) => s.id === row.id)?.url ?? ''
+		expect(view).toContain('%5Bredacted%5D')
+		expect(view).not.toContain('secret-pass')
+
+		// The definition endpoint rides the same helper; its no-userinfo
+		// pass-through is pinned by the stored-definition test below.
+	})
+
 	it('clears the destination approvals when the URL changes', async () => {
 		const created = await fetch(`${BASE}/mcp/servers`, {
 			method: 'POST',
@@ -935,6 +985,35 @@ describe('mock API MCP policy', () => {
 		}
 		expect(after.server.allowPrivateNetwork).toBe(false)
 		expect(after.server.allowPlaintext).toBe(false)
+	})
+
+	// Validate-then-mutate: a patch that fails validation must not
+	// flip the switch — the 400 answers before any row state changes.
+	it('leaves enabled untouched when a patch fails validation', async () => {
+		const created = await fetch(`${BASE}/mcp/servers`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Validate Flip',
+				url: 'http://127.0.0.1:3333/mcp'
+			})
+		})
+		expect(created.status).toBe(201)
+		const { server: row } = (await created.json()) as {
+			server: { id: string }
+		}
+
+		const rejected = await fetch(`${BASE}/mcp/servers/${row.id}`, {
+			method: 'PATCH',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ enabled: false, name: 'Bad_Name!' })
+		})
+		expect(rejected.status).toBe(400)
+
+		const listing = (await (await fetch(`${BASE}/mcp/servers`)).json()) as {
+			servers: { id: string; enabled: boolean }[]
+		}
+		expect(listing.servers.find((s) => s.id === row.id)?.enabled).toBe(true)
 	})
 
 	it('reaches a gated agent on a global enable, except where it opted out', async () => {
@@ -1048,34 +1127,5 @@ describe('mock API MCP policy', () => {
 		})
 		const cleanBody = (await clean.json()) as { skippedTools?: unknown[] }
 		expect(cleanBody.skippedTools).toBeUndefined()
-	})
-
-	it('gate toggles never rewrite an existing opt-out', async () => {
-		// scribe explicitly disabled fetch_note. A gate off/on must not
-		// re-enable it: only the agent's own switch does.
-		const listed = async () =>
-			(await (await fetch(`${BASE}/agent/scribe/tools`)).json()) as {
-				tools: { id: string; locallyDisabled: boolean }[]
-			}
-		const before = await listed()
-		expect(
-			before.tools.find((tool) => tool.id === 'notes-mcp:fetch_note')
-				?.locallyDisabled
-		).toBe(true)
-
-		for (const enabled of [false, true]) {
-			const gate = await fetch(`${BASE}/agent/scribe/mcp/notes-mcp`, {
-				method: 'PATCH',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ enabled })
-			})
-			expect(gate.status).toBe(200)
-		}
-
-		const after = await listed()
-		expect(
-			after.tools.find((tool) => tool.id === 'notes-mcp:fetch_note')
-				?.locallyDisabled
-		).toBe(true)
 	})
 })

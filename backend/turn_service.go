@@ -22,7 +22,7 @@ type TurnService struct {
 	sqlDB      *sql.DB
 	vaultStore *vault.Store
 	registry   *tools.Registry
-logger     zerolog.Logger
+	logger     zerolog.Logger
 	admitter   *tooladmission.Admitter
 	// stopPrune ends the audit retention ticker on shutdown.
 	stopPrune func()

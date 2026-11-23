@@ -33,7 +33,8 @@ import type {
 	AgentTool,
 	GetToolsResponse,
 	ToggleAgentToolRequest,
-	ToggleToolRequest
+	ToggleToolRequest,
+	Tool
 } from '../types/tool.ts'
 import { deriveAgentId, isValidAgentName } from './agent-id.ts'
 import {
@@ -132,12 +133,26 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 
 	// --- MCP servers ----------------------------------------------
 
+	// The backend hides userinfo in every endpoint it renders; the mock
+	// mirrors it so a userinfo leak cannot hide behind mock mode.
+	const maskedUrl = (raw: string): string => {
+		try {
+			const u = new URL(raw)
+			if (u.username === '' && u.password === '') return raw
+			u.username = '[redacted]'
+			u.password = '[redacted]'
+			return u.toString()
+		} catch {
+			return raw
+		}
+	}
+
 	// Wire view of one server row: key names only, the tool count
 	// derived from the catalog.
 	const serverView = (row: McpServerRow): McpServer => ({
 		id: row.id,
 		name: row.name,
-		...(row.url ? { url: row.url } : {}),
+		...(row.url ? { url: maskedUrl(row.url) } : {}),
 		headerKeys: row.headerKeys,
 		...(row.timeoutMs ? { timeoutMs: row.timeoutMs } : {}),
 		enabled: row.enabled,
@@ -145,8 +160,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 		catalogState: row.catalogState,
 		allowPrivateNetwork: row.allowPrivateNetwork,
 		allowPlaintext: row.allowPlaintext,
-		...(row.lastError ? { lastError: row.lastError } : {}),
-		...(row.refreshedAt ? { refreshedAt: row.refreshedAt } : {})
+		...(row.lastError ? { lastError: row.lastError } : {})
 	})
 
 	// The agent tool listing's server rows: id, display name, this
@@ -186,25 +200,28 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				]
 			: []
 
-	// The save-time connection check, deterministic in mock mode: a
-	// non-http(s) url fails like the backend's real dial.
-	const serverConnectionCheck = (url: string) => {
-		if (!/^https?:\/\/.+/.test(url)) {
-			return HttpResponse.json(
-				{
-					message:
-						'Connection check failed: mcp server: initialize: connection refused'
-				},
-				{ status: 400 }
-			)
-		}
-		return null
-	}
+	// The one URL predicate: an absolute http(s) URL, answering with
+	// the backend's own message. It deliberately stops at the scheme —
+	// the mock admits userinfo so render-side masking has rows to mask
+	// (the backend rejects credentials at validation) — and create and
+	// patch are its only callers.
+	const validateServerUrl = (url: string): string | null =>
+		/^https?:\/\/.+/.test(url)
+			? null
+			: 'url must be an http(s) URL without embedded credentials'
 
-	const serverConfigProblem = (url: string): string | null => {
-		if (!/^https?:\/\/.+/.test(url))
-			return 'url must be an http(s) URL without embedded credentials'
-		return null
+	// The listing a save, refresh or install answers: the saved row, the
+	// server's catalog rows, and any cosmetic skips.
+	const listingResponse = (row: McpServerRow, status = 200) => {
+		const skipped = skippedFor(row.url ?? '')
+		return HttpResponse.json(
+			{
+				server: serverView(row),
+				tools: discoveredFor(row.id),
+				...(skipped.length ? { skippedTools: skipped } : {})
+			},
+			{ status }
+		)
 	}
 
 	// A created mock server deterministically reports one echo tool;
@@ -255,6 +272,17 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 		if (!store.tools.some((tool) => tool.id === kept)) seedServerTools(slug)
 	}
 
+	// The catalog row as the wire carries it: the stored definition is
+	// read through the per-tool endpoint, never in the list.
+	const toolView = (row: ToolRow): Tool => ({
+		id: row.id,
+		name: row.name,
+		description: row.description,
+		enabled: row.enabled,
+		kind: row.kind,
+		...(row.serverId ? { serverId: row.serverId } : {})
+	})
+
 	// One agent's view of a tool: the global switch plus its own opt-out.
 	const agentToolView = (
 		tool: ToolRow,
@@ -268,6 +296,17 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 		kind: tool.kind,
 		...(tool.serverId ? { serverId: tool.serverId } : {})
 	})
+
+	// The agent tool listing: this agent's opt-outs and gate states over
+	// the whole catalog and server set.
+	const agentListing = (id: string) => {
+		const disabled = store.agentDisabledTools.get(id) ?? new Set<string>()
+		const gates = store.agentMcpGates.get(id) ?? new Map<string, boolean>()
+		return {
+			tools: store.tools.map((tool) => agentToolView(tool, disabled)),
+			servers: store.mcpServers.map((server) => agentServerView(server, gates))
+		}
+	}
 
 	return [
 		// The list mirrors the backend query: it never includes the system
@@ -685,14 +724,10 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			return HttpResponse.json({ systemModels: systemModelsFor(row) })
 		}),
 
-		// The tool catalog: the whole list, then the global switch. The
-		// wire's `builtin` derives from kind — one stored fact.
+		// The tool catalog: the whole list, then the global switch.
 		http.get('*/api/tools', () =>
 			HttpResponse.json<GetToolsResponse>({
-				tools: store.tools.map((tool) => ({
-					...tool,
-					builtin: tool.kind === 'builtin'
-				}))
+				tools: store.tools.map(toolView)
 			})
 		),
 
@@ -713,7 +748,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				)
 			}
 			row.enabled = body.enabled
-			return HttpResponse.json({ ...row })
+			return HttpResponse.json(toolView(row))
 		}),
 
 		http.get('*/api/mcp/servers', () =>
@@ -731,7 +766,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 					{ status: 400 }
 				)
 			}
-			const problem = serverConfigProblem(body.url ?? '')
+			const problem = validateServerUrl(body.url ?? '')
 			if (problem)
 				return HttpResponse.json({ message: problem }, { status: 400 })
 			if (
@@ -750,9 +785,6 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 					{ status: 409 }
 				)
 			}
-			const failed = serverConnectionCheck(body.url ?? '')
-			if (failed) return failed
-
 			const row: McpServerRow = {
 				id: slug,
 				name: body.name.trim(),
@@ -762,20 +794,11 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				enabled: true,
 				catalogState: 'active',
 				allowPrivateNetwork: body.allowPrivateNetwork === true,
-				allowPlaintext: body.allowPlaintext === true,
-				refreshedAt: Date.now()
+				allowPlaintext: body.allowPlaintext === true
 			}
 			store.mcpServers.push(row)
 			seedServerTools(slug)
-			const skipped = skippedFor(row.url ?? '')
-			return HttpResponse.json(
-				{
-					server: serverView(row),
-					tools: discoveredFor(slug),
-					...(skipped.length ? { skippedTools: skipped } : {})
-				},
-				{ status: 201 }
-			)
+			return listingResponse(row, 201)
 		}),
 
 		http.patch('*/api/mcp/servers/:id', async ({ params, request }) => {
@@ -788,12 +811,6 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				)
 			}
 			const body = (await request.json()) as UpdateMcpServerRequest
-			// The global switch is a pure state flip: no connection
-			// check, no config rewrite (mirrors the backend).
-			if (body.enabled !== undefined) {
-				row.enabled = body.enabled
-				if (!row.enabled) row.lastError = undefined
-			}
 			if (body.name !== undefined && !isValidAgentName(body.name)) {
 				return HttpResponse.json(
 					{
@@ -813,17 +830,21 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				)
 			}
 			const url = body.url !== undefined ? body.url : (row.url ?? '')
-			const problem = serverConfigProblem(url)
+			const problem = validateServerUrl(url)
 			if (problem)
 				return HttpResponse.json({ message: problem }, { status: 400 })
 			const urlChanged = body.url !== undefined && body.url !== row.url
 			const connectionChanged =
 				urlChanged || body.timeoutMs !== undefined || body.headers !== undefined
-			if (connectionChanged) {
-				const failed = serverConnectionCheck(url)
-				if (failed) return failed
-			}
 
+			// The global switch is a pure state flip: no connection
+			// check, no config rewrite (mirrors the backend) — and it
+			// lands only after every validation passed, so a rejected
+			// patch leaves the row untouched.
+			if (body.enabled !== undefined) {
+				row.enabled = body.enabled
+				if (!row.enabled) row.lastError = undefined
+			}
 			row.name = body.name !== undefined ? body.name.trim() : row.name
 			// A destination change invalidates its approvals: the same
 			// patch may re-approve them.
@@ -844,14 +865,8 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			if (connectionChanged) {
 				reconcileServerTools(id)
 				row.lastError = undefined
-				row.refreshedAt = Date.now()
 			}
-			const skipped = skippedFor(row.url ?? '')
-			return HttpResponse.json({
-				server: serverView(row),
-				tools: discoveredFor(id),
-				...(skipped.length ? { skippedTools: skipped } : {})
-			})
+			return listingResponse(row)
 		}),
 
 		http.delete('*/api/mcp/servers/:id', ({ params }) => {
@@ -883,15 +898,12 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 					{ status: 400 }
 				)
 			}
-			const failed = serverConnectionCheck(row.url ?? '')
 			// "flaky" simulates a server that verifies at install but is
 			// down at refresh: the one path that exercises lastError and
-			// the 502 branch in the UI. Validation never blocks it —
-			// serverConnectionCheck only rejects the "nonexistent" shape.
+			// the 502 branch in the UI.
 			const flaky = `${row.url ?? ''}`.includes('flaky')
-			if (failed || flaky) {
+			if (flaky) {
 				row.lastError = `mcp server ${id}: initialize: connection refused`
-				row.refreshedAt = Date.now()
 				return HttpResponse.json(
 					{ message: `Connection check failed: ${row.lastError}` },
 					{ status: 502 }
@@ -906,7 +918,6 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				row.catalogState = 'paused'
 				row.lastError =
 					'catalog_invalid_schema: tool "boom" input schema: depth > 32'
-				row.refreshedAt = Date.now()
 				return HttpResponse.json(
 					{ message: `Connection check failed: ${row.lastError}` },
 					{ status: 502 }
@@ -914,13 +925,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			}
 			row.catalogState = 'active'
 			row.lastError = undefined
-			row.refreshedAt = Date.now()
-			const skipped = skippedFor(row.url ?? '')
-			return HttpResponse.json({
-				server: serverView(row),
-				tools: discoveredFor(id),
-				...(skipped.length ? { skippedTools: skipped } : {})
-			})
+			return listingResponse(row)
 		}),
 
 		// The stored definition the settings page inspects, with the
@@ -952,7 +957,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			}
 			return HttpResponse.json({
 				definitionJson: tool.definitionJson ?? '{}',
-				endpoint: server.url ?? '',
+				endpoint: maskedUrl(server.url ?? ''),
 				hasCredentials: (server.headerKeys ?? []).length > 0,
 				allowPlaintext: server.allowPlaintext,
 				allowPrivateNetwork: server.allowPrivateNetwork
@@ -969,14 +974,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 					{ status: 404 }
 				)
 			}
-			const disabled = store.agentDisabledTools.get(id) ?? new Set<string>()
-			const gates = store.agentMcpGates.get(id) ?? new Map<string, boolean>()
-			return HttpResponse.json({
-				tools: store.tools.map((tool) => agentToolView(tool, disabled)),
-				servers: store.mcpServers.map((server) =>
-					agentServerView(server, gates)
-				)
-			})
+			return HttpResponse.json(agentListing(id))
 		}),
 
 		// The agent's MCP gate: a pure flip — it never seeds or revokes a
@@ -1006,14 +1004,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			const gates = store.agentMcpGates.get(id) ?? new Map<string, boolean>()
 			gates.set(serverId, body.enabled)
 			store.agentMcpGates.set(id, gates)
-
-			const disabled = store.agentDisabledTools.get(id) ?? new Set<string>()
-			return HttpResponse.json({
-				tools: store.tools.map((tool) => agentToolView(tool, disabled)),
-				servers: store.mcpServers.map((server) =>
-					agentServerView(server, gates)
-				)
-			})
+			return HttpResponse.json(agentListing(id))
 		}),
 
 		http.patch('*/api/agent/:id/tools/:toolId', async ({ params, request }) => {
@@ -1045,7 +1036,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			if (body.enabled) disabled.delete(toolId)
 			else disabled.add(toolId)
 			store.agentDisabledTools.set(id, disabled)
-			return HttpResponse.json(agentToolView(tool, disabled))
+			return HttpResponse.json(agentListing(id))
 		}),
 
 		http.post('*/api/providers', async ({ request }) => {

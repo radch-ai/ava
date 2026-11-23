@@ -118,6 +118,13 @@ func TestUnrecordedTerminalHaltsLane(t *testing.T) {
 		return false
 	}, 750*time.Millisecond, 25*time.Millisecond, "a halted lane must not start the reserved item")
 
+	// The reserved item keeps the queue runnable-looking, but a halted
+	// lane must not respawn workers against it: a respawn loop here
+	// burns a core and floods subscribers with lane-status frames.
+	require.Never(t, func() bool {
+		return agent.Worker(mgr, "agent-halt") != nil
+	}, 750*time.Millisecond, 25*time.Millisecond, "a halted lane must not respawn workers against a reserved item")
+
 	// The first item's start did land before the halt; its terminal
 	// state stays unrecorded for service recovery to settle.
 	var started int

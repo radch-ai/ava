@@ -125,7 +125,7 @@ func TestTurnRecorderRefusesWritesAfterClose(t *testing.T) {
 	if err := rec.recordStart("inv-1", "call-1", "tool", "{}"); err != nil {
 		t.Fatalf("late recordStart: %v", err)
 	}
-	if err := rec.recordOutcome("inv-1", "call-1", "tool", "done", nil); err != nil {
+	if err := rec.recordOutcome("inv-1", "done", nil); err != nil {
 		t.Fatalf("late recordOutcome: %v", err)
 	}
 	if writes := journal.writesFor("turn-1"); len(writes) != 0 {
@@ -151,7 +151,7 @@ func TestTurnRecorderTracksInvocations(t *testing.T) {
 	}
 
 	errText := "boom"
-	if err := rec.recordOutcome("inv-1", "call-1", "web_search", "partial", errors.New(errText)); err != nil {
+	if err := rec.recordOutcome("inv-1", "partial", errors.New(errText)); err != nil {
 		t.Fatalf("recordOutcome: %v", err)
 	}
 	if got := rec.snapshotInvocations(); len(got) != 0 {

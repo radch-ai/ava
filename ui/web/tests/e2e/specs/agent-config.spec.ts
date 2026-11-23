@@ -1,18 +1,8 @@
 // tests/e2e/specs/agent-config.spec.ts
-import type { Page } from '@playwright/test'
-import { expect, test } from '../setup/fixtures'
 
-/**
- * Helper to create an agent via UI.
- * Each test should create its own agent to avoid shared mutable state.
- */
-async function createAgentViaUi(page: Page, name: string) {
-	const agentId = name.toLowerCase().replace(/ +/g, '-')
-	await page.goto('/agent/new')
-	await page.getByLabel(/name/i).fill(name)
-	await page.getByRole('button', { name: 'Create Agent' }).click()
-	await expect(page).toHaveURL(new RegExp(`/agent/${agentId}$`))
-}
+import type { Page } from '@playwright/test'
+import { createAgentViaUi } from '../fixtures/ui'
+import { expect, test } from '../setup/fixtures'
 
 test.describe('agent configuration', () => {
 	test.describe('configuration sheet', () => {

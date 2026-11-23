@@ -6,10 +6,13 @@ package mcpserver_test
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/rs/zerolog"
 
 	"github.com/radch-ai/ava/backend/internal/db"
 	"github.com/radch-ai/ava/backend/internal/mcp"
@@ -37,19 +40,12 @@ func newStore(t *testing.T, sqlDB *sql.DB) *vault.Store {
 
 // seedServer inserts one HTTP row pointing at url, approvals included so
 // the loopback fixture is reachable.
-func seedServer(t *testing.T, queries *db.Queries, id, url string) db.McpServer {
+func seedServer(t *testing.T, sqlDB *sql.DB, id, url string) db.McpServer {
 	t.Helper()
-	if err := queries.CreateMcpServer(t.Context(), db.CreateMcpServerParams{
-		ID: id, Name: id,
-		Url:        sql.NullString{String: url, Valid: true},
-		HeaderKeys: "[]",
-		TimeoutMs:  sql.NullInt64{Int64: 5000, Valid: true},
-
-		AllowPrivateNetwork: 1,
-		AllowPlaintext:      1,
-	}); err != nil {
-		t.Fatalf("seed server %q: %v", id, err)
-	}
+	queries := db.New(sqlDB)
+	testdb.SeedMcpServer(t, sqlDB, id, url, func(params *db.CreateMcpServerParams) {
+		params.TimeoutMs = sql.NullInt64{Int64: 5000, Valid: true}
+	})
 	row, err := queries.GetMcpServer(t.Context(), id)
 	if err != nil {
 		t.Fatalf("read server %q: %v", id, err)
@@ -65,7 +61,7 @@ func discover(t *testing.T, sqlDB *sql.DB, manager *mcp.Manager, store *vault.St
 	if err != nil {
 		t.Fatalf("read server %q: %v", id, err)
 	}
-	return mcpserver.Discover(t.Context(), sqlDB, queries, manager, store, row)
+	return mcpserver.Discover(t.Context(), sqlDB, queries, manager, store, zerolog.Nop(), row)
 }
 
 // catalogState reads one row's admission state.
@@ -85,7 +81,7 @@ func TestDiscoverPublishesDefinitions(t *testing.T) {
 	queries := db.New(sqlDB)
 	store, manager := newStore(t, sqlDB), mcp.NewManager()
 	t.Cleanup(manager.CloseAll)
-	seedServer(t, queries, "helper", mcptest.Start(t).URL)
+	seedServer(t, sqlDB, "helper", mcptest.Start(t).URL)
 
 	listed, skipped, err := discover(t, sqlDB, manager, store, "helper")
 	if err != nil {
@@ -113,6 +109,42 @@ func TestDiscoverPublishesDefinitions(t *testing.T) {
 	}
 }
 
+// A catalog larger than the 100-row upsert chunk publishes completely:
+// both statements run, the prune sees every kept id, and first and last
+// rows land in the catalog.
+func TestUpsertListingChunksLargeCatalog(t *testing.T) {
+	sqlDB := testdb.Open(t, true)
+	queries := db.New(sqlDB)
+	store, manager := newStore(t, sqlDB), mcp.NewManager()
+	t.Cleanup(manager.CloseAll)
+	// 150 fixture tools plus the baseline echo: two upsert chunks.
+	seedServer(t, sqlDB, "big", mcptest.Start(t, mcptest.WithToolCount(150)).URL)
+
+	listed, skipped, err := discover(t, sqlDB, manager, store, "big")
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if len(skipped) != 0 || len(listed) != 151 {
+		t.Fatalf("listed=%d skipped=%v, want 151 tools and no skips", len(listed), skipped)
+	}
+	count, err := queries.CountMcpServerTools(t.Context(), sql.NullString{String: "big", Valid: true})
+	if err != nil {
+		t.Fatalf("count tools: %v", err)
+	}
+	if count != 151 {
+		t.Fatalf("catalog holds %d tools, want 151", count)
+	}
+	for _, id := range []string{"big:tool-0", "big:tool-149"} {
+		tool, err := queries.GetTool(t.Context(), id)
+		if err != nil {
+			t.Fatalf("read %s: %v", id, err)
+		}
+		if tool.Kind != "mcp" || tool.Enabled != 0 {
+			t.Fatalf("%s = kind %q enabled %d, want mcp and off", id, tool.Kind, tool.Enabled)
+		}
+	}
+}
+
 // Concurrent discovery passes on one server serialize: whichever
 // finishes last leaves the catalog definition and the live client on
 // the same generation.
@@ -122,7 +154,7 @@ func TestConcurrentDiscoverStaysCoherent(t *testing.T) {
 	store, manager := newStore(t, sqlDB), mcp.NewManager()
 	t.Cleanup(manager.CloseAll)
 	srv := mcptest.Start(t)
-	seedServer(t, queries, "helper", srv.URL)
+	seedServer(t, sqlDB, "helper", srv.URL)
 
 	if _, _, err := discover(t, sqlDB, manager, store, "helper"); err != nil {
 		t.Fatalf("seed discover: %v", err)
@@ -139,7 +171,7 @@ func TestConcurrentDiscoverStaysCoherent(t *testing.T) {
 				errs <- err
 				return
 			}
-			if _, _, err := mcpserver.Discover(t.Context(), sqlDB, queries, manager, store, row); err != nil {
+			if _, _, err := mcpserver.Discover(t.Context(), sqlDB, queries, manager, store, zerolog.Nop(), row); err != nil {
 				errs <- err
 			}
 		}()
@@ -180,7 +212,7 @@ func TestOversizedCatalogPausesAndKeepsPriorRows(t *testing.T) {
 	store, manager := newStore(t, sqlDB), mcp.NewManager()
 	t.Cleanup(manager.CloseAll)
 	good := mcptest.Start(t)
-	seedServer(t, queries, "helper", good.URL)
+	seedServer(t, sqlDB, "helper", good.URL)
 
 	if _, _, err := discover(t, sqlDB, manager, store, "helper"); err != nil {
 		t.Fatalf("first discover: %v", err)
@@ -216,9 +248,7 @@ func TestOversizedCatalogPausesAndKeepsPriorRows(t *testing.T) {
 	if _, err := queries.GetTool(t.Context(), "helper:echo"); err != nil {
 		t.Fatalf("paused catalog lost its previous rows: %v", err)
 	}
-	if rows, err := queries.ResolveAgentToolsDetailed(t.Context(), db.ResolveAgentToolsDetailedParams{
-		AgentID: "a1", AgentID_2: "a1",
-	}); err != nil || len(rows) != 0 {
+	if rows, err := queries.ResolveAgentToolsDetailed(t.Context(), "a1"); err != nil || len(rows) != 0 {
 		t.Fatalf("paused catalog resolved %v (err %v), want nothing", rows, err)
 	}
 
@@ -248,7 +278,7 @@ func TestDeepSchemaRejectsGeneration(t *testing.T) {
 	store, manager := newStore(t, sqlDB), mcp.NewManager()
 	t.Cleanup(manager.CloseAll)
 	srv := mcptest.Start(t, mcptest.WithSchemaDepth(64))
-	seedServer(t, queries, "bomb", srv.URL)
+	seedServer(t, sqlDB, "bomb", srv.URL)
 
 	_, _, err := discover(t, sqlDB, manager, store, "bomb")
 	var catalogErr *mcp.CatalogError
@@ -258,7 +288,7 @@ func TestDeepSchemaRejectsGeneration(t *testing.T) {
 	if state := catalogState(t, queries, "bomb"); state != mcpserver.CatalogPaused {
 		t.Fatalf("catalog state = %q, want paused", state)
 	}
-	if tools, err := queries.ListMcpServerTools(t.Context(), "bomb"); err != nil || len(tools) != 0 {
+	if tools, err := queries.ListMcpServerTools(t.Context(), sql.NullString{String: "bomb", Valid: true}); err != nil || len(tools) != 0 {
 		t.Fatalf("rejected generation published %d tools (err %v)", len(tools), err)
 	}
 }
@@ -270,8 +300,8 @@ func TestModelNameCollisionRejectsGeneration(t *testing.T) {
 	queries := db.New(sqlDB)
 	store, manager := newStore(t, sqlDB), mcp.NewManager()
 	t.Cleanup(manager.CloseAll)
-	seedServer(t, queries, "a", mcptest.Start(t, mcptest.WithToolNames("b_c")).URL)
-	seedServer(t, queries, "a_b", mcptest.Start(t, mcptest.WithToolNames("c")).URL)
+	seedServer(t, sqlDB, "a", mcptest.Start(t, mcptest.WithToolNames("b_c")).URL)
+	seedServer(t, sqlDB, "a_b", mcptest.Start(t, mcptest.WithToolNames("c")).URL)
 
 	if _, _, err := discover(t, sqlDB, manager, store, "a"); err != nil {
 		t.Fatalf("discover first server: %v", err)
@@ -297,7 +327,7 @@ func TestPublishFenceRejectsStaleGeneration(t *testing.T) {
 	queries := db.New(sqlDB)
 	store := newStore(t, sqlDB)
 	srv := mcptest.Start(t)
-	row := seedServer(t, queries, "helper", srv.URL)
+	row := seedServer(t, sqlDB, "helper", srv.URL)
 
 	cfg, err := mcpserver.Config(t.Context(), row, store)
 	if err != nil {
@@ -311,7 +341,7 @@ func TestPublishFenceRejectsStaleGeneration(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
-	if err := mcpserver.UpsertListing(t.Context(), sqlDB, "helper", cfg, listed); err == nil {
+	if err := mcpserver.UpsertListing(t.Context(), sqlDB, store, "helper", cfg, listed); err == nil {
 		t.Fatal("disabled server published a generation")
 	}
 	if _, err := queries.GetTool(t.Context(), "helper:echo"); !errors.Is(err, sql.ErrNoRows) {
@@ -326,17 +356,31 @@ func TestPublishFenceRejectsStaleGeneration(t *testing.T) {
 	// Destination changed mid-flight.
 	stale := cfg
 	stale.URL = "http://127.0.0.1:9/mcp"
-	if err := mcpserver.UpsertListing(t.Context(), sqlDB, "helper", stale, listed); err == nil {
+	if err := mcpserver.UpsertListing(t.Context(), sqlDB, store, "helper", stale, listed); err == nil {
 		t.Fatal("changed destination published a generation")
 	}
 	// Credential authority changed mid-flight.
 	stale = cfg
 	stale.Headers = map[string]string{"Authorization": "Bearer new"}
-	if err := mcpserver.UpsertListing(t.Context(), sqlDB, "helper", stale, listed); err == nil {
+	if err := mcpserver.UpsertListing(t.Context(), sqlDB, store, "helper", stale, listed); err == nil {
 		t.Fatal("changed credential authority published a generation")
 	}
-	// The matching generation publishes.
-	if err := mcpserver.UpsertListing(t.Context(), sqlDB, "helper", cfg, listed); err != nil {
+	// Credential values rotated mid-flight: same key names, new values —
+	// the fence unseals the stored set and compares it whole.
+	blob, err := json.Marshal(mcpserver.Secrets{Headers: map[string]string{"Authorization": "Bearer old"}})
+	if err != nil {
+		t.Fatalf("encode secrets: %v", err)
+	}
+	if err := store.Put(t.Context(), vault.NameRuntime, mcpserver.EntryName("helper"), mcpserver.Kind, blob, nil); err != nil {
+		t.Fatalf("seal secrets: %v", err)
+	}
+	if err := mcpserver.UpsertListing(t.Context(), sqlDB, store, "helper", stale, listed); err == nil {
+		t.Fatal("rotated credential values published a generation")
+	}
+	// The stored values still publish.
+	current := cfg
+	current.Headers = map[string]string{"Authorization": "Bearer old"}
+	if err := mcpserver.UpsertListing(t.Context(), sqlDB, store, "helper", current, listed); err != nil {
 		t.Fatalf("current generation rejected: %v", err)
 	}
 }
@@ -350,7 +394,7 @@ func TestDiscoveryReplacesDeadSession(t *testing.T) {
 	store, manager := newStore(t, sqlDB), mcp.NewManager()
 	t.Cleanup(manager.CloseAll)
 	srv := mcptest.Start(t)
-	seedServer(t, queries, "helper", srv.URL)
+	seedServer(t, sqlDB, "helper", srv.URL)
 
 	if _, _, err := discover(t, sqlDB, manager, store, "helper"); err != nil {
 		t.Fatalf("first discover: %v", err)
@@ -379,6 +423,50 @@ func TestDiscoveryReplacesDeadSession(t *testing.T) {
 	}
 }
 
+// A reconnect whose re-publish is rejected keeps the previous client
+// serving from its committed generation: the replacement commits the
+// catalog before it is installed, exactly like a verified publish.
+func TestReconnectFailureKeepsServingClient(t *testing.T) {
+	sqlDB := testdb.Open(t, true)
+	queries := db.New(sqlDB)
+	store, manager := newStore(t, sqlDB), mcp.NewManager()
+	t.Cleanup(manager.CloseAll)
+	srv := mcptest.Start(t)
+	row := seedServer(t, sqlDB, "helper", srv.URL)
+
+	if _, _, err := mcpserver.Discover(t.Context(), sqlDB, queries, manager, store, zerolog.Nop(), row); err != nil {
+		t.Fatalf("first discover: %v", err)
+	}
+	live, ok := manager.Get("helper")
+	if !ok {
+		t.Fatal("discover did not install a client")
+	}
+
+	// The cached session dies, and the row moves before the replacement
+	// publishes: the reconnect arm dials, the fence rejects, and the
+	// previous client must survive the rejected replacement.
+	srv.ExpireSession()
+	if err := queries.UpdateMcpServer(t.Context(), db.UpdateMcpServerParams{
+		Name:       row.Name,
+		Url:        sql.NullString{String: srv.URL + "/moved", Valid: true},
+		HeaderKeys: row.HeaderKeys, TimeoutMs: row.TimeoutMs,
+		AllowPrivateNetwork: row.AllowPrivateNetwork, AllowPlaintext: row.AllowPlaintext,
+		ID: "helper",
+	}); err != nil {
+		t.Fatalf("move row: %v", err)
+	}
+	if _, _, err := mcpserver.Discover(t.Context(), sqlDB, queries, manager, store, zerolog.Nop(), row); err == nil {
+		t.Fatal("reconnect past a moved row succeeded")
+	}
+	after, ok := manager.Get("helper")
+	if !ok || after != live {
+		t.Fatal("rejected re-publish replaced the live client")
+	}
+	if _, ok := after.InvokableByRemote("echo"); !ok {
+		t.Fatal("previous generation stopped serving")
+	}
+}
+
 // A transient network failure keeps the last validated generation active:
 // only an observed security violation pauses the catalog.
 func TestTransientFailureKeepsCatalogActive(t *testing.T) {
@@ -387,7 +475,7 @@ func TestTransientFailureKeepsCatalogActive(t *testing.T) {
 	store, manager := newStore(t, sqlDB), mcp.NewManager()
 	t.Cleanup(manager.CloseAll)
 	good := mcptest.Start(t)
-	seedServer(t, queries, "helper", good.URL)
+	seedServer(t, sqlDB, "helper", good.URL)
 
 	if _, _, err := discover(t, sqlDB, manager, store, "helper"); err != nil {
 		t.Fatalf("first discover: %v", err)
@@ -424,7 +512,7 @@ func TestDiagnosticsSanitizedAndCoded(t *testing.T) {
 	store, manager := newStore(t, sqlDB), mcp.NewManager()
 	t.Cleanup(manager.CloseAll)
 	srv := mcptest.Start(t, mcptest.WithStatus(500))
-	seedServer(t, queries, "helper", srv.URL)
+	seedServer(t, sqlDB, "helper", srv.URL)
 
 	if _, _, err := discover(t, sqlDB, manager, store, "helper"); err == nil {
 		t.Fatal("500 endpoint discovered")
@@ -436,7 +524,7 @@ func TestDiagnosticsSanitizedAndCoded(t *testing.T) {
 	if !strings.HasPrefix(row.LastError.String, mcp.CodeTransient+":") {
 		t.Fatalf("last_error = %q, want the transient code", row.LastError.String)
 	}
-	for _, leaked := range []string{"sk-abcdefghijklmnop1234"} {
+	for _, leaked := range []string{mcptest.PatternCanary} {
 		if strings.Contains(row.LastError.String, leaked) {
 			t.Fatalf("diagnostics carry a raw credential: %q", row.LastError.String)
 		}
@@ -455,9 +543,9 @@ func TestFailedUpsertKeepsOldGeneration(t *testing.T) {
 	store, manager := newStore(t, sqlDB), mcp.NewManager()
 	t.Cleanup(manager.CloseAll)
 	srv := mcptest.Start(t)
-	row := seedServer(t, queries, "helper", srv.URL)
+	row := seedServer(t, sqlDB, "helper", srv.URL)
 
-	if _, _, err := mcpserver.Discover(t.Context(), sqlDB, queries, manager, store, row); err != nil {
+	if _, _, err := mcpserver.Discover(t.Context(), sqlDB, queries, manager, store, zerolog.Nop(), row); err != nil {
 		t.Fatalf("first discover: %v", err)
 	}
 	client, ok := manager.Get("helper")
@@ -488,7 +576,7 @@ func TestFailedUpsertKeepsOldGeneration(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("move row: %v", err)
 	}
-	if _, _, err := mcpserver.Publish(t.Context(), sqlDB, queries, row, client); err == nil {
+	if _, _, err := mcpserver.Publish(t.Context(), sqlDB, store, row, client); err == nil {
 		t.Fatal("publish past a moved row succeeded")
 	}
 	if _, _, ok := client.StagedListing(); ok {
@@ -511,10 +599,10 @@ func TestFailedUpsertKeepsOldGeneration(t *testing.T) {
 // A staged listing is published instead of listing the server twice.
 func TestPublishReusesStagedListing(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
-	queries := db.New(sqlDB)
+
 	store := newStore(t, sqlDB)
 	srv := mcptest.Start(t)
-	row := seedServer(t, queries, "helper", srv.URL)
+	row := seedServer(t, sqlDB, "helper", srv.URL)
 
 	cfg, err := mcpserver.Config(t.Context(), row, store)
 	if err != nil {
@@ -528,7 +616,7 @@ func TestPublishReusesStagedListing(t *testing.T) {
 	if _, _, err := client.SyncStaged(t.Context()); err != nil {
 		t.Fatalf("staged sync: %v", err)
 	}
-	if _, _, err := mcpserver.Publish(t.Context(), sqlDB, queries, row, client); err != nil {
+	if _, _, err := mcpserver.Publish(t.Context(), sqlDB, store, row, client); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
 	if got := srv.Lists(); got != 1 {
@@ -536,5 +624,62 @@ func TestPublishReusesStagedListing(t *testing.T) {
 	}
 	if _, ok := client.InvokableByRemote("echo"); !ok {
 		t.Fatal("publish did not commit the staged generation")
+	}
+}
+
+// A verified publish commits the catalog before installing the
+// candidate: a rejected generation leaves the manager untouched — the
+// previous client keeps serving — and the candidate stays uninstalled.
+func TestPublishVerifiedRejectKeepsServingClient(t *testing.T) {
+	sqlDB := testdb.Open(t, true)
+	queries := db.New(sqlDB)
+	store, manager := newStore(t, sqlDB), mcp.NewManager()
+	t.Cleanup(manager.CloseAll)
+	srv := mcptest.Start(t)
+	row := seedServer(t, sqlDB, "helper", srv.URL)
+
+	if _, _, err := mcpserver.Discover(t.Context(), sqlDB, queries, manager, store, zerolog.Nop(), row); err != nil {
+		t.Fatalf("first discover: %v", err)
+	}
+	live, ok := manager.Get("helper")
+	if !ok {
+		t.Fatal("discover did not install a client")
+	}
+
+	cfg, err := mcpserver.Config(t.Context(), row, store)
+	if err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	candidate, err := mcp.BoundedDial(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("dial candidate: %v", err)
+	}
+	t.Cleanup(func() { _ = candidate.Close() })
+	if _, _, err := candidate.SyncStaged(t.Context()); err != nil {
+		t.Fatalf("stage candidate: %v", err)
+	}
+
+	// The row moves before the publish: the fence rejects the generation.
+	if err := queries.UpdateMcpServer(t.Context(), db.UpdateMcpServerParams{
+		Name:       row.Name,
+		Url:        sql.NullString{String: srv.URL + "/moved", Valid: true},
+		HeaderKeys: row.HeaderKeys, TimeoutMs: row.TimeoutMs,
+		AllowPrivateNetwork: row.AllowPrivateNetwork, AllowPlaintext: row.AllowPlaintext,
+		ID: "helper",
+	}); err != nil {
+		t.Fatalf("move row: %v", err)
+	}
+	if _, _, err := mcpserver.PublishVerified(t.Context(), sqlDB, store, manager, row, candidate); err == nil {
+		t.Fatal("verified publish past a moved row succeeded")
+	}
+	if _, _, ok := candidate.StagedListing(); ok {
+		t.Fatal("rejected candidate stayed staged")
+	}
+	after, ok := manager.Get("helper")
+	if !ok || after != live {
+		t.Fatal("rejected publish replaced the live client")
+	}
+	if _, ok := after.InvokableByRemote("echo"); !ok {
+		t.Fatal("previous generation stopped serving")
 	}
 }

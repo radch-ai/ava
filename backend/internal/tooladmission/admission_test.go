@@ -5,6 +5,7 @@ package tooladmission_test
 // bounds.
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -70,17 +71,9 @@ func newHarness(t *testing.T, limits tooladmission.Limits) *harness {
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
 		ID: "a1", Name: "Agent", Icon: "globe",
 	})
-	if err := queries.CreateMcpServer(ctx, db.CreateMcpServerParams{
-		ID: "gh", Name: "GitHub",
-		Url:        sql.NullString{String: "https://example.test/mcp", Valid: true},
-		HeaderKeys: "[]",
-	}); err != nil {
-		t.Fatalf("seed server: %v", err)
-	}
-	if err := queries.UpsertMcpTool(ctx, db.UpsertMcpToolParams{
-		ID: "gh:search", Name: "search", Description: "search",
-		ServerID: sql.NullString{String: "gh", Valid: true}, DefinitionJson: `{}`,
-	}); err != nil {
+	testdb.SeedMcpServer(t, sqlDB, "gh", "https://example.test/mcp")
+	if _, err := sqlDB.Exec(
+		`INSERT INTO tools (id, name, description, kind, server_id, definition_json) VALUES ('gh:search', 'search', 'search', 'mcp', 'gh', '{}')`); err != nil {
 		t.Fatalf("seed tool: %v", err)
 	}
 	if _, err := queries.ToggleToolEnabled(ctx, db.ToggleToolEnabledParams{
@@ -121,7 +114,7 @@ func (h *harness) wrap(fake *fakeTool) tool.InvokableTool {
 func (h *harness) seedBuiltin(toolID string) tooladmission.Options {
 	h.t.Helper()
 	if err := h.queries.UpsertTool(h.t.Context(), db.UpsertToolParams{
-		ID: toolID, Name: "fetch", Description: "fetch a document", Builtin: 1,
+		ID: toolID, Name: "fetch", Description: "fetch a document",
 	}); err != nil {
 		h.t.Fatalf("seed builtin %s: %v", toolID, err)
 	}
@@ -209,6 +202,34 @@ func TestPolicyDeniedNeverDispatches(t *testing.T) {
 	}
 	if events := h.auditEvents(); len(events) != 1 || events[0].Event != tooladmission.EventDenial {
 		t.Fatalf("audit = %+v, want one denial record", events)
+	}
+}
+
+// The policy view joins agents: an unknown agent resolves to no rows.
+// That is a clean denial — not an "unreadable policy" error log.
+func TestUnknownAgentDeniedWithoutErrorLog(t *testing.T) {
+	h := newHarness(t, tooladmission.DefaultLimits())
+	fake := &fakeTool{run: func(context.Context, string) (string, error) { return "ran", nil }}
+
+	var logBuf bytes.Buffer
+	admitter := tooladmission.New(h.queries, tooladmission.DefaultLimits(),
+		h.registry, zerolog.New(&logBuf))
+	opts := h.opts
+	opts.AgentID = "ghost"
+
+	result, err := admitter.Wrap(fake, fake.toolInfo(), opts).
+		InvokableRun(t.Context(), `{"q":"x"}`)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if code := denialCode(t, result); code != tooladmission.CodePolicyDenied {
+		t.Fatalf("denial code = %q, want policy_denied", code)
+	}
+	if fake.calls.Load() != 0 {
+		t.Fatalf("denied call dispatched %d times", fake.calls.Load())
+	}
+	if strings.Contains(logBuf.String(), "authorization unreadable") {
+		t.Fatalf("unknown agent logged as unreadable policy: %s", logBuf.String())
 	}
 }
 
@@ -410,6 +431,59 @@ func TestOutboundCredentialUseDenied(t *testing.T) {
 	}
 	if fake.calls.Load() != 0 {
 		t.Fatal("credential-bearing call dispatched")
+	}
+}
+
+// A credential that is a bare JSON number is still that credential:
+// numeric leaves compare against the known spellings, and alternate
+// literals of the same value (exponent, decimal-point padding) match
+// the canonical form.
+func TestOutboundNumericCredentialDenied(t *testing.T) {
+	h := newHarness(t, tooladmission.DefaultLimits())
+	h.opts.KnownSecrets = []string{"8675309001234567"}
+	fake := &fakeTool{run: func(context.Context, string) (string, error) { return "ran", nil }}
+
+	for _, args := range []string{
+		`{"code":8675309001234567}`,
+		`{"code":8675309001234567.0}`,
+		`{"code":8.675309001234567e15}`,
+	} {
+		result, err := h.wrap(fake).InvokableRun(t.Context(), args)
+		if err != nil {
+			t.Fatalf("denial errored for %q: %v", args, err)
+		}
+		if code := denialCode(t, result); code != tooladmission.CodeCredentialUseDenied {
+			t.Fatalf("code = %q for %q, want credential_use_denied", code, args)
+		}
+	}
+	if fake.calls.Load() != 0 {
+		t.Fatal("numeric credential call dispatched")
+	}
+}
+
+// A payload that decodes as one JSON value but carries trailing data is
+// not a JSON document: the whole raw text is scanned, so a secret after
+// the first value is still denied.
+func TestOutboundTrailingCredentialDenied(t *testing.T) {
+	h := newHarness(t, tooladmission.DefaultLimits())
+	h.opts.KnownSecrets = []string{"canary-secret-value"}
+	fake := &fakeTool{run: func(context.Context, string) (string, error) { return "ran", nil }}
+
+	for _, args := range []string{
+		`{"q":"x"} canary-secret-value`,
+		`{"q":"x"}{"secret":"canary-secret-value"}`,
+		"\xef\xbb\xbf" + `{"q":"canary-secret-value"}`,
+	} {
+		result, err := h.wrap(fake).InvokableRun(t.Context(), args)
+		if err != nil {
+			t.Fatalf("denial errored for %q: %v", args, err)
+		}
+		if code := denialCode(t, result); code != tooladmission.CodeCredentialUseDenied {
+			t.Fatalf("code = %q for %q, want credential_use_denied", code, args)
+		}
+	}
+	if fake.calls.Load() != 0 {
+		t.Fatal("trailing-credential call dispatched")
 	}
 }
 
@@ -825,17 +899,9 @@ func TestTwoServersConcurrentSlots(t *testing.T) {
 	h := newHarness(t, limits)
 
 	// A second server with its own globally enabled tool, gated for a1.
-	if err := h.queries.CreateMcpServer(t.Context(), db.CreateMcpServerParams{
-		ID: "gl", Name: "GitLab",
-		Url:        sql.NullString{String: "https://example.test/gl", Valid: true},
-		HeaderKeys: "[]",
-	}); err != nil {
-		t.Fatalf("seed second server: %v", err)
-	}
-	if err := h.queries.UpsertMcpTool(t.Context(), db.UpsertMcpToolParams{
-		ID: "gl:search", Name: "search", Description: "search",
-		ServerID: sql.NullString{String: "gl", Valid: true}, DefinitionJson: `{}`,
-	}); err != nil {
+	testdb.SeedMcpServer(t, h.sqlDB, "gl", "https://example.test/gl")
+	if _, err := h.sqlDB.Exec(
+		`INSERT INTO tools (id, name, description, kind, server_id, definition_json) VALUES ('gl:search', 'search', 'search', 'mcp', 'gl', '{}')`); err != nil {
 		t.Fatalf("seed second tool: %v", err)
 	}
 	if _, err := h.queries.ToggleToolEnabled(t.Context(), db.ToggleToolEnabledParams{
@@ -1096,19 +1162,17 @@ func TestErrorPathBounded(t *testing.T) {
 	}
 
 	// A JSON-valid oversized error body takes the structured overflow
-	// arm: the denial shape is both the result and the error text.
+	// arm: like the success path, the denial is a normal tool result —
+	// the turn survives, no message-level failure.
 	structured := &fakeTool{run: func(context.Context, string) (string, error) {
 		return "", errors.New(`"` + strings.Repeat("x", tooladmission.MaxDeliveredBytes) + `"`)
 	}}
 	result, err = h.wrap(structured).InvokableRun(t.Context(), `{}`)
-	if err == nil {
-		t.Fatalf("structured error path returned %q with no error", result)
+	if err != nil {
+		t.Fatalf("structured error path returned error %v", err)
 	}
-	if code := denialCode(t, err.Error()); code != tooladmission.CodeOutputLimitExceeded {
-		t.Fatalf("error text = %q, want the output_limit_exceeded denial", err.Error())
-	}
-	if result != err.Error() {
-		t.Fatalf("result %q and error %q disagree", result, err.Error())
+	if code := denialCode(t, result); code != tooladmission.CodeOutputLimitExceeded {
+		t.Fatalf("result = %q, want the output_limit_exceeded denial", result)
 	}
 
 	var sawRedaction, sawLimit bool

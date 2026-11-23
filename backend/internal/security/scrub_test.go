@@ -76,14 +76,24 @@ func TestScrubPatterns(t *testing.T) {
 		kind string
 	}{
 		{"openai", "key sk-abcdefghijklmnop1234 here", "api_key"},
+		{"openai project", "sk-proj-abcdefghijklmnop1234567890AB", "api_key"},
+		{"anthropic", "sk-ant-api03-abcdefghijklmnop1234567890", "api_key"},
+		{"stripe live", "sk_" + "live_" + strings.Repeat("0123456789abcdef", 2), "api_key"},
+		{"stripe live mixed-case", "sk_" + "live_AbCdEf0123GhIjKlMnOpQr", "api_key"},
+		{"stripe restricted", "rk_" + "live_AbCdEf0123GhIjKlMnOpQr", "api_key"},
+		{"stripe webhook", "whsec_" + "AbCdEf0123GhIjKlMnOpQrStUv", "webhook_secret"},
 		{"ghp", "ghp_0123456789abcdefghijKLMN", "github_token"},
 		{"gho", "gho_0123456789abcdefghijKLMN", "github_token"},
+		{"ghu", "ghu_" + strings.Repeat("0123456789", 4), "github_token"},
 		{"pat", "github_pat_" + "11ABCDEFG0123456789_abcdefghijklmnop", "github_token"},
+		{"google", "AIza" + strings.Repeat("SyA-BCdefGHij", 3), "google_key"},
+		{"gitlab", "glpat-" + "0123456789abcdefghij", "gitlab_token"},
+		{"npm", "npm_" + strings.Repeat("0123456789", 4), "npm_token"},
 		{"aws", "AKIA" + "IOSFODNN7EXAMPLE", "aws_key"},
 		{"slack", "xoxb-" + "123456789012-abcdefghijklmnop", "slack_token"},
 		{"dburl", "postgres://user:hunter2@db.internal:5432/app", "db_url"},
 		{"jwt", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U", "bearer"},
-		{"pem", "-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----", "private_key"},
+		{"pem", "-----BEGIN RSA PRIVATE KEY-----", "private_key"},
 	}
 	for _, tc := range cases {
 		out, findings := s.ScrubString(tc.in)

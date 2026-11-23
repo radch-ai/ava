@@ -16,8 +16,6 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
-	"github.com/cloudwego/eino/components/tool"
-
 	"github.com/radch-ai/ava/backend"
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/gateway/internal/agent"
@@ -143,8 +141,8 @@ func TestCommandBypassesModelResolution(t *testing.T) {
 		ResolveModel: func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
 			return backend.ResolvedModel{}, errSink
 		},
-		Tools: func(ctx context.Context, agentID string) ([]tool.InvokableTool, error) {
-			return nil, errSink
+		Tools: func(ctx context.Context, agentID string) (backend.TurnTools, error) {
+			return backend.TurnTools{}, errSink
 		},
 		GetAgentThread: func(ctx context.Context, agentID string) ([]backend.AgentThreadMessage, error) {
 			return nil, errSink
@@ -355,7 +353,8 @@ func TestCommandAfterCommitStopStillReports(t *testing.T) {
 }
 
 // Without a journal there is no durable half: admission is rejected and no
-// item is invented.
+// item is invented. (Constructed directly — the absent journal is the
+// condition under test, not incidental wiring.)
 func TestCommandWithoutJournalRejectsAdmission(t *testing.T) {
 	mgr := agent.NewUserAgentManager(zerolog.Nop(), &agent.UserAgentManagerOptions{
 		GetAgentThread: emptyThread,

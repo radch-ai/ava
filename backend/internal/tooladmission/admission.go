@@ -12,13 +12,17 @@ package tooladmission
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"io"
 	"strings"
 	"sync"
-	"sync/atomic"
+
 	"time"
+	"unicode/utf8"
+
+	"golang.org/x/sync/semaphore"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -89,12 +93,14 @@ type Admitter struct {
 	registry *CancelRegistry
 	logger   zerolog.Logger
 
-	mu          sync.Mutex
-	pending     map[int64]pendingOutcome
-	serverSlots map[string]chan struct{}
-	globalSlot  chan struct{}
-
-	inserts atomic.Uint64
+	mu      sync.Mutex
+	pending map[int64]pendingOutcome
+	// serverSlots is one weighted semaphore per server id; entries
+	// persist for the process lifetime, bounded by distinct server
+	// slugs (same trade as mcpserver's pubLocks). globalSlot is the
+	// process-wide budget every admitted call holds one unit of.
+	serverSlots map[string]*semaphore.Weighted
+	globalSlot  *semaphore.Weighted
 }
 
 // New builds the admitter over the query layer.
@@ -108,8 +114,8 @@ func New(queries *db.Queries, limits Limits, registry *CancelRegistry, logger ze
 		registry:    registry,
 		logger:      logger,
 		pending:     make(map[int64]pendingOutcome),
-		serverSlots: make(map[string]chan struct{}),
-		globalSlot:  make(chan struct{}, limits.ConcurrencyGlobal),
+		serverSlots: make(map[string]*semaphore.Weighted),
+		globalSlot:  semaphore.NewWeighted(int64(limits.ConcurrencyGlobal)),
 	}
 	admitter.closeOrphans()
 	return admitter
@@ -140,7 +146,10 @@ func (a *Admitter) Registry() *CancelRegistry { return a.registry }
 
 // Wrap rides one invokable on the admission chain.
 func (a *Admitter) Wrap(inner tool.InvokableTool, info *schema.ToolInfo, opts Options) tool.InvokableTool {
-	return &admittingTool{admitter: a, inner: inner, info: info, opts: opts}
+	return &admittingTool{
+		admitter: a, inner: inner, info: info, opts: opts,
+		scrub: security.NewScrubber(opts.KnownSecrets),
+	}
 }
 
 // admittingTool is one tool call under the admission chain.
@@ -149,6 +158,10 @@ type admittingTool struct {
 	inner    tool.InvokableTool
 	info     *schema.ToolInfo
 	opts     Options
+	// scrub is built once per wrapped tool — this configuration's
+	// known values never change — and reused by every invocation and
+	// every audit row through it.
+	scrub *security.Scrubber
 }
 
 // Info passes the turn's snapshot through unchanged.
@@ -161,10 +174,7 @@ func (t *admittingTool) Info(context.Context) (*schema.ToolInfo, error) { return
 // at message level, as before.
 func (t *admittingTool) InvokableRun(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
 	a := t.admitter
-	timeout := t.opts.Timeout
-	if timeout <= 0 || timeout > MaxCallTimeout {
-		timeout = DefaultCallTimeout
-	}
+	timeout := ResolveTimeout(t.opts.Timeout)
 	// The budget starts before authorization and credential
 	// lookup, and no stage may restart it.
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -180,36 +190,45 @@ func (t *admittingTool) InvokableRun(ctx context.Context, argumentsInJSON string
 	// Authorization before capacity: a denied call never queues behind
 	// admitted work, and denials stay fast even with a full budget.
 	if reason := a.authorize(ctx, t.opts); reason != "" {
-		a.record(ctx, t.opts, callID, "denial", reason, nil)
+		a.record(ctx, t.opts, callID, "denial", reason, t.scrub)
 		return denialOutcome(reason), nil
 	}
 
 	// Caller-supplied data is checked before any authorized
 	// credential injection. Arguments are never rewritten.
-	scrubber := security.NewScrubber(t.opts.KnownSecrets)
-	if len(argumentFindings(argumentsInJSON, scrubber)) > 0 {
-		a.record(ctx, t.opts, callID, "denial", CodeCredentialUseDenied, nil)
+	if len(argumentFindings(argumentsInJSON, t.scrub)) > 0 {
+		a.record(ctx, t.opts, callID, "denial", CodeCredentialUseDenied, t.scrub)
 		return denialOutcome(CodeCredentialUseDenied), nil
 	}
 
 	// Capacity is awaited, not rejected: excess calls wait for a slot and
 	// are admitted as one frees up, bounded by this call's own deadline.
-	lease, reason, err := a.acquire(ctx, t.opts.ServerID)
+	reason, err := a.acquire(ctx, t.opts.ServerID)
 	if err != nil {
 		// A local cancel is not a policy decision: nobody denied it.
 		return "", errors.New("canceled locally while waiting for capacity; remote never called")
 	}
 	if reason != "" {
-		a.recordDetached(t.opts, callID, "denial", reason)
+		a.recordDetached(t.opts, callID, "denial", reason, t.scrub)
 		return denialOutcome(reason), nil
 	}
-	defer a.release(lease)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		// The wait won its race with expiry: the slots are handed back
+		// and the stop is classified exactly as a lost wait would be.
+		a.release(t.opts.ServerID)
+		if errors.Is(ctxErr, context.DeadlineExceeded) {
+			a.recordDetached(t.opts, callID, "denial", CodeDeadlineExceeded, t.scrub)
+			return denialOutcome(CodeDeadlineExceeded), nil
+		}
+		return "", errors.New("canceled locally while waiting for capacity; remote never called")
+	}
+	defer a.release(t.opts.ServerID)
 
 	// The wait may have straddled a permission change, so authority is
 	// read again once capacity is held: the check that counts is the one
 	// immediately before dispatch.
 	if reason := a.authorize(ctx, t.opts); reason != "" {
-		a.record(ctx, t.opts, callID, "denial", reason, nil)
+		a.record(ctx, t.opts, callID, "denial", reason, t.scrub)
 		return denialOutcome(reason), nil
 	}
 
@@ -221,7 +240,7 @@ func (t *admittingTool) InvokableRun(ctx context.Context, argumentsInJSON string
 	}
 
 	// Durable admission before any external dispatch.
-	auditID, err := a.insertAdmission(ctx, t.opts, callID)
+	auditID, err := a.insertAdmission(ctx, t.opts, callID, t.scrub)
 	if err != nil {
 		a.logger.Error().Err(err).Str("tool", t.opts.CatalogID).Msg("tool admission audit unavailable")
 		return denialOutcome(CodeAuditUnavailable), nil
@@ -233,48 +252,47 @@ func (t *admittingTool) InvokableRun(ctx context.Context, argumentsInJSON string
 		// the remote outcome is unknown, and nothing is retried.
 		switch {
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):
-			a.closeAudit(auditID, "error", CodeDeadlineExceeded, 0)
+			a.closeAudit(auditID, "error", CodeDeadlineExceeded)
 			return denialOutcome(CodeDeadlineExceeded), nil
 		case errors.Is(ctx.Err(), context.Canceled):
-			a.closeAudit(auditID, "error", "canceled", 0)
+			a.closeAudit(auditID, "error", "canceled")
 			return "", errors.New("canceled locally; remote outcome unknown")
 		}
 		// The error path is bounded too — a hostile remote cannot
 		// push an unbounded body through the failure channel — and its
 		// text is scrubbed structure-preservingly, like a result.
-		scrubbed, errFindings := scrubResult(scrubber, dispatchErr.Error())
+		scrubbed, errFindings := scrubResult(t.scrub, dispatchErr.Error())
 		if len(errFindings) > 0 {
-			a.record(ctx, t.opts, callID, "redaction", "redacted", nil)
+			a.recordDetached(t.opts, callID, "redaction", "redacted", t.scrub)
 		}
 		bounded, overflowed := boundOutcome(scrubbed)
 		if overflowed {
-			a.closeAudit(auditID, "error", CodeOutputLimitExceeded, 0)
-			out := denialOutcome(CodeOutputLimitExceeded)
-			return out, errors.New(out)
+			a.closeAudit(auditID, "error", CodeOutputLimitExceeded)
+			return denialOutcome(CodeOutputLimitExceeded), nil
 		}
 		if len(bounded) != len(scrubbed) {
-			a.closeAudit(auditID, "error", CodeOutputLimitExceeded, 0)
+			a.closeAudit(auditID, "error", CodeOutputLimitExceeded)
 			return "", errors.New(bounded)
 		}
-		a.closeAudit(auditID, "error", "failed", 0)
+		a.closeAudit(auditID, "error", "failed")
 		return "", errors.New(scrubbed)
 	}
 
 	// Sanitize first, then bound, so clipping never splits a
 	// value before whole-secret matching.
-	sanitized, findings := scrubResult(scrubber, result)
+	sanitized, findings := scrubResult(t.scrub, result)
 	bounded, overflowed := boundOutcome(sanitized)
 	if overflowed {
-		a.closeAudit(auditID, "error", CodeOutputLimitExceeded, 0)
+		a.closeAudit(auditID, "error", CodeOutputLimitExceeded)
 		if len(findings) > 0 {
-			a.record(ctx, t.opts, callID, "redaction", "redacted", nil)
+			a.recordDetached(t.opts, callID, "redaction", "redacted", t.scrub)
 		}
 		return denialOutcome(CodeOutputLimitExceeded), nil
 	}
 	if len(findings) > 0 {
-		a.record(ctx, t.opts, callID, "redaction", "redacted", nil)
+		a.recordDetached(t.opts, callID, "redaction", "redacted", t.scrub)
 	}
-	a.closeAudit(auditID, "complete", "ok", int64(len(bounded)))
+	a.closeAuditComplete(auditID, int64(len(bounded)))
 	return bounded, nil
 }
 
@@ -283,14 +301,20 @@ func (t *admittingTool) InvokableRun(ctx context.Context, argumentsInJSON string
 // decoded form — `"\u0063anary"` is the value it decodes to — and object
 // keys are inspected too. The payload itself is never rewritten.
 func argumentFindings(args string, s *security.Scrubber) []security.Finding {
-	if !json.Valid([]byte(args)) {
-		_, findings := s.ScrubString(args)
-		return findings
-	}
+	// One parse: a payload that is not exactly one decodable JSON value
+	// takes the flat-text path. Decode alone is not enough — it stops
+	// at the first value, so trailing data (`{"q":"x"} sk-…`) must fall
+	// back to the whole-payload scan or a secret after the first value
+	// escapes.
 	dec := json.NewDecoder(strings.NewReader(args))
 	dec.UseNumber()
 	var tree any
 	if err := dec.Decode(&tree); err != nil {
+		_, findings := s.ScrubString(args)
+		return findings
+	}
+	var trailing any
+	if dec.Decode(&trailing) != io.EOF {
 		_, findings := s.ScrubString(args)
 		return findings
 	}
@@ -331,18 +355,23 @@ func callIDFrom(ctx context.Context) string {
 // parent gate and its explicit opt-out. An unreadable policy fails closed.
 func (a *Admitter) authorize(ctx context.Context, opts Options) string {
 	row, err := a.queries.AuthorizeToolCall(ctx, db.AuthorizeToolCallParams{
-		AgentID: opts.AgentID, AgentID_2: opts.AgentID, ID: opts.CatalogID,
+		AgentID: opts.AgentID, ID: opts.CatalogID,
 	})
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// The policy view joins agents: an unknown agent or tool id
+			// resolves to no rows — a clean denial, not an unreadable policy.
+			return CodePolicyDenied
+		}
 		a.logger.Error().Err(err).Str("tool", opts.CatalogID).Msg("tool authorization unreadable")
 		return CodePolicyDenied
 	}
 	switch {
 	case row.ToolEnabled != 1:
 		return CodePolicyDenied
-	case row.ServerID != nil && row.ServerEnabled != 1:
+	case row.ServerID.Valid && row.ServerEnabled != 1:
 		return CodePolicyDenied
-	case row.ServerID != nil && row.CatalogState != "active":
+	case row.ServerID.Valid && row.CatalogState != "active":
 		return CodePolicyDenied
 	case row.GateOn != 1:
 		return CodePolicyDenied
@@ -352,68 +381,55 @@ func (a *Admitter) authorize(ctx context.Context, opts Options) string {
 	return ""
 }
 
-// lease is one call's held capacity: the semaphore slots it occupies.
-type lease struct {
-	serverSlot chan struct{}
-	global     bool
-}
-
 // acquire waits for this call's capacity: a per-server slot first (MCP
-// calls only — built-ins carry no server), then a global one. Waiting is
-// bounded by the invocation context, so a full budget delays a call until
-// its own deadline instead of failing it at once.
-func (a *Admitter) acquire(ctx context.Context, serverID string) (lease, string, error) {
-	l := lease{}
+// calls only — built-ins carry no server), then a global one. Waiting
+// is bounded by the invocation context, so a full budget delays a call
+// until its own deadline instead of failing it at once. On success both
+// slots are held; release gives both back.
+func (a *Admitter) acquire(ctx context.Context, serverID string) (string, error) {
 	if serverID != "" {
-		slot := a.serverSlot(serverID)
-		select {
-		case slot <- struct{}{}:
-			l.serverSlot = slot
-		case <-ctx.Done():
-			return a.waitStopped(ctx, l)
+		if err := a.serverSlot(serverID).Acquire(ctx, 1); err != nil {
+			return a.waitStopped(ctx)
 		}
 	}
-	select {
-	case a.globalSlot <- struct{}{}:
-		l.global = true
-	case <-ctx.Done():
-		return a.waitStopped(ctx, l)
+	if err := a.globalSlot.Acquire(ctx, 1); err != nil {
+		if serverID != "" {
+			a.serverSlot(serverID).Release(1)
+		}
+		return a.waitStopped(ctx)
 	}
-	return l, "", nil
+	return "", nil
 }
 
-// waitStopped classifies a stopped capacity wait and gives back the
-// server slot it may already hold: an expired deadline is the deadline
-// denial; a local cancel is an error, not a policy decision.
-func (a *Admitter) waitStopped(ctx context.Context, l lease) (lease, string, error) {
-	if l.serverSlot != nil {
-		<-l.serverSlot
-	}
+// waitStopped classifies a stopped capacity wait: an expired deadline
+// is the deadline denial; a local cancel is an error, not a policy
+// decision. A server slot held when the global wait stopped is
+// released by the caller.
+func (a *Admitter) waitStopped(ctx context.Context) (string, error) {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return lease{}, CodeDeadlineExceeded, nil
+		return CodeDeadlineExceeded, nil
 	}
-	return lease{}, "", ctx.Err()
+	return "", ctx.Err()
 }
 
-// release frees the capacity a call held. The receives are unconditional:
-// the lease holds exactly the tokens it took, so a blocking receive
-// surfaces an accounting bug instead of silently leaking capacity.
-func (a *Admitter) release(l lease) {
-	if l.global {
-		<-a.globalSlot
-	}
-	if l.serverSlot != nil {
-		<-l.serverSlot
+// release frees the capacity a call holds — exactly the two units
+// acquire took.
+func (a *Admitter) release(serverID string) {
+	a.globalSlot.Release(1)
+	if serverID != "" {
+		a.serverSlot(serverID).Release(1)
 	}
 }
 
 // serverSlot returns (creating on first use) one server's semaphore.
-func (a *Admitter) serverSlot(serverID string) chan struct{} {
+// Entries persist for the process lifetime — bounded by distinct server
+// slugs, the same trade as mcpserver's pubLocks.
+func (a *Admitter) serverSlot(serverID string) *semaphore.Weighted {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	slot, ok := a.serverSlots[serverID]
 	if !ok {
-		slot = make(chan struct{}, a.limits.ConcurrencyPerServer)
+		slot = semaphore.NewWeighted(int64(a.limits.ConcurrencyPerServer))
 		a.serverSlots[serverID] = slot
 	}
 	return slot
@@ -430,12 +446,8 @@ type denial struct {
 func denialOutcome(code string) string {
 	var out denial
 	out.Error.Code = code
-	encoded, err := json.Marshal(out)
-	if err != nil {
-		// A marshal failure of a static struct cannot carry payload; the
-		// code alone is the honest answer.
-		return fmt.Sprintf(`{"error":{"code":%q}}`, code)
-	}
+	// A static struct with a string field cannot fail to marshal.
+	encoded, _ := json.Marshal(out)
 	return string(encoded)
 }
 
@@ -450,14 +462,11 @@ func boundOutcome(s string) (bounded string, overflowed bool) {
 		return "", true
 	}
 	keep := MaxDeliveredBytes - len(truncationMarker)
-	for keep > 0 && !isRuneStart(s[keep]) {
+	for keep > 0 && !utf8.RuneStart(s[keep]) {
 		keep--
 	}
 	return s[:keep] + truncationMarker, false
 }
-
-// isRuneStart reports whether b begins a UTF-8 rune.
-func isRuneStart(b byte) bool { return b&0xC0 != 0x80 }
 
 // ResolveTimeout maps a configured deadline to the effective one: the
 // default when unset, clamped to the administrator ceiling.

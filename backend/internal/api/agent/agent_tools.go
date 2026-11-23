@@ -4,7 +4,6 @@
 package agent
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -16,11 +15,6 @@ import (
 	"github.com/radch-ai/ava/backend/internal/db"
 	"github.com/radch-ai/ava/backend/internal/tooladmission"
 )
-
-// auditGrant writes one approval-change record.
-func auditGrant(ctx context.Context, queries *db.Queries, decision tooladmission.Decision) error {
-	return tooladmission.NewAuditor(queries).Record(ctx, decision)
-}
 
 // GetAgentTools answers the catalog as this agent sees it: every
 // installed tool with its global switch and this agent's opt-out.
@@ -110,72 +104,50 @@ func ToggleAgentTool(throttle *api.Throttle, sqlDB *sql.DB, queries *db.Queries,
 				"Toggling too fast — try again in a moment")
 		}
 
-		var auditFail error
+		outcome, reason := "revoke", "locally_disabled"
 		if *req.Enabled {
-			// Enabling means dropping the opt-out: inheritance resumes.
-			// The change and its record commit together, so no activation
-			// goes unrecorded.
-			tx, err := sqlDB.BeginTx(r.Context(), nil)
-			if err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("begin opt-in %q for %q: %w", toolID, id, err)
-			}
-			defer func() { _ = tx.Rollback() }()
-			txq := db.New(tx)
-			if err := txq.RemoveAgentDisabledTool(r.Context(), db.RemoveAgentDisabledToolParams{
-				AgentID: id, ToolID: toolID,
-			}); err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("remove opt-out %q for %q: %w", toolID, id, err)
-			}
-			if err := auditGrant(r.Context(), txq, tooladmission.Decision{
-				Event:   tooladmission.EventApprovalChange,
-				AgentID: id,
-				ToolID:  toolID,
-				Outcome: "approve",
-				Reason:  "locally_enabled",
-			}); err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("audit opt-in %q for %q: %w", toolID, id, err)
-			}
-			if err := tx.Commit(); err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("commit opt-in %q for %q: %w", toolID, id, err)
-			}
-		} else {
-			if err := queries.AddAgentDisabledTool(r.Context(), db.AddAgentDisabledToolParams{
-				AgentID: id, ToolID: toolID,
-			}); err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("add opt-out %q for %q: %w", toolID, id, err)
-			}
-			// The opt-out takes effect even when its record fails; the
-			// cancellation is best-effort by nature. It is agent-scoped,
-			// and builtin entries (no server) match too.
-			if canceler != nil {
-				serverIDStr := ""
-				if serverID, ok := tool.ServerID.(string); ok {
-					serverIDStr = serverID
-				}
-				canceler.CancelAgentToolCalls(id, serverIDStr, toolID)
-			}
-			if err := auditGrant(r.Context(), queries, tooladmission.Decision{
-				Event:   tooladmission.EventApprovalChange,
-				AgentID: id,
-				ToolID:  toolID,
-				Outcome: "revoke",
-				Reason:  "locally_disabled",
-			}); err != nil {
-				auditFail = fmt.Errorf("audit opt-out %q for %q: %w", toolID, id, err)
-			}
+			outcome, reason = "approve", "locally_enabled"
 		}
-
-		row, err := queries.GetAgentTool(r.Context(), db.GetAgentToolParams{AgentID: id, ID: toolID})
+		serverIDStr := ""
+		if tool.ServerID.Valid {
+			serverIDStr = tool.ServerID.String
+		}
+		auditErr, err := api.ApplyToggle(r.Context(), sqlDB, queries, *req.Enabled,
+			tooladmission.Decision{
+				Event:    tooladmission.EventApprovalChange,
+				AgentID:  id,
+				ServerID: serverIDStr,
+				ToolID:   toolID,
+				Outcome:  outcome,
+				Reason:   reason,
+			},
+			func(runner *db.Queries) error {
+				if *req.Enabled {
+					// Enabling drops the opt-out: inheritance resumes.
+					return runner.RemoveAgentDisabledTool(r.Context(), db.RemoveAgentDisabledToolParams{
+						AgentID: id, ToolID: toolID,
+					})
+				}
+				return runner.AddAgentDisabledTool(r.Context(), db.AddAgentDisabledToolParams{
+					AgentID: id, ToolID: toolID,
+				})
+			},
+			// The opt-out takes effect even when its record fails; the
+			// cancellation is best-effort by nature. Builtin entries
+			// (no server) match too.
+			func() {
+				if canceler != nil {
+					canceler.CancelAgentToolCalls(id, serverIDStr, toolID)
+				}
+			})
 		if err != nil {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-			return fmt.Errorf("read tool %q for %q after save: %w", toolID, id, err)
+			return fmt.Errorf("toggle opt-out %q for %q: %w", toolID, id, err)
 		}
-		return errors.Join(api.WriteJSON(w, http.StatusOK, agentToolFromOne(row)), auditFail)
+
+		// The toggle answers the same listing shape as GET and the gate
+		// toggle: the editor re-renders every switch from one source.
+		return errors.Join(writeAgentTools(w, r, queries, id), auditErr)
 	}
 }
 
@@ -196,26 +168,6 @@ func agentToolFromRow(row db.ListAgentToolsRow) apitypes.AgentTool {
 		GlobalEnabled:   row.GloballyEnabled != 0,
 		LocallyDisabled: row.LocallyDisabled,
 		Kind:            row.Kind,
-		ServerID:        serverIDPtr(row.ServerID),
+		ServerID:        api.ServerIDPtr(row.ServerID),
 	}
-}
-
-func agentToolFromOne(row db.GetAgentToolRow) apitypes.AgentTool {
-	return apitypes.AgentTool{
-		ID:              row.ID,
-		Name:            row.Name,
-		Description:     row.Description,
-		GlobalEnabled:   row.GloballyEnabled != 0,
-		LocallyDisabled: row.LocallyDisabled,
-		Kind:            row.Kind,
-		ServerID:        serverIDPtr(row.ServerID),
-	}
-}
-
-// serverIDPtr maps the nullable server_id column to its wire pointer.
-func serverIDPtr(v interface{}) *string {
-	if s, ok := v.(string); ok {
-		return &s
-	}
-	return nil
 }

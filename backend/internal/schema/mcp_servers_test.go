@@ -8,33 +8,75 @@ import (
 	"database/sql"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/radch-ai/ava/backend/internal/db"
+	"github.com/radch-ai/ava/backend/internal/mcp"
+	"github.com/radch-ai/ava/backend/internal/mcpserver"
 	"github.com/radch-ai/ava/backend/internal/testdb"
+	"github.com/radch-ai/ava/backend/internal/vault"
 )
 
-// seedMcpServer inserts one server row; the id is the slug.
+// schemaTestKey seals the discovery fence's vault reads in these tests.
+var schemaTestKey = []byte("0123456789abcdef0123456789abcdef")
+
+// seedMcpServer inserts one server row; the id is the slug. Approvals
+// stay off — these tests toggle them per scenario.
 func seedMcpServer(t *testing.T, sqlDB *sql.DB, id string) {
 	t.Helper()
-	if err := db.New(sqlDB).CreateMcpServer(t.Context(), db.CreateMcpServerParams{
-		ID: id, Name: id,
-		Url:        sql.NullString{String: "https://" + id + ".example/mcp", Valid: true},
-		HeaderKeys: "[]",
-	}); err != nil {
-		t.Fatalf("seed server: %v", err)
-	}
+	testdb.SeedMcpServer(t, sqlDB, id, "https://"+id+".example/mcp",
+		func(arg *db.CreateMcpServerParams) {
+			arg.AllowPrivateNetwork = 0
+			arg.AllowPlaintext = 0
+		})
 }
 
-// upsertMcpTool lands one server-owned catalog row via the discovery
-// sync path -- composite id {slug}:{remoteName}.
+// upsertMcpTool lands one server-owned catalog row through the
+// discovery sync path (mcpserver.UpsertListing) -- composite id
+// {slug}:{remoteName}. The production writer is the only path: the
+// insert's SQL constants live there, not in a test twin.
 func upsertMcpTool(t *testing.T, sqlDB *sql.DB, id, serverID string) {
 	t.Helper()
-	if err := db.New(sqlDB).UpsertMcpTool(t.Context(), db.UpsertMcpToolParams{
-		ID: id, Name: id, Description: "",
-		ServerID: sql.NullString{String: serverID, Valid: true},
-	}); err != nil {
-		t.Fatalf("upsert mcp tool: %v", err)
+	row, err := db.New(sqlDB).GetMcpServer(t.Context(), serverID)
+	if err != nil {
+		t.Fatalf("read server %q: %v", serverID, err)
+	}
+	master, err := vault.NewMasterAEAD(schemaTestKey)
+	if err != nil {
+		t.Fatalf("master AEAD: %v", err)
+	}
+	store, err := vault.NewStore(sqlDB, master)
+	if err != nil {
+		t.Fatalf("vault store: %v", err)
+	}
+	cfg := mcp.ServerConfig{
+		ID:                  serverID,
+		URL:                 row.Url.String,
+		AllowPrivateNetwork: row.AllowPrivateNetwork != 0,
+		AllowPlaintext:      row.AllowPlaintext != 0,
+	}
+	_, remote, _ := strings.Cut(id, ":")
+	// The listing unions the server's existing rows: a discovery pass
+	// prunes what it does not report, and this helper only ever adds.
+	queries := db.New(sqlDB)
+	rows, err := queries.ListMcpServerTools(t.Context(), sql.NullString{String: serverID, Valid: true})
+	if err != nil {
+		t.Fatalf("list %q tools: %v", serverID, err)
+	}
+	listed := make([]mcp.ListedTool, 0, len(rows)+1)
+	for _, existing := range rows {
+		if existing.ID == id {
+			continue // replaced by the entry below
+		}
+		listed = append(listed, mcp.ListedTool{
+			Remote: existing.Name, Description: existing.Description,
+			DefinitionJSON: existing.DefinitionJson,
+		})
+	}
+	listed = append(listed, mcp.ListedTool{Remote: remote, Description: "", DefinitionJSON: "{}"})
+	if err := mcpserver.UpsertListing(t.Context(), sqlDB, store, serverID, cfg, listed); err != nil {
+		t.Fatalf("upsert mcp tool %q: %v", id, err)
 	}
 }
 
@@ -51,9 +93,7 @@ func enableTool(t *testing.T, sqlDB *sql.DB, toolID string) {
 // resolveIDs reads the turn's effective tool set for one agent.
 func resolveIDs(t *testing.T, sqlDB *sql.DB, agentID string) []string {
 	t.Helper()
-	rows, err := db.New(sqlDB).ResolveAgentToolsDetailed(t.Context(), db.ResolveAgentToolsDetailedParams{
-		AgentID: agentID, AgentID_2: agentID,
-	})
+	rows, err := db.New(sqlDB).ResolveAgentToolsDetailed(t.Context(), agentID)
 	if err != nil {
 		t.Fatalf("resolve agent tools: %v", err)
 	}

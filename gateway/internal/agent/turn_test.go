@@ -448,6 +448,71 @@ func TestTurnInterruptCancelsQuery(t *testing.T) {
 	require.Equal(t, "after interrupt", p.Content)
 }
 
+// The durable copies of the model's own text scrub at persistence:
+// the settled terminal row and an interrupted turn's partial carry the
+// static marker, while the live chunk stream stays the model's text.
+func TestAssistantTextScrubbedAtPersistence(t *testing.T) {
+	secret := "sk_live_QX9SLYN1SZV7wxyz0"
+	flushes := atomic.Int32{}
+	arrived := make(chan struct{}, 1)
+	release := make(chan struct{})
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		_, _ = w.Write([]byte(sseChunk("the key is " + secret)))
+		flusher.Flush()
+		if flushes.Add(1) > 1 {
+			// Second turn: hold the stream open so the interrupt
+			// lands mid-answer with a partial on record.
+			arrived <- struct{}{}
+			<-release
+			return
+		}
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer llm.Close()
+	defer close(release) // LIFO: runs before llm.Close()
+
+	mgr, sqlDB := journaledLane(t,
+		&agent.UserAgentManagerOptions{GetAgentThread: emptyThread, ResolveModel: fixedResolver(llm.URL)})
+
+	c, sc := wsPair(t)
+	submit(t, mgr, "agent-scrub", "conn-1", sc, "hi")
+	_, p := readUntilMessage(t, c)
+	require.Equal(t, "the key is [REDACTED:api_key]", p.Content, "the terminal frame rides the scrubbed durable copy")
+
+	submit(t, mgr, "agent-scrub", "conn-1", sc, "again")
+	select {
+	case <-arrived:
+	case <-time.After(5 * time.Second):
+		t.Fatal("second query never reached the model")
+	}
+	// The chunk on the wire proves the answer already holds text, so
+	// the stop lands mid-answer instead of racing an empty partial.
+	for chunked := false; !chunked; {
+		chunked = readEvent(t, c).Type == wstypes.EventTypeMessageChunk
+	}
+	mgr.Interrupt("agent-scrub")
+
+	// The stopped turn's terminal batch carries the partial row: wait
+	// for it instead of an idle status — the lane's trailing frames
+	// from turn one would satisfy an idle check before turn two
+	// settles.
+	_, stopped := readUntilSettled(t, c)
+	require.Equal(t, apitypes.ItemStopped, stopped.Event.Outcome)
+	require.NotContains(t, stopped.Content, secret, "the broadcast partial leaked the secret")
+	require.Contains(t, stopped.Content, "[REDACTED:api_key]", "the stopped turn's partial")
+
+	rows := storedRows(t, sqlDB, "agent-scrub")
+	for _, row := range rows {
+		if row.Role != apitypes.ThreadRoleAssistant {
+			continue
+		}
+		require.NotContains(t, row.Content, secret, "durable assistant copy leaked the secret")
+		require.Contains(t, row.Content, "[REDACTED:api_key]", describe(rows))
+	}
+}
+
 // A canceled turn settles as a stop even when the failing seam
 // returned its own error: classification goes by the turn's context,
 // which has exactly one cancel source.

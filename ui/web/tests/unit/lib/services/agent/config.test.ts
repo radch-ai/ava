@@ -135,12 +135,12 @@ describe('agent/config service', () => {
 	})
 
 	describe('updateAgentConfig', () => {
-		it('updates one agent config with wrapped response', async () => {
+		it('updates one agent config with direct response', async () => {
 			const detail = toDetail(createTestConfig({ name: 'Updated' }))
 			const patch: AgentEditableFields = { name: 'Updated' }
 
 			vi.mocked(api.patch).mockReturnValue({
-				json: async () => ({ data: detail })
+				json: async () => detail
 			} as ApiResponsePromise)
 
 			const result = await updateAgentConfig('ava', patch)
@@ -151,27 +151,12 @@ describe('agent/config service', () => {
 			expect(result).toEqual(detail)
 		})
 
-		it('updates one agent config with direct response', async () => {
-			const detail = toDetail(createTestConfig())
-			const patch: AgentEditableFields = {
-				operatingInstructions: 'Updated instructions'
-			}
-
-			vi.mocked(api.patch).mockReturnValue({
-				json: async () => detail
-			} as ApiResponsePromise)
-
-			const result = await updateAgentConfig('ava', patch)
-
-			expect(result).toEqual(detail)
-		})
-
 		it('handles name-only updates', async () => {
 			const patch: AgentEditableFields = { name: 'Updated Name' }
 			const detail = toDetail(createTestConfig({ name: 'Updated Name' }))
 
 			vi.mocked(api.patch).mockReturnValue({
-				json: async () => ({ data: detail })
+				json: async () => detail
 			} as ApiResponsePromise)
 
 			const result = await updateAgentConfig('ava', patch)
@@ -188,7 +173,7 @@ describe('agent/config service', () => {
 			const detail = toDetail(createTestConfig({ soul }))
 
 			vi.mocked(api.patch).mockReturnValue({
-				json: async () => ({ data: detail })
+				json: async () => detail
 			} as ApiResponsePromise)
 
 			const result = await updateAgentConfig('ava', patch)
@@ -205,7 +190,7 @@ describe('agent/config service', () => {
 			const detail = toDetail(createTestConfig(configUpdate))
 
 			vi.mocked(api.patch).mockReturnValue({
-				json: async () => ({ data: detail })
+				json: async () => detail
 			} as ApiResponsePromise)
 
 			const result = await updateAgentConfig('ava', patch)

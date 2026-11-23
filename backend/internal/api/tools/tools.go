@@ -70,75 +70,33 @@ func ToggleTool(throttle *api.Throttle, sqlDB *sql.DB, queries *db.Queries, canc
 			outcome, reason = "approve", "global_enabled"
 		}
 		serverID := ""
-		if owned, ok := tool.ServerID.(string); ok {
-			serverID = owned
+		if tool.ServerID.Valid {
+			serverID = tool.ServerID.String
 		}
 
-		var auditFail error
-		if *req.Enabled {
-			// Activation: the switch and its record commit together, so an
-			// enabled tool is never live unrecorded.
-			tx, err := sqlDB.BeginTx(r.Context(), nil)
-			if err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("begin tool toggle %q: %w", id, err)
-			}
-			defer func() { _ = tx.Rollback() }()
-			txq := db.New(tx)
-			n, err := txq.ToggleToolEnabled(r.Context(), db.ToggleToolEnabledParams{
-				Enabled: enabled,
-				ID:      id,
-			})
-			if err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("toggle tool %q: %w", id, err)
-			}
-			if n == 0 {
-				return api.WriteError(w, http.StatusNotFound, fmt.Sprintf("Tool %q not found", id))
-			}
-			if err := tooladmission.NewAuditor(txq).Record(r.Context(), tooladmission.Decision{
+		auditErr, err := api.ApplyToggle(r.Context(), sqlDB, queries, *req.Enabled,
+			tooladmission.Decision{
 				Event:    tooladmission.EventApprovalChange,
 				ServerID: serverID,
 				ToolID:   id,
 				Outcome:  outcome,
 				Reason:   reason,
-			}); err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("audit tool toggle %q: %w", id, err)
-			}
-			if err := tx.Commit(); err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("commit tool toggle %q: %w", id, err)
-			}
-		} else {
-			// Restriction: the switch commits alone and the admitted calls
-			// are revoked before the record is attempted. A failing audit
-			// degrades the trail — joined into the successful response —
-			// and never keeps a disabled tool live.
-			n, err := queries.ToggleToolEnabled(r.Context(), db.ToggleToolEnabledParams{
-				Enabled: enabled,
-				ID:      id,
-			})
-			if err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("toggle tool %q: %w", id, err)
-			}
-			if n == 0 {
-				return api.WriteError(w, http.StatusNotFound, fmt.Sprintf("Tool %q not found", id))
-			}
+			},
+			func(runner *db.Queries) error {
+				_, err := runner.ToggleToolEnabled(r.Context(), db.ToggleToolEnabledParams{
+					Enabled: enabled, ID: id,
+				})
+				return err
+			},
 			// Builtin entries have no server and still cancel.
-			if canceler != nil {
-				canceler.CancelToolCalls(serverID, id)
-			}
-			if err := tooladmission.NewAuditor(queries).Record(r.Context(), tooladmission.Decision{
-				Event:    tooladmission.EventApprovalChange,
-				ServerID: serverID,
-				ToolID:   id,
-				Outcome:  outcome,
-				Reason:   reason,
-			}); err != nil {
-				auditFail = fmt.Errorf("audit tool toggle %q: %w", id, err)
-			}
+			func() {
+				if canceler != nil {
+					canceler.CancelToolCalls(serverID, id)
+				}
+			})
+		if err != nil {
+			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+			return fmt.Errorf("toggle tool %q: %w", id, err)
 		}
 
 		row, err := queries.GetTool(r.Context(), id)
@@ -146,7 +104,7 @@ func ToggleTool(throttle *api.Throttle, sqlDB *sql.DB, queries *db.Queries, canc
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return fmt.Errorf("read tool %q after save: %w", id, err)
 		}
-		return errors.Join(api.WriteJSON(w, http.StatusOK, toolFromRow(row)), auditFail)
+		return errors.Join(api.WriteJSON(w, http.StatusOK, toolFromRow(row)), auditErr)
 	}
 }
 
@@ -155,17 +113,8 @@ func toolFromRow(row db.Tool) apitypes.Tool {
 		ID:          row.ID,
 		Name:        row.Name,
 		Description: row.Description,
-		Builtin:     row.Builtin != 0,
 		Enabled:     row.Enabled != 0,
 		Kind:        row.Kind,
-		ServerID:    serverIDPtr(row.ServerID),
+		ServerID:    api.ServerIDPtr(row.ServerID),
 	}
-}
-
-// serverIDPtr maps the nullable server_id column to its wire pointer.
-func serverIDPtr(v interface{}) *string {
-	if s, ok := v.(string); ok {
-		return &s
-	}
-	return nil
 }

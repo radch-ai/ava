@@ -111,8 +111,9 @@ func TestCallIdSanitizedInAudit(t *testing.T) {
 	}
 }
 
-// Retention is driven by traffic — denial writes count too, so the
-// 30-day bound expires without any successful admission.
+// Retention is the ticker's alone: denial traffic never sweeps inline,
+// and the 30-day bound still expires on the ticker without any
+// successful admission.
 func TestPruneOnDenialTraffic(t *testing.T) {
 	h := newHarness(t, tooladmission.DefaultLimits())
 	fake := &fakeTool{run: func(context.Context, string) (string, error) { return "ran", nil }}
@@ -139,13 +140,31 @@ func TestPruneOnDenialTraffic(t *testing.T) {
 		}
 	}
 
+	// Denial traffic pays no sweep: the expired rows survive it.
 	var retained int64
 	if err := h.sqlDB.QueryRow(`SELECT COUNT(*) FROM tool_audit_events WHERE occurred_at = ?`, old).
 		Scan(&retained); err != nil {
 		t.Fatalf("count retained: %v", err)
 	}
-	if retained != 0 {
-		t.Fatalf("%d expired rows survived the denial-driven sweep", retained)
+	if retained != 70 {
+		t.Fatalf("expired rows = %d after denial traffic, want 70 (no inline sweep)", retained)
+	}
+
+	stop := h.admitter.StartPrune(20 * time.Millisecond)
+	defer stop()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if err := h.sqlDB.QueryRow(`SELECT COUNT(*) FROM tool_audit_events WHERE occurred_at = ?`, old).
+			Scan(&retained); err != nil {
+			t.Fatalf("count expired: %v", err)
+		}
+		if retained == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("expired rows survived the ticker sweep")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -236,9 +255,9 @@ func auditIDs(t *testing.T, sqlDB *sql.DB) []int64 {
 	return ids
 }
 
-// Approval traffic drives retention too — one Auditor.Record
-// sweeps, so expired rows leave on an operator action alone.
-func TestApprovalTrafficPrunes(t *testing.T) {
+// Approval traffic never sweeps inline either: retention is the
+// ticker's alone, and the operator write lands without paying it.
+func TestApprovalTrafficDoesNotPrune(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
 	queries := db.New(sqlDB)
 
@@ -247,8 +266,7 @@ func TestApprovalTrafficPrunes(t *testing.T) {
 		insertAudit(t, sqlDB, old, "approval_change", "terminal")
 	}
 
-	auditor := tooladmission.NewAuditor(queries)
-	if err := auditor.Record(t.Context(), tooladmission.Decision{
+	if err := tooladmission.RecordDecision(t.Context(), queries, tooladmission.Decision{
 		Event:   tooladmission.EventApprovalChange,
 		Outcome: "grant",
 		Reason:  "approved",
@@ -261,8 +279,8 @@ func TestApprovalTrafficPrunes(t *testing.T) {
 		Scan(&retained); err != nil {
 		t.Fatalf("count expired: %v", err)
 	}
-	if retained != 0 {
-		t.Fatalf("%d expired rows survived the approval-driven sweep", retained)
+	if retained != 3 {
+		t.Fatalf("expired rows = %d after the approval write, want 3 (no inline sweep)", retained)
 	}
 	var fresh int64
 	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM tool_audit_events WHERE event = 'approval_change' AND occurred_at > ?`, old).
@@ -271,6 +289,18 @@ func TestApprovalTrafficPrunes(t *testing.T) {
 	}
 	if fresh != 1 {
 		t.Fatalf("approval record = %d rows, want the one just written", fresh)
+	}
+	var callID sql.NullString
+	if err := sqlDB.QueryRow(
+		`SELECT tool_call_id FROM tool_audit_events WHERE event = 'approval_change' AND occurred_at > ?`, old,
+	).Scan(&callID); err != nil {
+		t.Fatalf("read approval call id: %v", err)
+	}
+	if callID.Valid {
+		// "unknown" is reserved for an invocation missing its id; an
+		// operator decision has no invocation at all, so the column is
+		// NULL.
+		t.Fatalf("operator decision tool_call_id = %q, want NULL", callID.String)
 	}
 }
 

@@ -6,6 +6,7 @@ package mcpservers
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 
 	"github.com/radch-ai/ava/backend/internal/api"
@@ -14,14 +15,20 @@ import (
 	"github.com/radch-ai/ava/backend/internal/tooladmission"
 )
 
-// auditDecision writes one point-in-time record.
-func auditDecision(ctx context.Context, queries *db.Queries, decision tooladmission.Decision) error {
-	return tooladmission.NewAuditor(queries).Record(ctx, decision)
+// auditApproval records one approval-shaped decision: the global/server
+// switch, a destination approval or its removal.
+func auditApproval(ctx context.Context, queries *db.Queries, serverID, outcome, reason string) error {
+	return auditDecision(ctx, queries, tooladmission.EventApprovalChange, serverID, outcome, reason)
 }
 
-// auditApproval records a destination/plaintext approval or its removal.
-func auditApproval(ctx context.Context, queries *db.Queries, serverID, event, outcome, reason string) error {
-	return auditDecision(ctx, queries, tooladmission.Decision{
+// auditPlaintext records the plaintext-credential exception's own trail.
+func auditPlaintext(ctx context.Context, queries *db.Queries, serverID, outcome, reason string) error {
+	return auditDecision(ctx, queries, tooladmission.EventPlaintext, serverID, outcome, reason)
+}
+
+// auditDecision writes one point-in-time record.
+func auditDecision(ctx context.Context, queries *db.Queries, event, serverID, outcome, reason string) error {
+	return tooladmission.RecordDecision(ctx, queries, tooladmission.Decision{
 		Event:    event,
 		ServerID: serverID,
 		Outcome:  outcome,
@@ -47,7 +54,7 @@ func cancelRemovedTools(canceler api.Canceler, serverID string, before, kept map
 // toolIDs snapshots one server's catalog ids before a publish, so a
 // removal can be detected afterwards.
 func toolIDs(ctx context.Context, queries *db.Queries, serverID string) map[string]struct{} {
-	rows, err := queries.ListMcpServerTools(ctx, serverID)
+	rows, err := queries.ListMcpServerTools(ctx, sql.NullString{String: serverID, Valid: true})
 	if err != nil {
 		return nil
 	}
@@ -72,13 +79,13 @@ func keptFromListing(serverID string, listed []mcp.ListedTool) map[string]struct
 // failure stops the caller: unauditable authority must not activate.
 func approveAuthority(ctx context.Context, queries *db.Queries, serverID string, allowPrivate, allowPlain bool) error {
 	if allowPrivate {
-		if err := auditApproval(ctx, queries, serverID, "approval_change", "approve",
+		if err := auditApproval(ctx, queries, serverID, "approve",
 			"destination_approved"); err != nil {
 			return err
 		}
 	}
 	if allowPlain {
-		if err := auditApproval(ctx, queries, serverID, "plaintext_exception", "approve",
+		if err := auditPlaintext(ctx, queries, serverID, "approve",
 			"plaintext_approved"); err != nil {
 			return err
 		}
@@ -92,13 +99,13 @@ func approveAuthority(ctx context.Context, queries *db.Queries, serverID string,
 func withdrawAuthority(ctx context.Context, queries *db.Queries, serverID string, allowPrivate, allowPlain bool) error {
 	var errs error
 	if allowPrivate {
-		if err := auditApproval(ctx, queries, serverID, "approval_change", "revoke",
+		if err := auditApproval(ctx, queries, serverID, "revoke",
 			"destination_not_activated"); err != nil {
 			errs = errors.Join(errs, err)
 		}
 	}
 	if allowPlain {
-		if err := auditApproval(ctx, queries, serverID, "plaintext_exception", "revoke",
+		if err := auditPlaintext(ctx, queries, serverID, "revoke",
 			"plaintext_not_activated"); err != nil {
 			errs = errors.Join(errs, err)
 		}
@@ -112,13 +119,13 @@ func withdrawAuthority(ctx context.Context, queries *db.Queries, serverID string
 func revokeAuthority(ctx context.Context, queries *db.Queries, serverID string, destination, plaintext bool) error {
 	var errs error
 	if destination {
-		if err := auditApproval(ctx, queries, serverID, "approval_change", "revoke",
+		if err := auditApproval(ctx, queries, serverID, "revoke",
 			"destination_revoked"); err != nil {
 			errs = errors.Join(errs, err)
 		}
 	}
 	if plaintext {
-		if err := auditApproval(ctx, queries, serverID, "plaintext_exception", "revoke",
+		if err := auditPlaintext(ctx, queries, serverID, "revoke",
 			"plaintext_revoked"); err != nil {
 			errs = errors.Join(errs, err)
 		}

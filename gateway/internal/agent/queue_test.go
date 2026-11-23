@@ -100,7 +100,7 @@ func TestQueueClaimsFIFOOneAtATime(t *testing.T) {
 // item whose durable start has not committed. startItem publishes the
 // committed lifecycle batch and the one running snapshot together, after
 // that commit.
-func TestMarkStartedPublishesRunningProjection(t *testing.T) {
+func TestStartItemPublishesRunningProjection(t *testing.T) {
 	s, published := newTestState()
 	item, err := testAdmit(s, "A", nil, wstypes.QueueItemKindPrompt)
 	require.NoError(t, err)

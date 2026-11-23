@@ -162,12 +162,10 @@ type lazyJournal struct {
 // on first admission.
 func newJournaledManager(t *testing.T, opts *agent.UserAgentManagerOptions) *agent.UserAgentManager {
 	t.Helper()
-	sqlDB, turns := journalFor(t)
-	if opts == nil {
-		opts = &agent.UserAgentManagerOptions{}
-	}
-	opts.Journal = &lazyJournal{TurnService: turns, sqlDB: sqlDB, seen: make(map[string]struct{})}
-	return agent.NewUserAgentManager(zerolog.Nop(), opts)
+	// journaledLane owns the one construction: this is the same manager
+	// minus the store handle most tests never read.
+	m, _ := journaledLane(t, opts)
+	return m
 }
 
 func (j *lazyJournal) AcceptItem(ctx context.Context, agentID, itemID, content, kind string, model *apitypes.ModelEntry) (*backend.JournalBatch, error) {

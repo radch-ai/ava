@@ -163,9 +163,20 @@ func (t *fakeTool) ranWith() []string {
 	return out
 }
 
-// fixedTools answers every turn with the same tools.
+// fixedTools answers every turn with the same tools, their metadata
+// resolved beside them the way the backend does.
 func fixedTools(ts ...tool.InvokableTool) agent.AgentToolsFunc {
-	return func(context.Context, string) ([]tool.InvokableTool, error) { return ts, nil }
+	return func(ctx context.Context, _ string) (backend.TurnTools, error) {
+		infos := make([]*schema.ToolInfo, 0, len(ts))
+		for _, t := range ts {
+			info, err := t.Info(ctx)
+			if err != nil {
+				return backend.TurnTools{}, err
+			}
+			infos = append(infos, info)
+		}
+		return backend.TurnTools{Impls: ts, Infos: infos}, nil
+	}
 }
 
 // A selected tool that cannot describe itself fails the turn before
@@ -189,6 +200,32 @@ func TestToolMetadataFailureFailsTurn(t *testing.T) {
 	require.Equal(t, wstypes.EventTypeError, ev.Type)
 	require.Contains(t,
 		eventPayload[wstypes.ErrorEvent](t, ev).Message, "schema unavailable")
+	require.Empty(t, llm.requests(), "the model must not be called")
+}
+
+// backend.TurnTools crosses the module boundary as parallel slices; a
+// mismatched pair must fail the turn, never panic mid-wrap.
+func TestMismatchedToolResolutionFailsTurn(t *testing.T) {
+	echo := &fakeTool{name: "echo_tool"}
+	llm := newScriptedLLM(t, sseChunk("never reached"))
+
+	mgr := newJournaledManager(t,
+		&agent.UserAgentManagerOptions{
+			GetAgentThread: emptyThread,
+			ResolveModel:   fixedResolver(llm.URL),
+			Tools: func(context.Context, string) (backend.TurnTools, error) {
+				return backend.TurnTools{Impls: []tool.InvokableTool{echo}}, nil
+			},
+		})
+
+	c, sc := wsPair(t)
+
+	submit(t, mgr, "agent-toolmismatch", "conn-1", sc, "hi")
+
+	ev := readUntilError(t, c)
+	require.Equal(t, wstypes.EventTypeError, ev.Type)
+	require.Contains(t, eventPayload[wstypes.ErrorEvent](t, ev).Message,
+		"impl/info length mismatch")
 	require.Empty(t, llm.requests(), "the model must not be called")
 }
 
@@ -231,6 +268,48 @@ func TestToolRoundFeedsResultAndStreamsAnswer(t *testing.T) {
 	}
 	require.NotNil(t, toolMsg, "second round carries a tool message")
 	require.Equal(t, "tool says hi", toolMsg.Content)
+}
+
+// countingInfoTool counts metadata reads: the turn must resolve the
+// toolset once and read each tool's Info once — the start, result and
+// outcome copies all ride that snapshot.
+type countingInfoTool struct {
+	*fakeTool
+	infos atomic.Int64
+}
+
+func (c *countingInfoTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
+	c.infos.Add(1)
+	return c.fakeTool.Info(ctx)
+}
+
+func TestToolResolutionCountedPerTurn(t *testing.T) {
+	echo := &countingInfoTool{fakeTool: &fakeTool{name: "echo_tool", result: "tool says hi"}}
+	snapshot := fixedTools(echo)
+	var resolves atomic.Int64
+	llm := newScriptedLLM(t,
+		toolCallChunk("echo_tool")+toolCallDone(),
+		sseChunk("final answer"))
+
+	mgr := newJournaledManager(t,
+		&agent.UserAgentManagerOptions{
+			GetAgentThread: emptyThread,
+			ResolveModel:   fixedResolver(llm.URL),
+			Tools: func(ctx context.Context, agentID string) (backend.TurnTools, error) {
+				resolves.Add(1)
+				return snapshot(ctx, agentID)
+			},
+		})
+
+	c, sc := wsPair(t)
+	submit(t, mgr, "agent-toolcount", "conn-1", sc, "search for otters")
+
+	_, p := readUntilMessage(t, c)
+	require.Equal(t, "final answer", p.Content)
+
+	require.Equal(t, []string{`{"query":"plush otters"}`}, echo.ranWith())
+	require.Equal(t, int64(1), resolves.Load(), "toolset resolved per turn, not per observable copy")
+	require.Equal(t, int64(1), echo.infos.Load(), "tool metadata read once per tool per turn")
 }
 
 func TestFetchedToolsAreAllOffered(t *testing.T) {
@@ -341,8 +420,8 @@ func TestToolFetchFailureFailsTurn(t *testing.T) {
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel:   fixedResolver(llm.URL),
-			Tools: func(context.Context, string) ([]tool.InvokableTool, error) {
-				return nil, errors.New("tools store unreachable")
+			Tools: func(context.Context, string) (backend.TurnTools, error) {
+				return backend.TurnTools{}, errors.New("tools store unreachable")
 			},
 		})
 
@@ -366,10 +445,10 @@ func TestInterruptDuringToolFetchEmitsNothing(t *testing.T) {
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
 			ResolveModel:   fixedResolver(llm.URL),
-			Tools: func(ctx context.Context, _ string) ([]tool.InvokableTool, error) {
+			Tools: func(ctx context.Context, _ string) (backend.TurnTools, error) {
 				close(entered)
 				<-ctx.Done()
-				return nil, ctx.Err()
+				return backend.TurnTools{}, ctx.Err()
 			},
 		})
 

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -55,7 +56,6 @@ type Server struct {
 type config struct {
 	toolCount   int
 	resultBytes int
-	echoSecrets bool
 	pageSize    int
 	schemaDepth int
 	redirect    string
@@ -93,12 +93,6 @@ func WithToolCount(n int) Option {
 // the decoded-response ceiling.
 func WithToolResult(n int) Option {
 	return func(c *config) { c.resultBytes = n }
-}
-
-// WithEchoSecrets adds an "echo-secrets" tool that reflects the request
-// headers it received — the reflected-credential leak path.
-func WithEchoSecrets() Option {
-	return func(c *config) { c.echoSecrets = true }
 }
 
 // WithPageSize paginates the tool listing.
@@ -201,6 +195,10 @@ func (s *Server) ExpireSession() {
 	}
 }
 
+// PatternCanary is the pattern-shaped credential the fixture reflects
+// into hostile error bodies — one spelling every leak assertion checks.
+const PatternCanary = "sk-abcdefghijklmnop1234"
+
 // Start runs the fixture until the test ends.
 func Start(tb testing.TB, opts ...Option) *Server {
 	tb.Helper()
@@ -245,44 +243,36 @@ func (s *Server) serve(next http.Handler) http.HandlerFunc {
 			http.Redirect(w, r, s.config.redirect, http.StatusTemporaryRedirect)
 			return
 		}
+		// One decode routes every injected JSON-RPC method; the
+		// message is written by one helper.
 		var listRequest bool
 		if body, err := io.ReadAll(r.Body); err == nil {
 			r.Body = io.NopCloser(bytes.NewReader(body))
-			listRequest = bytes.Contains(body, []byte(`"tools/list"`))
+			var req struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+			}
+			_ = json.Unmarshal(body, &req)
+			listRequest = req.Method == "tools/list"
 			if listRequest {
 				s.lists.Add(1)
 				dead, _ := s.deadSession.Load().(string)
 				sessionID := r.Header.Get("Mcp-Session-Id")
-				if sessionID == "" {
-					sessionID = r.Header.Get("mcp-session-id")
-				}
 				if dead != "" && sessionID == dead {
 					w.WriteHeader(http.StatusBadRequest)
 					_, _ = w.Write([]byte(`{"jsonrpc":"2.0","error":{"code":-32000,"message":"Invalid session ID"},"id":null}`))
 					return
 				}
 			}
-			if bytes.Contains(body, []byte(`"initialize"`)) {
+			if req.Method == "initialize" {
 				s.inits.Add(1)
 				if s.config.initErrorMsg != "" {
-					var req struct {
-						ID json.RawMessage `json:"id"`
-					}
-					_ = json.Unmarshal(body, &req)
-					w.Header().Set("Content-Type", "application/json")
-					_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":%s}}`,
-						req.ID, mustJSON(s.config.initErrorMsg))
+					writeRPCError(w, req.ID, s.config.initErrorMsg)
 					return
 				}
 			}
 			if listRequest && s.config.listErrorMsg != "" {
-				var req struct {
-					ID json.RawMessage `json:"id"`
-				}
-				_ = json.Unmarshal(body, &req)
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":%s}}`,
-					req.ID, mustJSON(s.config.listErrorMsg))
+				writeRPCError(w, req.ID, s.config.listErrorMsg)
 				return
 			}
 		}
@@ -301,7 +291,7 @@ func (s *Server) serve(next http.Handler) http.HandlerFunc {
 			auth := s.headers.Get("Authorization")
 			s.mu.Unlock()
 			w.WriteHeader(s.config.statusCode)
-			_, _ = fmt.Fprintf(w, "upstream failure; authorization=%s mock=sk-abcdefghijklmnop1234", auth)
+			_, _ = fmt.Fprintf(w, "upstream failure; authorization=%s mock="+PatternCanary, auth)
 			return
 		}
 		if listRequest && s.config.forgeRepeatedCursor {
@@ -330,49 +320,49 @@ func (s *Server) serveForgedList(w http.ResponseWriter, r *http.Request, next ht
 	rec := httptest.NewRecorder()
 	next.ServeHTTP(rec, r)
 	if !strings.Contains(rec.Header().Get("Content-Type"), "application/json") {
-		copyHeader(w.Header(), rec.Header())
+		maps.Copy(w.Header(), rec.Header())
 		w.WriteHeader(rec.Code)
 		_, _ = rec.Body.WriteTo(w)
 		return
 	}
 	var doc map[string]any
 	body := rec.Body.Bytes()
-	if err := json.Unmarshal(body, &doc); err != nil {
-		copyHeader(w.Header(), rec.Header())
+	// UseNumber keeps numeric literals (schema defaults, consts) exact
+	// through the rewrite.
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	if err := dec.Decode(&doc); err != nil {
+		maps.Copy(w.Header(), rec.Header())
 		w.WriteHeader(rec.Code)
 		_, _ = w.Write(body)
 		return
 	}
-	result, _ := doc["result"].(map[string]any)
-	if result != nil {
-		switch {
-		case s.config.forgeRepeatedCursor:
-			if stored, ok := s.firstCursor.Load().(string); ok && stored != "" {
-				result["nextCursor"] = stored
-			} else if cursor, _ := result["nextCursor"].(string); cursor != "" {
-				s.firstCursor.Store(cursor)
-			}
+	// The first page's cursor re-issued forever: a repeated-cursor cycle.
+	if result, ok := doc["result"].(map[string]any); ok {
+		if stored, ok := s.firstCursor.Load().(string); ok && stored != "" {
+			result["nextCursor"] = stored
+		} else if cursor, _ := result["nextCursor"].(string); cursor != "" {
+			s.firstCursor.Store(cursor)
 		}
 	}
 	rewritten, err := json.Marshal(doc)
 	if err != nil {
-		copyHeader(w.Header(), rec.Header())
+		maps.Copy(w.Header(), rec.Header())
 		w.WriteHeader(rec.Code)
 		_, _ = w.Write(body)
 		return
 	}
-	copyHeader(w.Header(), rec.Header())
+	maps.Copy(w.Header(), rec.Header())
 	w.WriteHeader(rec.Code)
 	_, _ = w.Write(rewritten)
 }
 
-// copyHeader copies every response header value to dst.
-func copyHeader(dst, src http.Header) {
-	for key, values := range src {
-		for _, value := range values {
-			dst.Add(key, value)
-		}
-	}
+// writeRPCError answers one JSON-RPC request with a static error
+// message — the fixture's injected-failure shape.
+func writeRPCError(w http.ResponseWriter, id json.RawMessage, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":%s}}`,
+		id, mustJSON(message))
 }
 
 // SetEcho re-registers the echo tool with a new description and/or raw
@@ -393,7 +383,7 @@ func (s *Server) registerEcho() {
 	description, schema := s.config.echoDesc, s.config.echoSchema
 	annotations := s.config.echoAnnotations
 	s.mu.Unlock()
-	echo := echoTool()
+	echo := EchoTool()
 	if description != "" {
 		echo.Description = description
 	}
@@ -417,7 +407,7 @@ func (s *Server) echoHandler(ctx context.Context, req mcpsdk.CallToolRequest) (*
 			return nil, ctx.Err()
 		}
 	}
-	return echoHandler(ctx, req)
+	return EchoHandler(ctx, req)
 }
 
 // ReleaseEcho lets every blocked echo call proceed. Idempotent.
@@ -440,12 +430,10 @@ func (s *Server) Initializes() int64 { return s.inits.Load() }
 func (s *Server) Lists() int64 { return s.lists.Load() }
 
 // Header returns the last value of one request header the fixture saw.
+// A nil header set reads as absent.
 func (s *Server) Header(key string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.headers == nil {
-		return s.headers.Get(key)
-	}
 	return s.headers.Get(key)
 }
 
@@ -454,51 +442,37 @@ func registerTools(server *mcpserver.MCPServer, s *Server) {
 	s.registerEcho()
 	for i := range s.config.toolCount {
 		name := fmt.Sprintf("tool-%d", i)
-		server.AddTool(mcpsdk.NewTool(name, mcpsdk.WithDescription("Fixture tool "+name)), echoHandler)
+		server.AddTool(mcpsdk.NewTool(name, mcpsdk.WithDescription("Fixture tool "+name)), EchoHandler)
 	}
 	for _, name := range s.config.toolNames {
-		server.AddTool(mcpsdk.NewTool(name, mcpsdk.WithDescription("Fixture tool "+name)), echoHandler)
+		server.AddTool(mcpsdk.NewTool(name, mcpsdk.WithDescription("Fixture tool "+name)), EchoHandler)
 	}
 	if s.config.resultBytes > 0 {
 		server.AddTool(
 			mcpsdk.NewTool("big", mcpsdk.WithDescription("Returns a large text result.")),
 			bigHandler(s.config.resultBytes))
 	}
-	if s.config.echoSecrets {
-		server.AddTool(
-			mcpsdk.NewTool("echo-secrets", mcpsdk.WithDescription("Reflects the request headers it received.")),
-			func(context.Context, mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
-				var b strings.Builder
-				s.mu.Lock()
-				for key, values := range s.headers {
-					for _, value := range values {
-						fmt.Fprintf(&b, "%s: %s\n", key, value)
-					}
-				}
-				s.mu.Unlock()
-				return mcpsdk.NewToolResultText(b.String()), nil
-			})
-	}
 	for i := range s.config.described[0] {
 		name := fmt.Sprintf("described-%d", i)
 		server.AddTool(mcpsdk.NewTool(name,
-			mcpsdk.WithDescription(name+" "+strings.Repeat("d", s.config.described[1]))), echoHandler)
+			mcpsdk.WithDescription(name+" "+strings.Repeat("d", s.config.described[1]))), EchoHandler)
 	}
 	if s.config.schemaDepth > 0 {
 		server.AddTool(mcpsdk.NewToolWithRawSchema(
-			"deep", "Carries a deeply nested input schema.", deepSchema(s.config.schemaDepth)), echoHandler)
+			"deep", "Carries a deeply nested input schema.", deepSchema(s.config.schemaDepth)), EchoHandler)
 	}
 }
 
-// echoTool is the fixture's baseline tool.
-func echoTool() mcpsdk.Tool {
+// EchoTool is the fixture's baseline tool definition: the shape every
+// echo round-trip in the suite asserts against.
+func EchoTool() mcpsdk.Tool {
 	return mcpsdk.NewTool("echo",
 		mcpsdk.WithDescription("Echoes its input text."),
 		mcpsdk.WithString("text", mcpsdk.Required()))
 }
 
-// echoHandler answers an echo call.
-func echoHandler(_ context.Context, req mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+// EchoHandler answers an echo call: the input text back as text.
+func EchoHandler(_ context.Context, req mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 	text, _ := req.GetArguments()["text"].(string)
 	return mcpsdk.NewToolResultText(text), nil
 }

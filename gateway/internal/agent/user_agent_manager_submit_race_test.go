@@ -42,6 +42,8 @@ func TestSubmitRacingWorkerExitNeverStrandsAcceptedItems(t *testing.T) {
 	// No idle timer exists anymore: the worker exits whenever the
 	// queue has nothing runnable, so its exit races the senders the
 	// whole way through on its own.
+	// Constructed directly (whitebox): this package-internal test drives
+	// m.state and the worker loop the suite builders cannot reach.
 	m := NewUserAgentManager(zerolog.Nop(), &UserAgentManagerOptions{
 		ResolveModel: resolver,
 		Journal:      journal,

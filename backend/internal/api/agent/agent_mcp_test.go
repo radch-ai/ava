@@ -8,7 +8,6 @@ package agent
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -29,18 +28,11 @@ func mcpStore(t *testing.T) (*db.Queries, *sql.DB) {
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
 		ID: "research", Name: "Research", Icon: "globe",
 	})
-	if err := queries.CreateMcpServer(t.Context(), db.CreateMcpServerParams{
-		ID: "github", Name: "GitHub",
-		Url:        sql.NullString{String: "https://github.example/mcp", Valid: true},
-		HeaderKeys: "[]",
-	}); err != nil {
-		t.Fatalf("seed server: %v", err)
-	}
+	testdb.SeedMcpServer(t, sqlDB, "github", "https://github.example/mcp")
 	for _, id := range []string{"github:search", "github:issues"} {
-		if err := queries.UpsertMcpTool(t.Context(), db.UpsertMcpToolParams{
-			ID: id, Name: strings.TrimPrefix(id, "github:"), Description: "",
-			ServerID: sql.NullString{String: "github", Valid: true},
-		}); err != nil {
+		if _, err := sqlDB.Exec(
+			`INSERT INTO tools (id, name, description, enabled, kind, server_id, definition_json) VALUES (?, ?, '', 0, 'mcp', 'github', '{}')`,
+			id, strings.TrimPrefix(id, "github:")); err != nil {
 			t.Fatalf("seed tool %q: %v", id, err)
 		}
 		if _, err := queries.ToggleToolEnabled(t.Context(), db.ToggleToolEnabledParams{
@@ -63,9 +55,7 @@ func decodeTools(t *testing.T, rec *json.RawMessage) apitypes.GetAgentToolsRespo
 
 func resolveIDs(t *testing.T, queries *db.Queries, agentID string) []string {
 	t.Helper()
-	rows, err := queries.ResolveAgentToolsDetailed(t.Context(), db.ResolveAgentToolsDetailedParams{
-		AgentID: agentID, AgentID_2: agentID,
-	})
+	rows, err := queries.ResolveAgentToolsDetailed(t.Context(), agentID)
 	if err != nil {
 		t.Fatalf("resolve tools: %v", err)
 	}
@@ -213,10 +203,10 @@ func TestEnableAuditFailureBlocks(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d body %s, want 500", rec.Code, rec.Body.String())
 	}
-	if _, err := queries.GetAgentMcp(t.Context(), db.GetAgentMcpParams{
-		AgentID: "research", ServerID: "github",
-	}); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("unaudited enable left a gate row: %v", err)
+	var gateRows int
+	if err := sqlDB.QueryRowContext(t.Context(),
+		`SELECT COUNT(*) FROM agent_mcp_preferences WHERE agent_id = 'research' AND server_id = 'github'`).Scan(&gateRows); err != nil || gateRows != 0 {
+		t.Fatalf("unaudited enable left a gate row: rows=%d err %v", gateRows, err)
 	}
 	var rows int
 	if err := sqlDB.QueryRowContext(t.Context(),
@@ -248,11 +238,10 @@ func TestReEnableAuditFailureBlocks(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", rec.Code)
 	}
-	gate, err := queries.GetAgentMcp(t.Context(), db.GetAgentMcpParams{
-		AgentID: "research", ServerID: "github",
-	})
-	if err != nil || gate.Enabled != 0 {
-		t.Fatalf("gate after failed re-enable = %+v err %v, want enabled=0", gate, err)
+	var gateEnabled int
+	if err := sqlDB.QueryRowContext(t.Context(),
+		`SELECT enabled FROM agent_mcp_preferences WHERE agent_id = 'research' AND server_id = 'github'`).Scan(&gateEnabled); err != nil || gateEnabled != 0 {
+		t.Fatalf("gate after failed re-enable = %d err %v, want 0", gateEnabled, err)
 	}
 	if got := resolveIDs(t, queries, "research"); len(got) != 0 {
 		t.Fatalf("effective tools after blocked re-enable = %v, want none", got)

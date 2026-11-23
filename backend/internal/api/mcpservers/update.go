@@ -15,12 +15,15 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/rs/zerolog"
+
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/backend/internal/api"
 	"github.com/radch-ai/ava/backend/internal/db"
 	"github.com/radch-ai/ava/backend/internal/mcp"
 	"github.com/radch-ai/ava/backend/internal/mcpserver"
 	"github.com/radch-ai/ava/backend/internal/names"
+	"github.com/radch-ai/ava/backend/internal/tooladmission"
 	"github.com/radch-ai/ava/backend/internal/vault"
 )
 
@@ -28,7 +31,7 @@ import (
 // re-verify, the vault, and discovery; anything that changes what a dial
 // looks like proves the new config connects before a single write
 // happens.
-func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore *vault.Store, canceler api.Canceler) api.Handler {
+func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore *vault.Store, canceler api.Canceler, logger zerolog.Logger) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		var req apitypes.UpdateMcpServerRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -66,21 +69,27 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 		enabling := req.Enabled != nil && *req.Enabled
 		// Narrowing authority — or switching the server off — needs no
 		// successful connection check: an unreachable or newly forbidden
-		// endpoint must not be able to block its own restriction. A patch
-		// that also re-enables takes the connection path, so the reconnect
-		// is never skipped.
-		withdrawalOnly := !authorityAdded && req.Headers == nil && !enabling &&
-			(disabling || ((privateRemoved || plainRemoved) && !shapeChanged))
+		// endpoint must not be able to block its own restriction. Any
+		// connection-shape change (a URL move, a timeout change) still
+		// verifies: a disable must not smuggle an unverified endpoint,
+		// and a patch that also re-enables takes the connection path, so
+		// the reconnect is never skipped.
+		withdrawalOnly := !authorityAdded && req.Headers == nil && !enabling && !shapeChanged &&
+			(disabling || privateRemoved || plainRemoved)
 		connectionEdit := (next.connectionChanged || req.Headers != nil) && !withdrawalOnly
 
 		var secrets, storedSecrets mcpserver.Secrets
 		secretsReplaced := false
 		if connectionEdit {
 			var err error
-			if secrets, err = unsealSecrets(r.Context(), vaultStore, id); err != nil {
+			// One unseal path: mcpserver.Config reads the stored blob
+			// with the same missing-means-empty rule.
+			storedCfg, err := mcpserver.Config(r.Context(), row, vaultStore)
+			if err != nil {
 				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 				return fmt.Errorf("unseal secrets for %q: %w", id, err)
 			}
+			secrets = mcpserver.Secrets{Headers: storedCfg.Headers}
 			// The stored values ride along in case the row write below
 			// fails after a successful re-seal and must be restored.
 			storedSecrets = secrets
@@ -94,7 +103,7 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 		// rename passes the stored names through untouched.
 		headerKeys := row.HeaderKeys
 		if connectionEdit {
-			headerKeys = encodeKeyNames(secrets.Headers)
+			headerKeys = mcpserver.HeaderKeys(secrets.Headers)
 		}
 		// A pure switch patch writes no config: enabled lives on its own
 		// query (mcp_servers.sql), and the row is otherwise untouched.
@@ -135,95 +144,70 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 			return nil
 		}
 
-		// toggleAudit carries a failed post-tightening record: the switch
-		// already moved, so its failure is logged, never turned into a
-		// denial of a completed save.
-		var toggleAudit error
-		// toggle applies the global switch and its revocation. Enabling is
-		// an activation — the switch and its record commit together, so no
-		// server goes live unrecorded. Disabling is a restriction: the
-		// switch, the client teardown and the revocation commit first, and
-		// the record is best-effort.
-		toggle := func() error {
+		// toggle applies the global switch through the shared grant/revoke
+		// mechanics: enabling commits the switch and its record together,
+		// disabling commits the switch, the client teardown and the
+		// revocation first, and answers a failed record as auditErr — the
+		// switch already moved, so that failure never denies the save.
+		toggle := func() (auditErr, err error) {
 			if req.Enabled == nil {
-				return nil
+				return nil, nil
 			}
+			enabled := int64(0)
+			outcome, reason := "revoke", "server_disabled"
 			if *req.Enabled {
-				tx, err := sqlDB.BeginTx(r.Context(), nil)
-				if err != nil {
-					return fmt.Errorf("begin mcp server enable %q: %w", id, err)
-				}
-				defer func() { _ = tx.Rollback() }()
-				txq := db.New(tx)
-				if _, err := txq.ToggleMcpServerEnabled(r.Context(), db.ToggleMcpServerEnabledParams{
-					Enabled: 1, ID: id,
-				}); err != nil {
-					return fmt.Errorf("toggle mcp server %q: %w", id, err)
-				}
-				if err := auditApproval(r.Context(), txq, id, "approval_change", "approve",
-					"server_enabled"); err != nil {
-					return fmt.Errorf("audit server enable for %q: %w", id, err)
-				}
-				if err := tx.Commit(); err != nil {
-					return fmt.Errorf("commit mcp server enable %q: %w", id, err)
-				}
-				return nil
+				enabled, outcome, reason = 1, "approve", "server_enabled"
 			}
-			if _, err := queries.ToggleMcpServerEnabled(r.Context(), db.ToggleMcpServerEnabledParams{
-				Enabled: 0, ID: id,
-			}); err != nil {
-				return fmt.Errorf("toggle mcp server %q: %w", id, err)
-			}
-			// Disabling revokes: admitted calls are cancelled and the live
-			// client goes. The record is written after the fact —
-			// the tightening already took effect, so failing it must not
-			// undo or deny the save.
-			manager.Close(id)
-			if canceler != nil {
-				canceler.CancelServerTools(id)
-			}
-			if err := auditApproval(r.Context(), queries, id, "approval_change", "revoke",
-				"server_disabled"); err != nil {
-				toggleAudit = fmt.Errorf("audit server disable for %q: %w", id, err)
-			}
-			return nil
+			return api.ApplyToggle(r.Context(), sqlDB, queries, *req.Enabled,
+				tooladmission.Decision{
+					Event:    tooladmission.EventApprovalChange,
+					ServerID: id,
+					Outcome:  outcome,
+					Reason:   reason,
+				},
+				func(runner *db.Queries) error {
+					_, err := runner.ToggleMcpServerEnabled(r.Context(), db.ToggleMcpServerEnabledParams{
+						Enabled: enabled, ID: id,
+					})
+					return err
+				},
+				// Disabling revokes: the live client goes and admitted
+				// calls are cancelled.
+				func() {
+					manager.Close(id)
+					if canceler != nil {
+						canceler.CancelServerTools(id)
+					}
+				})
 		}
 
 		// respond renders the saved row with the listing the pass knows.
 		respond := func(status int, listed []mcp.ListedTool, skipped []mcp.Skipped) error {
-			saved, err := queries.GetMcpServer(r.Context(), id)
-			if err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("read back mcp server %q: %w", id, err)
-			}
-			server, err := buildServer(r.Context(), queries, saved)
-			if err != nil {
-				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
-				return fmt.Errorf("build server %q: %w", id, err)
-			}
-			return api.WriteJSON(w, status, apitypes.McpServerWithToolsResponse{
-				Server:       server,
-				Tools:        discoveredTools(id, listed),
-				SkippedTools: skippedTools(skipped),
-			})
+			return respondServer(r.Context(), w, status, queries, id, listed, skipped)
 		}
 
 		if withdrawalOnly {
-			// The tightening persists with no dial at all, and the
-			// live client is closed so the next enable reconnects under
-			// the new policy. The restriction takes effect even when
-			// its audit record fails — the failure degrades the trail,
-			// surfaced through the joined error, never the save.
+			// The tightening persists with no dial at all, and the live
+			// client is closed so the next enable reconnects under the
+			// new policy: a switch toggle's teardown rides ApplyToggle's
+			// cancel callback, a pure flag removal closes it here. The
+			// restriction takes effect even when its audit record fails —
+			// the failure degrades the trail, surfaced through the joined
+			// error, never the save.
 			before := toolIDs(r.Context(), queries, id)
 			if err := writeRow(); err != nil {
 				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 				return err
 			}
-			manager.Close(id)
-			if canceler != nil {
-				canceler.CancelServerTools(id)
+			if req.Enabled == nil {
+				// A pure flag withdrawal carries no switch toggle.
+				manager.Close(id)
+				if canceler != nil {
+					canceler.CancelServerTools(id)
+				}
 			}
-			if err := toggle(); err != nil {
+			toggleAudit, err := toggle()
+			if err != nil {
 				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 				return err
 			}
@@ -264,7 +248,7 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 		)
 		if connectionEdit {
 			verifyCfg = dialConfig(id, next, secrets)
-			client, _, _, err := verify(r.Context(), verifyCfg)
+			client, err := verify(r.Context(), verifyCfg)
 			if err != nil {
 				return errors.Join(
 					api.WriteError(w, http.StatusBadRequest, "Connection check failed: "+err.Error()),
@@ -283,7 +267,8 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return errors.Join(err, withdraw())
 		}
-		if err := toggle(); err != nil {
+		toggleAudit, err := toggle()
+		if err != nil {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return err
 		}
@@ -308,17 +293,13 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 			}
 		case verified != nil:
 			// One publish for definition, implementation and authority:
-			// the client the manager keeps and the listing the catalog
-			// accepts are installed together. Ownership transferred inside
-			// the call — a publish failure leaves the installed client
-			// with an empty committed cache, so its tools stay inert until
-			// the next refresh rather than diverging from the catalog.
-			listed, skipped, err = mcpserver.PublishVerified(discoverCtx, sqlDB, queries, manager, saved, verifyCfg, verified)
-			// Ownership moved into the manager when PublishVerified
-			// installed the verified client, so the deferred close must
-			// not run even when publication fails: closing here would
-			// shutter the live installed connection.
-			adopted = true
+			// the catalog write commits first, and only a committed
+			// generation installs the verified client. A failed
+			// publication leaves the manager untouched — the previous
+			// generation keeps serving — and ownership stays here, so
+			// the deferred close reclaims the candidate.
+			listed, skipped, err = mcpserver.PublishVerified(discoverCtx, sqlDB, vaultStore, manager, saved, verified)
+			adopted = err == nil
 			if err != nil {
 				// A failed publication leaves the row explaining itself,
 				// exactly like a refresh: diagnostics land, and a rejected
@@ -340,7 +321,7 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 		case enabling:
 			// A re-enable reconnects through the manager: its failure
 			// degrades to the stored listing with diagnostics recorded.
-			if listed, skipped, err = mcpserver.Discover(discoverCtx, sqlDB, queries, manager, vaultStore, saved); err != nil {
+			if listed, skipped, err = mcpserver.Discover(discoverCtx, sqlDB, queries, manager, vaultStore, logger, saved); err != nil {
 				if listed, err = catalogListing(r.Context(), queries, id); err != nil {
 					_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 					return err
@@ -373,7 +354,7 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 // catalogListing renders the server's stored catalog rows in the
 // listing shape discovery would have returned.
 func catalogListing(ctx context.Context, queries *db.Queries, serverID string) ([]mcp.ListedTool, error) {
-	rows, err := queries.ListMcpServerTools(ctx, serverID)
+	rows, err := queries.ListMcpServerTools(ctx, sql.NullString{String: serverID, Valid: true})
 	if err != nil {
 		return nil, fmt.Errorf("list tools for %q: %w", serverID, err)
 	}
@@ -455,12 +436,13 @@ func applyPatch(row db.McpServer, req apitypes.UpdateMcpServerRequest) (serverPa
 		}
 	}
 
-	rawURL := ""
-	if next.url.Valid {
-		rawURL = next.url.String
-	}
-	if msg := configProblem(rawURL); msg != "" {
-		return next, msg
+	// Only a URL the patch itself supplies is validated: a stored
+	// endpoint that predates today's validator must not be able to
+	// block its own restriction — the handler's own rule.
+	if req.URL != nil && next.url.Valid {
+		if msg := configProblem(next.url.String); msg != "" {
+			return next, msg
+		}
 	}
 	return next, ""
 }
@@ -480,23 +462,6 @@ func sameNullInt64(a, b sql.NullInt64) bool {
 		return false
 	}
 	return !a.Valid || a.Int64 == b.Int64
-}
-
-// unsealSecrets reads the stored secrets blob; a missing entry is an
-// honestly empty one.
-func unsealSecrets(ctx context.Context, vaultStore *vault.Store, slug string) (mcpserver.Secrets, error) {
-	var secrets mcpserver.Secrets
-	blob, _, err := vaultStore.Get(ctx, vault.NameRuntime, mcpserver.EntryName(slug))
-	if errors.Is(err, vault.ErrNotFound) {
-		return secrets, nil
-	}
-	if err != nil {
-		return secrets, err
-	}
-	if err := json.Unmarshal(blob, &secrets); err != nil {
-		return secrets, fmt.Errorf("decode secrets: %w", err)
-	}
-	return secrets, nil
 }
 
 // dialConfig builds the verification dial for the next row state: the

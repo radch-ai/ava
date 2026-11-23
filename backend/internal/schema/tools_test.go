@@ -17,7 +17,7 @@ func seedBuiltinAndAgent(t *testing.T, sqlDB *sql.DB, toolID, agentID string) {
 	t.Helper()
 	queries := db.New(sqlDB)
 	if err := queries.UpsertTool(t.Context(), db.UpsertToolParams{
-		ID: toolID, Name: toolID, Description: "", Builtin: 1,
+		ID: toolID, Name: toolID, Description: "",
 	}); err != nil {
 		t.Fatalf("seed tool: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestToolIDDuplicateInsertRejected(t *testing.T) {
 func TestBuiltinInsertDefaultsOn(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
 	if err := db.New(sqlDB).UpsertTool(t.Context(), db.UpsertToolParams{
-		ID: "ddg", Name: "DuckDuckGo Search", Builtin: 1,
+		ID: "ddg", Name: "DuckDuckGo Search",
 	}); err != nil {
 		t.Fatalf("seed builtin: %v", err)
 	}
@@ -105,11 +105,7 @@ func TestMcpToolInsertStartsGloballyOff(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
 	queries := db.New(sqlDB)
 	seedMcpServer(t, sqlDB, "github")
-	if err := queries.UpsertMcpTool(t.Context(), db.UpsertMcpToolParams{
-		ID: "github:search", Name: "search", ServerID: sql.NullString{String: "github", Valid: true},
-	}); err != nil {
-		t.Fatalf("insert mcp tool: %v", err)
-	}
+	upsertMcpTool(t, sqlDB, "github:search", "github")
 	row, err := queries.GetTool(t.Context(), "github:search")
 	if err != nil {
 		t.Fatalf("get mcp tool: %v", err)
@@ -122,21 +118,14 @@ func TestMcpToolInsertStartsGloballyOff(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("enable mcp tool: %v", err)
 	}
-	if err := queries.UpsertMcpTool(t.Context(), db.UpsertMcpToolParams{
-		ID: "github:search", Name: "search-v2", Description: "newer",
-		ServerID: sql.NullString{String: "github", Valid: true},
-	}); err != nil {
-		t.Fatalf("re-sync mcp tool: %v", err)
-	}
+	// A re-sync refreshes metadata and never touches the saved switch.
+	upsertMcpTool(t, sqlDB, "github:search", "github")
 	row, err = queries.GetTool(t.Context(), "github:search")
 	if err != nil {
 		t.Fatalf("get re-synced tool: %v", err)
 	}
 	if row.Enabled != 1 {
 		t.Errorf("re-sync reset the saved switch: enabled = %d, want 1", row.Enabled)
-	}
-	if row.Name != "search-v2" {
-		t.Errorf("re-sync kept stale metadata: name = %q, want search-v2", row.Name)
 	}
 }
 

@@ -58,11 +58,20 @@ type turnRecorder struct {
 	emitCtx context.Context
 	lane    *UserAgent
 	// scrub sanitizes the copies this recorder persists.
-	scrub func(context.Context, string) string
+	scrub func(string) string
 
-	mu     sync.Mutex
-	closed bool
-	last   *schema.Message // the group's text and, at the end, the terminal answer
+	// writeMu serializes the closed-check and the journal sink across
+	// persist/recordStart/recordOutcome and close: a late callback
+	// either finishes its write before close lands or refuses after —
+	// never a durable row after the turn's window. It is a separate
+	// mutex from mu on purpose: mu is never held across the sink, so
+	// publication lock order (pubMu → snapMu → a.mu) cannot invert.
+	// writeMu sits above that order — nothing below it acquires it —
+	// and is held across the sink and the publication it triggers.
+	writeMu sync.Mutex
+	mu      sync.Mutex
+	closed  bool
+	last    *schema.Message // the group's text and, at the end, the terminal answer
 	// invocations is the registry; order records first-start order so
 	// the prefix snapshot is stable rather than map-ordered.
 	invocations map[string]*invState
@@ -147,20 +156,18 @@ func (r *turnRecorder) AfterModelRewriteState(
 	return ctx, state, nil
 }
 
-// cleanCopy sanitizes one persisted copy. A recorder without a bound
-// scrubber keeps the pattern battery alone.
+// cleanCopy sanitizes one persisted copy through the lane's scrubber.
 func (r *turnRecorder) cleanCopy(content string) string {
-	if r.scrub == nil {
-		return fanOutScrubber(content)
-	}
-	return r.scrub(r.emitCtx, content)
+	return r.scrub(content)
 }
 
 // persist writes one required batch and publishes the event that carries
 // it. A closed recorder refuses: the turn is over, and a late row would
 // land after the next turn's prompt.
 func (r *turnRecorder) persist(msgs []backend.ThreadMessageDraft) error {
-	if r.lane.journal == nil || r.isClosed() {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
+	if r.isClosed() {
 		return nil
 	}
 	err := r.lane.state.commitAndPublish(func() (*backend.JournalBatch, error) {
@@ -186,10 +193,9 @@ func (r *turnRecorder) persist(msgs []backend.ThreadMessageDraft) error {
 // snapshot. A required-write error reaches the wrapper, which then never
 // invokes the tool: intent the journal cannot record must not run.
 func (r *turnRecorder) recordStart(invocationID, callID, name, args string) error {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
 	if r.isClosed() {
-		return nil
-	}
-	if r.lane.journal == nil {
 		return nil
 	}
 	err := r.lane.state.commitAndPublish(func() (*backend.JournalBatch, error) {
@@ -220,7 +226,9 @@ func (r *turnRecorder) recordStart(invocationID, callID, name, args string) erro
 // event that carries it. It returns a required-write error when the
 // write fails — the wrapper passes it out of the invocation so the round
 // aborts at message level.
-func (r *turnRecorder) recordOutcome(invocationID, callID, name, result string, invocationErr error) error {
+func (r *turnRecorder) recordOutcome(invocationID, result string, invocationErr error) error {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
 	errText := ""
 	if invocationErr != nil {
 		// One rendered cause, sanitized like every persisted copy, for
@@ -238,7 +246,7 @@ func (r *turnRecorder) recordOutcome(invocationID, callID, name, result string, 
 		}
 	}
 	r.mu.Unlock()
-	if closed || r.lane.journal == nil {
+	if closed {
 		return nil
 	}
 	// The journal's error half is a nil-or-value pointer, so an empty
@@ -303,6 +311,8 @@ func (r *turnRecorder) snapshotInvocations() []wstypes.ToolInvocationState {
 // close ends the turn's recording window. Late invocations may still
 // report their wire event, but never write a durable row.
 func (r *turnRecorder) close() {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
 	r.mu.Lock()
 	r.closed = true
 	r.mu.Unlock()

@@ -28,7 +28,7 @@ func (a *UserAgent) processCommand(claim *turnClaim, emitCtx context.Context, ms
 	if err := a.state.startItem(func() (*backend.ItemStart, *backend.JournalBatch, error) {
 		return a.journal.StartItem(claim.ctx, a.state.agentID, msgID)
 	}); err != nil {
-		a.logger.Error().Err(err).Str("agent_id", a.state.agentID).Msg("start command")
+		a.logger.Error().Str("error", a.scrubCopy(err.Error())).Str("agent_id", a.state.agentID).Msg("start command")
 		a.failTurn(emitCtx, msgID, "persist command start: "+err.Error(), "")
 		return outcomeMessageFailed
 	}

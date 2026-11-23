@@ -1,3 +1,4 @@
+DROP VIEW IF EXISTS agent_effective_tools;
 DROP INDEX IF EXISTS idx_tool_audit_agent;
 DROP INDEX IF EXISTS idx_tool_audit_occurred;
 DROP TABLE IF EXISTS tool_audit_events;
@@ -7,5 +8,5 @@ DROP TABLE IF EXISTS agent_disabled_tools;
 DROP INDEX IF EXISTS idx_tools_server_id;
 DROP TABLE IF EXISTS tools;
 DROP TABLE IF EXISTS mcp_servers;
-DROP TABLE IF EXISTS agents;
 DROP TABLE IF EXISTS threads;
+DROP TABLE IF EXISTS agents;

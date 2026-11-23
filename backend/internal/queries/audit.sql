@@ -24,13 +24,15 @@ DELETE FROM tool_audit_events WHERE state = 'terminal' AND occurred_at < ?;
 
 -- name: DeleteAuditOverflow :execrows
 -- Retention bound two: keep the newest completed records, drop the rest
--- of the terminal rows. Admitted rows never count against the cap.
+-- of the terminal rows. Admitted rows never count against the cap. The
+-- boundary row's id (OFFSET keep from the top) names everything older;
+-- no rows means nothing to delete.
 DELETE FROM tool_audit_events
 WHERE state = 'terminal'
-  AND id NOT IN (
+  AND id <= COALESCE((
     SELECT id FROM tool_audit_events WHERE state = 'terminal'
-    ORDER BY id DESC LIMIT CAST(sqlc.arg('keep_count') AS INTEGER)
-  );
+    ORDER BY id DESC LIMIT 1 OFFSET CAST(sqlc.arg('keep_count') AS INTEGER)
+  ), 0);
 
 -- name: CloseOrphanAdmissions :execrows
 -- Startup reconciliation: an 'admitted' row that survived a restart has

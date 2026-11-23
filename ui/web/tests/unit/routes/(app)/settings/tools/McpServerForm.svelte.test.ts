@@ -147,6 +147,20 @@ describe('McpServerForm edit patch', () => {
 		expect(oncancel).not.toHaveBeenCalled()
 	})
 
+	// Present-but-unparseable input is an error, never a silent clear:
+	// the save is blocked before any request leaves the form.
+	it('rejects garbage in the timeout field instead of clearing it', async () => {
+		const { oncancel } = renderForm()
+		await page.getByLabelText('Per-call timeout (ms, optional)').fill('12x')
+		await page.getByRole('button', { name: 'Save changes' }).click()
+
+		await expect
+			.element(page.getByText(/Timeout must be a whole number/))
+			.toBeInTheDocument()
+		expect(mcpService.updateMcpServer).not.toHaveBeenCalled()
+		expect(oncancel).not.toHaveBeenCalled()
+	})
+
 	it('names malformed secret lines instead of dropping them', async () => {
 		renderForm()
 		await page.getByLabelText('Headers — KEY: VALUE per line').fill('TOKEN=abc')
@@ -248,16 +262,18 @@ describe('McpServerForm create', () => {
 		expect(onsaved).toHaveBeenCalledOnce()
 	})
 
-	it('offers no process fields', () => {
+	it('trims the name and URL before they leave the form', async () => {
 		render(McpServerForm, { onsaved: vi.fn(), oncancel: vi.fn() })
-		expect(page.getByLabelText('Transport').elements()).toHaveLength(0)
-		expect(page.getByLabelText('Command').elements()).toHaveLength(0)
-		expect(
-			page.getByLabelText('Arguments — one per line').elements()
-		).toHaveLength(0)
-		expect(
-			page.getByLabelText('Environment — KEY: VALUE per line').elements()
-		).toHaveLength(0)
+
+		await page.getByLabelText('Name').fill('  Notes  ')
+		await page.getByLabelText('URL').fill(' http://127.0.0.1:4444/mcp ')
+		await page.getByRole('button', { name: 'Add server' }).click()
+
+		expect(mcpService.createMcpServer).toHaveBeenCalledExactlyOnceWith({
+			name: 'Notes',
+			url: 'http://127.0.0.1:4444/mcp',
+			headers: {}
+		})
 	})
 })
 

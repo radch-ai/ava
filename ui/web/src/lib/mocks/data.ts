@@ -202,7 +202,6 @@ export interface McpServerRow {
 	allowPrivateNetwork: boolean
 	allowPlaintext: boolean
 	lastError?: string
-	refreshedAt?: number
 }
 
 const MCP_SERVER_SEEDS: McpServerRow[] = [
@@ -214,8 +213,7 @@ const MCP_SERVER_SEEDS: McpServerRow[] = [
 		enabled: true,
 		catalogState: 'active',
 		allowPrivateNetwork: true,
-		allowPlaintext: true,
-		refreshedAt: ANCHOR
+		allowPlaintext: true
 	}
 ]
 /** The seeded rows: keyless, no custom models — mirroring a store

@@ -40,9 +40,8 @@ DELETE FROM mcp_servers WHERE id = ?;
 UPDATE mcp_servers SET catalog_state = ? WHERE id = ?;
 
 -- name: SetMcpServerDiagnostics :exec
--- Post-discovery state: last error (NULL = healthy) and when the
--- server's tools were last synced into the catalog.
-UPDATE mcp_servers SET last_error = ?, refreshed_at = ? WHERE id = ?;
+-- Post-discovery state: last error (NULL = healthy).
+UPDATE mcp_servers SET last_error = ? WHERE id = ?;
 
 -- name: ListMcpServersWithCounts :many
 -- Servers in creation order with their catalog tool counts: one query,

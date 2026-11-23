@@ -65,11 +65,12 @@
 		return out
 	}
 
+	// '' is the clear; any other text must parse — garbage yields NaN,
+	// which timeoutProblem rejects: never a silent clear.
 	function parsedTimeout(): number | undefined {
 		const text = timeoutText == null ? '' : String(timeoutText).trim()
 		if (text === '') return undefined
-		const value = Number(text)
-		return Number.isFinite(value) ? value : undefined
+		return Number(text)
 	}
 
 	// The field only holds whole milliseconds in the backend's range: an
@@ -143,8 +144,8 @@
 			} else {
 				const timeoutMs = parsedTimeout()
 				result = await createMcpServer({
-					name,
-					url,
+					name: name.trim(),
+					url: url.trim(),
 					...(timeoutMs !== undefined && { timeoutMs }),
 					...(allowPrivateNetwork && { allowPrivateNetwork }),
 					...(allowPlaintext && { allowPlaintext }),
@@ -228,12 +229,13 @@
 
 	<div class="space-y-1.5">
 		<Label for="mcp-timeout">Per-call timeout (ms, optional)</Label>
+		<!-- A number input swallows unparseable text before the form
+			ever sees it; the field stays text so validation can reject
+			it instead of silently clearing. -->
 		<Input
 			id="mcp-timeout"
 			bind:value={timeoutText}
-			type="number"
-			min={1}
-			max={600000}
+			inputmode="numeric"
 			placeholder="30000"
 		/>
 	</div>

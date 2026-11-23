@@ -39,9 +39,6 @@ type UserAgentManagerOptions struct {
 	// model input; bound by the gateway at boot. Required: an unbound
 	// source fails each turn at message level.
 	GetAgentThread AgentThreadSource
-	// ScrubToolCopy sanitizes observable tool-call copies with the
-	// agent's known secrets; nil keeps the pattern battery alone.
-	ScrubToolCopy ToolCopyScrubber
 }
 
 // UserAgentManager manages per-agent queue states with thread-safe
@@ -57,7 +54,6 @@ type UserAgentManager struct {
 	tools          AgentToolsFunc
 	getAgentThread AgentThreadSource
 	journal        LifecycleJournal
-	scrubToolCopy  ToolCopyScrubber
 
 	// turns counts claimed turns across every lane; Drain waits on it.
 	turns sync.WaitGroup
@@ -78,7 +74,6 @@ func NewUserAgentManager(logger zerolog.Logger, opts *UserAgentManagerOptions) *
 		m.tools = opts.Tools
 		m.getAgentThread = opts.GetAgentThread
 		m.journal = opts.Journal
-		m.scrubToolCopy = opts.ScrubToolCopy
 	}
 	m.rootCtx, m.rootCancel = context.WithCancel(context.Background())
 	return m
@@ -127,7 +122,6 @@ func (m *UserAgentManager) newWorker(s *agentState) *UserAgent {
 		Tools:          m.tools,
 		GetAgentThread: m.getAgentThread,
 		Journal:        m.journal,
-		ScrubToolCopy:  m.scrubToolCopy,
 		Logger:         m.logger,
 		OnExit:         func(w *UserAgent) { m.workerExited(s, w) },
 	})
@@ -150,7 +144,10 @@ func (m *UserAgentManager) workerExited(s *agentState, w *UserAgent) {
 		return
 	}
 	s.worker = nil
-	if s.canRunNow() && !s.drainingNow() {
+	s.mu.Lock()
+	runnable := s.runnableLocked()
+	s.mu.Unlock()
+	if runnable {
 		s.worker = m.newWorker(s)
 	}
 }

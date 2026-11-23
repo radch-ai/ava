@@ -284,7 +284,6 @@ func startLeakPipelineWith(t *testing.T, provider func(*testing.T) *httptest.Ser
 		GetAgentConfig: turns.GetAgentConfig,
 		Tools:          turns.AgentTools,
 		GetAgentThread: turns.GetAgentThread,
-		ScrubToolCopy:  turns.ScrubToolCopy,
 	}, zerolog.Nop())
 	if err != nil {
 		t.Fatalf("gateway.New: %v", err)
@@ -524,6 +523,42 @@ FROM tool_audit_events`)
 	}
 	if seen == 0 {
 		t.Fatal("the invocation left no audit rows")
+	}
+}
+
+// failingProvider answers every request with a 500 whose body carries
+// the canary: the model query fails with remote text a leak would ride.
+func failingProvider(t *testing.T, message string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, message, http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// A failed turn's error row and broadcasts are scrubbed at the sink:
+// remote failure text cannot carry the credential into the transcript
+// or the wire even though no tool outcome existed.
+func TestFailedTurnErrorRowCarriesNoCredential(t *testing.T) {
+	p := startLeakPipelineWith(t, func(t *testing.T) *httptest.Server {
+		return failingProvider(t, "provider exploded: "+leakCanary)
+	})
+	turn := driveLeakTurn(t, p, "trigger the failure")
+	if turn.terminal.ItemID == "" || turn.terminal.Outcome != string(apitypes.ItemFailed) {
+		t.Fatalf("terminal = %+v, want a failed item", turn.terminal)
+	}
+	sawErrorRow := false
+	for _, row := range transcriptRows(t, p) {
+		if strings.Contains(row.content, leakCanary) || strings.Contains(row.toolCalls, leakCanary) {
+			t.Fatalf("persisted failure row leaked the credential: %s %s", row.content, row.toolCalls)
+		}
+		if row.role == "error" {
+			sawErrorRow = true
+		}
+	}
+	if !sawErrorRow {
+		t.Fatal("failed turn persisted no error row")
 	}
 }
 

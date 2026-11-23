@@ -72,16 +72,10 @@ type LifecycleJournal interface {
 type AgentConfigSource = func(ctx context.Context, agentID string) (*apitypes.AgentConfig, error)
 
 // AgentToolsFunc fetches an agent's effective tools for a turn —
-// permissions applied, ready for the capture wrapper. An alias of
-// backend TurnService.AgentTools, so the bound method value needs no
-// adapter.
-type AgentToolsFunc = func(ctx context.Context, agentID string) ([]tool.InvokableTool, error)
-
-// ToolCopyScrubber sanitizes one tool-call copy for persistence and
-// emission. An alias of backend TurnService.ScrubToolCopy, so the bound
-// method value needs no adapter. A nil scrubber falls back to the shared
-// pattern battery.
-type ToolCopyScrubber = func(ctx context.Context, agentID, content string) string
+// permissions applied, metadata and the turn's scrubber resolved in the
+// same pass, ready for the capture wrapper. An alias of backend
+// TurnService.AgentTools, so the bound method value needs no adapter.
+type AgentToolsFunc = func(ctx context.Context, agentID string) (backend.TurnTools, error)
 
 // AgentThreadSource reads the agent's active thread as the turn's
 // model input. An alias of backend TurnService.GetAgentThread, so the
@@ -123,12 +117,7 @@ type UserAgentOptions struct {
 	// GetAgentThread reads one thread as the turn's model input;
 	// bound by the gateway at boot.
 	GetAgentThread AgentThreadSource
-	// ScrubToolCopy sanitizes every observable copy of a tool call —
-	// arguments, results, error text — with the agent's known secrets
-	// plus the pattern battery; bound by the gateway at boot (nil keeps
-	// the pattern battery alone).
-	ScrubToolCopy ToolCopyScrubber
-	Logger        zerolog.Logger
+	Logger         zerolog.Logger
 }
 
 // UserAgent is one agent's disposable runtime worker: it executes
@@ -166,9 +155,10 @@ type UserAgent struct {
 	tools          AgentToolsFunc
 	getAgentThread AgentThreadSource
 	journal        LifecycleJournal
-	// scrubToolCopy sanitizes observable copies; nil keeps the shared
-	// pattern battery alone.
-	scrubToolCopy ToolCopyScrubber
+	// turnScrub is the live turn's resolved scrubber (the agent's
+	// servers' known values plus the pattern battery); nil outside a
+	// turn keeps the pattern battery alone. Guarded by mu.
+	turnScrub *backend.Scrubber
 }
 
 // newUserAgent creates a worker and starts its claim loop. Turn
@@ -183,7 +173,6 @@ func newUserAgent(opts UserAgentOptions) *UserAgent {
 		tools:          opts.Tools,
 		getAgentThread: opts.GetAgentThread,
 		journal:        opts.Journal,
-		scrubToolCopy:  opts.ScrubToolCopy,
 		onExit:         opts.OnExit,
 	}
 
@@ -191,19 +180,22 @@ func newUserAgent(opts UserAgentOptions) *UserAgent {
 	return a
 }
 
-// scrubCopy sanitizes one observable copy of tool-call content:
-// the agent's known secrets plus the pattern battery when the backend
-// seam is bound, the pattern battery alone otherwise. The copy is detached
-// from the invocation's cancel — a stopped call's text still needs its
-// credentials removed — and never fails the turn.
-func (a *UserAgent) scrubCopy(ctx context.Context, content string) string {
+// scrubCopy sanitizes one observable copy of tool-call content: the
+// live turn's resolved scrubber (the agent's servers' known values
+// plus the pattern battery) when tools resolved, the pattern battery
+// alone otherwise. Never fails the turn.
+func (a *UserAgent) scrubCopy(content string) string {
 	if content == "" {
 		return content
 	}
-	if a.scrubToolCopy == nil {
+	a.mu.Lock()
+	scrub := a.turnScrub
+	a.mu.Unlock()
+	if scrub == nil {
 		return fanOutScrubber(content)
 	}
-	return a.scrubToolCopy(context.WithoutCancel(ctx), a.state.agentID, content)
+	sanitized, _ := scrub.ScrubString(content)
+	return sanitized
 }
 
 // prefixSnapshotLocked captures the live turn's replayable state, or
@@ -310,7 +302,7 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 	if err := a.state.startItem(func() (*backend.ItemStart, *backend.JournalBatch, error) {
 		return a.journal.StartItem(claim.ctx, a.state.agentID, msgID)
 	}); err != nil {
-		a.logger.Error().Err(err).Str("agent_id", a.state.agentID).Msg("start item")
+		a.logger.Error().Str("error", a.scrubCopy(err.Error())).Str("agent_id", a.state.agentID).Msg("start item")
 		a.failTurn(emitCtx, msgID, "persist item start: "+err.Error(), "")
 		return outcomeMessageFailed
 	}
@@ -357,27 +349,35 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 	if a.getAgentConfig != nil {
 		cfg, err := a.getAgentConfig(claim.ctx, a.state.agentID)
 		if err != nil {
-			a.logger.Warn().Err(err).Str("agent_id", a.state.agentID).
+			a.logger.Warn().Str("error", a.scrubCopy(err.Error())).Str("agent_id", a.state.agentID).
 				Msg("fetch agent config; turn proceeds without persona")
 		} else {
 			instruction = BuildSystemPrompt(cfg)
 		}
 	}
 	// The recorder owns this turn's replay rows: the native assistant
-	// hook writes call groups, the tool wrapper writes outcomes.
+	// hook writes call groups, the tool wrapper writes outcomes. Its
+	// window closes on every exit from here — a setup failure must not
+	// leave the recorder accepting rows after the turn is over.
 	rec := newTurnRecorder(a, msgID, emitCtx)
 	a.setRecorder(rec)
+	defer rec.close()
 	// Tools arrive through their own seam — permissions and global
 	// switches already applied, ready to wrap. A failed read or an
 	// unreadable manifest fails the turn; an empty set is an honest
 	// tool-less turn. A stop during setup is not a failure.
 	var turnTools []tool.BaseTool
 	if a.tools != nil {
-		impls, err := a.tools(claim.ctx, a.state.agentID)
+		resolved, err := a.tools(claim.ctx, a.state.agentID)
 		if err != nil {
 			return a.setupFailure(emitCtx, claim, msgID, "resolve tools", err)
 		}
-		if turnTools, err = a.wrapTools(claim.ctx, rec, impls); err != nil {
+		// The turn's scrubber rides the same resolution: known values
+		// and implementations come from one pass.
+		a.mu.Lock()
+		a.turnScrub = resolved.Scrubber
+		a.mu.Unlock()
+		if turnTools, err = a.wrapTools(rec, resolved); err != nil {
 			return a.setupFailure(emitCtx, claim, msgID, "wrap tools", err)
 		}
 	}
@@ -441,7 +441,7 @@ func (a *UserAgent) failEvent(emitCtx context.Context, claim *turnClaim, msgID s
 	rec.close()
 	var rwe *requiredWriteError
 	if errors.As(err, &rwe) {
-		a.logger.Error().Err(rwe.err).Str("agent_id", a.state.agentID).Msg("persist turn message")
+		a.logger.Error().Str("error", a.scrubCopy(rwe.err.Error())).Str("agent_id", a.state.agentID).Msg("persist turn message")
 		if a.failTurn(emitCtx, msgID, "persist turn message: "+rwe.err.Error(), "") {
 			return outcomeMessageFailed
 		}
@@ -450,8 +450,8 @@ func (a *UserAgent) failEvent(emitCtx context.Context, claim *turnClaim, msgID s
 	if turnStopped(claim.ctx) {
 		return a.finishInterrupted(emitCtx, msgID, answer)
 	}
-	a.logger.Error().Err(err).Str("agent_id", a.state.agentID).Msg("model query")
-	text, toolName := a.turnError(emitCtx, err)
+	a.logger.Error().Str("error", a.scrubCopy(err.Error())).Str("agent_id", a.state.agentID).Msg("model query")
+	text, toolName := turnError(err)
 	if a.failTurn(emitCtx, msgID, text, toolName) {
 		// A tool-attributed failure already shows on its own row and
 		// must not pause the queue.
@@ -496,7 +496,7 @@ func (a *UserAgent) setupFailure(emitCtx context.Context, claim *turnClaim, msgI
 	if turnStopped(claim.ctx) {
 		return a.finishInterrupted(emitCtx, msgID, &strings.Builder{})
 	}
-	a.logger.Error().Err(err).Str("agent_id", a.state.agentID).Msg(site)
+	a.logger.Error().Str("error", a.scrubCopy(err.Error())).Str("agent_id", a.state.agentID).Msg(site)
 	if a.failTurn(emitCtx, msgID, err.Error(), "") {
 		return outcomeMessageFailed
 	}
@@ -518,20 +518,19 @@ func turnStopped(queryCtx context.Context) bool {
 func (a *UserAgent) finishInterrupted(emitCtx context.Context, msgID string, answer *strings.Builder) turnOutcome {
 	var drafts []backend.ThreadMessageDraft
 	if answer.Len() > 0 {
+		// The settlement sink applies the same scrub as mid-turn rows:
+		// the partial answer is persisted exactly like any other
+		// assistant content.
 		drafts = []backend.ThreadMessageDraft{{
-			Role: apitypes.ThreadRoleAssistant, Content: answer.String(), TurnID: msgID,
+			Role: apitypes.ThreadRoleAssistant, Content: a.scrubCopy(answer.String()), TurnID: msgID,
 		}}
-	}
-	if a.journal == nil {
-		a.clearTurnPrefix()
-		return outcomeStopped
 	}
 	err := a.state.commitAndPublish(func() (*backend.JournalBatch, error) {
 		return a.journal.FinishItem(emitCtx, a.state.agentID, msgID, apitypes.ItemStopped, "", drafts)
 	})
 	if err != nil {
-		a.logger.Warn().Err(err).Str("agent_id", a.state.agentID).Msg("persist stopped item")
-		a.emitError(emitCtx, "persist turn outcome: "+err.Error(), "", msgID)
+		a.logger.Warn().Str("error", a.scrubCopy(err.Error())).Str("agent_id", a.state.agentID).Msg("persist stopped item")
+		a.emitError(emitCtx, a.scrubCopy("persist turn outcome: "+err.Error()), "", msgID)
 		return outcomeTerminalUnrecorded
 	}
 	a.clearTurnPrefix()
@@ -544,17 +543,17 @@ func (a *UserAgent) finishInterrupted(emitCtx context.Context, msgID string, ans
 // persist settles the item as failed through failTurn; when even that
 // cannot commit, the outcome is unrecorded and the lane must halt.
 func (a *UserAgent) settleTurn(emitCtx context.Context, msgID, content string) turnOutcome {
-	if a.journal == nil {
-		a.failTurn(emitCtx, msgID, "no lifecycle journal configured", "")
-		return outcomeMessageFailed
-	}
+	// The settlement sink applies the same scrub as mid-turn rows: the
+	// terminal answer is persisted exactly like any other assistant
+	// content.
+	content = a.scrubCopy(content)
 	err := a.state.commitAndPublish(func() (*backend.JournalBatch, error) {
 		return a.journal.FinishItem(emitCtx, a.state.agentID, msgID, apitypes.ItemCompleted, "",
 			[]backend.ThreadMessageDraft{{Role: apitypes.ThreadRoleAssistant,
 				Content: content, TurnID: msgID}})
 	})
 	if err != nil {
-		a.logger.Error().Err(err).Str("agent_id", a.state.agentID).Msg("persist assistant message")
+		a.logger.Error().Str("error", a.scrubCopy(err.Error())).Str("agent_id", a.state.agentID).Msg("persist assistant message")
 		if a.failTurn(emitCtx, msgID, "persist assistant message: "+err.Error(), "") {
 			return outcomeMessageFailed
 		}
@@ -572,6 +571,7 @@ func (a *UserAgent) beginTurn(msgID string) {
 	a.turnMsgID = msgID
 	a.turnPrefix.Reset()
 	a.recorder = nil
+	a.turnScrub = nil
 	a.turnSeq.Store(0)
 }
 
@@ -591,6 +591,7 @@ func (a *UserAgent) clearTurnPrefix() {
 	a.turnPrefix.Reset()
 	a.turnMsgID = ""
 	a.recorder = nil
+	a.turnScrub = nil
 }
 
 // dropCommittedPrefix retires committed rounds' text from the replay

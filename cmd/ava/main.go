@@ -186,7 +186,6 @@ func serve(logger zerolog.Logger) {
 		GetAgentConfig: turnSvc.GetAgentConfig,
 		Tools:          turnSvc.AgentTools,
 		GetAgentThread: turnSvc.GetAgentThread,
-		ScrubToolCopy:  turnSvc.ScrubToolCopy,
 	}, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Failed to create gateway handler")

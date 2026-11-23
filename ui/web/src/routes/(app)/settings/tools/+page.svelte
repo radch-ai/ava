@@ -2,20 +2,18 @@
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity'
 	import ToolViewer from '#components/tools/ToolViewer.svelte'
 	import type {
-		ViewerEntry,
-		ViewerServerEntry,
 		ViewerStatus,
 		ViewerToolEntry,
 		ViewerToolInspect
 	} from '#components/tools/viewer-types'
-	import { groupTools } from '#components/tools/viewer-types'
+	import { buildViewerEntries } from '#components/tools/viewer-types'
 	import * as AlertDialog from '#components/ui/alert-dialog'
 	import { Button } from '#components/ui/button'
 	import {
 		deleteMcpServer,
 		getMcpToolDefinition,
 		refreshMcpServer,
-		setMcpServerEnabled
+		updateMcpServer
 	} from '#lib/services/mcp'
 	import { toggleTool } from '#lib/services/tools'
 	import type {
@@ -54,10 +52,9 @@
 	let serverError = $state<string | null>(null)
 	const serverQueue = createToggleQueue<McpServer>({
 		apply: async (server, enabled) => {
-			const { server: confirmed } = await setMcpServerEnabled(
-				server.id,
+			const { server: confirmed } = await updateMcpServer(server.id, {
 				enabled
-			)
+			})
 			savedServers.set(server.id, confirmed.enabled)
 			return confirmed.enabled
 		},
@@ -114,10 +111,14 @@
 	let definitions = new SvelteMap<string, McpToolDefinitionResponse>()
 	let loadingDefinitions = new SvelteSet<string>()
 	let definitionError = $state<string | null>(null)
+	// Bumped by every clear: a fetch that started before the clear
+	// must not repopulate the cache when it resolves after it.
+	let definitionGeneration = 0
 
 	function clearDefinitions(): void {
-		openDefinitions = new SvelteMap()
-		definitions = new SvelteMap()
+		definitionGeneration++
+		openDefinitions.clear()
+		definitions.clear()
 	}
 
 	async function toggleDefinition(tool: Tool, serverId: string) {
@@ -129,10 +130,17 @@
 		if (definitions.has(tool.id)) return
 		definitionError = null
 		loadingDefinitions.add(tool.id)
+		const generation = definitionGeneration
 		try {
 			const definition = await getMcpToolDefinition(serverId, tool.id)
+			// A clear ran while this fetch was in flight: the result
+			// belongs to a dead listing — drop it.
+			if (generation !== definitionGeneration) return
 			definitions.set(tool.id, definition)
 		} catch (e) {
+			// Same for a stale failure: it cannot reopen banners for
+			// a listing that no longer exists.
+			if (generation !== definitionGeneration) return
 			openDefinitions.delete(tool.id)
 			definitionError = errorMessage(e, 'Failed to load the definition')
 		} finally {
@@ -161,6 +169,11 @@
 
 	async function refresh(server: McpServer): Promise<void> {
 		actionError = null
+		// The new pass replaces the old one's banners: a failed
+		// refresh must not leave the previous run's skips or
+		// definition error on screen.
+		skipped = null
+		definitionError = null
 		refreshing.add(server.id)
 		try {
 			const result = await refreshMcpServer(server.id)
@@ -178,6 +191,8 @@
 
 	async function remove(server: McpServer): Promise<void> {
 		actionError = null
+		// The deleted server cannot leave its skips behind either.
+		skipped = null
 		try {
 			await deleteMcpServer(server.id)
 			deleting = null
@@ -227,48 +242,46 @@
 
 	// One unified list: builtins flat, then every server (its tools
 	// nested) in creation order. A server switch off dims and blocks its
-	// tools; the manage buttons live on the server header.
-	const entries = $derived.by((): ViewerEntry[] => {
-		const { builtins, byServer } = groupTools(data.tools)
-
-		const rows: ViewerEntry[] = builtins.map((tool) => ({
-			kind: 'tool',
-			entry: toolEntry(tool, undefined)
-		}))
-
-		for (const server of data.servers) {
-			const on = serverQueue.displayed(server)
-			// A paused catalog leaves the nested tools visible but inert:
-			// their switches are blocked.
-			const inert = server.catalogState === 'paused'
-			const entry: ViewerServerEntry = {
-				row: { id: server.id, name: server.name },
-				toolCount: server.toolCount,
-				lastError: server.lastError,
-				status: serverStatus(server),
-				state: {
-					checked: on,
-					disabled: serverQueue.flushing.has(server.id)
-				},
-				label: `Enable ${server.name} globally`,
-				ontoggle: () => serverQueue.toggle(server),
-				tools: (byServer.get(server.id) ?? []).map((tool) =>
-					toolEntry(tool, server.id, !on || inert)
-				),
-				manage: {
-					refreshing: refreshing.has(server.id),
-					onrefresh: () => void refresh(server),
-					onedit: () => (editing = server.id),
-					ondelete: () => {
-						deleting = server
-						confirmDelete = true
+	// tools; the manage buttons live on the server header. The structure
+	// is the shared builder's; this page owns only its policy.
+	// The builder keys nested tools by each surface's own id accessor;
+	// this page hands the original McpServer rows straight through.
+	const entries = $derived(
+		buildViewerEntries(data.tools, data.servers, {
+			serverIdOf: (server) => server.id,
+			toolEntry: (tool, dimmed) =>
+				toolEntry(tool, tool.serverId ?? undefined, dimmed),
+			toolDimmed: (_tool, server) => {
+				const on = serverQueue.displayed(server)
+				return !on || server.catalogState === 'paused'
+			},
+			builtinDimmed: () => false,
+			serverEntry: (server) => {
+				const on = serverQueue.displayed(server)
+				return {
+					row: { id: server.id, name: server.name },
+					toolCount: server.toolCount,
+					lastError: server.lastError,
+					status: serverStatus(server),
+					state: {
+						checked: on,
+						disabled: serverQueue.flushing.has(server.id)
+					},
+					label: `Enable ${server.name} globally`,
+					ontoggle: () => serverQueue.toggle(server),
+					manage: {
+						refreshing: refreshing.has(server.id),
+						onrefresh: () => void refresh(server),
+						onedit: () => (editing = server.id),
+						ondelete: () => {
+							deleting = server
+							confirmDelete = true
+						}
 					}
 				}
 			}
-			rows.push({ kind: 'server', entry })
-		}
-		return rows
-	})
+		})
+	)
 </script>
 
 <svelte:head>
@@ -324,14 +337,14 @@
 					{skipped.length === 1 ? 'tool was' : 'tools were'}
 					skipped
 				</p>
-				<button
-					type="button"
-					class="text-muted-foreground text-xs underline-offset-4 hover:underline"
+				<Button
+					variant="link"
+					class="text-muted-foreground h-auto p-0 text-xs"
 					aria-label="Dismiss skipped tools"
 					onclick={() => (skipped = null)}
 				>
 					×
-				</button>
+				</Button>
 			</div>
 			<ul class="text-muted-foreground space-y-0.5 text-xs">
 				{#each skipped as tool (tool.name)}

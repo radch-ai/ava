@@ -10,11 +10,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
+	"time"
+
+	"github.com/rs/zerolog"
 
 	"github.com/radch-ai/ava/backend/internal/security"
 )
@@ -85,9 +88,9 @@ func guardedDial(cfg ServerConfig) func(ctx context.Context, network, addr strin
 }
 
 // newHTTPClient builds the hardened client every MCP request rides: no
-// proxy, a pinning dial, a bounded body, and no redirects.
-func newHTTPClient(cfg ServerConfig) *http.Client {
-	scrub := security.NewScrubber(cfg.KnownSecrets())
+// proxy, a pinning dial, a bounded body, and no redirects. The
+// scrubber is the connection's own — no per-request construction.
+func newHTTPClient(cfg ServerConfig, scrub *security.Scrubber) *http.Client {
 	rt := &http.Transport{
 		// A proxy re-resolves the destination: that would defeat the
 		// address pinning below.
@@ -96,6 +99,12 @@ func newHTTPClient(cfg ServerConfig) *http.Client {
 		DialContext:         guardedDial(cfg),
 		TLSHandshakeTimeout: ConnectTimeout,
 		ForceAttemptHTTP2:   true,
+		// Keep-alive reuse for the concurrent-call pattern: 16 covers
+		// any per-server admission budget (DefaultLimits) with headroom
+		// for the global one, and idle conns close after 90s.
+		MaxIdleConns:        16,
+		MaxIdleConnsPerHost: 16,
+		IdleConnTimeout:     90 * time.Second,
 	}
 	return &http.Client{
 		Transport: &limitRT{
@@ -194,6 +203,11 @@ func (b *boundedBody) Read(p []byte) (int, error) {
 		if errors.Is(err, io.EOF) {
 			return 0, io.EOF
 		}
+		if err == nil && n == 0 {
+			// A reader that never yields bytes nor errors must not pin
+			// the consumer in a spin.
+			return 0, io.ErrNoProgress
+		}
 		return 0, err
 	}
 	if int64(len(p)) > b.remaining {
@@ -216,20 +230,32 @@ func (b *boundedBody) Close() error { return b.inner.Close() }
 // unsanitized.
 type scrubLogger struct {
 	scrub *security.Scrubber
+	log   zerolog.Logger
 }
 
+// transportLog is the MCP protocol logger: stderr, component-tagged,
+// gated by the global zerolog level so AVA_*_LOG_LEVEL filters it like
+// everything else. The dial chain carries no injectable logger, and
+// SetGlobalLevel applies to every zerolog logger alike.
+var transportLog = zerolog.New(os.Stderr).With().Timestamp().Str("component", "mcp-transport").Logger()
+
 // Infof logs one scrubbed informational line.
-func (l scrubLogger) Infof(format string, v ...any) { l.write("INFO", format, v...) }
+func (l scrubLogger) Infof(format string, v ...any) { l.write(false, format, v...) }
 
 // Errorf logs one scrubbed error line.
-func (l scrubLogger) Errorf(format string, v ...any) { l.write("ERROR", format, v...) }
+func (l scrubLogger) Errorf(format string, v ...any) { l.write(true, format, v...) }
 
 // write formats, scrubs, then logs — the order that keeps a value from
-// ever being observable.
-func (l scrubLogger) write(level, format string, v ...any) {
+// ever being observable. The protocol level maps onto the zerolog level
+// itself: mcp-go's errors are the lines an operator needs to see.
+func (l scrubLogger) write(errLevel bool, format string, v ...any) {
 	line := fmt.Sprintf(format, v...)
 	if l.scrub != nil {
 		line, _ = l.scrub.ScrubString(line)
 	}
-	log.Print(level + ": mcp: " + line)
+	event := l.log.Info()
+	if errLevel {
+		event = l.log.Error()
+	}
+	event.Msg(line)
 }

@@ -53,12 +53,9 @@
 			: 'text-muted-foreground'}"
 	>
 		{#if status.manageUrl}
-			<a
-				href={status.manageUrl}
-				class="text-primary underline-offset-4 hover:underline"
-			>
+			<Button variant="link" href={status.manageUrl} class="h-auto p-0 text-xs">
 				{status.text}
-			</a>
+			</Button>
 		{:else}
 			{status.text}
 		{/if}
@@ -69,9 +66,9 @@
 	{#if tool.inspect}
 		{@const inspect = tool.inspect}
 		<div class="space-y-1.5">
-			<button
-				type="button"
-				class="text-primary text-xs underline-offset-4 hover:underline"
+			<Button
+				variant="link"
+				class="h-auto p-0 text-xs"
 				aria-expanded={inspect.json !== null}
 				onclick={() => inspect.ontoggle()}
 			>
@@ -80,7 +77,7 @@
 					: inspect.json === null
 						? `Show definition of ${tool.row.name}`
 						: `Hide definition of ${tool.row.name}`}
-			</button>
+			</Button>
 			{#if inspect.json !== null}
 				{#if inspect.meta}
 					<p class="text-muted-foreground font-mono text-xs break-all">
@@ -96,9 +93,7 @@
 {/snippet}
 
 <div class="divide-y rounded-lg border">
-	{#each entries as item (item.kind === 'tool'
-		? item.entry.row.id
-		: item.entry.row.id)}
+	{#each entries as item (item.entry.row.id)}
 		{#if item.kind === 'tool'}
 			{@const tool = item.entry}
 			<div
@@ -137,141 +132,146 @@
 			</div>
 		{:else}
 			{@const server = item.entry}
-			<Collapsible>
-				<div
-					class="hover:bg-muted/40 flex items-center justify-between gap-4 transition-colors {compact
-						? 'px-3 py-2.5'
-						: 'p-4'}"
-				>
-					<div class="min-w-0 flex-1 space-y-1.5">
-						<div class="flex flex-wrap items-center gap-2">
-							<CollapsibleTrigger
-								class="group flex items-center gap-2 text-left"
-							>
-								{#if server.state.checked}
-									<ChevronRight
-										class="text-muted-foreground size-4 transition-transform group-data-[state=open]:rotate-90"
-									/>
-								{/if}
-								<h3 class="text-sm font-semibold">{server.row.name}</h3>
-							</CollapsibleTrigger>
-							<span
-								class="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs font-medium"
-							>
-								MCP
-							</span>
-							<span class="text-muted-foreground text-xs">
-								{server.toolCount}
-								{server.toolCount === 1 ? 'tool' : 'tools'}
-							</span>
-							{#each server.row.badges ?? [] as badge (badge)}
+			<div data-testid="mcp-server-row">
+				<Collapsible>
+					<div
+						class="hover:bg-muted/40 flex items-center justify-between gap-4 transition-colors {compact
+							? 'px-3 py-2.5'
+							: 'p-4'}"
+					>
+						<div class="min-w-0 flex-1 space-y-1.5">
+							<div class="flex flex-wrap items-center gap-2">
+								<CollapsibleTrigger
+									class="group flex items-center gap-2 text-left"
+								>
+									{#if server.state.checked}
+										<ChevronRight
+											class="text-muted-foreground size-4 transition-transform group-data-[state=open]:rotate-90"
+										/>
+									{/if}
+									<h3 class="text-sm font-semibold">{server.row.name}</h3>
+								</CollapsibleTrigger>
 								<span
 									class="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs font-medium"
 								>
-									{badge}
+									MCP
 								</span>
-							{/each}
-						</div>
-						{#if server.status}
-							{@render statusLine(server.status)}
-						{/if}
-						{#if server.lastError}
-							<p
-								class="text-destructive truncate text-xs"
-								title={server.lastError}
-							>
-								{server.lastError}
-							</p>
-						{/if}
-					</div>
-					<div class="flex shrink-0 items-center gap-1">
-						{#if server.manage}
-							<Button
-								variant="ghost"
-								size="icon"
-								title="Refresh tools"
-								disabled={server.manage.refreshing}
-								onclick={() => server.manage?.onrefresh()}
-							>
-								<RefreshCw
-									class={server.manage.refreshing ? 'animate-spin' : ''}
-								/>
-							</Button>
-							<Button
-								variant="ghost"
-								size="icon"
-								title="Edit server"
-								onclick={() => server.manage?.onedit()}
-							>
-								<Pencil />
-							</Button>
-							<Button
-								variant="ghost"
-								size="icon"
-								title="Delete server"
-								onclick={() => server.manage?.ondelete()}
-							>
-								<Trash2 class="text-destructive" />
-							</Button>
-						{/if}
-						<Switch
-							id="server-{server.row.id}"
-							aria-label={server.label}
-							checked={server.state.checked}
-							disabled={server.state.disabled}
-							onCheckedChange={() => server.ontoggle()}
-						/>
-					</div>
-				</div>
-				{#if server.state.checked}
-					<CollapsibleContent>
-						<div class="bg-muted/20 divide-y border-t">
-							{#each server.tools as tool (tool.row.id)}
-								<div
-									class={cn(
-										'hover:bg-muted/40 flex items-center justify-between gap-4 transition-colors',
-										compact ? 'py-2 pr-3 pl-8' : 'py-3 pr-4 pl-10',
-										tool.state.dimmed && 'opacity-60'
-									)}
+								<span class="text-muted-foreground text-xs">
+									{server.toolCount}
+									{server.toolCount === 1 ? 'tool' : 'tools'}
+								</span>
+								{#each server.row.badges ?? [] as badge (badge)}
+									<span
+										class="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs font-medium"
+									>
+										{badge}
+									</span>
+								{/each}
+							</div>
+							{#if server.status}
+								{@render statusLine(server.status)}
+							{/if}
+							{#if server.lastError}
+								<p
+									class="text-destructive truncate text-xs"
+									title={server.lastError}
 								>
-									<div class="min-w-0 flex-1 space-y-1">
-										<div class="flex flex-wrap items-center gap-2">
-											<h4 class="text-sm font-medium">{tool.row.name}</h4>
-											{#each tool.row.badges ?? [] as badge (badge)}
-												<span
-													class="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs font-medium"
-												>
-													{badge}
-												</span>
-											{/each}
-										</div>
-										{#if tool.row.description}
-											<p class="text-muted-foreground truncate text-xs">
-												{tool.row.description}
-											</p>
-										{/if}
-										{#if tool.status}
-											{@render statusLine(tool.status)}
-										{/if}
-										{@render definitionPanel(tool)}
-									</div>
-									<Switch
-										id="nested-tool-{tool.row.id}"
-										aria-label={tool.label}
-										checked={tool.state.checked}
-										disabled={tool.state.disabled}
-										onCheckedChange={() => tool.ontoggle()}
-									/>
-								</div>
-							{:else}
-								<p class="text-muted-foreground px-8 py-3 text-sm">
-									No tools discovered yet — refresh this server.
+									{server.lastError}
 								</p>
-							{/each}
+							{/if}
 						</div>
-					</CollapsibleContent>
-				{/if}
-			</Collapsible>
+						<div class="flex shrink-0 items-center gap-1">
+							{#if server.manage}
+								<Button
+									variant="ghost"
+									size="icon"
+									title="Refresh tools"
+									aria-label="Refresh tools"
+									disabled={server.manage.refreshing}
+									onclick={() => server.manage?.onrefresh()}
+								>
+									<RefreshCw
+										class={server.manage.refreshing ? 'animate-spin' : ''}
+									/>
+								</Button>
+								<Button
+									variant="ghost"
+									size="icon"
+									title="Edit server"
+									aria-label="Edit server"
+									onclick={() => server.manage?.onedit()}
+								>
+									<Pencil />
+								</Button>
+								<Button
+									variant="ghost"
+									size="icon"
+									title="Delete server"
+									aria-label="Delete server"
+									onclick={() => server.manage?.ondelete()}
+								>
+									<Trash2 class="text-destructive" />
+								</Button>
+							{/if}
+							<Switch
+								id="server-{server.row.id}"
+								aria-label={server.label}
+								checked={server.state.checked}
+								disabled={server.state.disabled}
+								onCheckedChange={() => server.ontoggle()}
+							/>
+						</div>
+					</div>
+					{#if server.state.checked}
+						<CollapsibleContent>
+							<div class="bg-muted/20 divide-y border-t">
+								{#each server.tools as tool (tool.row.id)}
+									<div
+										class={cn(
+											'hover:bg-muted/40 flex items-center justify-between gap-4 transition-colors',
+											compact ? 'py-2 pr-3 pl-8' : 'py-3 pr-4 pl-10',
+											tool.state.dimmed && 'opacity-60'
+										)}
+									>
+										<div class="min-w-0 flex-1 space-y-1">
+											<div class="flex flex-wrap items-center gap-2">
+												<h4 class="text-sm font-medium">{tool.row.name}</h4>
+												{#each tool.row.badges ?? [] as badge (badge)}
+													<span
+														class="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs font-medium"
+													>
+														{badge}
+													</span>
+												{/each}
+											</div>
+											{#if tool.row.description}
+												<p class="text-muted-foreground truncate text-xs">
+													{tool.row.description}
+												</p>
+											{/if}
+											{#if tool.status}
+												{@render statusLine(tool.status)}
+											{/if}
+											{@render definitionPanel(tool)}
+										</div>
+										<Switch
+											id="nested-tool-{tool.row.id}"
+											aria-label={tool.label}
+											checked={tool.state.checked}
+											disabled={tool.state.disabled}
+											onCheckedChange={() => tool.ontoggle()}
+										/>
+									</div>
+								{:else}
+									<p class="text-muted-foreground px-8 py-3 text-sm">
+										No tools discovered yet — refresh this server.
+									</p>
+								{/each}
+							</div>
+						</CollapsibleContent>
+					{/if}
+				</Collapsible>
+			</div>
 		{/if}
 	{:else}
 		<p class="text-muted-foreground p-4 text-sm">No tools available.</p>

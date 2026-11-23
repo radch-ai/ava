@@ -26,14 +26,11 @@ import (
 func toolRoundManager(t *testing.T, echo *fakeTool, llmResponses []string) (*agent.UserAgentManager, *sql.DB) {
 	t.Helper()
 	llm := newScriptedLLM(t, llmResponses...)
-	sqlDB, turns := journalFor(t)
-	journal := &lazyJournal{TurnService: turns, sqlDB: sqlDB, seen: make(map[string]struct{})}
-	mgr := hookedManager(t, &agent.UserAgentManagerOptions{
+	return journaledLane(t, &agent.UserAgentManagerOptions{
 		GetAgentThread: emptyThread,
 		ResolveModel:   fixedResolver(llm.URL),
 		Tools:          fixedTools(echo),
-	}, &journalHook{LifecycleJournal: journal})
-	return mgr, sqlDB
+	})
 }
 
 // toolOrder reads one frame's contribution to the round's ordering.

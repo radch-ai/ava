@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"sync"
@@ -12,21 +13,10 @@ import (
 	"github.com/mark3labs/mcp-go/client/transport"
 	mcpsdk "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
+
+	"github.com/radch-ai/ava/backend/internal/mcptest"
+	"github.com/radch-ai/ava/backend/internal/security"
 )
-
-// Shared tool definitions for the in-process and HTTP tests; the
-// mcptest fixture registers the same names over real HTTP.
-
-func echoTool() mcpsdk.Tool {
-	return mcpsdk.NewTool("echo",
-		mcpsdk.WithDescription("Echoes its input text."),
-		mcpsdk.WithString("text", mcpsdk.Required()))
-}
-
-func echoHandler(_ context.Context, req mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
-	text, _ := req.GetArguments()["text"].(string)
-	return mcpsdk.NewToolResultText(text), nil
-}
 
 // newInProcess starts a client over mcp-go's in-process transport — real
 // MCP handshake and dispatch, no sockets. Transport-hardening behavior is
@@ -35,15 +25,15 @@ func echoHandler(_ context.Context, req mcpsdk.CallToolRequest) (*mcpsdk.CallToo
 func newInProcess(t *testing.T, slug string, timeout time.Duration, extra ...mcpsdk.Tool) *Client {
 	t.Helper()
 	s := mcpserver.NewMCPServer("ava-test-helper", "1.0.0")
-	s.AddTool(echoTool(), echoHandler)
+	s.AddTool(mcptest.EchoTool(), mcptest.EchoHandler)
 	for _, tl := range extra {
-		s.AddTool(tl, echoHandler)
+		s.AddTool(tl, mcptest.EchoHandler)
 	}
 	c, err := newClient(context.Background(), ServerConfig{
 		ID:      slug,
 		URL:     "http://in-process.test/mcp",
 		Timeout: timeout,
-	}, transport.NewInProcessTransport(s))
+	}, transport.NewInProcessTransport(s), security.NewScrubber(nil))
 	if err != nil {
 		t.Fatalf("newClient: %v", err)
 	}
@@ -362,5 +352,49 @@ func TestConcurrentGetDuringClose(t *testing.T) {
 	wg.Wait()
 	if _, ok := m.Get("first"); ok {
 		t.Fatal("closed client still cached")
+	}
+}
+
+// refuseBorrows seals the drain race: after it returns, borrow refuses
+// even with zero in-flight calls, so waitDrained then sees every
+// dispatch that can ever exist.
+func TestRefuseBorrowsBlocksNewDispatches(t *testing.T) {
+	c := newInProcess(t, "helper", 5*time.Second)
+	if err := c.borrow(); err != nil {
+		t.Fatalf("borrow on live client: %v", err)
+	}
+	c.release()
+	c.refuseBorrows()
+	if err := c.borrow(); !errors.Is(err, errClientClosed) {
+		t.Fatalf("borrow after refuseBorrows = %v, want errClientClosed", err)
+	}
+}
+
+// A failed listing pass drops the previous pass's staging: StagedListing
+// never reports a generation this pass did not validate.
+func TestFailedSyncClearsStaleStaging(t *testing.T) {
+	srv := mcptest.Start(t)
+	c, err := Dial(context.Background(), ServerConfig{
+		ID: "helper", URL: srv.URL, Timeout: 5 * time.Second,
+		AllowPrivateNetwork: true, AllowPlaintext: true,
+	})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	if _, _, err := c.SyncStaged(context.Background()); err != nil {
+		t.Fatalf("first sync: %v", err)
+	}
+	if _, _, ok := c.StagedListing(); !ok {
+		t.Fatal("staged listing missing after sync")
+	}
+	// A restarted server forgets the session: the next listing pass
+	// fails on the dead session.
+	srv.ExpireSession()
+	if _, _, err := c.SyncStaged(context.Background()); err == nil {
+		t.Fatal("sync on a dead session succeeded")
+	}
+	if _, _, ok := c.StagedListing(); ok {
+		t.Fatal("stale staging survived a failed sync")
 	}
 }
