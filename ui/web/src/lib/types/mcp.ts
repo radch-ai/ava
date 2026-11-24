@@ -5,9 +5,9 @@
  * #lib/types/gen/apitypes.gen (gitignored) via `just typegen` —
  * regenerate, never edit.
  *
- * Secret values are write-only: requests accept a headers map, any
- * response lists key names only. Servers connect over streamable HTTP
- * only: there is no command/argv/env field to send.
+ * Secret values are write-only: requests accept headers and env maps, any
+ * response lists key names only. Two transports: "http" (streamable HTTP)
+ * and "stdio" (a local process ava spawns with the operator's privileges).
  */
 
 export type {

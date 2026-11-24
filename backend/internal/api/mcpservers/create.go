@@ -33,14 +33,14 @@ func Create(manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore
 			return api.WriteError(w, http.StatusBadRequest,
 				"Invalid server name: use letters, digits and single spaces only")
 		}
-		if msg := configProblem(req.URL); msg != "" {
-			return api.WriteError(w, http.StatusBadRequest, msg)
-		}
+		slug := names.Slug(req.Name)
 		if msg := timeoutProblem(req.TimeoutMs); msg != "" {
 			return api.WriteError(w, http.StatusBadRequest, msg)
 		}
-
-		slug := names.Slug(req.Name)
+		cfg, problem := createConfig(slug, req)
+		if problem != "" {
+			return api.WriteError(w, http.StatusBadRequest, problem)
+		}
 		if _, err := queries.GetMcpServer(r.Context(), slug); err == nil {
 			return api.WriteError(w, http.StatusConflict,
 				fmt.Sprintf("An MCP server named %q already exists", req.Name))
@@ -49,30 +49,34 @@ func Create(manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore
 			return fmt.Errorf("server id collision check: %w", err)
 		}
 
-		// Policy flags default to deny: absence approves nothing.
-		allowPrivate := req.AllowPrivateNetwork != nil && *req.AllowPrivateNetwork
-		allowPlain := req.AllowPlaintext != nil && *req.AllowPlaintext
-		cfg := mcp.ServerConfig{
-			ID:                  slug,
-			URL:                 req.URL,
-			Headers:             req.Headers,
-			AllowPrivateNetwork: allowPrivate,
-			AllowPlaintext:      allowPlain,
-		}
-		if req.TimeoutMs != nil {
-			cfg.Timeout = msDuration(*req.TimeoutMs)
-		}
-		// A new authority is recorded before the credential it
-		// implies is ever transmitted — verification included.
-		if err := approveAuthority(r.Context(), queries, slug, allowPrivate, allowPlain); err != nil {
+		// A new authority — the destination exception or the process
+		// acknowledgment — is recorded before the privilege it implies
+		// is exercised: verification included.
+		if err := approveAuthority(r.Context(), queries, slug,
+			cfg.AllowPrivateNetwork, cfg.AllowPlaintext); err != nil {
 			_ = api.WriteError(w, http.StatusInternalServerError, "audit unavailable")
 			return fmt.Errorf("audit approvals for %q: %w", slug, err)
+		}
+		if cfg.Transport == mcp.TransportStdio {
+			if err := auditApproval(r.Context(), queries, slug, "approve", "process_acknowledged"); err != nil {
+				_ = api.WriteError(w, http.StatusInternalServerError, "audit unavailable")
+				return errors.Join(
+					fmt.Errorf("audit process acknowledgment for %q: %w", slug, err),
+					withdrawAuthority(r.Context(), queries, slug,
+						cfg.AllowPrivateNetwork, cfg.AllowPlaintext))
+			}
 		}
 		// Nothing installs on a rejection or a defect, so the approvals
 		// written above are withdrawn with an explicit record: authority
 		// that never activated must not read as granted.
 		withdraw := func() error {
-			return withdrawAuthority(r.Context(), queries, slug, allowPrivate, allowPlain)
+			var errs error
+			if cfg.Transport == mcp.TransportStdio {
+				errs = errors.Join(errs, auditApproval(r.Context(), queries, slug,
+					"revoke", "process_ack_not_activated"))
+			}
+			return errors.Join(errs, withdrawAuthority(r.Context(), queries, slug,
+				cfg.AllowPrivateNetwork, cfg.AllowPlaintext))
 		}
 		client, err := verify(r.Context(), cfg)
 		if err != nil {
@@ -89,7 +93,6 @@ func Create(manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore
 			}
 		}()
 
-		rawURL := sql.NullString{String: req.URL, Valid: true}
 		timeout := sql.NullInt64{}
 		if req.TimeoutMs != nil {
 			timeout = sql.NullInt64{Int64: *req.TimeoutMs, Valid: true}
@@ -107,11 +110,17 @@ func Create(manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore
 		if err := txq.CreateMcpServer(r.Context(), db.CreateMcpServerParams{
 			ID:                  slug,
 			Name:                strings.TrimSpace(req.Name),
-			Url:                 rawURL,
-			HeaderKeys:          mcpserver.HeaderKeys(req.Headers),
+			Transport:           cfg.Transport,
+			Command:             storedCommand(cfg.Transport, cfg.Command),
+			Args:                mcpserver.EncodeStrings(cfg.Args),
+			EnvKeys:             mcpserver.EnvKeys(cfg.Env),
+			InheritEnv:          boolInt(cfg.InheritEnv),
+			ProcessAck:          storedAck(cfg.Transport, cfg.Command, cfg.Args),
+			Url:                 storedURL(cfg.Transport, cfg.URL),
+			HeaderKeys:          mcpserver.HeaderKeys(cfg.Headers),
 			TimeoutMs:           timeout,
-			AllowPrivateNetwork: boolInt(allowPrivate),
-			AllowPlaintext:      boolInt(allowPlain),
+			AllowPrivateNetwork: boolInt(cfg.AllowPrivateNetwork),
+			AllowPlaintext:      boolInt(cfg.AllowPlaintext),
 		}); err != nil {
 			// Release the transaction before any error arm runs: withdraw()
 			// and rollbackInstall() use the connection pool, which a
@@ -143,7 +152,8 @@ func Create(manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore
 		// Always seal the effective set, even when empty: a reused slug
 		// must never inherit a previous install's credentials.
 		if err := sealSecrets(r.Context(), vaultStore, slug, mcpserver.Secrets{
-			Headers: req.Headers,
+			Headers: cfg.Headers,
+			Env:     cfg.Env,
 		}); err != nil {
 			// The row without its secrets is unusable and blocks the
 			// name; nothing was adopted and Put cannot have partially
@@ -178,6 +188,70 @@ func Create(manager *mcp.Manager, sqlDB *sql.DB, queries *db.Queries, vaultStore
 
 		return respondServer(r.Context(), w, http.StatusCreated, queries, slug, listed, skipped)
 	}
+}
+
+// createConfig folds a create request into the config verification dials,
+// or the 400 message explaining why the shape is unusable. Transport
+// defaults to http (the schema's default); the fields of the other
+// transport are rejected by mcp's validator, never silently dropped, and a
+// stdio server additionally needs the explicit acknowledgment.
+func createConfig(slug string, req apitypes.CreateMcpServerRequest) (mcp.ServerConfig, string) {
+	transport := req.Transport
+	if transport == "" {
+		transport = mcp.TransportHTTP
+	}
+	cfg := mcp.ServerConfig{
+		ID:                  slug,
+		Transport:           transport,
+		URL:                 strings.TrimSpace(req.URL),
+		Command:             strings.TrimSpace(req.Command),
+		Args:                req.Args,
+		Env:                 req.Env,
+		InheritEnv:          req.InheritEnv,
+		Headers:             req.Headers,
+		AllowPrivateNetwork: req.AllowPrivateNetwork != nil && *req.AllowPrivateNetwork,
+		AllowPlaintext:      req.AllowPlaintext != nil && *req.AllowPlaintext,
+	}
+	if req.TimeoutMs != nil {
+		cfg.Timeout = msDuration(*req.TimeoutMs)
+	}
+	if msg := configProblem(cfg); msg != "" {
+		return cfg, msg
+	}
+	if transport == mcp.TransportStdio && !req.AcknowledgeProcessExecution {
+		return cfg, ackRequired
+	}
+	if transport == mcp.TransportHTTP && req.AcknowledgeProcessExecution {
+		return cfg, ackNotApplicable
+	}
+	return cfg, ""
+}
+
+// storedCommand is the command column for a connection: set for stdio
+// rows, NULL for http.
+func storedCommand(transport, command string) sql.NullString {
+	if transport != mcp.TransportStdio {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: command, Valid: true}
+}
+
+// storedURL is the endpoint column for a connection: set for http rows,
+// NULL for stdio.
+func storedURL(transport, endpoint string) sql.NullString {
+	if transport == mcp.TransportStdio || endpoint == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: endpoint, Valid: true}
+}
+
+// storedAck is the acknowledgment fingerprint for a connection: set for
+// stdio rows, NULL for http.
+func storedAck(transport, command string, args []string) sql.NullString {
+	if transport != mcp.TransportStdio {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: processAck(command, args), Valid: true}
 }
 
 // rollbackInstall undoes a partially-written install: the live client,

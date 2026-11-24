@@ -748,6 +748,11 @@ describe('mock API handlers', () => {
 					id: 'notes-mcp:fetch_note',
 					globalEnabled: false,
 					locallyDisabled: false
+				},
+				{
+					id: 'local-notes:echo',
+					globalEnabled: false,
+					locallyDisabled: false
 				}
 			])
 			// Every server is listed with its gate state (absent = off) and
@@ -756,6 +761,13 @@ describe('mock API handlers', () => {
 				{
 					serverId: 'notes-mcp',
 					name: 'Notes MCP',
+					agentEnabled: false,
+					serverEnabled: true,
+					catalogState: 'active'
+				},
+				{
+					serverId: 'local-notes',
+					name: 'Local Notes',
 					agentEnabled: false,
 					serverEnabled: true,
 					catalogState: 'active'

@@ -491,6 +491,7 @@ func TestRefreshHealthyAndDead(t *testing.T) {
 	// Break the row behind the API's back: refresh must report, not
 	// crash, and the row must say why it is inert.
 	if err := queries.UpdateMcpServer(context.Background(), db.UpdateMcpServerParams{
+		Transport: "http", Args: "[]", EnvKeys: "[]",
 		Name:                "Test Helper",
 		Url:                 sql.NullString{String: "http://127.0.0.1:1/mcp", Valid: true},
 		HeaderKeys:          "[]",
@@ -1081,6 +1082,7 @@ func TestRefreshPausesOnRejectedGeneration(t *testing.T) {
 
 	bomb := mcptest.Start(t, mcptest.WithSchemaDepth(64))
 	if err := queries.UpdateMcpServer(t.Context(), db.UpdateMcpServerParams{
+		Transport: "http", Args: "[]", EnvKeys: "[]",
 		Name:                "Paused Helper",
 		Url:                 sql.NullString{String: bomb.URL, Valid: true},
 		HeaderKeys:          "[]",
@@ -1107,6 +1109,7 @@ func TestRefreshPausesOnRejectedGeneration(t *testing.T) {
 
 	// A healthy refresh unpauses.
 	if err := queries.UpdateMcpServer(t.Context(), db.UpdateMcpServerParams{
+		Transport: "http", Args: "[]", EnvKeys: "[]",
 		Name:                "Paused Helper",
 		Url:                 sql.NullString{String: good.URL, Valid: true},
 		HeaderKeys:          "[]",

@@ -221,6 +221,7 @@ func TestOversizedCatalogPausesAndKeepsPriorRows(t *testing.T) {
 	// Repoint the row at a catalog that exceeds the tool ceiling.
 	huge := mcptest.Start(t, mcptest.WithToolCount(mcp.MaxCatalogTools+1))
 	if err := queries.UpdateMcpServer(t.Context(), db.UpdateMcpServerParams{
+		Transport: "http", Args: "[]", EnvKeys: "[]",
 		Name:                "helper",
 		Url:                 sql.NullString{String: huge.URL, Valid: true},
 		HeaderKeys:          "[]",
@@ -254,6 +255,7 @@ func TestOversizedCatalogPausesAndKeepsPriorRows(t *testing.T) {
 
 	// A valid refresh publishes and unpauses.
 	if err := queries.UpdateMcpServer(t.Context(), db.UpdateMcpServerParams{
+		Transport: "http", Args: "[]", EnvKeys: "[]",
 		Name:                "helper",
 		Url:                 sql.NullString{String: good.URL, Valid: true},
 		HeaderKeys:          "[]",
@@ -385,6 +387,65 @@ func TestPublishFenceRejectsStaleGeneration(t *testing.T) {
 	}
 }
 
+// The fence's stdio arms: a process shape changed mid-flight — the
+// command, the arguments, the env inheritance, or the sealed env values —
+// publishes nothing.
+func TestPublishFenceRejectsChangedProcess(t *testing.T) {
+	sqlDB := testdb.Open(t, true)
+	queries := db.New(sqlDB)
+	store := newStore(t, sqlDB)
+	testdb.SeedMcpServer(t, sqlDB, "helper", "", func(params *db.CreateMcpServerParams) {
+		params.Transport = "stdio"
+		params.Command = sql.NullString{String: "/usr/bin/notes-server", Valid: true}
+		params.Args = `["-y"]`
+	})
+	row, err := queries.GetMcpServer(t.Context(), "helper")
+	if err != nil {
+		t.Fatalf("read server: %v", err)
+	}
+	cfg, err := mcpserver.Config(t.Context(), row, store)
+	if err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	listed := []mcp.ListedTool{{Remote: "echo", Description: "d", DefinitionJSON: `{}`}}
+
+	stale := cfg
+	stale.Command = "/usr/bin/other-server"
+	if err := mcpserver.UpsertListing(t.Context(), sqlDB, store, "helper", stale, listed); err == nil {
+		t.Fatal("changed command published a generation")
+	}
+	stale = cfg
+	stale.Args = []string{"-x"}
+	if err := mcpserver.UpsertListing(t.Context(), sqlDB, store, "helper", stale, listed); err == nil {
+		t.Fatal("changed args published a generation")
+	}
+	stale = cfg
+	stale.InheritEnv = !stale.InheritEnv
+	if err := mcpserver.UpsertListing(t.Context(), sqlDB, store, "helper", stale, listed); err == nil {
+		t.Fatal("changed env inheritance published a generation")
+	}
+	// Sealed env values rotated mid-flight: the fence unseals the
+	// stored set and compares it whole, exactly as it does for headers.
+	blob, err := json.Marshal(mcpserver.Secrets{Env: map[string]string{"NOTES_TOKEN": "old"}})
+	if err != nil {
+		t.Fatalf("encode secrets: %v", err)
+	}
+	if err := store.Put(t.Context(), vault.NameRuntime, mcpserver.EntryName("helper"), mcpserver.Kind, blob, nil); err != nil {
+		t.Fatalf("seal secrets: %v", err)
+	}
+	stale = cfg
+	stale.Env = map[string]string{"NOTES_TOKEN": "new"}
+	if err := mcpserver.UpsertListing(t.Context(), sqlDB, store, "helper", stale, listed); err == nil {
+		t.Fatal("rotated env values published a generation")
+	}
+	// The stored values still publish.
+	current := cfg
+	current.Env = map[string]string{"NOTES_TOKEN": "old"}
+	if err := mcpserver.UpsertListing(t.Context(), sqlDB, store, "helper", current, listed); err != nil {
+		t.Fatalf("current generation rejected: %v", err)
+	}
+}
+
 // A cached session the remote no longer knows (a server restart) is
 // replaced by one freshly validated connection: the next discovery pass
 // recovers instead of reporting the dead session forever.
@@ -447,6 +508,7 @@ func TestReconnectFailureKeepsServingClient(t *testing.T) {
 	// previous client must survive the rejected replacement.
 	srv.ExpireSession()
 	if err := queries.UpdateMcpServer(t.Context(), db.UpdateMcpServerParams{
+		Transport: "http", Args: "[]", EnvKeys: "[]",
 		Name:       row.Name,
 		Url:        sql.NullString{String: srv.URL + "/moved", Valid: true},
 		HeaderKeys: row.HeaderKeys, TimeoutMs: row.TimeoutMs,
@@ -481,6 +543,7 @@ func TestTransientFailureKeepsCatalogActive(t *testing.T) {
 		t.Fatalf("first discover: %v", err)
 	}
 	if err := queries.UpdateMcpServer(t.Context(), db.UpdateMcpServerParams{
+		Transport: "http", Args: "[]", EnvKeys: "[]",
 		Name:                "helper",
 		Url:                 sql.NullString{String: "http://127.0.0.1:1/mcp", Valid: true},
 		HeaderKeys:          "[]",
@@ -568,6 +631,7 @@ func TestFailedUpsertKeepsOldGeneration(t *testing.T) {
 		t.Fatalf("staged sync: %v", err)
 	}
 	if err := queries.UpdateMcpServer(t.Context(), db.UpdateMcpServerParams{
+		Transport: "http", Args: "[]", EnvKeys: "[]",
 		Name:       row.Name,
 		Url:        sql.NullString{String: srv.URL + "/moved", Valid: true},
 		HeaderKeys: row.HeaderKeys, TimeoutMs: row.TimeoutMs,
@@ -661,6 +725,7 @@ func TestPublishVerifiedRejectKeepsServingClient(t *testing.T) {
 
 	// The row moves before the publish: the fence rejects the generation.
 	if err := queries.UpdateMcpServer(t.Context(), db.UpdateMcpServerParams{
+		Transport: "http", Args: "[]", EnvKeys: "[]",
 		Name:       row.Name,
 		Url:        sql.NullString{String: srv.URL + "/moved", Valid: true},
 		HeaderKeys: row.HeaderKeys, TimeoutMs: row.TimeoutMs,

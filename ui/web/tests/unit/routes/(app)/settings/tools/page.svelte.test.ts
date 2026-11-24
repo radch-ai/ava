@@ -42,6 +42,7 @@ const ddg: Tool = {
 const notesServer: McpServer = {
 	id: 'notes-mcp',
 	name: 'Notes MCP',
+	transport: 'http',
 	url: 'http://127.0.0.1:3333/mcp',
 	headerKeys: ['Authorization'],
 	enabled: true,

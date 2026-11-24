@@ -15,6 +15,9 @@ func SeedMcpServer(t *testing.T, sqlDB *sql.DB, id, url string, opts ...func(*db
 	arg := db.CreateMcpServerParams{
 		ID:                  id,
 		Name:                id,
+		Transport:           "http",
+		Args:                "[]",
+		EnvKeys:             "[]",
 		Url:                 sql.NullString{String: url, Valid: url != ""},
 		HeaderKeys:          "[]",
 		AllowPrivateNetwork: 1,

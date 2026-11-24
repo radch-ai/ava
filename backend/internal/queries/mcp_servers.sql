@@ -4,9 +4,10 @@
 -- name: CreateMcpServer :exec
 -- id (slug) is stamped by the caller; created_at defaults in the DB.
 -- Connection is verified by the API before this runs.
-INSERT INTO mcp_servers (id, name, url, header_keys, timeout_ms,
+INSERT INTO mcp_servers (id, name, transport, command, args, env_keys,
+                         inherit_env, process_ack, url, header_keys, timeout_ms,
                          allow_private_network, allow_plaintext)
-VALUES (?, ?, ?, ?, ?, ?, ?);
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: ListMcpServers :many
 -- Servers in creation order, diagnostics included so a down server's
@@ -22,7 +23,8 @@ SELECT * FROM mcp_servers WHERE id = ?;
 -- by the API before this runs. enabled is deliberately not here --
 -- the kill switch has its own query.
 UPDATE mcp_servers
-SET name = ?, url = ?, header_keys = ?, timeout_ms = ?,
+SET name = ?, transport = ?, command = ?, args = ?, env_keys = ?,
+    inherit_env = ?, process_ack = ?, url = ?, header_keys = ?, timeout_ms = ?,
     allow_private_network = ?, allow_plaintext = ?
 WHERE id = ?;
 

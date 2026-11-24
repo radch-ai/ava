@@ -24,13 +24,15 @@ vi.mock('#lib/services/mcp', () => ({
 const server: McpServer = {
 	id: 'notes-mcp',
 	name: 'Notes MCP',
+	transport: 'http',
 	url: 'http://127.0.0.1:3333/mcp',
 	headerKeys: ['Authorization'],
 	enabled: true,
 	toolCount: 2,
 	catalogState: 'active',
 	allowPrivateNetwork: true,
-	allowPlaintext: true
+	allowPlaintext: true,
+	inheritEnv: false
 }
 
 /** The two callbacks the form reports through. */
@@ -229,7 +231,8 @@ describe('McpServerForm edit patch', () => {
 	})
 })
 
-// The create path asks for an endpoint only: no process is ever spawned.
+// The create path serves both transports: an http endpoint, or an stdio
+// process the operator must acknowledge before it is ever spawned.
 describe('McpServerForm create', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
@@ -274,6 +277,137 @@ describe('McpServerForm create', () => {
 			url: 'http://127.0.0.1:4444/mcp',
 			headers: {}
 		})
+	})
+})
+
+// One stdio server with a sealed env value: the state an operator
+// reaches by installing a local process.
+const stdioServer: McpServer = {
+	id: 'local-notes',
+	name: 'Local Notes',
+	transport: 'stdio',
+	command: 'npx',
+	args: ['-y', 'notes-server'],
+	envKeys: ['NOTES_TOKEN'],
+	enabled: true,
+	toolCount: 2,
+	catalogState: 'active',
+	allowPrivateNetwork: false,
+	allowPlaintext: false,
+	inheritEnv: false
+}
+
+describe('McpServerForm stdio', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+	})
+
+	afterEach(() => {
+		cleanup()
+	})
+
+	it('reveals the process view and creates an acknowledged stdio server', async () => {
+		render(McpServerForm, { onsaved: vi.fn(), oncancel: vi.fn() })
+		await page.getByRole('radio', { name: 'stdio (local process)' }).click()
+		await expect
+			.element(page.getByRole('textbox', { name: 'Command' }))
+			.toBeInTheDocument()
+		await expect.element(page.getByLabelText('URL')).not.toBeInTheDocument()
+		await page.getByLabelText('Name').fill('Local Notes')
+		await page.getByRole('textbox', { name: 'Command' }).fill('npx')
+		await page
+			.getByLabelText('Arguments — one per line')
+			.fill('-y\nnotes-server')
+		await page
+			.getByLabelText('Environment — KEY: VALUE per line')
+			.fill('NOTES_TOKEN: abc')
+		await page
+			.getByRole('checkbox', { name: /I understand this server runs/ })
+			.click()
+		await page.getByRole('button', { name: 'Add server' }).click()
+
+		expect(mcpService.createMcpServer).toHaveBeenCalledExactlyOnceWith({
+			name: 'Local Notes',
+			transport: 'stdio',
+			command: 'npx',
+			args: ['-y', 'notes-server'],
+			env: { NOTES_TOKEN: 'abc' },
+			acknowledgeProcessExecution: true
+		})
+	})
+
+	it('blocks the save until the process privilege is acknowledged', async () => {
+		render(McpServerForm, { onsaved: vi.fn(), oncancel: vi.fn() })
+		await page.getByRole('radio', { name: 'stdio (local process)' }).click()
+		await page.getByLabelText('Name').fill('Local Notes')
+		await page.getByRole('textbox', { name: 'Command' }).fill('npx')
+		await page.getByRole('button', { name: 'Add server' }).click()
+
+		await expect
+			.element(page.getByText(/Acknowledge that this server runs a process/))
+			.toBeInTheDocument()
+		expect(mcpService.createMcpServer).not.toHaveBeenCalled()
+	})
+
+	it('parses and clears the sealed env on an stdio edit', async () => {
+		render(McpServerForm, {
+			server: stdioServer,
+			onsaved: vi.fn(),
+			oncancel: vi.fn()
+		})
+		await page
+			.getByLabelText('Environment — KEY: VALUE per line')
+			.fill('NOTES_TOKEN: abc')
+		await page.getByRole('button', { name: 'Save changes' }).click()
+		expect(mcpService.updateMcpServer).toHaveBeenCalledExactlyOnceWith(
+			'local-notes',
+			{ env: { NOTES_TOKEN: 'abc' } }
+		)
+
+		vi.clearAllMocks()
+		await page.getByRole('checkbox', { name: /Clear the 1 sealed/ }).click()
+		await page.getByRole('button', { name: 'Save changes' }).click()
+		expect(mcpService.updateMcpServer).toHaveBeenCalledExactlyOnceWith(
+			'local-notes',
+			{ env: {} }
+		)
+	})
+
+	it('carries the acknowledgment when a command edit re-prompts it', async () => {
+		render(McpServerForm, {
+			server: stdioServer,
+			onsaved: vi.fn(),
+			oncancel: vi.fn()
+		})
+		await page.getByRole('textbox', { name: 'Command' }).fill('uvx')
+		await page.getByRole('button', { name: 'Save changes' }).click()
+		await expect
+			.element(page.getByText(/Acknowledge that this server runs a process/))
+			.toBeInTheDocument()
+		expect(mcpService.updateMcpServer).not.toHaveBeenCalled()
+
+		await page
+			.getByRole('checkbox', { name: /I understand this server runs/ })
+			.click()
+		await page.getByRole('button', { name: 'Save changes' }).click()
+		expect(mcpService.updateMcpServer).toHaveBeenCalledExactlyOnceWith(
+			'local-notes',
+			{ command: 'uvx', acknowledgeProcessExecution: true }
+		)
+	})
+
+	it('switches an http server into an acknowledged stdio process', async () => {
+		render(McpServerForm, { server, onsaved: vi.fn(), oncancel: vi.fn() })
+		await page.getByRole('radio', { name: 'stdio (local process)' }).click()
+		await page.getByRole('textbox', { name: 'Command' }).fill('npx')
+		await page
+			.getByRole('checkbox', { name: /I understand this server runs/ })
+			.click()
+		await page.getByRole('button', { name: 'Save changes' }).click()
+		expect(mcpService.updateMcpServer).toHaveBeenCalledExactlyOnceWith(
+			'notes-mcp',
+			{ transport: 'stdio', command: 'npx', acknowledgeProcessExecution: true }
+		)
 	})
 })
 

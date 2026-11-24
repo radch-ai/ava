@@ -33,7 +33,7 @@ func newInProcess(t *testing.T, slug string, timeout time.Duration, extra ...mcp
 		ID:      slug,
 		URL:     "http://in-process.test/mcp",
 		Timeout: timeout,
-	}, transport.NewInProcessTransport(s), security.NewScrubber(nil))
+	}, transport.NewInProcessTransport(s), nil, security.NewScrubber(nil))
 	if err != nil {
 		t.Fatalf("newClient: %v", err)
 	}
@@ -180,11 +180,17 @@ func TestServerConfigValidate(t *testing.T) {
 		cfg  ServerConfig
 		ok   bool
 	}{
-		{"http ok", ServerConfig{URL: "http://x"}, true},
-		{"no url", ServerConfig{}, false},
-		{"no host", ServerConfig{URL: "http://"}, false},
-		{"userinfo", ServerConfig{URL: "http://u:p@x/mcp"}, false},
-		{"non-http scheme", ServerConfig{URL: "ftp://x/mcp"}, false},
+		{"http ok", ServerConfig{Transport: TransportHTTP, URL: "http://x"}, true},
+		{"http no url", ServerConfig{Transport: TransportHTTP}, false},
+		{"http no host", ServerConfig{Transport: TransportHTTP, URL: "http://"}, false},
+		{"http userinfo", ServerConfig{Transport: TransportHTTP, URL: "http://u:p@x/mcp"}, false},
+		{"http non-http scheme", ServerConfig{Transport: TransportHTTP, URL: "ftp://x/mcp"}, false},
+		{"stdio ok", ServerConfig{Transport: TransportStdio, Command: "/bin/true"}, true},
+		{"stdio no command", ServerConfig{Transport: TransportStdio}, false},
+		{"stdio blank command", ServerConfig{Transport: TransportStdio, Command: "  "}, false},
+		{"stdio with url", ServerConfig{Transport: TransportStdio, Command: "/bin/true", URL: "http://x"}, false},
+		{"unknown transport", ServerConfig{Transport: "sse", URL: "http://x"}, false},
+		{"absent transport", ServerConfig{URL: "http://x"}, false},
 	}
 	for _, tc := range cases {
 		err := tc.cfg.validate()
@@ -196,7 +202,7 @@ func TestServerConfigValidate(t *testing.T) {
 
 func TestSameConfig(t *testing.T) {
 	base := ServerConfig{
-		ID: "s", URL: "http://x/mcp",
+		ID: "s", Transport: TransportHTTP, URL: "http://x/mcp",
 		Headers: map[string]string{"A": "1", "B": "2"},
 	}
 
@@ -230,6 +236,32 @@ func TestSameConfig(t *testing.T) {
 	changed.AllowPlaintext = true
 	if sameConfig(base, changed) {
 		t.Fatal("changed plaintext approval compares equal")
+	}
+
+	// A stdio connection's identity is the process shape: transport,
+	// command, args, env values and the inherit switch.
+	stdio := ServerConfig{
+		ID: "s", Transport: TransportStdio, Command: "/bin/true",
+		Args: []string{"a"}, Env: map[string]string{"K": "v"},
+	}
+	sameStdio := stdio
+	sameStdio.Args = []string{"a"}
+	sameStdio.Env = map[string]string{"K": "v"}
+	if !sameConfig(stdio, sameStdio) {
+		t.Fatal("equivalent stdio configs compare unequal")
+	}
+	for _, mut := range []func(*ServerConfig){
+		func(c *ServerConfig) { c.Transport = TransportHTTP },
+		func(c *ServerConfig) { c.Command = "/bin/false" },
+		func(c *ServerConfig) { c.Args = []string{"b"} },
+		func(c *ServerConfig) { c.Env = map[string]string{"K": "other"} },
+		func(c *ServerConfig) { c.InheritEnv = true },
+	} {
+		changed := stdio
+		mut(&changed)
+		if sameConfig(stdio, changed) {
+			t.Fatal("changed stdio connection field compares equal")
+		}
 	}
 }
 
@@ -375,7 +407,7 @@ func TestRefuseBorrowsBlocksNewDispatches(t *testing.T) {
 func TestFailedSyncClearsStaleStaging(t *testing.T) {
 	srv := mcptest.Start(t)
 	c, err := Dial(context.Background(), ServerConfig{
-		ID: "helper", URL: srv.URL, Timeout: 5 * time.Second,
+		ID: "helper", Transport: TransportHTTP, URL: srv.URL, Timeout: 5 * time.Second,
 		AllowPrivateNetwork: true, AllowPlaintext: true,
 	})
 	if err != nil {

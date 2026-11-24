@@ -184,17 +184,35 @@ const TOOL_SEEDS: ToolRow[] = [
 		serverId: 'notes-mcp',
 		definitionJson:
 			'{"name":"fetch_note","description":"Reads one note by id.","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}}'
+	},
+	{
+		id: 'local-notes:echo',
+		name: 'echo',
+		description: 'Echoes its input text.',
+		enabled: false,
+		kind: 'mcp',
+		serverId: 'local-notes',
+		definitionJson:
+			'{"name":"echo","description":"Echoes its input text.","inputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}}'
 	}
 ]
 
 /** An MCP server row as the mock stores it — the backend's
  * mcp_servers table. Secret values are never stored here either:
- * headerKeys are names only. */
+ * headerKeys/envKeys are names only. */
 export interface McpServerRow {
 	id: string
 	name: string
+	/** "http" | "stdio" */
+	transport: 'http' | 'stdio'
 	url?: string
+	command?: string
+	args?: string[]
 	headerKeys: string[]
+	envKeys?: string[]
+	inheritEnv?: boolean
+	/** sha256 of command+args; absent = unacknowledged. */
+	processAck?: string
 	timeoutMs?: number
 	enabled: boolean
 	/** "active" | "paused" — a rejected generation pauses the catalog. */
@@ -208,12 +226,28 @@ const MCP_SERVER_SEEDS: McpServerRow[] = [
 	{
 		id: 'notes-mcp',
 		name: 'Notes MCP',
+		transport: 'http',
 		url: 'http://127.0.0.1:3333/mcp',
 		headerKeys: ['Authorization'],
 		enabled: true,
 		catalogState: 'active',
 		allowPrivateNetwork: true,
 		allowPlaintext: true
+	},
+	{
+		id: 'local-notes',
+		name: 'Local Notes',
+		transport: 'stdio',
+		command: 'npx',
+		args: ['-y', '@modelcontextprotocol/server-filesystem', '/tmp/notes'],
+		headerKeys: [],
+		envKeys: ['NOTES_TOKEN'],
+		inheritEnv: false,
+		processAck: 'seeded',
+		enabled: true,
+		catalogState: 'active',
+		allowPrivateNetwork: false,
+		allowPlaintext: false
 	}
 ]
 /** The seeded rows: keyless, no custom models — mirroring a store

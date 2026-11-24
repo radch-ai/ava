@@ -31,6 +31,7 @@ func connectFixture(t *testing.T, srv *mcptest.Server, cfg ServerConfig) (*Manag
 	if cfg.URL == "" {
 		cfg.URL = srv.URL
 	}
+	cfg.Transport = TransportHTTP
 	cfg.Timeout = 5 * time.Second
 	// The fixture listens on loopback: approve the local destination and
 	// the plaintext hop the way an operator would. Denial paths dial
@@ -122,7 +123,7 @@ func TestLoopbackRequiresApproval(t *testing.T) {
 	t.Cleanup(m.CloseAll)
 
 	_, err := m.Connect(t.Context(), ServerConfig{
-		ID: "loopback", URL: srv.URL, Timeout: 5 * time.Second,
+		ID: "loopback", Transport: TransportHTTP, URL: srv.URL, Timeout: 5 * time.Second,
 	})
 	if !errors.Is(err, ErrDestinationDenied) {
 		t.Fatalf("connect without approval err = %v, want ErrDestinationDenied", err)
@@ -132,7 +133,7 @@ func TestLoopbackRequiresApproval(t *testing.T) {
 	}
 
 	_, err = m.Connect(t.Context(), ServerConfig{
-		ID: "loopback", URL: srv.URL, Timeout: 5 * time.Second,
+		ID: "loopback", Transport: TransportHTTP, URL: srv.URL, Timeout: 5 * time.Second,
 		AllowPrivateNetwork: true,
 	})
 	if err != nil {
@@ -147,6 +148,7 @@ func TestMetadataDestinationAlwaysDenied(t *testing.T) {
 	t.Cleanup(m.CloseAll)
 	_, err := m.Connect(t.Context(), ServerConfig{
 		ID:                  "metadata",
+		Transport:           TransportHTTP,
 		URL:                 "http://169.254.169.254/mcp",
 		Timeout:             time.Second,
 		AllowPrivateNetwork: true,
@@ -165,7 +167,7 @@ func TestPlaintextCredentialsPolicy(t *testing.T) {
 	m := NewManager()
 	t.Cleanup(m.CloseAll)
 	_, err := m.Connect(t.Context(), ServerConfig{
-		ID: "plain", URL: srv.URL, Timeout: 5 * time.Second,
+		ID: "plain", Transport: TransportHTTP, URL: srv.URL, Timeout: 5 * time.Second,
 		Headers: headers, AllowPrivateNetwork: true,
 	})
 	if !errors.Is(err, ErrInsecureCredentials) {
@@ -174,7 +176,7 @@ func TestPlaintextCredentialsPolicy(t *testing.T) {
 
 	// Approved loopback plaintext carries its credentials.
 	_, err = m.Connect(t.Context(), ServerConfig{
-		ID: "plain", URL: srv.URL, Timeout: 5 * time.Second,
+		ID: "plain", Transport: TransportHTTP, URL: srv.URL, Timeout: 5 * time.Second,
 		Headers: headers, AllowPrivateNetwork: true, AllowPlaintext: true,
 	})
 	if err != nil {
@@ -186,9 +188,10 @@ func TestPlaintextCredentialsPolicy(t *testing.T) {
 	m2 := NewManager()
 	t.Cleanup(m2.CloseAll)
 	_, err = m2.Connect(t.Context(), ServerConfig{
-		ID:      "public",
-		URL:     "http://93.184.216.34/mcp",
-		Timeout: time.Second, Headers: headers,
+		ID:        "public",
+		Transport: TransportHTTP,
+		URL:       "http://93.184.216.34/mcp",
+		Timeout:   time.Second, Headers: headers,
 		AllowPrivateNetwork: true, AllowPlaintext: true,
 	})
 	if !errors.Is(err, ErrInsecureCredentials) {

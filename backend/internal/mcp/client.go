@@ -29,6 +29,8 @@ type Client struct {
 	tr      transport.Interface
 	cli     *client.Client
 	cancel  context.CancelFunc
+	// proc owns the spawned child for a stdio connection; nil over http.
+	proc *stdioProc
 	// mgr is the manager that installed this client (nil until Adopt):
 	// tools resolve their live connection through it instead of pinning
 	// the client they were listed on.
@@ -74,11 +76,22 @@ func Dial(ctx context.Context, cfg ServerConfig) (*Client, error) {
 	// One scrubber per connection build: transport, protocol logging
 	// and the client itself share it.
 	scrub := security.NewScrubber(cfg.KnownSecrets())
-	tr, err := newTransport(cfg, scrub)
-	if err != nil {
-		return nil, err
+	var (
+		tr   transport.Interface
+		proc *stdioProc
+	)
+	if cfg.Transport == TransportStdio {
+		var err error
+		if proc, tr, err = spawnStdio(cfg, scrub); err != nil {
+			return nil, startupError(scrub, "start", err)
+		}
+	} else {
+		var err error
+		if tr, err = newTransport(cfg, scrub); err != nil {
+			return nil, err
+		}
 	}
-	return newClient(ctx, cfg, tr, scrub)
+	return newClient(ctx, cfg, tr, proc, scrub)
 }
 
 // newTransport builds the streamable-HTTP transport over the hardened
@@ -102,8 +115,9 @@ func newTransport(cfg ServerConfig, scrub *security.Scrubber) (transport.Interfa
 
 // newClient starts a client over an already-built transport and completes
 // the MCP initialize handshake. The transport's lifetime context is
-// manager-owned (not the caller's request context).
-func newClient(ctx context.Context, cfg ServerConfig, tr transport.Interface, scrub *security.Scrubber) (*Client, error) {
+// manager-owned (not the caller's request context). proc is the spawned
+// child for a stdio connection (nil over http).
+func newClient(ctx context.Context, cfg ServerConfig, tr transport.Interface, proc *stdioProc, scrub *security.Scrubber) (*Client, error) {
 	lifetime, cancel := context.WithCancel(context.Background())
 	c := &Client{
 		id:      cfg.ID,
@@ -112,6 +126,7 @@ func newClient(ctx context.Context, cfg ServerConfig, tr transport.Interface, sc
 		tr:      tr,
 		cli:     client.NewClient(tr),
 		cancel:  cancel,
+		proc:    proc,
 		scrub:   scrub,
 	}
 	if err := c.cli.Start(lifetime); err != nil {
@@ -123,6 +138,21 @@ func newClient(ctx context.Context, cfg ServerConfig, tr transport.Interface, sc
 	// both the caller's deadline and the per-call timeout.
 	initCtx, initCancel := context.WithTimeout(ctx, c.timeout)
 	defer initCancel()
+	if proc != nil {
+		// A stdio child that dies mid-handshake leaves the pending
+		// Initialize waiting for its deadline: mcp-go's reader returns
+		// silently on stdout EOF. Cancel as soon as the reaper sees the
+		// exit, so an instantly-crashing server answers the request.
+		stopWatch := make(chan struct{})
+		defer close(stopWatch)
+		go func() {
+			select {
+			case <-proc.exited:
+				initCancel()
+			case <-stopWatch:
+			}
+		}()
+	}
 	if _, err := c.cli.Initialize(initCtx, mcpsdk.InitializeRequest{
 		Params: mcpsdk.InitializeParams{
 			ProtocolVersion: mcpsdk.LATEST_PROTOCOL_VERSION,
@@ -147,7 +177,14 @@ func (c *Client) wrapStartupError(stage string, err error) error {
 		errors.Is(err, ErrInsecureCredentials) {
 		return fmt.Errorf("%s: %w", stage, err)
 	}
-	return fmt.Errorf("%s: %s", stage, c.scrubText(err))
+	return startupError(c.scrub, stage, err)
+}
+
+// startupError renders one scrubbed startup stage failure: the text can
+// carry server- or filesystem-controlled strings, never a secret.
+func startupError(scrub *security.Scrubber, stage string, err error) error {
+	detail, _ := scrub.ScrubString(err.Error())
+	return fmt.Errorf("%s: %s", stage, detail)
 }
 
 // Catalog bounds: one discovery pass admits at most this many
@@ -637,21 +674,25 @@ func (c *Client) Close() error {
 	return c.closeErr
 }
 
-// teardown cancels the lifetime context and closes the transport, bounded
-// by closeGrace so a stuck transport cannot hang shutdown.
+// teardown closes the transport and, for stdio, kills the process group.
+// The close is bounded by closeGrace so a stuck transport cannot hang
+// shutdown: closing stdin is the graceful half, the group SIGKILL the
+// half a server that ignores EOF never sees.
 func (c *Client) teardown() error {
 	c.cancel()
-	if c.tr == nil {
-		return nil
+	var closeErr error
+	if c.tr != nil {
+		done := make(chan error, 1)
+		go func() { done <- c.tr.Close() }()
+		timer := time.NewTimer(closeGrace)
+		defer timer.Stop()
+		select {
+		case closeErr = <-done:
+		case <-timer.C:
+		}
 	}
-	done := make(chan error, 1)
-	go func() { done <- c.tr.Close() }()
-	timer := time.NewTimer(closeGrace)
-	defer timer.Stop()
-	select {
-	case err := <-done:
-		return err
-	case <-timer.C:
-		return nil
+	if c.proc != nil {
+		c.proc.terminate()
 	}
+	return closeErr
 }

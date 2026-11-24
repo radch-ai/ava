@@ -55,8 +55,9 @@ CREATE TABLE IF NOT EXISTS threads (
 
 -- User-installed MCP servers: the parent entity of kind='mcp' catalog
 -- rows. Ids are slugs minted from the name at creation (agent
--- convention) and stay immutable while the name is editable. Secrets
--- never touch this table: header VALUES live sealed in the
+-- convention) and stay immutable while the name is editable. Two
+-- transports: an http endpoint, or a stdio process ava spawns. Secrets
+-- never touch this table: header and env VALUES live sealed in the
 -- runtime vault under mcp-server/{slug}; only key NAMES are recorded,
 -- so the wire can render them redacted. A disabled server's tools
 -- resolve to nothing at turn time (ResolveAgentToolsDetailed joins
@@ -64,6 +65,20 @@ CREATE TABLE IF NOT EXISTS threads (
 CREATE TABLE IF NOT EXISTS mcp_servers (
     id           TEXT NOT NULL PRIMARY KEY,
     name         TEXT NOT NULL,
+    -- "http" (streamable HTTP endpoint) or "stdio" (local process).
+    transport    TEXT NOT NULL DEFAULT 'http'
+        CHECK (transport IN ('http', 'stdio')),
+    -- stdio: executable command; required for stdio rows.
+    command      TEXT NULL
+        CHECK (transport = 'http' OR command IS NOT NULL),
+    -- stdio: JSON array of arguments.
+    args         TEXT NOT NULL DEFAULT '[]',
+    -- stdio: JSON array of sealed env key names (values in the vault).
+    env_keys     TEXT NOT NULL DEFAULT '[]',
+    -- stdio: inherit ava's environment into the child (default: minimal env).
+    inherit_env  INTEGER NOT NULL DEFAULT 0,
+    -- stdio: sha256 hex of the acknowledged command+args; NULL = unacknowledged.
+    process_ack  TEXT NULL,
     -- Streamable HTTP endpoint (http(s), validated in the API).
     url          TEXT NULL,
     -- JSON array of secret key names; values sealed in the vault.

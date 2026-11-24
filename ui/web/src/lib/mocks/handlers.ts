@@ -148,12 +148,18 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 	}
 
 	// Wire view of one server row: key names only, the tool count
-	// derived from the catalog.
+	// derived from the catalog, and the fields of the row's own
+	// transport.
 	const serverView = (row: McpServerRow): McpServer => ({
 		id: row.id,
 		name: row.name,
+		transport: row.transport,
 		...(row.url ? { url: maskedUrl(row.url) } : {}),
+		...(row.command ? { command: row.command } : {}),
+		...((row.args ?? []).length ? { args: row.args } : {}),
 		headerKeys: row.headerKeys,
+		...((row.envKeys ?? []).length ? { envKeys: row.envKeys } : {}),
+		...(row.inheritEnv ? { inheritEnv: true } : {}),
 		...(row.timeoutMs ? { timeoutMs: row.timeoutMs } : {}),
 		enabled: row.enabled,
 		toolCount: store.tools.filter((tool) => tool.serverId === row.id).length,
@@ -209,6 +215,51 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 		/^https?:\/\/.+/.test(url)
 			? null
 			: 'url must be an http(s) URL without embedded credentials'
+
+	// The process fingerprint the backend stores in process_ack: command
+	// plus args. Any change to either clears the acknowledgment.
+	const fingerprint = (command: string, args: string[]): string =>
+		JSON.stringify([command, args])
+
+	const ackRequiredMessage =
+		'stdio servers run a process with your privileges: acknowledge required'
+
+	const ackNotApplicableMessage =
+		'acknowledgeProcessExecution applies to stdio servers only'
+
+	// The transport matrix, mirroring the backend's 400s: a stdio server
+	// takes a command and no endpoint or destination approvals; an http
+	// server takes an endpoint and no process fields.
+	const transportProblem = (shape: {
+		transport: string
+		url?: string
+		command?: string
+		args?: string[]
+		env?: Record<string, string>
+		inheritEnv?: boolean
+		headers?: Record<string, string>
+		allowPrivateNetwork?: boolean
+		allowPlaintext?: boolean
+	}): string | null => {
+		if (shape.transport === 'stdio') {
+			if (shape.url) return 'stdio transport takes no endpoint url'
+			if (Object.keys(shape.headers ?? {}).length > 0)
+				return 'stdio transport takes no request headers'
+			if (shape.allowPrivateNetwork || shape.allowPlaintext)
+				return 'stdio transport has no destination approvals'
+			return shape.command?.trim() ? null : 'stdio transport needs a command'
+		}
+		if (shape.transport !== 'http')
+			return `unsupported transport "${shape.transport}"`
+		if (
+			shape.command?.trim() ||
+			(shape.args ?? []).length > 0 ||
+			Object.keys(shape.env ?? {}).length > 0 ||
+			shape.inheritEnv
+		)
+			return 'http transport takes no command, args or environment'
+		return validateServerUrl(shape.url ?? '')
+	}
 
 	// The listing a save, refresh or install answers: the saved row, the
 	// server's catalog rows, and any cosmetic skips.
@@ -766,9 +817,32 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 					{ status: 400 }
 				)
 			}
-			const problem = validateServerUrl(body.url ?? '')
+			const transport = body.transport === 'stdio' ? 'stdio' : 'http'
+			const problem = transportProblem({
+				transport,
+				url: body.url,
+				command: body.command,
+				args: body.args,
+				env: body.env,
+				inheritEnv: body.inheritEnv,
+				headers: body.headers,
+				allowPrivateNetwork: body.allowPrivateNetwork,
+				allowPlaintext: body.allowPlaintext
+			})
 			if (problem)
 				return HttpResponse.json({ message: problem }, { status: 400 })
+			if (transport === 'stdio' && !body.acknowledgeProcessExecution) {
+				return HttpResponse.json(
+					{ message: ackRequiredMessage },
+					{ status: 400 }
+				)
+			}
+			if (transport === 'http' && body.acknowledgeProcessExecution) {
+				return HttpResponse.json(
+					{ message: ackNotApplicableMessage },
+					{ status: 400 }
+				)
+			}
 			if (
 				body.timeoutMs !== undefined &&
 				(body.timeoutMs <= 0 || body.timeoutMs > 600_000)
@@ -785,16 +859,28 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 					{ status: 409 }
 				)
 			}
+			const stdio = transport === 'stdio'
+			const command = (body.command ?? '').trim()
+			const args = body.args ?? []
 			const row: McpServerRow = {
 				id: slug,
 				name: body.name.trim(),
-				url: body.url ?? '',
-				headerKeys: Object.keys(body.headers ?? {}),
+				transport,
+				...(stdio
+					? {
+							command,
+							args,
+							envKeys: Object.keys(body.env ?? {}),
+							...(body.inheritEnv ? { inheritEnv: true } : {}),
+							processAck: fingerprint(command, args)
+						}
+					: { url: body.url ?? '' }),
+				headerKeys: stdio ? [] : Object.keys(body.headers ?? {}),
 				...(body.timeoutMs !== undefined ? { timeoutMs: body.timeoutMs } : {}),
 				enabled: true,
 				catalogState: 'active',
-				allowPrivateNetwork: body.allowPrivateNetwork === true,
-				allowPlaintext: body.allowPlaintext === true
+				allowPrivateNetwork: stdio ? false : body.allowPrivateNetwork === true,
+				allowPlaintext: stdio ? false : body.allowPlaintext === true
 			}
 			store.mcpServers.push(row)
 			seedServerTools(slug)
@@ -829,13 +915,88 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 					{ status: 400 }
 				)
 			}
-			const url = body.url !== undefined ? body.url : (row.url ?? '')
-			const problem = validateServerUrl(url)
+
+			// Fold the patch into the next row state; a transport change
+			// folds the old transport's fields away, exactly like the
+			// backend.
+			const requested = body.transport ?? row.transport
+			if (requested !== 'http' && requested !== 'stdio') {
+				return HttpResponse.json(
+					{ message: `unsupported transport "${requested}"` },
+					{ status: 400 }
+				)
+			}
+			const transport: McpServerRow['transport'] = requested
+			const transportChanged = transport !== row.transport
+			const urlChanged = body.url !== undefined && body.url !== row.url
+			let url = body.url !== undefined ? body.url : (row.url ?? '')
+			let command =
+				body.command !== undefined ? body.command.trim() : (row.command ?? '')
+			let args = body.args !== undefined ? body.args : (row.args ?? [])
+			let inheritEnv =
+				body.inheritEnv !== undefined
+					? body.inheritEnv
+					: row.inheritEnv === true
+			// A destination change invalidates its approvals; the same
+			// patch may re-approve them, so the flags apply after the
+			// reset — the backend's order.
+			let allowPrivateNetwork = urlChanged ? false : row.allowPrivateNetwork
+			let allowPlaintext = urlChanged ? false : row.allowPlaintext
+			if (body.allowPrivateNetwork !== undefined)
+				allowPrivateNetwork = body.allowPrivateNetwork
+			if (body.allowPlaintext !== undefined)
+				allowPlaintext = body.allowPlaintext
+			if (transportChanged) {
+				if (transport === 'stdio') {
+					url = ''
+					allowPrivateNetwork = false
+					allowPlaintext = false
+				} else {
+					command = ''
+					args = []
+					inheritEnv = false
+				}
+			}
+
+			const problem = transportProblem({
+				transport,
+				url,
+				command,
+				args,
+				env: body.env,
+				inheritEnv,
+				headers: body.headers,
+				allowPrivateNetwork,
+				allowPlaintext
+			})
 			if (problem)
 				return HttpResponse.json({ message: problem }, { status: 400 })
-			const urlChanged = body.url !== undefined && body.url !== row.url
+
+			// The acknowledgment covers command and args: a changed
+			// process — or a switch into stdio — re-prompts.
+			const processChanged =
+				transport === 'stdio' &&
+				(row.transport !== 'stdio' ||
+					row.processAck !== fingerprint(command, args))
+			if (processChanged && !body.acknowledgeProcessExecution) {
+				return HttpResponse.json(
+					{ message: ackRequiredMessage },
+					{ status: 400 }
+				)
+			}
+			if (transport === 'http' && body.acknowledgeProcessExecution) {
+				return HttpResponse.json(
+					{ message: ackNotApplicableMessage },
+					{ status: 400 }
+				)
+			}
 			const connectionChanged =
-				urlChanged || body.timeoutMs !== undefined || body.headers !== undefined
+				urlChanged ||
+				transportChanged ||
+				processChanged ||
+				body.timeoutMs !== undefined ||
+				body.headers !== undefined ||
+				body.env !== undefined
 
 			// The global switch is a pure state flip: no connection
 			// check, no config rewrite (mirrors the backend) — and it
@@ -846,22 +1007,35 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				if (!row.enabled) row.lastError = undefined
 			}
 			row.name = body.name !== undefined ? body.name.trim() : row.name
-			// A destination change invalidates its approvals: the same
-			// patch may re-approve them.
-			if (urlChanged) {
-				row.allowPrivateNetwork = false
-				row.allowPlaintext = false
-			}
-			row.url = url
+			row.transport = transport
+			row.allowPrivateNetwork = allowPrivateNetwork
+			row.allowPlaintext = allowPlaintext
 			row.timeoutMs =
 				body.timeoutMs !== undefined ? body.timeoutMs : row.timeoutMs
 			if (body.clearTimeoutMs) delete row.timeoutMs
-			if (body.allowPrivateNetwork !== undefined)
-				row.allowPrivateNetwork = body.allowPrivateNetwork
-			if (body.allowPlaintext !== undefined)
-				row.allowPlaintext = body.allowPlaintext
-			row.headerKeys =
-				body.headers !== undefined ? Object.keys(body.headers) : row.headerKeys
+			if (transport === 'stdio') {
+				row.command = command
+				row.args = args
+				if (inheritEnv) row.inheritEnv = true
+				else delete row.inheritEnv
+				row.processAck = processChanged
+					? fingerprint(command, args)
+					: row.processAck
+				if (body.env !== undefined) row.envKeys = Object.keys(body.env)
+				delete row.url
+				row.headerKeys = []
+			} else {
+				row.url = url
+				row.headerKeys =
+					body.headers !== undefined
+						? Object.keys(body.headers)
+						: row.headerKeys
+				delete row.command
+				delete row.args
+				delete row.inheritEnv
+				delete row.processAck
+				delete row.envKeys
+			}
 			if (connectionChanged) {
 				reconcileServerTools(id)
 				row.lastError = undefined
@@ -955,12 +1129,17 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 					{ status: 404 }
 				)
 			}
+			const stdio = server.transport === 'stdio'
 			return HttpResponse.json({
 				definitionJson: tool.definitionJson ?? '{}',
-				endpoint: maskedUrl(server.url ?? ''),
-				hasCredentials: (server.headerKeys ?? []).length > 0,
-				allowPlaintext: server.allowPlaintext,
-				allowPrivateNetwork: server.allowPrivateNetwork
+				...(stdio
+					? { command: server.command ?? '' }
+					: { endpoint: maskedUrl(server.url ?? '') }),
+				hasCredentials:
+					(server.headerKeys ?? []).length > 0 ||
+					(server.envKeys ?? []).length > 0,
+				allowPlaintext: stdio ? false : server.allowPlaintext,
+				allowPrivateNetwork: stdio ? false : server.allowPrivateNetwork
 			})
 		}),
 

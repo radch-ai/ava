@@ -37,7 +37,11 @@ export interface ViewerStatus {
  */
 export type ViewerToolAuthority = Pick<
 	McpToolDefinitionResponse,
-	'endpoint' | 'hasCredentials' | 'allowPlaintext' | 'allowPrivateNetwork'
+	| 'endpoint'
+	| 'command'
+	| 'hasCredentials'
+	| 'allowPlaintext'
+	| 'allowPrivateNetwork'
 >
 
 /**
@@ -73,6 +77,8 @@ export interface ViewerManage {
 export interface ViewerServerEntry {
 	row: ViewerRow
 	toolCount: number
+	/** "http" | "stdio"; absent where the surface has no transport fact. */
+	transport?: string
 	lastError?: string | null
 	/** Present when the server needs attention beyond its switch. */
 	status?: ViewerStatus

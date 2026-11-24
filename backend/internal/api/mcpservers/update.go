@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/rs/zerolog"
@@ -52,6 +53,22 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 		if problem != "" {
 			return api.WriteError(w, http.StatusBadRequest, problem)
 		}
+		transportChanged := next.transport != row.Transport
+
+		// A stdio process edit needs the acknowledgment: the fingerprint
+		// covers command and args, so either changing re-prompts. An
+		// unchanged process keeps its stored acknowledgment.
+		ackHash := ""
+		ackChanged := false
+		if next.transport == mcp.TransportStdio {
+			ackHash = processAck(next.command, next.args)
+			ackChanged = !row.ProcessAck.Valid || row.ProcessAck.String != ackHash
+			if ackChanged && !req.AcknowledgeProcessExecution {
+				return api.WriteError(w, http.StatusBadRequest, ackRequired)
+			}
+		} else if req.AcknowledgeProcessExecution {
+			return api.WriteError(w, http.StatusBadRequest, ackNotApplicable)
+		}
 
 		// A URL move invalidates the approvals bound to the old endpoint:
 		// the new endpoint's approvals are new authority even when the flag
@@ -64,19 +81,23 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 		authorityAdded := privateAdded || plainAdded
 		// The connection shape excludes the two policy flags: a flag
 		// removal moves them, and must still persist without a dial.
-		shapeChanged := urlMoved || !sameNullInt64(next.timeout, row.TimeoutMs)
+		shapeChanged := urlMoved || transportChanged || !sameNullInt64(next.timeout, row.TimeoutMs)
 		disabling := req.Enabled != nil && !*req.Enabled
 		enabling := req.Enabled != nil && *req.Enabled
+		// A process edit is a connection edit even when the target is
+		// unreachable, so it never rides the no-dial withdrawal path.
+		processTouched := req.Command != nil || req.Args != nil || req.InheritEnv != nil
 		// Narrowing authority — or switching the server off — needs no
 		// successful connection check: an unreachable or newly forbidden
 		// endpoint must not be able to block its own restriction. Any
-		// connection-shape change (a URL move, a timeout change) still
-		// verifies: a disable must not smuggle an unverified endpoint,
-		// and a patch that also re-enables takes the connection path, so
-		// the reconnect is never skipped.
-		withdrawalOnly := !authorityAdded && req.Headers == nil && !enabling && !shapeChanged &&
+		// connection-shape change (a URL move, a timeout change, a
+		// transport switch) still verifies: a disable must not smuggle an
+		// unverified endpoint, and a patch that also re-enables takes the
+		// connection path, so the reconnect is never skipped.
+		withdrawalOnly := !authorityAdded && req.Headers == nil && req.Env == nil &&
+			!processTouched && !transportChanged && !enabling && !shapeChanged &&
 			(disabling || privateRemoved || plainRemoved)
-		connectionEdit := (next.connectionChanged || req.Headers != nil) && !withdrawalOnly
+		connectionEdit := (next.connectionChanged || req.Headers != nil || req.Env != nil) && !withdrawalOnly
 
 		var secrets, storedSecrets mcpserver.Secrets
 		secretsReplaced := false
@@ -89,7 +110,7 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 				return fmt.Errorf("unseal secrets for %q: %w", id, err)
 			}
-			secrets = mcpserver.Secrets{Headers: storedCfg.Headers}
+			secrets = mcpserver.Secrets{Headers: storedCfg.Headers, Env: storedCfg.Env}
 			// The stored values ride along in case the row write below
 			// fails after a successful re-seal and must be restored.
 			storedSecrets = secrets
@@ -97,20 +118,48 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 				secrets.Headers = req.Headers
 				secretsReplaced = true
 			}
+			if req.Env != nil {
+				secrets.Env = req.Env
+				secretsReplaced = true
+			}
+			if transportChanged {
+				// The blob belongs to one transport: the old one's map
+				// must not linger as a credential the new config
+				// rejects.
+				if next.transport == mcp.TransportStdio {
+					secrets.Headers = nil
+				} else {
+					secrets.Env = nil
+				}
+				secretsReplaced = true
+			}
 		}
 
-		// The header key-name column follows the effective secrets; a
-		// rename passes the stored names through untouched.
-		headerKeys := row.HeaderKeys
+		// The key-name columns follow the effective secrets; a rename
+		// passes the stored names through untouched.
+		headerKeys, envKeys := row.HeaderKeys, row.EnvKeys
 		if connectionEdit {
 			headerKeys = mcpserver.HeaderKeys(secrets.Headers)
+			envKeys = mcpserver.EnvKeys(secrets.Env)
+		}
+		// The process column follows the effective transport: a changed
+		// process stores the acknowledged fingerprint, an http row none.
+		processAckCol := sql.NullString{}
+		switch {
+		case next.transport != mcp.TransportStdio:
+		case ackChanged:
+			processAckCol = sql.NullString{String: ackHash, Valid: true}
+		default:
+			processAckCol = row.ProcessAck
 		}
 		// A pure switch patch writes no config: enabled lives on its own
 		// query (mcp_servers.sql), and the row is otherwise untouched.
 		// Replaced secret maps do write: their key-name columns change.
-		configTouched := secretsReplaced || req.Name != nil ||
+		configTouched := secretsReplaced || next.connectionChanged || req.Name != nil ||
 			req.URL != nil || req.TimeoutMs != nil || req.ClearTimeoutMs ||
-			req.AllowPrivateNetwork != nil || req.AllowPlaintext != nil
+			req.AllowPrivateNetwork != nil || req.AllowPlaintext != nil ||
+			req.Transport != nil || req.Command != nil || req.Args != nil ||
+			req.InheritEnv != nil
 
 		// writeRow seals the replaced secrets and persists the row. The
 		// row write is the commit point; a failure restores the blob it
@@ -126,6 +175,12 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 			}
 			if err := queries.UpdateMcpServer(r.Context(), db.UpdateMcpServerParams{
 				Name:                next.name,
+				Transport:           next.transport,
+				Command:             storedCommand(next.transport, next.command),
+				Args:                mcpserver.EncodeStrings(next.args),
+				EnvKeys:             envKeys,
+				InheritEnv:          boolInt(next.inheritEnv),
+				ProcessAck:          processAckCol,
 				Url:                 next.url,
 				HeaderKeys:          headerKeys,
 				TimeoutMs:           next.timeout,
@@ -223,19 +278,34 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 				toggleAudit)
 		}
 
-		// Newly granted authority is recorded before the credential it
-		// implies is transmitted — verification included.
+		// Newly granted authority is recorded before the credential or
+		// process it implies is exercised — verification included.
 		if err := approveAuthority(r.Context(), queries, id, privateAdded, plainAdded); err != nil {
 			_ = api.WriteError(w, http.StatusInternalServerError, "audit unavailable")
 			return fmt.Errorf("audit approvals for %q: %w", id, err)
 		}
+		ackRecorded := false
+		if ackChanged {
+			if err := auditApproval(r.Context(), queries, id, "approve", "process_acknowledged"); err != nil {
+				_ = api.WriteError(w, http.StatusInternalServerError, "audit unavailable")
+				return errors.Join(
+					fmt.Errorf("audit process acknowledgment for %q: %w", id, err),
+					withdrawAuthority(r.Context(), queries, id, privateAdded, plainAdded))
+			}
+			ackRecorded = true
+		}
 		// Nothing of this patch installs on a rejection: authority that
 		// never activated is withdrawn with an explicit record.
 		withdraw := func() error {
-			if !authorityAdded {
-				return nil
+			var errs error
+			if ackRecorded {
+				errs = errors.Join(errs, auditApproval(r.Context(), queries, id,
+					"revoke", "process_ack_not_activated"))
 			}
-			return withdrawAuthority(r.Context(), queries, id, privateAdded, plainAdded)
+			if authorityAdded {
+				errs = errors.Join(errs, withdrawAuthority(r.Context(), queries, id, privateAdded, plainAdded))
+			}
+			return errs
 		}
 
 		// The candidate config dials with the effective secrets; the
@@ -248,6 +318,14 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 		)
 		if connectionEdit {
 			verifyCfg = dialConfig(id, next, secrets)
+			// The candidate's transport shape is checked against the
+			// operator's words before any authority is exercised: a
+			// field belonging to the other transport is a request
+			// defect, not a connection failure.
+			if msg := configProblem(verifyCfg); msg != "" {
+				return errors.Join(
+					api.WriteError(w, http.StatusBadRequest, msg), withdraw())
+			}
 			client, err := verify(r.Context(), verifyCfg)
 			if err != nil {
 				return errors.Join(
@@ -309,13 +387,15 @@ func Update(throttle *api.Throttle, manager *mcp.Manager, sqlDB *sql.DB, queries
 				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 				return fmt.Errorf("discover mcp server %q: %w", id, err)
 			}
-			// An endpoint or credential change retires the admitted work:
-			// the old connection drains without aborting it, so its calls
-			// are revoked explicitly. Headers are write-only, so any
-			// resubmission counts as a credential change even when the
-			// map equals the stored one. A rename or a policy widening
-			// leaves them running — same endpoint, same credentials.
-			if (urlMoved || req.Headers != nil) && canceler != nil {
+			// An endpoint, credential or process change retires the
+			// admitted work: the old connection drains without aborting
+			// it, so its calls are revoked explicitly. Headers and env
+			// are write-only, so any resubmission counts as a credential
+			// change even when the map equals the stored one. A rename or
+			// a policy widening leaves them running — same endpoint, same
+			// credentials.
+			endpointMoved := urlMoved || transportChanged || req.Command != nil || req.Args != nil
+			if (endpointMoved || req.Headers != nil || req.Env != nil) && canceler != nil {
 				canceler.CancelServerTools(id)
 			}
 		case enabling:
@@ -372,7 +452,11 @@ func catalogListing(ctx context.Context, queries *db.Queries, serverID string) (
 // serverPatch is the next row state, shaped for UpdateMcpServer.
 type serverPatch struct {
 	name                string
+	transport           string
 	url                 sql.NullString
+	command             string
+	args                []string
+	inheritEnv          bool
 	timeout             sql.NullInt64
 	allowPrivateNetwork bool
 	allowPlaintext      bool
@@ -382,11 +466,21 @@ type serverPatch struct {
 // applyPatch folds a request into the row. Nil maps and slices keep
 // stored values; non-nil ones replace. A present field that equals
 // the stored value is not a connection change — a no-op patch stays a
-// cheap rename.
+// cheap rename. A transport change folds the old transport's fields away:
+// a stdio server has no endpoint or destination approvals, an http server
+// no process shape.
 func applyPatch(row db.McpServer, req apitypes.UpdateMcpServerRequest) (serverPatch, string) {
+	args, err := mcpserver.DecodeStrings(row.Args)
+	if err != nil {
+		return serverPatch{}, fmt.Sprintf("stored args for %q are unreadable", row.ID)
+	}
 	next := serverPatch{
 		name:                row.Name,
+		transport:           row.Transport,
 		url:                 row.Url,
+		command:             row.Command.String,
+		args:                args,
+		inheritEnv:          row.InheritEnv != 0,
 		timeout:             row.TimeoutMs,
 		allowPrivateNetwork: row.AllowPrivateNetwork != 0,
 		allowPlaintext:      row.AllowPlaintext != 0,
@@ -397,6 +491,38 @@ func applyPatch(row db.McpServer, req apitypes.UpdateMcpServerRequest) (serverPa
 			return next, "Invalid server name: use letters, digits and single spaces only"
 		}
 		next.name = strings.TrimSpace(*req.Name)
+	}
+	if req.Transport != nil && *req.Transport != next.transport {
+		next.transport = *req.Transport
+		next.connectionChanged = true
+		if next.transport == mcp.TransportStdio {
+			next.url = sql.NullString{}
+			next.allowPrivateNetwork = false
+			next.allowPlaintext = false
+		} else {
+			next.command = ""
+			next.args = nil
+			next.inheritEnv = false
+		}
+	}
+	if req.Command != nil {
+		command := strings.TrimSpace(*req.Command)
+		if command != next.command {
+			next.connectionChanged = true
+		}
+		next.command = command
+	}
+	if req.Args != nil {
+		if !slices.Equal(req.Args, next.args) {
+			next.connectionChanged = true
+		}
+		next.args = req.Args
+	}
+	if req.InheritEnv != nil {
+		if *req.InheritEnv != next.inheritEnv {
+			next.connectionChanged = true
+		}
+		next.inheritEnv = *req.InheritEnv
 	}
 	if req.URL != nil {
 		v := strings.TrimSpace(*req.URL)
@@ -435,15 +561,6 @@ func applyPatch(row db.McpServer, req apitypes.UpdateMcpServerRequest) (serverPa
 			next.connectionChanged = true
 		}
 	}
-
-	// Only a URL the patch itself supplies is validated: a stored
-	// endpoint that predates today's validator must not be able to
-	// block its own restriction — the handler's own rule.
-	if req.URL != nil && next.url.Valid {
-		if msg := configProblem(next.url.String); msg != "" {
-			return next, msg
-		}
-	}
 	return next, ""
 }
 
@@ -465,12 +582,18 @@ func sameNullInt64(a, b sql.NullInt64) bool {
 }
 
 // dialConfig builds the verification dial for the next row state: the
-// candidate carries the policy flags, so verification, discovery and
-// refresh are denied exactly where the runtime is.
+// candidate carries the transport shape, the secrets the operation wrote,
+// and the policy flags, so verification, discovery and refresh are denied
+// exactly where the runtime is.
 func dialConfig(id string, next serverPatch, secrets mcpserver.Secrets) mcp.ServerConfig {
 	cfg := mcp.ServerConfig{
 		ID:                  id,
+		Transport:           next.transport,
 		URL:                 next.url.String,
+		Command:             next.command,
+		Args:                next.args,
+		Env:                 secrets.Env,
+		InheritEnv:          next.inheritEnv,
 		Headers:             secrets.Headers,
 		AllowPrivateNetwork: next.allowPrivateNetwork,
 		AllowPlaintext:      next.allowPlaintext,

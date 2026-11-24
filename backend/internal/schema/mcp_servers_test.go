@@ -52,9 +52,15 @@ func upsertMcpTool(t *testing.T, sqlDB *sql.DB, id, serverID string) {
 	}
 	cfg := mcp.ServerConfig{
 		ID:                  serverID,
+		Transport:           row.Transport,
 		URL:                 row.Url.String,
+		Command:             row.Command.String,
+		InheritEnv:          row.InheritEnv != 0,
 		AllowPrivateNetwork: row.AllowPrivateNetwork != 0,
 		AllowPlaintext:      row.AllowPlaintext != 0,
+	}
+	if cfg.Args, err = mcpserver.DecodeStrings(row.Args); err != nil {
+		t.Fatalf("decode args for %q: %v", serverID, err)
 	}
 	_, remote, _ := strings.Cut(id, ":")
 	// The listing unions the server's existing rows: a discovery pass
@@ -347,5 +353,52 @@ func TestMcpServerPolicyDefaults(t *testing.T) {
 	if row.AllowPrivateNetwork != 0 || row.AllowPlaintext != 0 {
 		t.Fatalf("fresh row flags = %d/%d, want 0/0 (default deny)",
 			row.AllowPrivateNetwork, row.AllowPlaintext)
+	}
+}
+
+// The transport column is enum-checked and stdio rows must name a
+// command: an unknown transport or a process row without one cannot be
+// stored, so no reader has to guess what a row runs. An http row needs
+// no command, and a fresh row lands on the http defaults.
+func TestMcpServerTransportChecked(t *testing.T) {
+	sqlDB := testdb.Open(t, true)
+	insert := func(id string, arg db.CreateMcpServerParams) error {
+		arg.ID, arg.Name, arg.HeaderKeys = id, id, "[]"
+		return db.New(sqlDB).CreateMcpServer(t.Context(), arg)
+	}
+
+	for _, tc := range []struct {
+		name string
+		arg  db.CreateMcpServerParams
+		ok   bool
+	}{
+		{"sse transport", db.CreateMcpServerParams{Transport: "sse"}, false},
+		{"stdio without command", db.CreateMcpServerParams{Transport: "stdio"}, false},
+		{"http without command", db.CreateMcpServerParams{Transport: "http",
+			Url: sql.NullString{String: "https://a.example/mcp", Valid: true}}, true},
+		{"stdio with command", db.CreateMcpServerParams{Transport: "stdio",
+			Command: sql.NullString{String: "/bin/true", Valid: true}}, true},
+	} {
+		err := insert(strings.ReplaceAll(tc.name, " ", "-"), tc.arg)
+		if tc.ok && err != nil {
+			t.Errorf("%s: rejected, want stored: %v", tc.name, err)
+		}
+		if !tc.ok && err == nil {
+			t.Errorf("%s: accepted, want CHECK rejection", tc.name)
+		}
+	}
+
+	if _, err := sqlDB.ExecContext(t.Context(),
+		`INSERT INTO mcp_servers (id, name, url) VALUES ('defaults', 'defaults', 'https://d.example/mcp')`); err != nil {
+		t.Fatalf("insert row with defaulted columns: %v", err)
+	}
+	row, err := db.New(sqlDB).GetMcpServer(t.Context(), "defaults")
+	if err != nil {
+		t.Fatalf("get http row: %v", err)
+	}
+	if row.Transport != "http" || row.Args != "[]" || row.EnvKeys != "[]" ||
+		row.InheritEnv != 0 || row.ProcessAck.Valid {
+		t.Fatalf("fresh row shape = %q/%q/%q/%d/ack=%q, want http/[]/[]/0/NULL",
+			row.Transport, row.Args, row.EnvKeys, row.InheritEnv, row.ProcessAck.String)
 	}
 }

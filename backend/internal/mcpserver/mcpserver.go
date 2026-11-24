@@ -31,9 +31,11 @@ import (
 const Kind = "mcp-server"
 
 // Secrets is the sealed blob under runtime/{EntryName}: one entry per
-// server. Headers are the only attachment the connection applies.
+// server. Headers ride http connections, Env values reach a stdio child;
+// one blob carries whichever the server uses.
 type Secrets struct {
 	Headers map[string]string `json:"headers"`
+	Env     map[string]string `json:"env"`
 }
 
 // EntryName is the runtime-vault entry holding a server's secrets.
@@ -295,7 +297,7 @@ func UpsertListing(ctx context.Context, sqlDB *sql.DB, vaultStore *vault.Store, 
 	// discovery and this write must reject the generation. The blob is
 	// unsealed through this transaction — same connection, same
 	// snapshot as the row read above.
-	var storedHeaders map[string]string
+	var storedHeaders, storedEnv map[string]string
 	blob, _, err := vaultStore.GetThrough(ctx, queries, vault.NameRuntime, EntryName(serverID))
 	switch {
 	case errors.Is(err, vault.ErrNotFound):
@@ -307,8 +309,9 @@ func UpsertListing(ctx context.Context, sqlDB *sql.DB, vaultStore *vault.Store, 
 			return fmt.Errorf("decode stored credentials to fence %q: %w", serverID, err)
 		}
 		storedHeaders = secrets.Headers
+		storedEnv = secrets.Env
 	}
-	if !maps.Equal(storedHeaders, cfg.Headers) {
+	if !maps.Equal(storedHeaders, cfg.Headers) || !maps.Equal(storedEnv, cfg.Env) {
 		return errStaleGeneration{serverID: serverID, reason: "credentials changed during discovery"}
 	}
 
@@ -394,12 +397,26 @@ func (e errStaleGeneration) Error() string {
 	return "mcp server " + e.serverID + ": stale discovery generation (" + e.reason + ")"
 }
 
-// sameAuthority reports whether the row still describes the endpoint the
-// discovery pass actually talked to: destination, approvals and effective
-// timeout. Credential values are fenced separately, inside the write
-// transaction, against the unsealed stored set.
+// sameAuthority reports whether the row still describes the connection the
+// discovery pass actually talked to: transport, endpoint or process shape,
+// approvals, environment inheritance and effective timeout. Credential
+// values are fenced separately, inside the write transaction, against the
+// unsealed stored set.
 func sameAuthority(row db.McpServer, cfg mcp.ServerConfig) bool {
+	if row.Transport != cfg.Transport {
+		return false
+	}
 	if row.Url.String != cfg.URL || row.Url.Valid != (cfg.URL != "") {
+		return false
+	}
+	if row.Command.String != cfg.Command || row.Command.Valid != (cfg.Command != "") {
+		return false
+	}
+	args, err := DecodeStrings(row.Args)
+	if err != nil || !slices.Equal(args, cfg.Args) {
+		return false
+	}
+	if (row.InheritEnv != 0) != cfg.InheritEnv {
 		return false
 	}
 	if (row.AllowPrivateNetwork != 0) != cfg.AllowPrivateNetwork {
@@ -416,14 +433,46 @@ func sameAuthority(row db.McpServer, cfg mcp.ServerConfig) bool {
 }
 
 // HeaderKeys renders a secrets map's key names the way the row stores
-// them: canonically sorted.
-func HeaderKeys(headers map[string]string) string {
-	keys := make([]string, 0, len(headers))
-	for key := range headers {
+// them: canonically sorted. EnvKeys is the same rendering for a stdio
+// server's sealed environment.
+func HeaderKeys(headers map[string]string) string { return keysJSON(headers) }
+
+// EnvKeys is HeaderKeys for the sealed environment.
+func EnvKeys(env map[string]string) string { return keysJSON(env) }
+
+// keysJSON encodes a secrets map's key names, sorted and always an array.
+func keysJSON(values map[string]string) string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
 		keys = append(keys, key)
 	}
 	slices.Sort(keys)
-	encoded, _ := json.Marshal(keys)
+	return EncodeStrings(keys)
+}
+
+// DecodeStrings parses a JSON string-array column into a non-nil slice:
+// the one decoder for args, env_keys and header_keys.
+func DecodeStrings(raw string) ([]string, error) {
+	if raw == "" {
+		return []string{}, nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []string{}
+	}
+	return out, nil
+}
+
+// EncodeStrings is DecodeStrings' inverse: the column form of a string
+// list, always a JSON array (nil encodes as "[]").
+func EncodeStrings(values []string) string {
+	if values == nil {
+		values = []string{}
+	}
+	encoded, _ := json.Marshal(values)
 	return string(encoded)
 }
 
@@ -443,9 +492,19 @@ func SetCatalogState(ctx context.Context, queries *db.Queries, id, state string)
 func Config(ctx context.Context, server db.McpServer, vaultStore *vault.Store) (mcp.ServerConfig, error) {
 	cfg := mcp.ServerConfig{
 		ID:                  server.ID,
+		Transport:           server.Transport,
+		InheritEnv:          server.InheritEnv != 0,
 		AllowPrivateNetwork: server.AllowPrivateNetwork != 0,
 		AllowPlaintext:      server.AllowPlaintext != 0,
 	}
+	if server.Command.Valid {
+		cfg.Command = server.Command.String
+	}
+	args, err := DecodeStrings(server.Args)
+	if err != nil {
+		return mcp.ServerConfig{}, fmt.Errorf("decode args: %w", err)
+	}
+	cfg.Args = args
 	if server.Url.Valid {
 		cfg.URL = server.Url.String
 	}
@@ -465,6 +524,7 @@ func Config(ctx context.Context, server db.McpServer, vaultStore *vault.Store) (
 		return mcp.ServerConfig{}, fmt.Errorf("decode secrets: %w", err)
 	}
 	cfg.Headers = secrets.Headers
+	cfg.Env = secrets.Env
 	return cfg, nil
 }
 

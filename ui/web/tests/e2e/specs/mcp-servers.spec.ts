@@ -90,7 +90,7 @@ test('the page states the inheritance rule', async ({ page }) => {
 	).toBeVisible()
 })
 
-test('the create form asks for an endpoint only', async ({ page }) => {
+test('the http create form opens on the endpoint field', async ({ page }) => {
 	await page.goto('/settings/tools')
 	await page.getByRole('button', { name: 'Add MCP server' }).click()
 
@@ -105,7 +105,7 @@ test('a create that cannot connect writes nothing', async ({ page }) => {
 	await page.getByLabel('URL').fill('not-a-url')
 	await page.getByRole('button', { name: 'Add server' }).click()
 
-	await expect(page.getByText(/must be an http\(s\) URL/)).toBeVisible()
+	await expect(page.getByText(/http\(s\) url/i)).toBeVisible()
 	await expect(page.getByRole('heading', { name: SERVER_NAME })).toHaveCount(0)
 })
 

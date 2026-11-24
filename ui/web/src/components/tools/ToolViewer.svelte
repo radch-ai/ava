@@ -32,10 +32,19 @@
 
 	let { entries, compact = false }: Props = $props()
 
-	/** The authority line beside a definition: where a call would go. */
+	/** The authority line beside a definition: where a call would go. A
+	 *  stdio server runs a command, so its endpoint facts do not apply. */
 	function authorityLine(tool: ViewerToolEntry): string {
 		const meta = tool.inspect?.meta
 		if (!meta) return ''
+		if (meta.command) {
+			return [
+				meta.command,
+				`credentials (env): ${meta.hasCredentials ? 'yes' : 'no'}`,
+				'plaintext: n/a',
+				'private network: n/a'
+			].join(' · ')
+		}
 		const parts = [
 			meta.endpoint,
 			`credentials: ${meta.hasCredentials ? 'yes' : 'no'}`,
@@ -156,6 +165,13 @@
 								>
 									MCP
 								</span>
+								{#if server.transport}
+									<span
+										class="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs font-medium"
+									>
+										{server.transport}
+									</span>
+								{/if}
 								<span class="text-muted-foreground text-xs">
 									{server.toolCount}
 									{server.toolCount === 1 ? 'tool' : 'tools'}

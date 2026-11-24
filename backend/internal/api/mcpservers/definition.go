@@ -12,6 +12,8 @@ import (
 	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/backend/internal/api"
 	"github.com/radch-ai/ava/backend/internal/db"
+	"github.com/radch-ai/ava/backend/internal/mcp"
+	"github.com/radch-ai/ava/backend/internal/mcpserver"
 )
 
 // ToolDefinition answers one tool's stored definition.
@@ -39,24 +41,33 @@ func ToolDefinition(queries *db.Queries) api.Handler {
 			return api.WriteError(w, http.StatusNotFound,
 				fmt.Sprintf("Tool %q not found on server %q", toolID, serverID))
 		}
-		headerKeys, err := decodeStrings(server.HeaderKeys)
+		headerKeys, err := mcpserver.DecodeStrings(server.HeaderKeys)
 		if err != nil {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return fmt.Errorf("decode headerKeys for %q: %w", serverID, err)
 		}
-		// A NULL url renders an empty endpoint, matching serverView.
-		endpoint := ""
-		if server.Url.Valid {
-			endpoint = maskedURL(server.Url.String)
+		envKeys, err := mcpserver.DecodeStrings(server.EnvKeys)
+		if err != nil {
+			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
+			return fmt.Errorf("decode envKeys for %q: %w", serverID, err)
 		}
 		// The authority behind the definition: the endpoint (userinfo
-		// masked), whether credentials ride it, and the exceptions.
-		return api.WriteJSON(w, http.StatusOK, apitypes.McpToolDefinitionResponse{
-			DefinitionJSON:      row.DefinitionJson,
-			Endpoint:            endpoint,
-			HasCredentials:      len(headerKeys) > 0,
-			AllowPlaintext:      server.AllowPlaintext != 0,
-			AllowPrivateNetwork: server.AllowPrivateNetwork != 0,
-		})
+		// masked) or the command, whether credentials ride it, and the
+		// exceptions — plaintext and private-network are endpoint facts,
+		// so a stdio row reports neither.
+		out := apitypes.McpToolDefinitionResponse{
+			DefinitionJSON: row.DefinitionJson,
+			HasCredentials: len(headerKeys) > 0 || len(envKeys) > 0,
+		}
+		if server.Transport == mcp.TransportStdio {
+			out.Command = server.Command.String
+		} else {
+			if server.Url.Valid {
+				out.Endpoint = maskedURL(server.Url.String)
+			}
+			out.AllowPlaintext = server.AllowPlaintext != 0
+			out.AllowPrivateNetwork = server.AllowPrivateNetwork != 0
+		}
+		return api.WriteJSON(w, http.StatusOK, out)
 	}
 }

@@ -158,6 +158,7 @@
 			meta: definition
 				? {
 						endpoint: definition.endpoint ?? '',
+						command: definition.command ?? '',
 						hasCredentials: definition.hasCredentials,
 						allowPlaintext: definition.allowPlaintext,
 						allowPrivateNetwork: definition.allowPrivateNetwork
@@ -261,6 +262,7 @@
 				return {
 					row: { id: server.id, name: server.name },
 					toolCount: server.toolCount,
+					transport: server.transport,
 					lastError: server.lastError,
 					status: serverStatus(server),
 					state: {

@@ -7,7 +7,9 @@ package mcpservers
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,13 +63,37 @@ func msDuration(ms int64) time.Duration {
 	return time.Duration(ms) * time.Millisecond
 }
 
-// configProblem returns the 400 message for a malformed server config;
-// "" when well formed. The rule itself is mcp's one validator.
-func configProblem(rawURL string) string {
-	if err := mcp.ValidateURL(rawURL); err != nil {
-		return "url must be an http(s) URL without embedded credentials"
+// configProblem returns the 400 message for a server config that cannot be
+// dialed as described; "" when it is usable. The rule itself is mcp's one
+// validator — the transport matrix included.
+func configProblem(cfg mcp.ServerConfig) string {
+	if err := cfg.Validate(); err != nil {
+		return err.Error()
 	}
 	return ""
+}
+
+// ackRequired rejects a stdio install or process edit made without the
+// acknowledgment: running a process with the administrator's privileges is
+// never granted silently.
+const ackRequired = "stdio servers run a process with your privileges: acknowledge required"
+
+// ackNotApplicable rejects the stdio acknowledgment on an http row: the
+// flag grants process execution, which http servers never do.
+const ackNotApplicable = "acknowledgeProcessExecution applies to stdio servers only"
+
+// processAck fingerprints a stdio server's process shape — command plus
+// args — as stored in process_ack: any change to either clears the
+// acknowledgment until the next save acknowledges again. The JSON array
+// encoding keeps the fingerprint injective: JSON strings escape every
+// separator, so no two distinct shapes serialize alike.
+func processAck(command string, args []string) string {
+	if args == nil {
+		args = []string{}
+	}
+	shape, _ := json.Marshal([]any{command, args})
+	sum := sha256.Sum256(shape)
+	return hex.EncodeToString(sum[:])
 }
 
 func timeoutProblem(ms *int64) string {
@@ -133,11 +159,16 @@ func serverView(row db.McpServer, toolCount int64) (apitypes.McpServer, error) {
 	out := apitypes.McpServer{
 		ID:                  row.ID,
 		Name:                row.Name,
+		Transport:           row.Transport,
 		Enabled:             row.Enabled != 0,
 		ToolCount:           toolCount,
 		CatalogState:        row.CatalogState,
+		InheritEnv:          row.InheritEnv != 0,
 		AllowPrivateNetwork: row.AllowPrivateNetwork != 0,
 		AllowPlaintext:      row.AllowPlaintext != 0,
+	}
+	if row.Command.Valid {
+		out.Command = row.Command.String
 	}
 	if row.Url.Valid {
 		// A stored URL may carry credentials in its userinfo. The
@@ -153,8 +184,14 @@ func serverView(row db.McpServer, toolCount int64) (apitypes.McpServer, error) {
 		out.LastError = &msg
 	}
 	var err error
-	if out.HeaderKeys, err = decodeStrings(row.HeaderKeys); err != nil {
+	if out.HeaderKeys, err = mcpserver.DecodeStrings(row.HeaderKeys); err != nil {
 		return apitypes.McpServer{}, fmt.Errorf("decode headerKeys for %q: %w", row.ID, err)
+	}
+	if out.Args, err = mcpserver.DecodeStrings(row.Args); err != nil {
+		return apitypes.McpServer{}, fmt.Errorf("decode args for %q: %w", row.ID, err)
+	}
+	if out.EnvKeys, err = mcpserver.DecodeStrings(row.EnvKeys); err != nil {
+		return apitypes.McpServer{}, fmt.Errorf("decode envKeys for %q: %w", row.ID, err)
 	}
 	return out, nil
 }
@@ -193,22 +230,6 @@ func sealSecrets(ctx context.Context, vaultStore *vault.Store, slug string, secr
 		return fmt.Errorf("encode secrets: %w", err)
 	}
 	return vaultStore.Put(ctx, vault.NameRuntime, mcpserver.EntryName(slug), mcpserver.Kind, blob, nil)
-}
-
-// decodeStrings parses a JSON string-array column into a non-nil
-// slice.
-func decodeStrings(s string) ([]string, error) {
-	if s == "" {
-		return []string{}, nil
-	}
-	var out []string
-	if err := json.Unmarshal([]byte(s), &out); err != nil {
-		return nil, err
-	}
-	if out == nil {
-		out = []string{}
-	}
-	return out, nil
 }
 
 // skippedTools renders the cosmetic skips of one discovery pass.
