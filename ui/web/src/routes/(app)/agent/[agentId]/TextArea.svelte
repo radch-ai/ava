@@ -18,6 +18,7 @@
 		onsubmit,
 		oninterrupt,
 		working = false,
+		compacting = false,
 		blocked = false
 	}: {
 		/** Resolves when the gateway accepted the prompt — or left the
@@ -27,6 +28,9 @@
 		onsubmit?: (text: string) => Promise<void>
 		oninterrupt?: () => void
 		working?: boolean
+		/** Auto-compaction in flight: the composer shows its chip while
+		 * the checker's summarization runs ahead of the claim. */
+		compacting?: boolean
 		/** Submissions are blocked while the lane is not synchronized:
 		 * the gateway would reject them anyway; the composer says why. */
 		blocked?: boolean
@@ -202,6 +206,12 @@
 		{/if}
 	</Popover.Root>
 </div>
+
+{#if compacting}
+	<p class="text-muted-foreground mx-auto mt-1 w-fit text-xs">
+		Auto-compacting…
+	</p>
+{/if}
 {#if submitError}
 	<p class="text-destructive mx-auto mt-1 w-fit text-xs">
 		{submitError}

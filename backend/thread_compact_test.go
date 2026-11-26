@@ -264,3 +264,121 @@ func TestExecuteCompactionKeepsReferencesRestorable(t *testing.T) {
 		t.Errorf("restored predecessor output = %d bytes, want the original %d", len(stored), len(big))
 	}
 }
+
+// The itemless rotation — the pre-prompt automation's committed half —
+// seeds and swaps exactly like ExecuteCompaction but settles nothing:
+// the tagged prompt item stays accepted and settles when its own turn
+// finishes, and the single thread_changed event carries the seeded row
+// (there is no item_finished to ride).
+func TestRotateThreadCompactedSeedsAndSwaps(t *testing.T) {
+	turns, sqlDB := journalService(t)
+	ctx := context.Background()
+	const agent = "research"
+	seedRows(t, sqlDB, agent, []backend.ThreadMessageDraft{
+		userDraft("t1 prompt", "t1"),
+		groupDraft(t, "t1", "did the thing", callDecl("c1", "fetch")),
+		toolDraft(t, "t1", "c1", "fetch", `{}`, "payload", nil),
+	})
+	oldThread := testdb.ThreadID(agent)
+
+	// The tag must name a real queued item of this agent.
+	if _, err := turns.AcceptItem(ctx, agent, "prompt-1", "hello", "prompt", nil); err != nil {
+		t.Fatalf("accept prompt: %v", err)
+	}
+	head := journalPosition(t, turns, agent)
+
+	const summary = "Goals: ship pre-prompt automation. Decision: one engine."
+	activated, batch, err := turns.RotateThreadCompacted(ctx, agent, "prompt-1", summary)
+	if err != nil {
+		t.Fatalf("rotate thread compacted: %v", err)
+	}
+	if activated == nil || activated.ID == "" || activated.ID == oldThread {
+		t.Fatalf("activated = %+v, want a fresh successor", activated)
+	}
+	if activated.PreviousID != oldThread {
+		t.Errorf("activated previous = %q, want %q", activated.PreviousID, oldThread)
+	}
+
+	// The successor is a compact boundary linked to the old thread and
+	// the pointer moved to it.
+	var kind, previous string
+	if err := sqlDB.QueryRow(
+		`SELECT kind, previous_thread_id FROM threads WHERE agent_id = ? AND id = ?`,
+		agent, activated.ID).Scan(&kind, &previous); err != nil {
+		t.Fatal(err)
+	}
+	if kind != "compact" || previous != oldThread {
+		t.Errorf("successor thread = (%q, %q), want (compact, %q)", kind, previous, oldThread)
+	}
+	var active string
+	if err := sqlDB.QueryRow(`SELECT active_thread_id FROM agents WHERE id = ?`, agent).Scan(&active); err != nil {
+		t.Fatal(err)
+	}
+	if active != activated.ID {
+		t.Errorf("active thread = %q, want the successor %q", active, activated.ID)
+	}
+
+	// The summary is the successor's single row, keyed to the tagged
+	// prompt item.
+	var role, content, turnID string
+	if err := sqlDB.QueryRow(
+		`SELECT role, content, turn_id FROM thread_messages WHERE agent_id = ? AND thread_id = ?`,
+		agent, activated.ID).Scan(&role, &content, &turnID); err != nil {
+		t.Fatal(err)
+	}
+	if role != "assistant" || content != summary || turnID != "prompt-1" {
+		t.Errorf("seeded row = (%q, %q, %q), want (assistant, summary, prompt-1)", role, content, turnID)
+	}
+
+	// Exactly one journal event: thread_changed carrying the divider
+	// and the seeded row; the tagged item never settles.
+	if got := countRows(t, sqlDB, `SELECT COUNT(*) FROM lifecycle_journal WHERE agent_id = ?`, agent); got != int(head)+1 {
+		t.Fatalf("lifecycle_journal rows = %d, want %d (one event)", got, head+1)
+	}
+	if len(batch.Events) != 1 {
+		t.Fatalf("batch events = %d, want the single thread_changed", len(batch.Events))
+	}
+	changed := batch.Events[0]
+	if changed.Kind != apitypes.LifecycleThreadChanged || changed.ThreadID != activated.ID ||
+		changed.PreviousThreadID != oldThread || changed.ItemID != "prompt-1" ||
+		changed.ItemKind != "prompt" {
+		t.Errorf("thread_changed = %+v, want the tagged successor link", changed)
+	}
+	if changed.Divider == nil || changed.Divider.Content != "Compacted" {
+		t.Errorf("thread_changed divider = %+v, want the Compacted label", changed.Divider)
+	}
+	if len(changed.Rows) != 1 || changed.Rows[0].Role != "assistant" || changed.Rows[0].Content != summary {
+		t.Errorf("thread_changed rows = %+v, want the seeded summary riding the event", changed.Rows)
+	}
+	if got := itemState(t, sqlDB, agent, "prompt-1"); got != "accepted" {
+		t.Errorf("tagged prompt state = %q, want accepted (no settle)", got)
+	}
+
+	// An empty summary is refused, exactly like ExecuteCompaction —
+	// while the tag is still valid, so the summary guard is what fires.
+	if _, _, err := turns.RotateThreadCompacted(ctx, agent, "prompt-1", ""); err == nil {
+		t.Error("empty summary succeeded")
+	}
+
+	// The tag's guards are enforced, not assumed: an unknown id, a
+	// non-prompt kind, and a non-accepted state all fail, exactly like
+	// every sibling mutation re-reads its item.
+	if _, _, err := turns.RotateThreadCompacted(ctx, agent, "nope", summary); err == nil {
+		t.Error("unknown tag item succeeded")
+	}
+	if _, err := turns.AcceptItem(ctx, agent, "cmd-1", "/compact", "compact", nil); err != nil {
+		t.Fatalf("accept compact item: %v", err)
+	}
+	if _, _, err := turns.RotateThreadCompacted(ctx, agent, "cmd-1", summary); err == nil {
+		t.Error("compact-kind tag succeeded")
+	}
+	if _, _, err := turns.StartItem(ctx, agent, "prompt-1"); err != nil {
+		t.Fatalf("start prompt item: %v", err)
+	}
+	if _, _, err := turns.RotateThreadCompacted(ctx, agent, "prompt-1", summary); err == nil {
+		t.Error("started-state tag succeeded")
+	}
+	if got := itemState(t, sqlDB, agent, "prompt-1"); got != "started" {
+		t.Errorf("prompt state = %q, want started", got)
+	}
+}

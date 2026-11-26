@@ -191,6 +191,7 @@ function sendSyncReady(
 			lane: {
 				active: false,
 				working: false,
+				compacting: false,
 				reasoning: false,
 				model: ''
 			},
@@ -750,6 +751,7 @@ describe('AgentPage (superagent branch)', () => {
 				data: {
 					active: true,
 					working: false,
+					compacting: false,
 					reasoning: false,
 					model: ''
 				}
@@ -777,6 +779,7 @@ describe('AgentPage (superagent branch)', () => {
 				data: {
 					active: true,
 					working: false,
+					compacting: false,
 					reasoning: false,
 					model: ''
 				}
@@ -799,6 +802,7 @@ describe('AgentPage (superagent branch)', () => {
 				data: {
 					active: true,
 					working: true,
+					compacting: false,
 					reasoning: false,
 					model: ''
 				}
@@ -821,6 +825,7 @@ describe('AgentPage (superagent branch)', () => {
 				data: {
 					active: true,
 					working: true,
+					compacting: false,
 					reasoning: false,
 					model: ''
 				}
@@ -884,6 +889,7 @@ describe('AgentPage (superagent branch)', () => {
 				data: {
 					active: true,
 					working: true,
+					compacting: false,
 					reasoning: true,
 					model: ''
 				}
@@ -895,6 +901,7 @@ describe('AgentPage (superagent branch)', () => {
 				data: {
 					active: true,
 					working: true,
+					compacting: false,
 					reasoning: false,
 					model: ''
 				}
@@ -1130,6 +1137,7 @@ describe('AgentPage (superagent branch)', () => {
 				data: {
 					active: true,
 					working: true,
+					compacting: false,
 					reasoning: false,
 					model: ''
 				}
@@ -1154,6 +1162,7 @@ describe('AgentPage (superagent branch)', () => {
 				data: {
 					active: true,
 					working: true,
+					compacting: false,
 					reasoning: false,
 					model: ''
 				}
@@ -1167,6 +1176,7 @@ describe('AgentPage (superagent branch)', () => {
 				data: {
 					active: true,
 					working: false,
+					compacting: false,
 					reasoning: false,
 					model: ''
 				}
@@ -1212,6 +1222,7 @@ describe('AgentPage (superagent branch)', () => {
 				data: {
 					active: true,
 					working: false,
+					compacting: false,
 					reasoning: false,
 					model: ''
 				}
@@ -1271,6 +1282,54 @@ describe('AgentPage (superagent branch)', () => {
 						.elements()
 				).toHaveLength(0)
 			})
+		})
+
+		it('shows the auto-compacting chip and disables send-now while compacting', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+			capturedOnEvent?.({
+				type: 'queue_state',
+				data: {
+					items: [
+						{ id: 'q-1', content: 'waiting behind compaction', kind: 'prompt' }
+					],
+					paused: false
+				}
+			})
+			capturedOnState?.('live')
+			capturedOnEvent?.({
+				type: 'lane_status',
+				data: {
+					active: true,
+					working: false,
+					compacting: true,
+					reasoning: false,
+					model: ''
+				}
+			})
+
+			await expect.element(page.getByText('Auto-compacting…')).toBeVisible()
+			await expect
+				.element(page.getByRole('button', { name: /send immediately/i }))
+				.toBeDisabled()
+
+			// The chip and the disable ride the flag: clearing it restores
+			// the actions and drops the chip.
+			capturedOnEvent?.({
+				type: 'lane_status',
+				data: {
+					active: true,
+					working: true,
+					compacting: false,
+					reasoning: false,
+					model: ''
+				}
+			})
+			await vi.waitFor(() => {
+				expect(page.getByText('Auto-compacting…').elements()).toHaveLength(0)
+			})
+			await expect
+				.element(page.getByRole('button', { name: /send immediately/i }))
+				.toBeEnabled()
 		})
 
 		it('replaces the projection wholesale on each snapshot', async () => {

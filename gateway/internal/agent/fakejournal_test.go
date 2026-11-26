@@ -234,6 +234,27 @@ func (f *fakeJournal) ShakeThreadContext(_ context.Context, agentID, itemID stri
 	}), nil
 }
 
+func (f *fakeJournal) ShakeAgentContext(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
+
+func (f *fakeJournal) RotateThreadCompacted(_ context.Context, agentID, tagItemID, summary string) (*backend.ActivatedThread, *backend.JournalBatch, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	item := f.items[fakeKey(agentID, tagItemID)]
+	if item == nil || item.state != "accepted" {
+		return nil, nil, errors.New("item is not accepted")
+	}
+	if summary == "" {
+		return nil, nil, errors.New("empty summary")
+	}
+	return &backend.ActivatedThread{ID: tagItemID + "-successor", PreviousID: "thread-" + agentID},
+		f.appendLocked(agentID, tagItemID, apitypes.LifecycleEvent{
+			Kind: apitypes.LifecycleThreadChanged, ItemID: tagItemID, ItemKind: item.kind,
+			ThreadID: tagItemID + "-successor", PreviousThreadID: "thread-" + agentID,
+		}), nil
+}
+
 func (f *fakeJournal) ExecuteCompaction(_ context.Context, agentID, itemID, summary string) (*backend.ActivatedThread, *backend.JournalBatch, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -117,6 +117,39 @@ func (s *TurnService) ShakeThreadContext(ctx context.Context, agentID, itemID st
 	return elided, batch, err
 }
 
+// ShakeAgentContext is the pre-prompt automation's durable shake: the
+// same tail-protected walk /shake runs, without an item to settle —
+// the prompt whose claim armed it is still queued. Zero events by
+// design: the turn that follows publishes everything observable.
+func (s *TurnService) ShakeAgentContext(ctx context.Context, agentID string) (int, error) {
+	var elided int
+	_, err := journalTx(ctx, s, agentID, "shake agent context",
+		func(qtx *db.Queries, stamp, head int64) (*JournalBatch, error) {
+			threadID, err := qtx.GetActiveThreadID(ctx, agentID)
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, ErrUnknownAgent
+			} else if err != nil {
+				return nil, err
+			}
+			protected := ""
+			if latest, err := qtx.GetThreadNewestTurn(ctx, db.GetThreadNewestTurnParams{
+				AgentID: agentID, ThreadID: threadID,
+			}); err == nil {
+				protected = latest
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
+			elided, err = s.elideOversizedToolRows(ctx, qtx, agentID, threadID, protected)
+			if err != nil {
+				return nil, err
+			}
+			// Empty-events append: a non-nil batch commits the flag
+			// flips; zero events publish nothing.
+			return s.appendEvents(ctx, qtx, agentID, "", head, stamp, nil)
+		})
+	return elided, err
+}
+
 // elideOversizedToolRows is the shared shaking engine: it walks the
 // thread's oversized tool rows and flips their elided flag, skipping
 // every row of protectTurnID (an empty id protects nothing — turn ids

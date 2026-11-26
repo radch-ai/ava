@@ -894,6 +894,103 @@ func (s *TurnService) ExecuteCompaction(ctx context.Context, agentID, itemID, su
 	return activated, batch, nil
 }
 
+// RotateThreadCompacted is the pre-prompt automation's rotation: the
+// committed half of ExecuteCompaction without its item settlement —
+// the tagged prompt item is accepted, not started, and settles when
+// its own turn finishes. tagItemID must name an accepted queue item
+// of this agent (the journal's item FK requires it).
+func (s *TurnService) RotateThreadCompacted(ctx context.Context, agentID, tagItemID, summary string) (*ActivatedThread, *JournalBatch, error) {
+	var activated *ActivatedThread
+	batch, err := journalTx(ctx, s, agentID, "rotate thread compacted",
+		func(qtx *db.Queries, stamp, head int64) (*JournalBatch, error) {
+			if summary == "" {
+				return nil, errors.New("rotate thread compacted: empty summary")
+			}
+			// The tag names the prompt the checker measured — still
+			// accepted, because the rotation runs before its claim.
+			// Enforced, not assumed: every sibling mutation re-reads
+			// its item, and the journal's FK proves only existence.
+			item, err := qtx.GetQueueItem(ctx, db.GetQueueItemParams{AgentID: agentID, ID: tagItemID})
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, errItemNotAccepted
+			} else if err != nil {
+				return nil, err
+			}
+			if item.State != "accepted" {
+				return nil, fmt.Errorf("%s: %w", tagItemID, errItemNotAccepted)
+			}
+			if item.Kind != itemKindPrompt {
+				return nil, fmt.Errorf("rotate thread compacted: item %s has kind %q", tagItemID, item.Kind)
+			}
+			threadID := uuid.NewString()
+			row, err := qtx.CreateThreadFromActive(ctx, db.CreateThreadFromActiveParams{
+				ThreadID:  threadID,
+				CreatedMs: stamp,
+				AgentID:   agentID,
+				Kind:      threadpage.CompactedKind,
+			})
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, ErrUnknownAgent
+			} else if err != nil {
+				return nil, err
+			}
+			// The seeded row carries the tagged item's id as its turn:
+			// the convention every row an item mints follows, and a
+			// lone assistant row projects as a plain message.
+			rows, err := s.insertRows(ctx, qtx, agentID, threadID, stamp, []ThreadMessageDraft{{
+				ID:      uuid.NewString(),
+				Role:    apitypes.ThreadRoleAssistant,
+				Content: summary,
+				TurnID:  tagItemID,
+			}})
+			if err != nil {
+				return nil, err
+			}
+			if n, err := qtx.UpdateActiveThread(ctx, db.UpdateActiveThreadParams{
+				ActiveThreadID: threadID,
+				ID:             agentID,
+			}); err != nil {
+				return nil, err
+			} else if n == 0 {
+				return nil, ErrUnknownAgent
+			}
+			createdAt := threadpage.ISOTime(row.CreatedAt)
+			divider := threadpage.Divider(threadID, row.CreatedAt, threadpage.CompactedText)
+			// The divider and the seeded row share this transaction's
+			// stamp span; the watermark covers both, as FinishItem's
+			// row-carrying batches do. The seeded row rides the
+			// thread_changed event itself — there is no item_finished
+			// to carry it, so live and replayed clients render the
+			// summary in the new segment.
+			s.lastPersistedMs = stamp + int64(len(rows)) - 1
+			return s.appendEvents(ctx, qtx, agentID, tagItemID, head, stamp, []apitypes.LifecycleEvent{{
+				Kind:             apitypes.LifecycleThreadChanged,
+				ItemID:           tagItemID,
+				ItemKind:         "prompt",
+				ThreadID:         threadID,
+				PreviousThreadID: row.PreviousThreadID.String,
+				Divider:          &divider,
+				Rows:             rows,
+				CreatedAt:        createdAt,
+			}})
+		})
+	if err != nil {
+		return nil, batch, err
+	}
+	if batch != nil {
+		for i := range batch.Events {
+			if ev := batch.Events[i]; ev.Kind == apitypes.LifecycleThreadChanged {
+				activated = &ActivatedThread{
+					ID:         ev.ThreadID,
+					PreviousID: ev.PreviousThreadID,
+				}
+				break
+			}
+		}
+	}
+	return activated, batch, nil
+}
+
 // agentCoords reads one agent's journal coordinates on the caller's
 // transaction — the shared head of every cursor validation, replay page,
 // and snapshot read, so classification and the events it classifies can

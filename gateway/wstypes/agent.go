@@ -47,12 +47,15 @@ type SendNowMessage struct {
 // LaneStatus is the payload of a lane_status event. Model is the
 // active lane's model id — display only. Working reports a turn in
 // flight; the composer's stop control tracks it. Reasoning reports
-// the model streaming reasoning tokens right now.
+// the model streaming reasoning tokens right now. Compacting reports
+// the pre-prompt automation's summarization in flight; the composer
+// chip and send-now disable track it.
 type LaneStatus struct {
-	Active    bool   `json:"active"`
-	Working   bool   `json:"working"`
-	Reasoning bool   `json:"reasoning"`
-	Model     string `json:"model"`
+	Active     bool   `json:"active"`
+	Working    bool   `json:"working"`
+	Reasoning  bool   `json:"reasoning"`
+	Compacting bool   `json:"compacting"`
+	Model      string `json:"model"`
 }
 
 // QueueItem is one queued prompt. Kind is always set — a command or an

@@ -64,6 +64,7 @@ function connected() {
 const idleLane = {
 	active: false,
 	working: false,
+	compacting: false,
 	reasoning: false,
 	model: ''
 }
@@ -109,6 +110,7 @@ describe('agent socket', () => {
 			data: {
 				active: true,
 				working: true,
+				compacting: false,
 				reasoning: false,
 				model: 'gpt-4o'
 			}
@@ -120,6 +122,7 @@ describe('agent socket', () => {
 				data: {
 					active: true,
 					working: true,
+					compacting: false,
 					reasoning: false,
 					model: 'gpt-4o'
 				}

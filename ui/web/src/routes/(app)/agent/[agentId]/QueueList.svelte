@@ -10,6 +10,9 @@
 		/** The item whose send-immediately result is pending; all
 		 * actions disable while one is in flight. */
 		pendingId = null,
+		/** Auto-compaction in flight: the send-now actions step aside
+		 * while the checker's summarization runs. */
+		compacting = false,
 		onsendnow
 	}: {
 		items: QueueItem[]
@@ -18,12 +21,13 @@
 		next?: QueueItem | null
 		paused?: boolean
 		pendingId?: string | null
+		compacting?: boolean
 		onsendnow: (itemId: string) => void
 	} = $props()
 
 	/** Queue kinds that render as commands: monospaced, never prose. */
 	const commandKinds = new Set(['new_thread', 'shake', 'compact'])
-	const actionsDisabled = $derived(pendingId !== null)
+	const actionsDisabled = $derived(pendingId !== null || compacting)
 </script>
 
 <!-- The gateway-owned queue, oldest first: waiting prompts and

@@ -315,10 +315,13 @@ func TestTurnResolverErrorPausesUntilExplicitSelection(t *testing.T) {
 	llm := fakeOpenAI(t, "recovered")
 	defer llm.Close()
 
-	var failFirst atomic.Bool
+	var resolveCalls atomic.Int32
 	// Every resolver call reports the selection it ran on: the routing
 	// choice is not projected on the wire, so the rebind is proven where
-	// it takes effect.
+	// it takes effect. The first two calls fail — the pre-prompt
+	// checker's measurement first, then the turn's own resolve — so
+	// the failure the pause gate records is the turn's, not the
+	// checker's degraded one.
 	resolved := make(chan string, 8)
 	resolver := func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
 		selection := ""
@@ -326,7 +329,7 @@ func TestTurnResolverErrorPausesUntilExplicitSelection(t *testing.T) {
 			selection = entry.ID
 		}
 		resolved <- selection
-		if failFirst.CompareAndSwap(false, true) {
+		if resolveCalls.Add(1) <= 2 {
 			return backend.ResolvedModel{}, errors.New("read default model: no rows")
 		}
 		return backend.ResolvedModel{BaseURL: llm.URL, APIKey: "sk-test", Model: "test-model"}, nil
@@ -379,6 +382,7 @@ func TestTurnResolverErrorPausesUntilExplicitSelection(t *testing.T) {
 	require.Equal(t, item2, snapshot.Next.ID)
 	_, p2 := readUntilMessage(t, c)
 	require.Equal(t, "recovered", p2.Content)
+	require.Equal(t, "", <-resolved, "the checker measured the first item on default routing")
 	require.Equal(t, "", <-resolved, "the failed turn ran on default routing")
 	require.Equal(t, "recovered", <-resolved, "the paused rebind replaced the gated item's selection")
 }
@@ -571,7 +575,14 @@ func TestTurnCanceledDuringResolveSettlesAsStop(t *testing.T) {
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
 	defer close(release)
+	var calls atomic.Int32
 	resolver := func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
+		// The checker resolves first and must degrade quickly; the
+		// parked call below is the turn's own — the stop-during-
+		// resolve scenario under test.
+		if calls.Add(1) == 1 {
+			return backend.ResolvedModel{}, errors.New("no default model set")
+		}
 		select {
 		case started <- struct{}{}:
 		default:

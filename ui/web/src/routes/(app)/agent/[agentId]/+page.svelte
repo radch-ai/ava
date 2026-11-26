@@ -142,6 +142,13 @@
 				conversation.queueActiveItem !== null)
 	)
 
+	// Auto-compaction in flight: the checker's summarization runs
+	// ahead of the claim — the chip shows it and send-now steps aside.
+	const compacting = $derived(
+		conversation.socketState === 'live' &&
+			(conversation.laneStatus?.compacting ?? false)
+	)
+
 	async function loadActivity() {
 		if (activityFeed || activityError || isLoadingActivity) return
 
@@ -253,6 +260,7 @@
 						next={conversation.queueNextItem}
 						paused={conversation.queuePaused}
 						pendingId={conversation.pendingSendNowId}
+						{compacting}
 						onsendnow={(itemId) =>
 							void conversation.sendNow(itemId, selectedModel)}
 					/>
@@ -269,6 +277,7 @@
 			<TextArea
 				onsubmit={handleComposerSubmit}
 				working={composerWorking}
+				{compacting}
 				oninterrupt={() => conversation.interrupt()}
 				blocked={conversation.socketState !== 'live'}
 			/>

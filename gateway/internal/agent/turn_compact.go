@@ -120,6 +120,41 @@ func (a *UserAgent) processCompact(claim *turnClaim, emitCtx context.Context, ms
 		}
 		scrub = resolved.Scrubber
 	}
+	summary, err := a.summarizeForCompaction(claim.ctx, cfg, records, scrub)
+	if err != nil {
+		// A stop mid-summarization settles quietly, like every turn.
+		if errors.Is(err, errSummaryStopped) {
+			return a.setupFailure(emitCtx, claim, msgID, "compact thread", err)
+		}
+		return fail(err)
+	}
+
+	if err := a.state.commitAndPublish(func() (*backend.JournalBatch, error) {
+		_, batch, err := a.journal.ExecuteCompaction(claim.ctx, a.state.agentID, msgID, summary)
+		return batch, err
+	}); err != nil {
+		if turnStopped(claim.ctx) {
+			return a.setupFailure(emitCtx, claim, msgID, "compact thread", err)
+		}
+		return fail(err)
+	}
+	a.clearTurnPrefix()
+	return outcomeSucceeded
+}
+
+// errSummaryStopped marks a summarization abandoned by a stop: the
+// caller settles through its stop path instead of failing the item —
+// the cause is the stop itself, nothing worth reporting.
+var errSummaryStopped = errors.New("summarization stopped")
+
+// summarizeForCompaction is the shared summarization core: fit check,
+// in-memory reduction, one-shot Generate with stop-race, overflow
+// retry with window reporting, scrub, and bounds. Both callers — the
+// manual /compact lane and the pre-prompt checker — run this; only
+// their durable framing differs. cfg must carry a declared window;
+// scrub may be nil — the pattern battery fallback stays inside.
+func (a *UserAgent) summarizeForCompaction(ctx context.Context, cfg backend.ResolvedModel,
+	records []backend.AgentThreadMessage, scrub *backend.Scrubber) (string, error) {
 	// The fit check measures the request the summarizer will receive —
 	// instruction plus transcript — against the model's window less the
 	// room the summary answer needs back.
@@ -142,15 +177,15 @@ func (a *UserAgent) processCompact(claim *turnClaim, emitCtx context.Context, ms
 	if !fits() {
 		reduce()
 		if !fits() {
-			return fail(errors.New("summarization input exceeds the model context window after reduction"))
+			return "", errors.New("summarization input exceeds the model context window after reduction")
 		}
 	}
 
-	chatModel, err := createChatModel(claim.ctx, cfg)
+	chatModel, err := createChatModel(ctx, cfg)
 	if err != nil {
-		return fail(err)
+		return "", err
 	}
-	sctx, cancel := context.WithTimeout(claim.ctx, compactSummaryTimeout)
+	sctx, cancel := context.WithTimeout(ctx, compactSummaryTimeout)
 	defer cancel()
 	// The wire call honors its context, but a stop must settle the item
 	// without waiting on the provider: race the call — the lane settles
@@ -172,19 +207,18 @@ func (a *UserAgent) processCompact(claim *turnClaim, emitCtx context.Context, ms
 		select {
 		case res := <-done:
 			return res.out, res.err
-		case <-claim.ctx.Done():
-			return nil, claim.ctx.Err()
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
 	}
-	var out *schema.Message
-	out, err = generate()
+	out, err := generate()
 	if err != nil {
 		// A stop the race missed is still a quiet stop.
-		if turnStopped(claim.ctx) {
-			return a.setupFailure(emitCtx, claim, msgID, "compact thread", err)
+		if turnStopped(ctx) {
+			return "", errSummaryStopped
 		}
 		if !isContextOverflow(err) {
-			return fail(err)
+			return "", err
 		}
 		// The provider rejected the request against a window smaller
 		// than the one resolution knew: record what it stated, and
@@ -196,18 +230,18 @@ func (a *UserAgent) processCompact(claim *turnClaim, emitCtx context.Context, ms
 		}
 		a.reportWindow(cfg.ProviderID, cfg.Model, limit)
 		if reduced {
-			return fail(err)
+			return "", err
 		}
 		reduce()
 		if !fits() {
-			return fail(errors.New("summarization input exceeds the model context window after reduction"))
+			return "", errors.New("summarization input exceeds the model context window after reduction")
 		}
 		out, err = generate()
 		if err != nil {
-			if turnStopped(claim.ctx) {
-				return a.setupFailure(emitCtx, claim, msgID, "compact thread", err)
+			if turnStopped(ctx) {
+				return "", errSummaryStopped
 			}
-			return fail(err)
+			return "", err
 		}
 	}
 	summary := fanOutScrubber(out.Content)
@@ -215,29 +249,18 @@ func (a *UserAgent) processCompact(claim *turnClaim, emitCtx context.Context, ms
 		summary, _ = scrub.ScrubString(out.Content)
 	}
 	if summary == "" {
-		return fail(errors.New("summarization returned no content"))
+		return "", errors.New("summarization returned no content")
 	}
 	if len(summary) > compactSummaryMaxBytes {
-		return fail(errors.New("summarization exceeded the summary size bound"))
+		return "", errors.New("summarization exceeded the summary size bound")
 	}
 	// The reserve is the room the successor's first row must live in:
 	// a summary that overflows it in tokens would seed a context the
 	// declared window cannot hold.
 	if estimateTokens(summary) > reserve {
-		return fail(errors.New("summarization exceeded the summary token bound"))
+		return "", errors.New("summarization exceeded the summary token bound")
 	}
-
-	if err := a.state.commitAndPublish(func() (*backend.JournalBatch, error) {
-		_, batch, err := a.journal.ExecuteCompaction(claim.ctx, a.state.agentID, msgID, summary)
-		return batch, err
-	}); err != nil {
-		if turnStopped(claim.ctx) {
-			return a.setupFailure(emitCtx, claim, msgID, "compact thread", err)
-		}
-		return fail(err)
-	}
-	a.clearTurnPrefix()
-	return outcomeSucceeded
+	return summary, nil
 }
 
 // transcriptEscaper keeps one message one line: the summarizer's only

@@ -444,7 +444,11 @@ func TestInterruptDuringToolFetchEmitsNothing(t *testing.T) {
 	mgr, sqlDB := journaledLane(t,
 		&agent.UserAgentManagerOptions{
 			GetAgentThread: emptyThread,
-			ResolveModel:   fixedResolver(llm.URL),
+			// The checker resolves before it fetches tools, so the
+			// first-call error degrades it to a nil handoff: the
+			// parked tools fetch below is the turn's own — the
+			// stop-during-tool-setup scenario under test.
+			ResolveModel: failFirstResolver(llm.URL),
 			Tools: func(ctx context.Context, _ string) (backend.TurnTools, error) {
 				close(entered)
 				<-ctx.Done()

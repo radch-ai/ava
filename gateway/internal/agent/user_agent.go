@@ -67,6 +67,12 @@ type LifecycleJournal interface {
 	// ShakeThreadContext elides this agent's old large tool results
 	// from the replay projection and settles the shake item.
 	ShakeThreadContext(ctx context.Context, agentID, itemID string) (int, *backend.JournalBatch, error)
+	// ShakeAgentContext runs the itemless durable shake for pre-prompt
+	// automation; zero events by design.
+	ShakeAgentContext(ctx context.Context, agentID string) (int, error)
+	// RotateThreadCompacted commits the itemless compaction rotation,
+	// tagged with the upcoming prompt's item id.
+	RotateThreadCompacted(ctx context.Context, agentID, tagItemID, summary string) (*backend.ActivatedThread, *backend.JournalBatch, error)
 	// ReplayAfter answers one bounded replay page, validating the
 	// cursor's history inside the same read.
 	ReplayAfter(ctx context.Context, agentID, historyID string, afterPos int64, limit int) (*backend.JournalPage, error)
@@ -145,9 +151,12 @@ type UserAgent struct {
 	mu    sync.Mutex
 
 	// working reports a turn in flight; reasoning reports the model
-	// streaming reasoning tokens within it. Both guarded by mu.
-	working   bool
-	reasoning bool
+	// streaming reasoning tokens within it; compacting reports the
+	// pre-prompt automation's summarization call running ahead of a
+	// claim. All guarded by mu.
+	working    bool
+	reasoning  bool
+	compacting bool
 
 	// turnMsgID, turnPrefix, and recorder describe the live turn: its
 	// streamed text and invocation states, the prefix a synchronizing
@@ -245,6 +254,11 @@ func (a *UserAgent) prefixSnapshotLocked() *wstypes.TurnPrefix {
 
 func (a *UserAgent) loop() {
 	for {
+		var handoff *prePromptHandoff
+		if peeked := a.state.peekClaimable(); peeked != nil &&
+			peeked.kind == wstypes.QueueItemKindPrompt {
+			handoff = a.runPrePromptCheck(peeked)
+		}
 		claim := a.state.claim()
 		if claim == nil {
 			// Nothing may run now — paused, drained, or empty. Exit
@@ -253,8 +267,18 @@ func (a *UserAgent) loop() {
 			a.exit()
 			return
 		}
+		if handoff != nil && handoff.item != claim.item {
+			// A send-now overtook the checked item: it claims first and
+			// runs unchecked — the same benign one-off degradation as
+			// any checker seam failure; its own claim was never peeked.
+			// No recheck here: running the checker after the claim
+			// installs checking while the turn context is live, and a
+			// stop or send-now in that window would cancel the claimed
+			// prompt instead of skipping automation.
+			handoff = nil
+		}
 		a.setWorking(true)
-		outcome := a.processTurn(claim)
+		outcome := a.processTurn(claim, handoff)
 		a.setWorking(false)
 		// finish reports whether more work may run now; its false
 		// arm is claim's own nil predicate, so the worker retires
@@ -287,9 +311,11 @@ func (a *UserAgent) exit() {
 
 // processTurn runs exactly one claimed item: persist its prompt, read
 // the conversation the backend owns, run the model, and settle —
-// assembled, or whatever streamed when the item was stopped. The
-// returned outcome drives the queue's pause gate.
-func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
+// assembled, or whatever streamed when the item was stopped. A
+// non-nil handoff carries the pre-prompt checker's single read and
+// resolutions; the turn then performs no second fetch or resolution.
+// The returned outcome drives the queue's pause gate.
+func (a *UserAgent) processTurn(claim *turnClaim, handoff *prePromptHandoff) turnOutcome {
 	msgID := claim.item.id
 	entry := claim.item.model
 
@@ -344,10 +370,21 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 	// The turn's input is the backend's read: it already includes the
 	// row just committed, so the prompt appears exactly once — the
 	// committed user row is the prompt, unconditionally. A failed load
-	// fails the turn; a stop during it settles as a quiet stop.
-	records, err := a.getAgentThread(claim.ctx, a.state.agentID)
-	if err != nil {
-		return a.setupFailure(emitCtx, claim, msgID, "load conversation history", err)
+	// fails the turn; a stop during it settles as a quiet stop. A
+	// checker handoff replaces the read with the records it measured —
+	// the same instance, fetched before the claim, without the prompt
+	// (its row commits only now).
+	var (
+		records []backend.AgentThreadMessage
+		err     error
+	)
+	if handoff != nil {
+		records = handoff.records
+	} else {
+		records, err = a.getAgentThread(claim.ctx, a.state.agentID)
+		if err != nil {
+			return a.setupFailure(emitCtx, claim, msgID, "load conversation history", err)
+		}
 	}
 	runInput := mapAgentThread(records)
 	// The resolver seam is immutable after construction, read
@@ -357,9 +394,14 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 		a.failTurn(emitCtx, msgID, "no model resolver configured", "")
 		return outcomeMessageFailed
 	}
-	cfg, err := a.resolveModel(claim.ctx, entry)
-	if err != nil {
-		return a.setupFailure(emitCtx, claim, msgID, "resolve model", err)
+	var cfg backend.ResolvedModel
+	if handoff != nil {
+		cfg = handoff.cfg
+	} else {
+		cfg, err = a.resolveModel(claim.ctx, entry)
+		if err != nil {
+			return a.setupFailure(emitCtx, claim, msgID, "resolve model", err)
+		}
 	}
 	chatModel, err := createChatModel(claim.ctx, cfg)
 	if err != nil {
@@ -368,9 +410,12 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 	// The persona is fetched per turn: config edits apply to the next
 	// prompt without lane churn. A missing config or a failed read
 	// fails open — a persona-less answer beats none, unlike the
-	// resolver, where no model means no answer at all.
-	instruction := ""
-	if a.getAgentConfig != nil {
+	// resolver, where no model means no answer at all. The checker's
+	// instruction rides the handoff instead.
+	var instruction string
+	if handoff != nil {
+		instruction = handoff.instruction
+	} else if a.getAgentConfig != nil {
 		cfg, err := a.getAgentConfig(claim.ctx, a.state.agentID)
 		if err != nil {
 			a.logger.Warn().Str("error", a.scrubCopy(err.Error())).Str("agent_id", a.state.agentID).
@@ -392,7 +437,16 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 	// runs a tool-less turn. A failed read or an unreadable manifest
 	// fails the turn. A stop during setup is not a failure.
 	var resolved backend.TurnTools
-	if a.tools != nil {
+	if handoff != nil {
+		resolved = handoff.tools
+		// The turn's scrubber rides the same resolution, empty toolset
+		// included: known values and implementations come from one
+		// pass, and a tool-less turn must not fall back to the pattern
+		// battery over its seam's scrubber.
+		a.mu.Lock()
+		a.turnScrub = resolved.Scrubber
+		a.mu.Unlock()
+	} else if a.tools != nil {
 		fetched, err := a.tools(claim.ctx, a.state.agentID)
 		if err != nil {
 			return a.setupFailure(emitCtx, claim, msgID, "resolve tools", err)
@@ -427,7 +481,12 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 	// The model receives the conversation the backend returned — prior
 	// turns' replay-eligible history plus this prompt exactly once. The
 	// system instruction rides the agent, so stale personas never
-	// accumulate in the history itself.
+	// accumulate in the history itself. A handoff's records exclude
+	// the prompt — its row commits at StartItem moments before — so it
+	// is appended here, exactly once either way.
+	if handoff != nil {
+		runInput = append(runInput, schema.UserMessage(claim.item.content))
+	}
 	iterator := runner.Run(claim.ctx, runInput)
 	for event, ok := iterator.Next(); ok; event, ok = iterator.Next() {
 		if event.Err != nil {
@@ -761,6 +820,7 @@ func (a *UserAgent) LaneStatus() wstypes.LaneStatus {
 	a.mu.Lock()
 	working := a.working
 	reasoning := a.reasoning
+	compacting := a.compacting
 	a.mu.Unlock()
 
 	return wstypes.LaneStatus{
@@ -768,10 +828,11 @@ func (a *UserAgent) LaneStatus() wstypes.LaneStatus {
 		// context means this process still owns the lane. exit()
 		// settles the final status by reporting the worker gone;
 		// Drain is what cancels the root context.
-		Active:    a.state.rootCtx.Err() == nil,
-		Working:   working,
-		Reasoning: reasoning,
-		Model:     a.state.activeModelID(),
+		Active:     a.state.rootCtx.Err() == nil,
+		Working:    working,
+		Reasoning:  reasoning,
+		Compacting: compacting,
+		Model:      a.state.activeModelID(),
 	}
 }
 
@@ -784,6 +845,23 @@ func (a *UserAgent) setWorking(working bool) {
 		return
 	}
 	a.working = working
+	a.mu.Unlock()
+	_ = a.state.conns.WriteJSON(a.state.rootCtx, wstypes.Event{
+		Type:    wstypes.EventTypeLaneStatus,
+		AgentID: a.state.agentID,
+		Data:    a.LaneStatus(),
+	})
+}
+
+// setCompacting flips the auto-compaction flag and, on change, tells
+// the lane's connections.
+func (a *UserAgent) setCompacting(compacting bool) {
+	a.mu.Lock()
+	if a.compacting == compacting {
+		a.mu.Unlock()
+		return
+	}
+	a.compacting = compacting
 	a.mu.Unlock()
 	_ = a.state.conns.WriteJSON(a.state.rootCtx, wstypes.Event{
 		Type:    wstypes.EventTypeLaneStatus,

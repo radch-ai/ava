@@ -80,6 +80,11 @@ type agentState struct {
 	// send_now rebinds the pending entries captured on it.
 	pauseModel *apitypes.ModelEntry
 	cancel     context.CancelFunc // cancels the active item's turn ctx
+	// checking is the queued item the pre-prompt checker holds, with
+	// its own cancellable context; the loop goroutine is the only
+	// registrar. Both mu-guarded.
+	checking    *queuedItem
+	checkCancel context.CancelFunc // cancels the checker's ctx
 	// halted stops all dispatch after a turn whose terminal outcome
 	// could not be recorded; only service recovery — which settles the
 	// stuck item before the next process serves the lane — clears it.
@@ -310,6 +315,45 @@ func (s *agentState) activateLocked(item *queuedItem) *turnClaim {
 	return &turnClaim{item: item, ctx: ctx}
 }
 
+// peekClaimable reports the item claim() would hand out next, without
+// removing anything: the reserved item first, then the FIFO head past
+// the pause gate. Mirrors claim's selection so the pre-prompt checker
+// measures exactly the item the lane is about to run.
+func (s *agentState) peekClaimable() *queuedItem {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.peekClaimableLocked()
+}
+
+// peekClaimableLocked is peekClaimable with mu held.
+func (s *agentState) peekClaimableLocked() *queuedItem {
+	if !s.runnableLocked() {
+		return nil
+	}
+	if s.next != nil {
+		return s.next
+	}
+	return s.pending[0]
+}
+
+// setChecking registers the checker's item and context; the loop
+// goroutine — the only registrar — calls it before the checker runs.
+func (s *agentState) setChecking(item *queuedItem, cancel context.CancelFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.checking = item
+	s.checkCancel = cancel
+}
+
+// clearChecking retires the checker registration; the loop goroutine
+// calls it on every checker exit.
+func (s *agentState) clearChecking() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.checking = nil
+	s.checkCancel = nil
+}
+
 // finish records the active turn's end and reports whether another
 // item may run now. outcomeTerminalUnrecorded stops the lane for good:
 // a terminal outcome nobody recorded must not be overtaken by any later
@@ -453,14 +497,19 @@ func sameModelEntry(a, b *apitypes.ModelEntry) bool {
 	return *a == *b
 }
 
-// interruptActive cancels the active turn's context, if any. Manual
-// stops and send-now share this; neither pauses the queue.
+// interruptActive cancels the active turn's context and any running
+// pre-prompt checker's, if either exists. Manual stops and send-now
+// share this; neither pauses the queue.
 func (s *agentState) interruptActive() {
 	s.mu.Lock()
 	cancel := s.cancel
+	checkCancel := s.checkCancel
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+	if checkCancel != nil {
+		checkCancel()
 	}
 }
 
@@ -473,7 +522,9 @@ func (s *agentState) interruptActive() {
 // with no turn to interrupt has nothing to attribute. An existing
 // reservation wins: it was an explicit send-now and claims
 // momentarily; an empty queue only interrupts, per the arming
-// invariant.
+// invariant. A stop during the pre-prompt checker aborts it and
+// returns without arming the gate: the queued prompt claims and runs
+// immediately, its automation skipped once.
 func (s *agentState) stopNow() {
 	// The interrupt lands before the publication boundary is taken: a
 	// durable mutation in flight runs under pubMu and may itself be
@@ -491,6 +542,16 @@ func (s *agentState) stopNow() {
 	}
 
 	s.mu.Lock()
+	// A stop during the pre-prompt checker aborts it — the queued
+	// prompt claims and runs immediately with no automation. Nothing
+	// is active, so there is no selection to attribute and no gate to
+	// arm: skip-once.
+	if s.checking != nil {
+		snapshot := s.snapshotLocked()
+		s.mu.Unlock()
+		s.publish(snapshot)
+		return
+	}
 	var stoppedModel *apitypes.ModelEntry
 	if s.active != nil {
 		stoppedModel = s.active.model

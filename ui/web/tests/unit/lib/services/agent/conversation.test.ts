@@ -153,4 +153,36 @@ describe('createConversation committed-row visibility', () => {
 		})
 		expect(store.threadItems.map((m) => m.id)).toEqual(['m-1', 'tool-1'])
 	})
+
+	it('places the rows an itemless rotation seeds on thread_changed — the summary lands with its boundary', () => {
+		const store = createConversation('a', {
+			thread: page('t-1', [item('m-1', 'before')], null)
+		})
+		captured.onEvent.at(-1)?.({
+			type: 'lifecycle',
+			data: {
+				cursor: 'v1:h:5',
+				events: [
+					{
+						kind: 'thread_changed',
+						itemId: 'turn-2',
+						threadId: 't-2',
+						pos: 5,
+						batchEnd: true,
+						divider: {
+							id: 'd-1',
+							role: 'divider',
+							content: 'Compacted'
+						},
+						rows: [{ id: 'sum-1', role: 'assistant', content: 'auto summary' }]
+					}
+				]
+			}
+		})
+		// The seeded summary renders below the boundary it opened —
+		// without this placement a live client sees only the divider
+		// until a full reload.
+		expect(store.threadItems.map((m) => m.id)).toEqual(['m-1', 'd-1', 'sum-1'])
+		expect(store.threadItems[2]?.content).toBe('auto summary')
+	})
 })

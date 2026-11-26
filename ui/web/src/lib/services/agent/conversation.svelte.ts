@@ -261,6 +261,11 @@ export function createConversation(agentId: string, seed: ConversationSeed) {
 						]
 					}
 				]
+				// An itemless rotation (the pre-prompt automation) seeds
+				// the successor's summary on this event — no
+				// item_finished ever carries it — so the stored rows
+				// land with the boundary they opened.
+				placeStoredRows(event.threadId, event.rows ?? [])
 				break
 			}
 		}

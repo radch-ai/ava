@@ -20,6 +20,7 @@ function laneStatus(working: boolean, reasoning = false): AgentSocketEvent {
 		data: {
 			active: true,
 			working,
+			compacting: false,
 			reasoning,
 			model: ''
 		}

@@ -432,3 +432,69 @@ func TestReadToolOutput(t *testing.T) {
 		t.Error("cross-agent reference read succeeded")
 	}
 }
+
+// The itemless shake elides the same rows /shake does without settling
+// an item or journaling an event: the prompt whose claim armed it is
+// still queued, and the turn that follows publishes everything
+// observable.
+func TestShakeAgentContextElidesWithoutSettling(t *testing.T) {
+	turns, sqlDB := journalService(t)
+	ctx := context.Background()
+	const agent = "research"
+
+	big := strings.Repeat("x", 3000)
+	drafts := []backend.ThreadMessageDraft{
+		userDraft("t1 prompt", "t1"),
+		groupDraft(t, "t1", "", callDecl("c1", "fetch")),
+		toolDraft(t, "t1", "c1", "fetch", `{}`, big, nil), // row 3: elidable
+		userDraft("t2 prompt", "t2"),
+		groupDraft(t, "t2", "", callDecl("c2", "fetch")),
+		toolDraft(t, "t2", "c2", "fetch", `{}`, big, nil), // row 6: newest turn, protected
+	}
+	seedRows(t, sqlDB, agent, drafts)
+
+	// A queued prompt arms the shake; it must stay untouched.
+	if _, err := turns.AcceptItem(ctx, agent, "prompt-1", "hello", "prompt", nil); err != nil {
+		t.Fatalf("accept prompt: %v", err)
+	}
+	head := journalPosition(t, turns, agent)
+	journalRows := countRows(t, sqlDB, `SELECT COUNT(*) FROM lifecycle_journal WHERE agent_id = ?`, agent)
+
+	elided, err := turns.ShakeAgentContext(ctx, agent)
+	if err != nil {
+		t.Fatalf("shake agent context: %v", err)
+	}
+	if elided != 1 {
+		t.Fatalf("elided = %d, want the one old oversized row", elided)
+	}
+	if got := rowElided(t, sqlDB, agent, "research-row-2"); got != 1 {
+		t.Errorf("old row elided = %d, want 1", got)
+	}
+	if got := rowElided(t, sqlDB, agent, "research-row-5"); got != 0 {
+		t.Errorf("newest-turn row elided = %d, want 0 (protected)", got)
+	}
+	if got := itemState(t, sqlDB, agent, "prompt-1"); got != "accepted" {
+		t.Errorf("queued prompt state = %q, want accepted", got)
+	}
+	if got := countRows(t, sqlDB, `SELECT COUNT(*) FROM lifecycle_journal WHERE agent_id = ?`, agent); got != journalRows {
+		t.Errorf("lifecycle_journal rows = %d, want %d (zero events)", got, journalRows)
+	}
+	if got := journalPosition(t, turns, agent); got != head {
+		t.Errorf("journal head = %d, want %d (unchanged)", got, head)
+	}
+
+	// A second run finds nothing left to elide and flips nothing.
+	elided, err = turns.ShakeAgentContext(ctx, agent)
+	if err != nil {
+		t.Fatalf("second shake agent context: %v", err)
+	}
+	if elided != 0 {
+		t.Fatalf("second elided = %d, want 0", elided)
+	}
+	if got := rowElided(t, sqlDB, agent, "research-row-5"); got != 0 {
+		t.Errorf("newest-turn row elided after rerun = %d, want 0", got)
+	}
+	if got := countRows(t, sqlDB, `SELECT COUNT(*) FROM lifecycle_journal WHERE agent_id = ?`, agent); got != journalRows {
+		t.Errorf("lifecycle_journal rows after rerun = %d, want %d", got, journalRows)
+	}
+}

@@ -215,6 +215,7 @@ type journalHook struct {
 	finishItem     func(ctx context.Context, agentID, itemID, outcome, reason string, msgs []backend.ThreadMessageDraft) (*backend.JournalBatch, error)
 	startItem      func(ctx context.Context, agentID, itemID string) (*backend.ItemStart, *backend.JournalBatch, error)
 	toolFinished   func(ctx context.Context, agentID, itemID, invocationID, result string, errText *string) (*backend.JournalBatch, error)
+	shakeAgent     func(ctx context.Context, agentID string) (int, error)
 }
 
 func (h *journalHook) StartItem(ctx context.Context, agentID, itemID string) (*backend.ItemStart, *backend.JournalBatch, error) {
@@ -264,6 +265,19 @@ func (h *journalHook) ExecuteCompaction(ctx context.Context, agentID, itemID, su
 		return h.compactThread(ctx, agentID, itemID, summary)
 	}
 	return h.LifecycleJournal.ExecuteCompaction(ctx, agentID, itemID, summary)
+}
+
+func (h *journalHook) ShakeAgentContext(ctx context.Context, agentID string) (int, error) {
+	if h.shakeAgent != nil {
+		return h.shakeAgent(ctx, agentID)
+	}
+	return h.LifecycleJournal.ShakeAgentContext(ctx, agentID)
+}
+
+// RotateThreadCompacted needs no hook: no test parks or fails it — the
+// checker's rotation paths exercise through the real journal.
+func (h *journalHook) RotateThreadCompacted(ctx context.Context, agentID, tagItemID, summary string) (*backend.ActivatedThread, *backend.JournalBatch, error) {
+	return h.LifecycleJournal.RotateThreadCompacted(ctx, agentID, tagItemID, summary)
 }
 
 // hookedManager builds a manager whose lane commits through hook.
