@@ -83,7 +83,7 @@ func seedRows(t *testing.T, sqlDB *sql.DB, agentID string, drafts []backend.Thre
 }
 
 func TestGetAgentThreadPreservesNativeGroups(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "r1", Name: "Thread", Icon: "globe"})
 
 	// One turn: prompt, two parallel calls declared in order a,b but
@@ -135,7 +135,7 @@ func TestGetAgentThreadPreservesNativeGroups(t *testing.T) {
 }
 
 func TestGetAgentThreadProjectsIncompleteGroup(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "r2", Name: "Thread", Icon: "globe"})
 
 	// Two calls declared; only one outcome landed (interrupted turn).
@@ -168,7 +168,7 @@ func TestGetAgentThreadProjectsIncompleteGroup(t *testing.T) {
 }
 
 func TestGetAgentThreadKeepsTextOnlyInterruptedGroup(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "r3", Name: "Thread", Icon: "globe"})
 
 	drafts := []backend.ThreadMessageDraft{
@@ -194,7 +194,7 @@ func TestGetAgentThreadKeepsTextOnlyInterruptedGroup(t *testing.T) {
 }
 
 func TestGetAgentThreadExcludesStructureOnlyGroup(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "r4", Name: "Thread", Icon: "globe"})
 
 	// No text, no outcome: the group is display structure only.
@@ -217,7 +217,7 @@ func TestGetAgentThreadExcludesStructureOnlyGroup(t *testing.T) {
 // An elided tool row keeps its position and pairing; only its content
 // becomes the placeholder naming the stored row.
 func TestGetAgentThreadProjectsElidedOutcome(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "r-elide", Name: "Thread", Icon: "globe"})
 
 	drafts := []backend.ThreadMessageDraft{
@@ -254,7 +254,7 @@ func TestGetAgentThreadProjectsElidedOutcome(t *testing.T) {
 }
 
 func TestGetAgentThreadMapsToolErrorToContent(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "r5", Name: "Thread", Icon: "globe"})
 
 	errText := "backend down"
@@ -276,7 +276,7 @@ func TestGetAgentThreadMapsToolErrorToContent(t *testing.T) {
 }
 
 func TestGetAgentThreadRoundTripsJSONLiteralResults(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "r6", Name: "Thread", Icon: "globe"})
 
 	results := []string{`"quoted"`, `null`, `{"a":1}`, "  spaced  ", ""}
@@ -305,7 +305,7 @@ func TestGetAgentThreadRoundTripsJSONLiteralResults(t *testing.T) {
 }
 
 func TestGetAgentThreadScopesReusedIDsToTheirGroup(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "r7", Name: "Thread", Icon: "globe"})
 
 	// Two model rounds in one turn reuse provider ids (call_0), and a
@@ -340,7 +340,7 @@ func TestGetAgentThreadScopesReusedIDsToTheirGroup(t *testing.T) {
 }
 
 func TestGetAgentThreadExcludesErrorRows(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "r8", Name: "Thread", Icon: "globe"})
 
 	drafts := []backend.ThreadMessageDraft{
@@ -417,7 +417,7 @@ func TestGetAgentThreadRejectsCorruptStructure(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			sqlDB, svc := resolverDB(t)
+			sqlDB, svc := resolverDB(t, nil)
 			testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "corrupt", Name: "Thread", Icon: "globe"})
 			// Seeded past the sink: the write path rejects these
 			// drafts outright, so the read side is pinned against
@@ -448,7 +448,7 @@ func seedDraftsRaw(t *testing.T, sqlDB *sql.DB, agentID string, drafts []backend
 }
 
 func TestGetAgentThreadUnknownAgentFails(t *testing.T) {
-	_, svc := resolverDB(t)
+	_, svc := resolverDB(t, nil)
 	_, err := svc.GetAgentThread(context.Background(), "ghost")
 	if !errors.Is(err, backend.ErrUnknownAgent) {
 		t.Fatalf("GetAgentThread error = %v, want ErrUnknownAgent", err)

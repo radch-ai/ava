@@ -22,22 +22,31 @@ import (
 // Elision bound. Below the minimum, the placeholder costs nearly as
 // much as the result it replaces. The restore side needs no bound of
 // its own: the delivered-output ceiling in tooladmission governs it.
-const shakeMinResultBytes = 2048
+// Exported for the gateway's in-range compaction reduction, which
+// applies the same floor to its in-memory projection.
+const ShakeMinResultBytes = 2048
 
 // errUnknownReference is the retrieval answer for a reference that names
 // no tool row of the calling agent. A cross-agent id reads the same.
 var errUnknownReference = errors.New("unknown tool output reference")
 
-// ShakeResult reports what one /shake committed: the number of rows
-// whose payload left the model-facing projection.
-type ShakeResult struct {
-	Elided int
+// envelopeText is the model-facing text of a stored tool envelope:
+// the result, or the recorded error text when the invocation failed.
+// Both the elision walk and the restore read answer through it, so the
+// which-field-is-the-text rule has one home.
+func envelopeText(env ToolEnvelope) string {
+	if env.Error != nil {
+		return *env.Error
+	}
+	return env.Result
 }
 
-// elidedReference is the placeholder the projection emits instead of an
+// ElidedReference is the placeholder the projection emits instead of an
 // elided tool result. It names the row so the agent can restore the
-// exact original with read_tool_output.
-func elidedReference(rowID string, size int) string {
+// exact original with read_tool_output. The durable elision and the
+// gateway's in-memory compaction reduction both emit this text, so the
+// two can never drift.
+func ElidedReference(rowID string, size int) string {
 	return fmt.Sprintf("[elided tool output: %d bytes. Restore it with the read_tool_output tool: {\"reference\":%q}]", size, rowID)
 }
 
@@ -49,8 +58,8 @@ func elidedReference(rowID string, size int) string {
 // is the thread's newest row's turn, so a newest turn without tool rows
 // of its own still leaves every older payload elidable. Zero eligible
 // rows is a successful no-op.
-func (s *TurnService) ShakeThreadContext(ctx context.Context, agentID, itemID string) (*ShakeResult, *JournalBatch, error) {
-	var result *ShakeResult
+func (s *TurnService) ShakeThreadContext(ctx context.Context, agentID, itemID string) (int, *JournalBatch, error) {
+	var elided int
 	batch, err := journalTx(ctx, s, agentID, "shake context",
 		func(qtx *db.Queries, stamp, head int64) (*JournalBatch, error) {
 			item, err := qtx.GetQueueItem(ctx, db.GetQueueItemParams{AgentID: agentID, ID: itemID})
@@ -71,14 +80,6 @@ func (s *TurnService) ShakeThreadContext(ctx context.Context, agentID, itemID st
 			} else if err != nil {
 				return nil, fmt.Errorf("resolve active thread: %w", err)
 			}
-			rows, err := qtx.ListShakeEligibleToolRows(ctx, db.ListShakeEligibleToolRowsParams{
-				AgentID:  agentID,
-				ThreadID: threadID,
-				MinBytes: shakeMinResultBytes,
-			})
-			if err != nil {
-				return nil, fmt.Errorf("load shake candidates: %w", err)
-			}
 			// The active exchange is the thread's newest turn, whatever
 			// rows it carries; an empty thread has nothing to protect.
 			protected := ""
@@ -89,33 +90,9 @@ func (s *TurnService) ShakeThreadContext(ctx context.Context, agentID, itemID st
 			} else if !errors.Is(err, sql.ErrNoRows) {
 				return nil, fmt.Errorf("resolve newest turn: %w", err)
 			}
-			elided := 0
-			for _, row := range rows {
-				if row.TurnID == protected {
-					continue
-				}
-				var env ToolEnvelope
-				if err := json.Unmarshal([]byte(row.Content), &env); err != nil {
-					return nil, fmt.Errorf("decode tool envelope (row %s): %w", row.ID, err)
-				}
-				text := env.Result
-				if env.Error != nil {
-					text = *env.Error
-				}
-				if len(text) < shakeMinResultBytes {
-					continue
-				}
-				n, err := qtx.MarkThreadRowElided(ctx, db.MarkThreadRowElidedParams{
-					AgentID:  agentID,
-					ThreadID: threadID,
-					ID:       row.ID,
-				})
-				if err != nil {
-					return nil, fmt.Errorf("mark row %s elided: %w", row.ID, err)
-				}
-				if n == 1 {
-					elided++
-				}
+			elided, err = s.elideOversizedToolRows(ctx, qtx, agentID, threadID, protected)
+			if err != nil {
+				return nil, err
 			}
 			if n, err := qtx.SetQueueItemTerminal(ctx, db.SetQueueItemTerminalParams{
 				State:      apitypes.ItemCompleted,
@@ -127,7 +104,7 @@ func (s *TurnService) ShakeThreadContext(ctx context.Context, agentID, itemID st
 			} else if n != 1 {
 				return nil, fmt.Errorf("%s: %w", itemID, errItemNotStarted)
 			}
-			result = &ShakeResult{Elided: elided}
+
 			return s.appendEvents(ctx, qtx, agentID, itemID, head, stamp, []apitypes.LifecycleEvent{{
 				Kind:      apitypes.LifecycleItemFinished,
 				ItemID:    itemID,
@@ -137,7 +114,49 @@ func (s *TurnService) ShakeThreadContext(ctx context.Context, agentID, itemID st
 				CreatedAt: threadpage.ISOTime(stamp),
 			}})
 		})
-	return result, batch, err
+	return elided, batch, err
+}
+
+// elideOversizedToolRows is the shared shaking engine: it walks the
+// thread's oversized tool rows and flips their elided flag, skipping
+// every row of protectTurnID (an empty id protects nothing — turn ids
+// are uuids). The caller owns the transaction; this walk only mutates
+// row state.
+func (s *TurnService) elideOversizedToolRows(ctx context.Context, qtx *db.Queries, agentID, threadID, protectTurnID string) (int, error) {
+	rows, err := qtx.ListShakeEligibleToolRows(ctx, db.ListShakeEligibleToolRowsParams{
+		AgentID:  agentID,
+		ThreadID: threadID,
+		MinBytes: ShakeMinResultBytes,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("load shake candidates: %w", err)
+	}
+	elided := 0
+	for _, row := range rows {
+		if row.TurnID == protectTurnID {
+			continue
+		}
+		var env ToolEnvelope
+		if err := json.Unmarshal([]byte(row.Content), &env); err != nil {
+			return 0, fmt.Errorf("decode tool envelope (row %s): %w", row.ID, err)
+		}
+		text := envelopeText(env)
+		if len(text) < ShakeMinResultBytes {
+			continue
+		}
+		n, err := qtx.MarkThreadRowElided(ctx, db.MarkThreadRowElidedParams{
+			AgentID:  agentID,
+			ThreadID: threadID,
+			ID:       row.ID,
+		})
+		if err != nil {
+			return 0, fmt.Errorf("mark row %s elided: %w", row.ID, err)
+		}
+		if n == 1 {
+			elided++
+		}
+	}
+	return elided, nil
 }
 
 // ReadToolOutput restores one elided tool result: the exact model-facing
@@ -160,9 +179,6 @@ func (s *TurnService) ReadToolOutput(ctx context.Context, agentID, reference str
 	if err := json.Unmarshal([]byte(content), &env); err != nil {
 		return "", fmt.Errorf("decode tool envelope (row %s): %w", reference, err)
 	}
-	text := env.Result
-	if env.Error != nil {
-		text = *env.Error
-	}
+	text := envelopeText(env)
 	return tooladmission.DeliveredOutcome(text), nil
 }

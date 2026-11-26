@@ -22,7 +22,7 @@
 	} = $props()
 
 	/** Queue kinds that render as commands: monospaced, never prose. */
-	const commandKinds = new Set(['new_thread', 'shake'])
+	const commandKinds = new Set(['new_thread', 'shake', 'compact'])
 	const actionsDisabled = $derived(pendingId !== null)
 </script>
 

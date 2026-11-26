@@ -16,6 +16,9 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
+
+	"github.com/radch-ai/ava/backend/internal/security"
+	"github.com/radch-ai/ava/backend/internal/tooladmission"
 )
 
 // readToolOutputInfo is read_tool_output's static description.
@@ -33,14 +36,19 @@ var readToolOutputInfo = &schema.ToolInfo{
 }
 
 // readToolOutputInfoJSON is the internal definition's encoded size,
-// counted into the advertised budget like any catalog tool's.
+// counted into the advertised budget like any catalog tool's. A static
+// struct with marshable fields cannot fail to encode.
 var readToolOutputInfoJSON, _ = json.Marshal(readToolOutputInfo)
 
 // readToolOutputTool restores one elided tool result by reference,
-// scoped to one agent.
+// scoped to one agent. The scrubber is the assembling turn's: the
+// restored observable copy is redacted with the turn's current known
+// values, so capture-time cleanliness never has to be trusted as
+// permanent.
 type readToolOutputTool struct {
 	svc     *TurnService
 	agentID string
+	scrub   *security.Scrubber
 }
 
 // Info answers the static description.
@@ -68,5 +76,9 @@ func (t *readToolOutputTool) InvokableRun(ctx context.Context, args string, _ ..
 		// restore did not happen and can correct the call.
 		return fmt.Sprintf("read_tool_output: %v", err), nil
 	}
-	return text, nil
+	// Redact with the turn's scrubber before the final bound: scrubbing
+	// can grow the text (each redaction marker outgrows a short secret),
+	// so the ceiling must see the grown size.
+	scrubbed, _ := t.scrub.ScrubString(text)
+	return tooladmission.DeliveredOutcome(scrubbed), nil
 }

@@ -6,7 +6,9 @@ package agent
 // (thread_changed then item_finished), and their display record. A
 // failure is a message-level failure like any other, so the pause gate
 // holds the items queued behind it. The shared command-turn skeleton
-// (runCommandTurn below) also carries /shake.
+// (runCommandTurn below) carries /shake; /compact runs its own skeleton
+// in turn_compact.go because its summarization model call sits between
+// the durable start and the committed rotation.
 
 import (
 	"context"

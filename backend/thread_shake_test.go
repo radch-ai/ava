@@ -26,7 +26,7 @@ func callDecl(id, name string) backend.AgentThreadCall {
 
 // runShake admits and starts one shake item, then runs it: the real
 // item transitions the gateway drives.
-func runShake(t *testing.T, turns *backend.TurnService, agentID, itemID string) *backend.ShakeResult {
+func runShake(t *testing.T, turns *backend.TurnService, agentID, itemID string) int {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := turns.AcceptItem(ctx, agentID, itemID, "", "shake", nil); err != nil {
@@ -100,8 +100,8 @@ func TestShakeElidesOldLargeToolRows(t *testing.T) {
 	seedRows(t, sqlDB, agent, drafts)
 
 	res := runShake(t, turns, agent, "shake-1")
-	if res.Elided != 2 {
-		t.Fatalf("elided rows = %d, want the two old large results", res.Elided)
+	if res != 2 {
+		t.Fatalf("elided rows = %d, want the two old large results", res)
 	}
 	for _, row := range []struct {
 		id   string
@@ -157,8 +157,8 @@ func TestShakeElidesOldLargeToolRows(t *testing.T) {
 	}
 
 	// A second shake finds nothing left to elide and still completes.
-	if res := runShake(t, turns, agent, "shake-2"); res.Elided != 0 {
-		t.Errorf("second shake elided = %d, want a zero-elision no-op", res.Elided)
+	if res := runShake(t, turns, agent, "shake-2"); res != 0 {
+		t.Errorf("second shake elided = %d, want a zero-elision no-op", res)
 	}
 	if got := itemState(t, sqlDB, agent, "shake-2"); got != apitypes.ItemCompleted {
 		t.Errorf("shake item state = %q, want completed", got)
@@ -181,11 +181,39 @@ func TestShakeElidesMultibyteResultPastByteFloor(t *testing.T) {
 		toolDraft(t, "t2", "c2", "fetch", `{}`, "tail", nil), // row 5
 	})
 
-	if res := runShake(t, turns, agent, "shake-1"); res.Elided != 1 {
-		t.Fatalf("elided = %d, want 1: the 4500-byte result is past the byte floor", res.Elided)
+	if res := runShake(t, turns, agent, "shake-1"); res != 1 {
+		t.Fatalf("elided = %d, want 1: the 4500-byte result is past the byte floor", res)
 	}
 	if got := rowElided(t, sqlDB, agent, "research-row-2"); got != 1 {
 		t.Errorf("multibyte row elided = %d, want 1", got)
+	}
+}
+
+// The elision floor is exact: a result of exactly ShakeMinResultBytes
+// leaves, one byte under it stays — the envelope-decoding exact check
+// is the authority the SQL prefilter only approximates.
+func TestShakeFloorBoundary(t *testing.T) {
+	turns, sqlDB := journalService(t)
+	const agent = "research"
+	atFloor := strings.Repeat("a", 2048)
+	underFloor := strings.Repeat("b", 2047)
+	seedRows(t, sqlDB, agent, []backend.ThreadMessageDraft{
+		userDraft("t1 prompt", "t1"),
+		groupDraft(t, "t1", "", callDecl("c1", "fetch")),
+		toolDraft(t, "t1", "c1", "fetch", `{}`, atFloor, nil), // row 2
+		groupDraft(t, "t1", "", callDecl("c2", "fetch")),
+		toolDraft(t, "t1", "c2", "fetch", `{}`, underFloor, nil), // row 4
+		userDraft("t2 chat, no tools", "t2"),
+	})
+
+	if res := runShake(t, turns, agent, "shake-1"); res != 1 {
+		t.Fatalf("elided = %d, want exactly the at-floor row", res)
+	}
+	if got := rowElided(t, sqlDB, agent, "research-row-2"); got != 1 {
+		t.Errorf("at-floor row elided = %d, want 1", got)
+	}
+	if got := rowElided(t, sqlDB, agent, "research-row-4"); got != 0 {
+		t.Errorf("under-floor row elided = %d, want kept", got)
 	}
 }
 
@@ -203,8 +231,8 @@ func TestShakeElidesWhenNewestTurnHasNoToolRows(t *testing.T) {
 		userDraft("t2 chat, no tools", "t2"), // newest turn: no tool rows
 	})
 
-	if res := runShake(t, turns, agent, "shake-1"); res.Elided != 1 {
-		t.Fatalf("elided rows = %d, want 1: the toolless newest turn must not protect the old payload", res.Elided)
+	if res := runShake(t, turns, agent, "shake-1"); res != 1 {
+		t.Fatalf("elided rows = %d, want 1: the toolless newest turn must not protect the old payload", res)
 	}
 	if got := rowElided(t, sqlDB, agent, "research-row-2"); got != 1 {
 		t.Errorf("old tool row elided = %d, want 1", got)
@@ -239,8 +267,8 @@ func TestShakeCommitsOneTerminalEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("shake: %v", err)
 	}
-	if res.Elided != 1 {
-		t.Errorf("elided = %d, want 1", res.Elided)
+	if res != 1 {
+		t.Errorf("elided = %d, want 1", res)
 	}
 	if len(batch.Events) != 1 {
 		t.Fatalf("batch events = %d, want exactly the completion", len(batch.Events))
@@ -289,7 +317,7 @@ func TestShakeRejectsWrongItem(t *testing.T) {
 // placeholder exactly as the writing process did.
 func TestShakeElisionSurvivesRestart(t *testing.T) {
 	sqlDB := testdb.Open(t, false)
-	_, _, turns, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
+	_, _, turns, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits(), nil)
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}
@@ -309,7 +337,7 @@ func TestShakeElisionSurvivesRestart(t *testing.T) {
 	})
 	runShake(t, turns, "research", "shake-1")
 
-	_, _, cold, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
+	_, _, cold, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits(), nil)
 	if err != nil {
 		t.Fatalf("reopen backend: %v", err)
 	}

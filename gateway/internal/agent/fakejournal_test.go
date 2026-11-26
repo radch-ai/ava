@@ -216,19 +216,37 @@ func (f *fakeJournal) ExecuteThreadSwitch(_ context.Context, agentID, itemID str
 			Events: []apitypes.LifecycleEvent{changed, done}}, nil
 }
 
-func (f *fakeJournal) ShakeThreadContext(_ context.Context, agentID, itemID string) (*backend.ShakeResult, *backend.JournalBatch, error) {
+func (f *fakeJournal) ShakeThreadContext(_ context.Context, agentID, itemID string) (int, *backend.JournalBatch, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.failShake != nil {
-		return nil, nil, f.failShake
+		return 0, nil, f.failShake
 	}
+	item := f.items[fakeKey(agentID, itemID)]
+	if item == nil || item.state != "started" {
+		return 0, nil, errors.New("item is not started")
+	}
+	item.state = apitypes.ItemCompleted
+	f.writes = append(f.writes, fakeWrite{AgentID: agentID, ItemID: itemID, Kind: apitypes.LifecycleItemFinished})
+	return 0, f.appendLocked(agentID, itemID, apitypes.LifecycleEvent{
+		Kind: apitypes.LifecycleItemFinished, ItemID: itemID, ItemKind: item.kind,
+		ThreadID: item.threadID, Outcome: apitypes.ItemCompleted,
+	}), nil
+}
+
+func (f *fakeJournal) ExecuteCompaction(_ context.Context, agentID, itemID, summary string) (*backend.ActivatedThread, *backend.JournalBatch, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	item := f.items[fakeKey(agentID, itemID)]
 	if item == nil || item.state != "started" {
 		return nil, nil, errors.New("item is not started")
 	}
+	if summary == "" {
+		return nil, nil, errors.New("empty summary")
+	}
 	item.state = apitypes.ItemCompleted
 	f.writes = append(f.writes, fakeWrite{AgentID: agentID, ItemID: itemID, Kind: apitypes.LifecycleItemFinished})
-	return &backend.ShakeResult{Elided: 0}, f.appendLocked(agentID, itemID, apitypes.LifecycleEvent{
+	return &backend.ActivatedThread{ID: itemID + "-successor"}, f.appendLocked(agentID, itemID, apitypes.LifecycleEvent{
 		Kind: apitypes.LifecycleItemFinished, ItemID: itemID, ItemKind: item.kind,
 		ThreadID: item.threadID, Outcome: apitypes.ItemCompleted,
 	}), nil

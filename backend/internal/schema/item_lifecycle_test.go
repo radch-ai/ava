@@ -60,11 +60,13 @@ func TestQueueItemKindAndStateChecks(t *testing.T) {
 		t.Fatal("unknown kind stored, want CHECK rejection")
 	}
 	// The /shake command is a third admission kind: it runs no model and
-	// stores no row, exactly like /new.
+	// stores no row, exactly like /new. The /compact command is the
+	// fourth: it runs a summarization model call but is still a command
+	// item, not a synthetic prompt.
 	if _, err := sqlDB.Exec(
 		`INSERT INTO queue_items (id, agent_id, kind, content, state, accepted_ms)
-		 VALUES ('i-shake', 'a', 'shake', '', 'accepted', 1)`); err != nil {
-		t.Fatalf("shake kind rejected: %v", err)
+		 VALUES ('i-compact', 'a', 'compact', '', 'accepted', 1)`); err != nil {
+		t.Fatalf("compact kind rejected: %v", err)
 	}
 	// Every legal state stores; anything else fails.
 	for _, state := range []string{"accepted", "started", "completed", "failed", "stopped", "cancelled", "interrupted"} {
@@ -92,6 +94,35 @@ func TestQueueItemThreadMustBelongToAgent(t *testing.T) {
 		 VALUES ('i1', 'a', 'prompt', 'x', 'started', 'b-t1', 1)`)
 	if err == nil {
 		t.Fatal("cross-owner thread stored, want foreign key rejection")
+	}
+}
+
+// Thread kinds separate the two ways a thread chain grows: a plain
+// /new boundary and a compaction successor. Both store; anything else
+// is rejected, and existing threads default to the plain kind.
+func TestThreadKindBoundaries(t *testing.T) {
+	sqlDB := testdb.Open(t, true)
+	seedAgentRow(t, sqlDB, "a")
+
+	// The agent-creation thread backfills to the plain kind.
+	var kind string
+	if err := sqlDB.QueryRow(
+		`SELECT t.kind FROM threads t JOIN agents a ON a.active_thread_id = t.id WHERE a.id = 'a'`,
+	).Scan(&kind); err != nil {
+		t.Fatalf("read seeded thread kind: %v", err)
+	}
+	if kind != "new" {
+		t.Errorf("seeded thread kind = %q, want %q", kind, "new")
+	}
+	if _, err := sqlDB.Exec(
+		`INSERT INTO threads (id, agent_id, previous_thread_id, kind, created_at)
+		 VALUES ('t-compact', 'a', NULL, 'compact', 1)`); err != nil {
+		t.Fatalf("compact thread kind rejected: %v", err)
+	}
+	if _, err := sqlDB.Exec(
+		`INSERT INTO threads (id, agent_id, previous_thread_id, kind, created_at)
+		 VALUES ('t-bad', 'a', NULL, 'archived', 1)`); err == nil {
+		t.Fatal("unknown thread kind stored, want CHECK rejection")
 	}
 }
 

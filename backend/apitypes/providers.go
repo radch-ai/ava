@@ -3,14 +3,28 @@ package apitypes
 // Provider is one catalog connection: display name, base URL and
 // whether a key is set. The key itself is write-only - it never
 // appears in a response. ids are server-generated uuids, opaque and
-// never derived from the name. Models are plain model-id strings.
+// never derived from the name. Models are the operator's declared
+// custom entries - each carries an optional context window, the
+// capacity budget compaction measures against.
 type Provider struct {
-	ID      string   `json:"id"`
-	Name    string   `json:"name"`
-	BaseURL string   `json:"baseUrl"`
-	HasKey  bool     `json:"hasKey"`
-	Models  []string `json:"models"`
+	ID      string          `json:"id"`
+	Name    string          `json:"name"`
+	BaseURL string          `json:"baseUrl"`
+	HasKey  bool            `json:"hasKey"`
+	Models  []ProviderModel `json:"models"`
 }
+
+// ProviderModel is one custom model declared on a provider row: the
+// absolute model id plus an optional declared context window.
+type ProviderModel struct {
+	ID            string `json:"id"`
+	ContextWindow int    `json:"contextWindow,omitempty"`
+}
+
+// MaxModelContextWindow bounds a model's declared or reported context
+// window: it matches the largest value models.dev carries, so anything
+// larger is a parse artifact, not a capacity.
+const MaxModelContextWindow = 10_000_000
 
 // GetProvidersResponse is GET /api/providers' body: every stored
 // provider with its custom models.
@@ -71,10 +85,10 @@ type CreateProviderRequest struct {
 
 // UpdateProviderRequest is PATCH /api/providers/{id}'s body: absent
 // fields are no-ops (a withheld apiKey keeps the stored key); models
-// replaces the list wholesale.
+// replaces wholesale.
 type UpdateProviderRequest struct {
-	Name    *string   `json:"name"`
-	BaseURL *string   `json:"baseUrl"`
-	APIKey  *string   `json:"apiKey"`
-	Models  *[]string `json:"models"`
+	Name    *string          `json:"name"`
+	BaseURL *string          `json:"baseUrl"`
+	APIKey  *string          `json:"apiKey"`
+	Models  *[]ProviderModel `json:"models"`
 }

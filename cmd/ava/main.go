@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -29,6 +30,9 @@ type config struct {
 	MasterKey  []byte
 	Token      string
 	ToolLimits backend.ToolLimits
+	// ModelCatalogURL is the models.dev snapshot the context-window
+	// catalog refreshes from; empty disables refresh.
+	ModelCatalogURL string
 }
 
 // loadConfig binds env vars onto the config — all env reading lives here.
@@ -44,35 +48,58 @@ type config struct {
 // The AVA_MCP_CONCURRENCY_PER_SERVER and AVA_TOOL_CONCURRENCY_GLOBAL
 // bindings are the invocation capacity budget: operator-set limits that
 // neither a model nor a server can raise.
+//
+// AVA_MODEL_CATALOG_URL: the models.dev snapshot the context-window
+// catalog refreshes from. Unset takes the upstream default; set but
+// empty disables refresh, leaving the embedded snapshot — the switch
+// has to be expressible, so this read bypasses GetEnv's
+// empty-as-unset rule.
 func loadConfig(logger zerolog.Logger) config {
 	return config{
-		Addr:       utils.GetEnv("AVA_ADDR", ":8080"),
-		DBPath:     utils.GetEnvRequired("AVA_DB", logger),
-		MasterKey:  masterKeyFromEnv(logger, "AVA_SECRETS_MASTER_KEY"),
-		Token:      utils.GetEnvRequired("AVA_UI_TOKEN", logger),
-		ToolLimits: loadToolLimits(logger),
+		Addr:            utils.GetEnv("AVA_ADDR", ":8080"),
+		DBPath:          utils.GetEnvRequired("AVA_DB", logger),
+		MasterKey:       masterKeyFromEnv(logger, "AVA_SECRETS_MASTER_KEY"),
+		Token:           utils.GetEnvRequired("AVA_UI_TOKEN", logger),
+		ToolLimits:      loadToolLimits(logger),
+		ModelCatalogURL: modelCatalogURL(),
 	}
+}
+
+// defaultModelCatalogURL is the vendored snapshot's upstream.
+const defaultModelCatalogURL = "https://models.dev/api.json"
+
+// modelCatalogURL answers the catalog source: unset takes the upstream
+// default, set-but-empty disables refresh.
+func modelCatalogURL() string {
+	if raw, ok := os.LookupEnv("AVA_MODEL_CATALOG_URL"); ok {
+		return raw
+	}
+	return defaultModelCatalogURL
 }
 
 // loadToolLimits binds the capacity budget, fatally answering a malformed
 // value: a silently defaulted limit would weaken a policy bound.
 func loadToolLimits(logger zerolog.Logger) backend.ToolLimits {
 	defaults := backend.DefaultToolLimits()
-	value := func(key string, fallback int) int {
-		v, err := utils.GetEnvInt(key, fallback)
-		if err != nil {
-			logger.Fatal().Err(err).Str("env_var", key).Msg("invalid integer environment variable")
-		}
-		if v <= 0 {
-			logger.Fatal().Str("env_var", key).Int("value", v).
-				Msg("tool concurrency limits must be positive")
-		}
-		return v
-	}
 	return backend.ToolLimits{
-		ConcurrencyPerServer: value("AVA_MCP_CONCURRENCY_PER_SERVER", defaults.ConcurrencyPerServer),
-		ConcurrencyGlobal:    value("AVA_TOOL_CONCURRENCY_GLOBAL", defaults.ConcurrencyGlobal),
+		ConcurrencyPerServer: loadPositiveEnvInt(logger, "AVA_MCP_CONCURRENCY_PER_SERVER", defaults.ConcurrencyPerServer),
+		ConcurrencyGlobal:    loadPositiveEnvInt(logger, "AVA_TOOL_CONCURRENCY_GLOBAL", defaults.ConcurrencyGlobal),
 	}
+}
+
+// loadPositiveEnvInt binds one operator-set numeric bound, fatally
+// answering a malformed or non-positive value: a silently defaulted
+// limit would weaken a policy bound.
+func loadPositiveEnvInt(logger zerolog.Logger, key string, fallback int) int {
+	v, err := utils.GetEnvInt(key, fallback)
+	if err != nil {
+		logger.Fatal().Err(err).Str("env_var", key).Msg("invalid integer environment variable")
+	}
+	if v <= 0 {
+		logger.Fatal().Str("env_var", key).Int("value", v).
+			Msg("limit must be positive")
+	}
+	return v
 }
 
 // masterKeyFromEnv reads one master-key env var and parses it.
@@ -170,7 +197,19 @@ func serve(logger zerolog.Logger) {
 		logger.Fatal().Err(err).Msg("Failed to open store")
 	}
 
-	apiRouter, authSessions, turnSvc, err := backend.New(sqlDB, logger, cfg.MasterKey, cfg.ToolLimits)
+	// The catalog's cache lives beside the database: the directory is
+	// the one this process owns and already exists for a file-backed
+	// store. An in-memory database has no such directory.
+	catalogCache := ""
+	if cfg.DBPath != ":memory:" {
+		catalogCache = filepath.Join(filepath.Dir(cfg.DBPath), "model-catalog.json")
+	}
+	catalog, err := backend.LoadModelCatalog(cfg.ModelCatalogURL, catalogCache, logger)
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Model catalog bootstrap failed")
+	}
+
+	apiRouter, authSessions, turnSvc, err := backend.New(sqlDB, logger, cfg.MasterKey, cfg.ToolLimits, catalog)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Vault bootstrap failed")
 	}
@@ -181,11 +220,12 @@ func serve(logger zerolog.Logger) {
 	apiHandler := authMiddleware.Authenticate(apiRouter)
 
 	gw, err := gateway.New(&gateway.Config{
-		ResolveModel:   turnSvc.ResolveModel,
-		Journal:        turnSvc,
-		GetAgentConfig: turnSvc.GetAgentConfig,
-		Tools:          turnSvc.AgentTools,
-		GetAgentThread: turnSvc.GetAgentThread,
+		ResolveModel:         turnSvc.ResolveModel,
+		Journal:              turnSvc,
+		GetAgentConfig:       turnSvc.GetAgentConfig,
+		Tools:                turnSvc.AgentTools,
+		GetAgentThread:       turnSvc.GetAgentThread,
+		NoteDiscoveredWindow: turnSvc.RecordDiscoveredWindow,
 	}, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Failed to create gateway handler")

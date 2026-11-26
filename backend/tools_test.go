@@ -25,7 +25,7 @@ import (
 func toolsDB(t *testing.T, ephemeral bool) (*sql.DB, *db.Queries, *backend.TurnService) {
 	t.Helper()
 	sqlDB := testdb.Open(t, ephemeral)
-	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
+	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits(), nil)
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestSyncPreservesSavedGlobalSwitch(t *testing.T) {
 
 	// Reboot over the same file: metadata refreshes, the switch
 	// stays OFF.
-	if _, _, _, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits()); err != nil {
+	if _, _, _, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits(), nil); err != nil {
 		t.Fatalf("second boot: %v", err)
 	}
 	after, err := db.New(sqlDB).GetTool(t.Context(), id)
@@ -191,7 +191,7 @@ func TestSyncDoesNotRestoreOptOut(t *testing.T) {
 		t.Fatalf("opt out %s: %v", id, err)
 	}
 
-	if _, _, _, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits()); err != nil {
+	if _, _, _, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits(), nil); err != nil {
 		t.Fatalf("second boot: %v", err)
 	}
 	queries = db.New(sqlDB)
@@ -332,5 +332,87 @@ func TestAgentToolsReadToolOutputInvokesScopedRead(t *testing.T) {
 		if err != nil || !strings.Contains(got, want) {
 			t.Errorf("args %q = %q, %v; want result text containing %q", args, got, err, want)
 		}
+	}
+}
+
+// The restore re-serves the stored copy through this turn's scrubber:
+// a leak-shaped original stored by any writer comes back redacted, so
+// capture-time cleanliness never has to be trusted as permanent.
+func TestAgentToolsReadToolOutputScrubsRestore(t *testing.T) {
+	const raw = "sk-abcdefghijklmnop1234" // the pattern battery's api_key shape
+	turns, sqlDB := journalService(t)
+	ctx := context.Background()
+	seedRows(t, sqlDB, "research", []backend.ThreadMessageDraft{
+		userDraft("search", "t1"),
+		groupDraft(t, "t1", "", callDecl("c1", "fetch")),
+		toolDraft(t, "t1", "c1", "fetch", `{}`, "notes: key "+raw, nil), // research-row-2
+	})
+	if _, err := sqlDB.Exec(
+		`UPDATE thread_messages SET elided = 1 WHERE agent_id = 'research' AND id = 'research-row-2'`); err != nil {
+		t.Fatalf("elide seed row: %v", err)
+	}
+
+	resolved, err := turns.AgentTools(ctx, "research")
+	if err != nil {
+		t.Fatalf("AgentTools: %v", err)
+	}
+	var impl tool.InvokableTool
+	for i, info := range resolved.Infos {
+		if info.Name == "read_tool_output" {
+			impl = resolved.Impls[i]
+		}
+	}
+	if impl == nil {
+		t.Fatalf("resolved = %v, want read_tool_output", toolNames(resolved))
+	}
+
+	got, err := impl.InvokableRun(ctx, `{"reference":"research-row-2"}`)
+	if err != nil || strings.Contains(got, raw) || !strings.Contains(got, "[REDACTED:api_key]") {
+		t.Fatalf("restore = %q, %v; want the redacted copy", got, err)
+	}
+}
+
+// Through the invokable the model actually calls, an oversized restore
+// answers with the same delivered-output policy a live tool faces:
+// plain text arrives marker-bounded at the ceiling, structured text as
+// the overflow denial.
+func TestAgentToolsReadToolOutputDeliversBounded(t *testing.T) {
+	huge := strings.Repeat("x", 70000)
+	jsonHuge := `{"blob":"` + strings.Repeat("y", 70000) + `"}` // valid JSON
+	turns, sqlDB := journalService(t)
+	ctx := context.Background()
+	seedRows(t, sqlDB, "research", []backend.ThreadMessageDraft{
+		userDraft("search", "t1"),
+		groupDraft(t, "t1", "", callDecl("c1", "fetch")),
+		toolDraft(t, "t1", "c1", "fetch", `{}`, huge, nil), // research-row-2
+		groupDraft(t, "t1", "", callDecl("c2", "fetch")),
+		toolDraft(t, "t1", "c2", "fetch", `{}`, jsonHuge, nil), // research-row-4
+	})
+	if _, err := sqlDB.Exec(
+		`UPDATE thread_messages SET elided = 1 WHERE agent_id = 'research' AND id IN ('research-row-2', 'research-row-4')`); err != nil {
+		t.Fatalf("elide seed rows: %v", err)
+	}
+
+	resolved, err := turns.AgentTools(ctx, "research")
+	if err != nil {
+		t.Fatalf("AgentTools: %v", err)
+	}
+	var impl tool.InvokableTool
+	for i, info := range resolved.Infos {
+		if info.Name == "read_tool_output" {
+			impl = resolved.Impls[i]
+		}
+	}
+	if impl == nil {
+		t.Fatalf("resolved = %v, want read_tool_output", toolNames(resolved))
+	}
+
+	got, err := impl.InvokableRun(ctx, `{"reference":"research-row-2"}`)
+	if err != nil || len(got) != 65536 || !strings.HasSuffix(got, "…[truncated by output limit]") {
+		t.Fatalf("plain restore = %d bytes, %v; want marker-bounded at the ceiling", len(got), err)
+	}
+	got, err = impl.InvokableRun(ctx, `{"reference":"research-row-4"}`)
+	if err != nil || !strings.Contains(got, `"code":"output_limit_exceeded"`) {
+		t.Fatalf("structured restore = %q, %v; want the overflow denial", got, err)
 	}
 }

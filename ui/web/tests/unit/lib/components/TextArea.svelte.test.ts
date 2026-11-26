@@ -327,6 +327,13 @@ describe('TextArea', () => {
 					})
 				)
 				.toBeVisible()
+			await expect
+				.element(
+					page.getByRole('option', {
+						name: /\/compact.*Summarize this thread and continue fresh/
+					})
+				)
+				.toBeVisible()
 		})
 
 		it('finds the alias by prefix and fills its own token on Enter', async () => {

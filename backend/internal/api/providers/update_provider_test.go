@@ -6,10 +6,13 @@ package providers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/radch-ai/ava/backend/apitypes"
 	"github.com/radch-ai/ava/backend/internal/testdb"
 )
 
@@ -30,8 +33,8 @@ func TestUpdateProviderPatchKeepsAbsentFields(t *testing.T) {
 	}
 }
 
-// The models list is replaced wholesale: plain id strings, non-empty
-// and unique; an empty list clears the custom models.
+// The models list is replaced wholesale as entries; an empty list
+// clears the custom models.
 func TestUpdateProviderModelsReplace(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
 	url := noAuthURL(t)
@@ -40,11 +43,11 @@ func TestUpdateProviderModelsReplace(t *testing.T) {
 	id := createdID(t, created)
 
 	patch := do(t, sqlDB, http.MethodPatch, "/providers/"+id,
-		`{"models":["f/m2","f/m1"]}`)
+		`{"models":[{"id":"f/m2"},{"id":"f/m1"}]}`)
 	if patch.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", patch.Code)
 	}
-	want := `{"id":"` + id + `","name":"Fake","baseUrl":"` + url + `","hasKey":false,"models":["f/m1","f/m2"]}`
+	want := `{"id":"` + id + `","name":"Fake","baseUrl":"` + url + `","hasKey":false,"models":[{"id":"f/m1"},{"id":"f/m2"}]}`
 	if got := body(patch); got != want {
 		t.Errorf("body = %s, want %s", got, want)
 	}
@@ -53,12 +56,59 @@ func TestUpdateProviderModelsReplace(t *testing.T) {
 	if patch.Code != http.StatusOK {
 		t.Fatalf("clear status = %d, want 200", patch.Code)
 	}
-	if got := body(patch); !jsonEqualModels(got, id, "Fake", url, false, []string{}) {
-		t.Errorf("body = %s, want cleared models", got)
+	var cleared struct {
+		Models []apitypes.ProviderModel `json:"models"`
+	}
+	if err := json.Unmarshal([]byte(body(patch)), &cleared); err != nil {
+		t.Fatalf("decode cleared body: %v", err)
+	}
+	if len(cleared.Models) != 0 {
+		t.Errorf("body = %s, want cleared models", body(patch))
 	}
 }
 
-func TestUpdateProviderModelsValidation(t *testing.T) {
+// Context windows ride each declared model entry: a supplied list
+// replaces the stored one wholesale, a window-free entry clears it,
+// and the GET catalog carries the values back.
+func TestUpdateProviderModelWindowsReplace(t *testing.T) {
+	sqlDB := testdb.Open(t, true)
+	url := noAuthURL(t)
+	created := do(t, sqlDB, http.MethodPost, "/providers",
+		`{"name":"Fake","baseUrl":"`+url+`"}`)
+	id := createdID(t, created)
+
+	patch := do(t, sqlDB, http.MethodPatch, "/providers/"+id,
+		`{"models":[{"id":"f/m2","contextWindow":8192},{"id":"f/m1","contextWindow":200000}]}`)
+	if patch.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", patch.Code)
+	}
+	// Entries marshal in id order with the declared window beside it.
+	if want := `"models":[{"id":"f/m1","contextWindow":200000},{"id":"f/m2","contextWindow":8192}]`; !containsStr(body(patch), want) {
+		t.Errorf("body = %s, want it to carry %s", body(patch), want)
+	}
+
+	rec := do(t, sqlDB, http.MethodGet, "/providers", "")
+	if want := `"models":[{"id":"f/m1","contextWindow":200000},{"id":"f/m2","contextWindow":8192}]`; !containsStr(body(rec), want) {
+		t.Errorf("GET body = %s, want it to carry %s", body(rec), want)
+	}
+
+	patch = do(t, sqlDB, http.MethodPatch, "/providers/"+id,
+		`{"models":[{"id":"f/m1"},{"id":"f/m2"}]}`)
+	if patch.Code != http.StatusOK {
+		t.Fatalf("clear status = %d, want 200", patch.Code)
+	}
+	if want := `"models":[{"id":"f/m1"},{"id":"f/m2"}]`; !containsStr(body(patch), want) {
+		t.Errorf("cleared body = %s, want it to carry %s", body(patch), want)
+	}
+	rec = do(t, sqlDB, http.MethodGet, "/providers", "")
+	if got := body(rec); containsStr(got, "contextWindow") {
+		t.Errorf("cleared windows leaked: %s", got)
+	}
+}
+
+// Model entries are non-empty unique ids and a declared window is a
+// real token count; violations are 400s that name the rule.
+func TestUpdateProviderModelEntriesValidation(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
 	created := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"Fake","baseUrl":"`+noAuthURL(t)+`"}`)
@@ -68,8 +118,10 @@ func TestUpdateProviderModelsValidation(t *testing.T) {
 		body string
 		want string
 	}{
-		{`{"models":["f/m1",""]}`, `{"message":"Model id cannot be empty"}`},
-		{`{"models":["x","x"]}`, `{"message":"Duplicate model id \"x\""}`},
+		{`{"models":[{"id":"f/m1","contextWindow":-5}]}`, `{"message":"Context window must be a positive token count"}`},
+		{`{"models":[{"id":"f/m1","contextWindow":10000001}]}`, `{"message":"Context window must be at most 10000000 tokens"}`},
+		{`{"models":[{"id":"","contextWindow":100}]}`, `{"message":"Model id cannot be empty"}`},
+		{`{"models":[{"id":"f/m1"},{"id":"f/m1"}]}`, `{"message":"Duplicate model id \"f/m1\""}`},
 	}
 	for _, tc := range cases {
 		rec := do(t, sqlDB, http.MethodPatch, "/providers/"+id, tc.body)
@@ -79,6 +131,38 @@ func TestUpdateProviderModelsValidation(t *testing.T) {
 		if got := body(rec); got != tc.want {
 			t.Errorf("PATCH %s body = %s, want %s", tc.body, got, tc.want)
 		}
+	}
+
+	// A window of zero is "not declared", not an error.
+	rec := do(t, sqlDB, http.MethodPatch, "/providers/"+id, `{"models":[{"id":"f/m1","contextWindow":0}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("zero window status = %d, want 200", rec.Code)
+	}
+
+	// The entries cap keeps one wholesale replace cheap to validate.
+	var bigBody strings.Builder
+	bigBody.WriteString(`{"models":[`)
+	for i := range 513 {
+		if i > 0 {
+			bigBody.WriteByte(',')
+		}
+		fmt.Fprintf(&bigBody, `{"id":"f/m%d","contextWindow":100}`, i)
+	}
+	bigBody.WriteString("]}")
+	rec = do(t, sqlDB, http.MethodPatch, "/providers/"+id, bigBody.String())
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("entries cap status = %d, want 400", rec.Code)
+	}
+	if got, want := body(rec), `{"message":"Too many model entries (max 512)"}`; got != want {
+		t.Errorf("entries cap body = %s, want %s", got, want)
+	}
+
+	// The PATCH body itself is size-capped: a fast oversized upload
+	// fails the decode instead of costing memory.
+	rec = do(t, sqlDB, http.MethodPatch, "/providers/"+id,
+		`{"apiKey":"`+strings.Repeat("a", 2<<20)+`"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("oversized body status = %d, want 400", rec.Code)
 	}
 }
 
@@ -91,7 +175,7 @@ func TestUpdateProviderModelOwnedByAnother(t *testing.T) {
 	first := do(t, sqlDB, http.MethodPost, "/providers",
 		`{"name":"One","baseUrl":"`+url+`"}`)
 	id1 := createdID(t, first)
-	if rec := do(t, sqlDB, http.MethodPatch, "/providers/"+id1, `{"models":["one/m1"]}`); rec.Code != http.StatusOK {
+	if rec := do(t, sqlDB, http.MethodPatch, "/providers/"+id1, `{"models":[{"id":"one/m1"}]}`); rec.Code != http.StatusOK {
 		t.Fatalf("seed models: %d", rec.Code)
 	}
 	second := do(t, sqlDB, http.MethodPost, "/providers",
@@ -99,7 +183,7 @@ func TestUpdateProviderModelOwnedByAnother(t *testing.T) {
 	id2 := createdID(t, second)
 
 	rec := do(t, sqlDB, http.MethodPatch, "/providers/"+id2,
-		`{"models":["two/m1","one/m1"]}`)
+		`{"models":[{"id":"two/m1"},{"id":"one/m1"}]}`)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409", rec.Code)
 	}
@@ -157,6 +241,46 @@ func TestUpdateProviderProbe(t *testing.T) {
 	}
 	if want := `"hasKey":true`; !containsStr(body(rec), want) {
 		t.Errorf("body = %s, want hasKey true", body(rec))
+	}
+}
+
+// Repointing a provider to a different endpoint discards the departed
+// endpoint's learned limits — the overflow errors that stated them no
+// longer speak for the row. A patch that keeps the endpoint keeps them.
+func TestUpdateProviderRepointClearsDiscoveredWindows(t *testing.T) {
+	sqlDB := testdb.Open(t, true)
+	if _, err := sqlDB.Exec(
+		`INSERT INTO providers (id, name, base_url, discovered_context_windows)
+		 VALUES ('mv-1', 'Moved', ?, '{"cap-a":128000,"cap-b":8192}')`, noAuthURL(t)); err != nil {
+		t.Fatalf("seed provider: %v", err)
+	}
+
+	// A patch that does not move the endpoint keeps the learned limits.
+	rec := do(t, sqlDB, http.MethodPatch, "/providers/mv-1", `{"name":"Moved 2"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rename status = %d, want 200", rec.Code)
+	}
+	if got, want := storedWindows(t, sqlDB, "mv-1"), `{"cap-a":128000,"cap-b":8192}`; got != want {
+		t.Fatalf("windows after rename = %s, want %s", got, want)
+	}
+
+	rec = do(t, sqlDB, http.MethodPatch, "/providers/mv-1", `{"baseUrl":"`+noAuthURL(t)+`"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("repoint status = %d, want 200", rec.Code)
+	}
+	if got, want := storedWindows(t, sqlDB, "mv-1"), `{}`; got != want {
+		t.Fatalf("windows after repoint = %s, want %s — departed limits must not survive the move", got, want)
+	}
+}
+
+// A create body is size-capped like a patch: a fast oversized upload
+// fails the decode instead of costing memory.
+func TestCreateProviderRejectsOversizedBody(t *testing.T) {
+	sqlDB := testdb.Open(t, true)
+	rec := do(t, sqlDB, http.MethodPost, "/providers",
+		`{"name":"Big","baseUrl":"`+noAuthURL(t)+`","apiKey":"`+strings.Repeat("a", 2<<20)+`"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("oversized create status = %d, want 400", rec.Code)
 	}
 }
 
@@ -237,19 +361,4 @@ func containsStr(s, sub string) bool {
 		}
 	}
 	return false
-}
-
-// jsonEqualModels checks the cleared-models body without pinning a
-// whole JSON string twice.
-func jsonEqualModels(got, id, name, baseURL string, hasKey bool, models []string) bool {
-	var parsed struct {
-		Models []string `json:"models"`
-	}
-	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
-		return false
-	}
-	if len(parsed.Models) != len(models) {
-		return false
-	}
-	return true
 }

@@ -26,11 +26,17 @@
 	// Blank key keeps the stored one — the server never echoes keys,
 	// only hasKey.
 	let apiKey = $state('')
-	// One box per model: the model id is all a model is.
-	let models = $state<string[]>([...(provider?.models ?? [])])
+	// One box per model: the model id is all a model is. The window
+	// rides the row, so renaming an id keeps its value.
+	const declared = provider?.models ?? []
+	let models = $state<string[]>(declared.map((m) => m.id))
+	// Per-row declared context windows in tokens — the capacity budget
+	// the server measures /compact against; blank = undeclared.
+	let windows = $state<(number | '')[]>(
+		declared.map((m) => m.contextWindow || '')
+	)
 	let error = $state<string | null>(null)
 	let saving = $state(false)
-	// Delete is armed on first click, fired on the second.
 	// System models: fetched when an existing provider's form opens;
 	// read-only, never part of the save payload.
 	let systemModels = $state<string[] | null>(null)
@@ -40,6 +46,7 @@
 		if (!provider) return
 		getModelsByProvider(provider.id)
 			.then(({ systemModels: ids }) => {
+				// The list is read-only here: the form shows ids.
 				systemModels = ids
 			})
 			.catch((e: unknown) => {
@@ -53,10 +60,12 @@
 
 	function addModel(): void {
 		models.push('')
+		windows.push('')
 	}
 
 	function removeModel(index: number): void {
 		models.splice(index, 1)
+		windows.splice(index, 1)
 	}
 
 	async function save(): Promise<void> {
@@ -64,11 +73,19 @@
 		saving = true
 		try {
 			if (provider) {
+				// Wholesale replace: each row becomes one declared entry,
+				// its window beside the id when one was typed.
+				const entries = models.map((id, index) => {
+					const window = windows[index]
+					return typeof window === 'number' && window > 0
+						? { id, contextWindow: window }
+						: { id }
+				})
 				await updateProvider(provider.id, {
 					name,
 					baseUrl,
 					apiKey: apiKey === '' ? undefined : apiKey,
-					models
+					models: entries
 				})
 			} else {
 				// Create carries the key as-is: '' = keyless.
@@ -194,6 +211,19 @@
 						placeholder="provider/model, e.g. openai/gpt-4o"
 						aria-label="Model"
 						required
+					/>
+				</div>
+				<!-- Optional window: declared here only when no automatic
+					source knows this model; unlisted entries are replaced
+					on save. -->
+				<div class="w-40">
+					<Input
+						type="number"
+						min="1"
+						max="10000000"
+						bind:value={windows[index]}
+						placeholder="window (tokens)"
+						aria-label="Context window"
 					/>
 				</div>
 				<Button

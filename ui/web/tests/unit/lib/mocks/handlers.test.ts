@@ -476,7 +476,7 @@ describe('mock API handlers', () => {
 					name: string
 					hasKey: boolean
 					apiKey?: string
-					models: string[]
+					models: Array<{ id: string; contextWindow?: number }>
 				}>
 			}
 			expect(body.providers.map((p) => p.name)).toEqual([
@@ -506,7 +506,7 @@ describe('mock API handlers', () => {
 				{ id: 'openai/gpt-4', providerId: 'openai' }
 			])
 
-			// The settings expand serves one starter's system list.
+			// The settings expand serves one starter's system model ids.
 			const openai = (
 				await (await fetch(`${BASE}/providers/openai/models`)).json()
 			).systemModels as string[]
@@ -567,17 +567,20 @@ describe('mock API handlers', () => {
 				method: 'PATCH',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({
-					models: ['mistral/mistral-large', 'mistral/mistral-small']
+					models: [
+						{ id: 'mistral/mistral-large' },
+						{ id: 'mistral/mistral-small' }
+					]
 				})
 			})
 			expect(res.status).toBe(200)
 			const provider = (await res.json()) as {
-				models: string[]
+				models: Array<{ id: string; contextWindow?: number }>
 				hasKey: boolean
 			}
 			expect(provider.models).toEqual([
-				'mistral/mistral-large',
-				'mistral/mistral-small'
+				{ id: 'mistral/mistral-large' },
+				{ id: 'mistral/mistral-small' }
 			])
 			// No apiKey in the patch: the stored key survives.
 			expect(provider.hasKey).toBe(true)
@@ -585,7 +588,9 @@ describe('mock API handlers', () => {
 			const empty = await fetch(`${BASE}/providers/${id}`, {
 				method: 'PATCH',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ models: ['mistral/mistral-large', ''] })
+				body: JSON.stringify({
+					models: [{ id: 'mistral/mistral-large' }, { id: '' }]
+				})
 			})
 			expect(empty.status).toBe(400)
 
@@ -593,7 +598,10 @@ describe('mock API handlers', () => {
 				method: 'PATCH',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({
-					models: ['mistral/mistral-large', 'mistral/mistral-large']
+					models: [
+						{ id: 'mistral/mistral-large' },
+						{ id: 'mistral/mistral-large' }
+					]
 				})
 			})
 			expect(duplicate.status).toBe(400)
@@ -617,7 +625,7 @@ describe('mock API handlers', () => {
 			await fetch(`${BASE}/providers/${one}`, {
 				method: 'PATCH',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ models: ['one/m1'] })
+				body: JSON.stringify({ models: [{ id: 'one/m1' }] })
 			})
 			const second = await fetch(`${BASE}/providers`, {
 				method: 'POST',
@@ -628,7 +636,7 @@ describe('mock API handlers', () => {
 			const claim = await fetch(`${BASE}/providers/${two}`, {
 				method: 'PATCH',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ models: ['one/m1'] })
+				body: JSON.stringify({ models: [{ id: 'one/m1' }] })
 			})
 			expect(claim.status).toBe(409)
 			expect(await claim.json()).toEqual({
@@ -637,7 +645,10 @@ describe('mock API handlers', () => {
 
 			// The rejected replace saved nothing.
 			const listed = (await (await fetch(`${BASE}/providers`)).json()) as {
-				providers: Array<{ id: string; models: string[] }>
+				providers: Array<{
+					id: string
+					models: Array<{ id: string; contextWindow?: number }>
+				}>
 			}
 			expect(listed.providers.find((p) => p.id === two)?.models).toEqual([])
 		})
@@ -655,7 +666,7 @@ describe('mock API handlers', () => {
 			await fetch(`${BASE}/providers/${id}`, {
 				method: 'PATCH',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ models: ['pinned/mistral-large'] })
+				body: JSON.stringify({ models: [{ id: 'pinned/mistral-large' }] })
 			})
 
 			// A cron job on the superagent pins pinned/mistral-large.

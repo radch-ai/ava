@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS agent_sync_state (
 CREATE TABLE IF NOT EXISTS queue_items (
     id              TEXT NOT NULL,
     agent_id        TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-    kind            TEXT NOT NULL CHECK (kind IN ('prompt', 'new_thread', 'shake')),
+    kind            TEXT NOT NULL CHECK (kind IN ('prompt', 'new_thread', 'shake', 'compact')),
     content         TEXT NOT NULL,
     model           TEXT,
     state           TEXT NOT NULL CHECK (state IN ('accepted', 'started', 'completed', 'failed', 'stopped', 'cancelled', 'interrupted')),

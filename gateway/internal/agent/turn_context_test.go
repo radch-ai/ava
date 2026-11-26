@@ -100,7 +100,7 @@ func contextBackend(t *testing.T, agentID string) (*sql.DB, *backend.TurnService
 	sqlDB, err := sqlstore.OpenSQLite(":memory:")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x43}, 32), backend.DefaultToolLimits())
+	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x43}, 32), backend.DefaultToolLimits(), nil)
 	require.NoError(t, err)
 	threadID := agentID + "-t1"
 	tx, err := sqlDB.Begin()
@@ -309,7 +309,7 @@ func TestColdRestartRebuildsContextFromReplay(t *testing.T) {
 
 	// A fresh backend over the same store: the read is cold, exactly
 	// as after a restart.
-	_, _, cold, err := backend.New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x43}, 32), backend.DefaultToolLimits())
+	_, _, cold, err := backend.New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x43}, 32), backend.DefaultToolLimits(), nil)
 	require.NoError(t, err)
 	coldMgr := contextManager(t, llm, cold, nil)
 	submit(t, coldMgr, "agent-restart", "conn-1", sc, "new prompt")

@@ -31,7 +31,7 @@ func TestGetModelsMergesLiveAndCustom(t *testing.T) {
 	url := fakeProvider(t).URL
 	for _, stmt := range []string{
 		`INSERT INTO providers (id, name, base_url, models)
-		 VALUES ('u-1', 'Fake', '` + url + `', '["live-a","custom-1"]')`,
+		 VALUES ('u-1', 'Fake', '` + url + `', '[{"id":"live-a"},{"id":"custom-1"}]')`,
 		// Custom-only row against a rejecting endpoint: no group.
 		`INSERT INTO providers (id, name, base_url, models)
 		 VALUES ('u-2', 'Empty', '` + url + `', '[]')`,
@@ -65,7 +65,7 @@ func TestGetModelsMergesGroupsByName(t *testing.T) {
 		`INSERT INTO providers (id, name, base_url, models)
 		 VALUES ('u-1', 'OpenAI', '` + url + `', '[]')`,
 		`INSERT INTO providers (id, name, base_url, models)
-		 VALUES ('u-2', 'OpenAI', '` + url + `', '["custom-1","live-z"]')`,
+		 VALUES ('u-2', 'OpenAI', '` + url + `', '[{"id":"custom-1"},{"id":"live-z"}]')`,
 	} {
 		if _, err := sqlDB.Exec(stmt); err != nil {
 			t.Fatalf("seed provider: %v", err)

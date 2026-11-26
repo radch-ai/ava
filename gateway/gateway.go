@@ -65,6 +65,10 @@ type Config struct {
 	// at boot. Required: the working context is the committed user
 	// row, so an unbound source fails the turn.
 	GetAgentThread agent.AgentThreadSource
+	// NoteDiscoveredWindow records a context window a provider stated in
+	// its own rejection — bound to TurnService.RecordDiscoveredWindow by
+	// the binary at boot. Zero drops the lesson; it never fails a turn.
+	NoteDiscoveredWindow agent.WindowNoteFunc
 }
 
 // New builds the gateway. The gateway is a single WebSocket endpoint:
@@ -78,17 +82,26 @@ func New(cfg *Config, logger zerolog.Logger) (*Gateway, error) {
 	if cfg.PingInterval > 0 {
 		interval = cfg.PingInterval
 	}
-	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{
-		ResolveModel:   cfg.ResolveModel,
-		Journal:        cfg.Journal,
-		GetAgentConfig: cfg.GetAgentConfig,
-		Tools:          cfg.Tools,
-		GetAgentThread: cfg.GetAgentThread,
-	})
+	mgr := agent.NewUserAgentManager(logger, managerOptions(cfg))
 	return &Gateway{
 		handler: handleWS(interval, logger, mgr),
 		mgr:     mgr,
 	}, nil
+}
+
+// managerOptions names every Config seam the manager consumes. One
+// literal, kept beside the Config it copies: a seam bound by the
+// binary must never be dropped here — the wiring test pins each by
+// identity.
+func managerOptions(cfg *Config) *agent.UserAgentManagerOptions {
+	return &agent.UserAgentManagerOptions{
+		ResolveModel:         cfg.ResolveModel,
+		Journal:              cfg.Journal,
+		GetAgentConfig:       cfg.GetAgentConfig,
+		Tools:                cfg.Tools,
+		GetAgentThread:       cfg.GetAgentThread,
+		NoteDiscoveredWindow: cfg.NoteDiscoveredWindow,
+	}
 }
 
 // Gateway is the mounted WebSocket endpoint plus its drain half.
@@ -554,6 +567,11 @@ func classifySubmission(trimmed string) (kind string, reject error) {
 			return wstypes.QueueItemKindPrompt, errCommandArguments(cmd)
 		}
 		return wstypes.QueueItemKindShake, nil
+	case "/compact":
+		if cmd != trimmed {
+			return wstypes.QueueItemKindPrompt, errCommandArguments(cmd)
+		}
+		return wstypes.QueueItemKindCompact, nil
 	default:
 		return wstypes.QueueItemKindPrompt, nil
 	}

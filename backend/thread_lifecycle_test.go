@@ -35,7 +35,7 @@ func switchThread(t *testing.T, svc *backend.TurnService, agentID, itemID string
 }
 
 func TestExecuteThreadSwitchSwapsPointer(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "lc1", Name: "Thread", Icon: "globe"})
 	ctx := context.Background()
 
@@ -92,7 +92,7 @@ func TestExecuteThreadSwitchLinksPredecessor(t *testing.T) {
 	// A file-backed store: the restart below closes the handle and
 	// reopens the same database.
 	sqlDB := testdb.Open(t, false)
-	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
+	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits(), nil)
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestExecuteThreadSwitchLinksPredecessor(t *testing.T) {
 		t.Fatalf("close store: %v", err)
 	}
 	reopenedDB := testdb.Open(t, false)
-	_, _, reopened, err := backend.New(reopenedDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
+	_, _, reopened, err := backend.New(reopenedDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits(), nil)
 	if err != nil {
 		t.Fatalf("backend.New (reopen): %v", err)
 	}
@@ -156,7 +156,7 @@ func TestExecuteThreadSwitchLinksPredecessor(t *testing.T) {
 // A failed switch leaves no half-made thread: the insert rolls back with
 // the pointer swap it belongs to.
 func TestExecuteThreadSwitchRollbackLeavesNoThread(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "lc-rb", Name: "Rollback", Icon: "globe"})
 	if _, err := svc.AcceptItem(context.Background(), "lc-rb", "cmd-1", "/new", "new_thread", nil); err != nil {
 		t.Fatalf("accept: %v", err)
@@ -205,7 +205,7 @@ func activeThread(t *testing.T, sqlDB *sql.DB, agentID string) string {
 }
 
 func TestExecuteThreadSwitchUnknownItemFails(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	ctx := context.Background()
 
 	before := countThreads(t, sqlDB)
@@ -229,7 +229,7 @@ func countThreads(t *testing.T, sqlDB *sql.DB) int {
 }
 
 func TestGetAgentThreadIsScopedToActiveThread(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "sc", Name: "Thread", Icon: "globe"})
 	ctx := context.Background()
 
@@ -255,7 +255,7 @@ func TestGetAgentThreadIsScopedToActiveThread(t *testing.T) {
 
 func TestActiveThreadSurvivesRestart(t *testing.T) {
 	sqlDB := testdb.Open(t, false)
-	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
+	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits(), nil)
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestActiveThreadSurvivesRestart(t *testing.T) {
 		t.Fatalf("close store: %v", err)
 	}
 	reopenedDB := testdb.Open(t, false)
-	_, _, reopened, err := backend.New(reopenedDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
+	_, _, reopened, err := backend.New(reopenedDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits(), nil)
 	if err != nil {
 		t.Fatalf("backend.New (reopen): %v", err)
 	}
@@ -293,7 +293,7 @@ func TestActiveThreadSurvivesRestart(t *testing.T) {
 // The initial thread is visible before any prompt: creation is eager,
 // not lazy.
 func TestNewAgentHasEmptyInitialThread(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "fresh", Name: "Thread", Icon: "globe"})
 	ctx := context.Background()
 
@@ -313,7 +313,7 @@ func TestNewAgentHasEmptyInitialThread(t *testing.T) {
 // Item writes and thread switches share one writer: an item's rows land
 // whole in the thread it started in, never straddling a concurrent swap.
 func TestConcurrentSwitchAndAppendStayWhole(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "race", Name: "Thread", Icon: "globe"})
 	ctx := context.Background()
 

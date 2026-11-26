@@ -537,6 +537,33 @@ func TestEmptyToolsetKeepsResolvedScrubber(t *testing.T) {
 		"the resolved scrubber owns the durable copy; the pattern battery must not re-apply")
 }
 
+// A prompt turn never consumed a context window: a resolution that
+// answers zero — nothing declared, discovered, or cataloged — must not
+// fail the turn. Only window-aware paths (the compact lane) name the
+// failure.
+func TestPromptTurnRunsOnUnresolvedWindow(t *testing.T) {
+	llm := newScriptedLLM(t, sseChunk("still answering"))
+	mgr, _ := journaledLane(t, &agent.UserAgentManagerOptions{
+		ResolveModel: func(_ context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
+			model := "test-model"
+			if entry != nil {
+				model = entry.ID
+			}
+			return backend.ResolvedModel{
+				ProviderID: "prov-1", BaseURL: llm.URL, APIKey: "sk-test",
+				Model: model, ContextWindowTokens: 0,
+			}, nil
+		},
+		GetAgentThread: emptyThread,
+	})
+
+	c, sc := wsPair(t)
+	submit(t, mgr, "agent-zerowin", "conn-1", sc, "hi")
+	_, p := readUntilMessage(t, c)
+	require.Contains(t, p.Content, "still answering",
+		"a zero-window resolution must not fail a prompt turn")
+}
+
 // A canceled turn settles as a stop even when the failing seam
 // returned its own error: classification goes by the turn's context,
 // which has exactly one cancel source.

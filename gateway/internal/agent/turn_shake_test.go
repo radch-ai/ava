@@ -241,8 +241,8 @@ func TestShakeLaneQueueContinues(t *testing.T) {
 func TestShakeLaneFailurePauses(t *testing.T) {
 	llm := newContextLLM(t, sseChunk("never reached"))
 	_, svc := contextBackend(t, "agent-shakef")
-	failing := func(context.Context, string, string) (*backend.ShakeResult, *backend.JournalBatch, error) {
-		return nil, nil, errSink
+	failing := func(context.Context, string, string) (int, *backend.JournalBatch, error) {
+		return 0, nil, errSink
 	}
 	mgr := laneShakeManager(t, llm, svc, &journalHook{shakeThread: failing})
 
@@ -270,10 +270,10 @@ func TestShakeLaneCancelBeforeCommitIsQuietStop(t *testing.T) {
 		{turnID: "t2", callID: "call-tail", rowID: "row-tail", name: "fetch", result: "tail"},
 	})
 	entered := make(chan struct{})
-	blocked := func(ctx context.Context, _, _ string) (*backend.ShakeResult, *backend.JournalBatch, error) {
+	blocked := func(ctx context.Context, _, _ string) (int, *backend.JournalBatch, error) {
 		close(entered)
 		<-ctx.Done()
-		return nil, nil, ctx.Err()
+		return 0, nil, ctx.Err()
 	}
 	mgr := laneShakeManager(t, llm, svc, &journalHook{shakeThread: blocked})
 
@@ -351,7 +351,7 @@ func TestShakeLaneColdRestartKeepsReference(t *testing.T) {
 	drainToTerminal(t, c, shakeID)
 
 	// A fresh backend and manager over the same store: the read is cold.
-	_, _, cold, err := backend.New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x43}, 32), backend.DefaultToolLimits())
+	_, _, cold, err := backend.New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x43}, 32), backend.DefaultToolLimits(), nil)
 	require.NoError(t, err)
 	llm := newScriptedLLM(t, sseChunk("cold answer"))
 	coldMgr := hookedManager(t, &agent.UserAgentManagerOptions{

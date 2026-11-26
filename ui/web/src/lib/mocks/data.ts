@@ -10,13 +10,20 @@ import type {
 } from '../types/agent.ts'
 /** A provider row as the mock stores it — apiKey included but never
  * sent in a response (hasKey is the response field). ids are opaque
- * (uuid), never derived from the name. */
+ * (uuid), never derived from the name. models are the operator's
+ * declared entries: the id plus an optional declared context window. */
 export interface ProviderRow {
 	id: string
 	name: string
 	baseUrl: string
 	apiKey: string
-	models: string[]
+	models: ProviderModelRow[]
+}
+
+/** One declared custom model — the backend's ProviderModel. */
+export interface ProviderModelRow {
+	id: string
+	contextWindow?: number
 }
 
 /** A tool row as the mock stores it — the backend's tools table.

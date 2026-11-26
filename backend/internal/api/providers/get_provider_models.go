@@ -1,4 +1,4 @@
-// GET /api/providers/{id}/models - one provider's system models.
+// GET /api/providers/{id}/models - one provider's system model ids.
 package providers
 
 import (
@@ -15,8 +15,8 @@ import (
 
 // GetProviderModels answers the provider's fetched system model ids:
 // the live list, keyed or keyless — empty when nothing is known or
-// the endpoint rejects us. Custom ids are not repeated. Unknown id
-// is a 404.
+// the endpoint rejects us. Custom ids are not repeated. Unknown id is
+// a 404.
 func GetProviderModels(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		id := r.PathValue("id")
@@ -29,12 +29,9 @@ func GetProviderModels(queries *db.Queries, vaultStore *vault.Store) api.Handler
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return fmt.Errorf("read provider %q: %w", id, err)
 		}
-
-		system := systemModels(r.Context(), row.BaseUrl, providerKey(r.Context(), vaultStore, id))
-		if system == nil {
-			system = []string{}
-		}
+		models := systemModels(r.Context(), row.BaseUrl,
+			providerKey(r.Context(), vaultStore, id))
 		return api.WriteJSON(w, http.StatusOK,
-			apitypes.ProviderModelsResponse{SystemModels: system})
+			apitypes.ProviderModelsResponse{SystemModels: systemModelIDs(models)})
 	}
 }

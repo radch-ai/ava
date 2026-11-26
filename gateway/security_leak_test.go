@@ -220,7 +220,7 @@ func startLeakPipelineWith(t *testing.T, provider func(*testing.T) *httptest.Ser
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
 
-	router, _, turns, err := backend.New(sqlDB, zerolog.Nop(), leakKey, backend.DefaultToolLimits())
+	router, _, turns, err := backend.New(sqlDB, zerolog.Nop(), leakKey, backend.DefaultToolLimits(), nil)
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}

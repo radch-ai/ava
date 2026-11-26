@@ -43,7 +43,7 @@ func newAdmissionSetup(t *testing.T, limits backend.ToolLimits, opts ...mcptest.
 	testdb.SeedMcpServer(t, sqlDB, "helper", srv.URL, func(params *db.CreateMcpServerParams) {
 		params.TimeoutMs = sql.NullInt64{Int64: 5000, Valid: true}
 	})
-	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, limits)
+	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, limits, nil)
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}

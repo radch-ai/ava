@@ -55,8 +55,10 @@ func (s *TurnService) AgentTools(ctx context.Context, agentID string) (TurnTools
 	infos := make([]*schema.ToolInfo, 0, len(rows)+1)
 	// read_tool_output is internal, never catalog-managed: it rides
 	// beside the effective ids so a shaken context always keeps its
-	// restore path, even when the catalog resolves nothing.
-	impls = append(impls, &readToolOutputTool{svc: s, agentID: agentID})
+	// restore path, even when the catalog resolves nothing. Its scrubber
+	// is set once the turn's known values are collected below.
+	internal := &readToolOutputTool{svc: s, agentID: agentID}
+	impls = append(impls, internal)
 	infos = append(infos, readToolOutputInfo)
 
 	sizes := make(map[string]int, len(rows))
@@ -113,7 +115,9 @@ func (s *TurnService) AgentTools(ctx context.Context, agentID string) (TurnTools
 		return TurnTools{}, fmt.Errorf("toolset budget exceeded (%d KiB > %d KiB): %s",
 			total>>10, MaxAdvertisedToolsetBytes>>10, largestTools(sizes))
 	}
-	return TurnTools{Impls: impls, Infos: infos, Scrubber: security.NewScrubber(values)}, nil
+	scrubber := security.NewScrubber(values)
+	internal.scrub = scrubber
+	return TurnTools{Impls: impls, Infos: infos, Scrubber: scrubber}, nil
 }
 
 // serverConfig resolves (once per turn) one server's connection config:

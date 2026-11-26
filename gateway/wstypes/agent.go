@@ -5,12 +5,15 @@ import "encoding/json"
 // Queue item kinds. QueueItemKindPrompt is an ordinary Eino turn;
 // QueueItemKindNewThread is a /new or /reset command; QueueItemKindShake
 // is a /shake command — both commands execute without a model call and
-// store no user row. Every item carries one of these — there is no
+// store no user row. QueueItemKindCompact is a /compact command: it
+// makes one summarization model call, but is still a command, not a
+// synthetic prompt. Every item carries one of these — there is no
 // zero-value spelling.
 const (
 	QueueItemKindPrompt    = "prompt"
 	QueueItemKindNewThread = "new_thread"
 	QueueItemKindShake     = "shake"
+	QueueItemKindCompact   = "compact"
 )
 
 // ModelRef is a prompt's model selection: the model id plus the

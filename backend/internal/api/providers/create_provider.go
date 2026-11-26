@@ -22,6 +22,7 @@ import (
 // with the minted uuid id.
 func CreateProvider(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
+		r.Body = http.MaxBytesReader(w, r.Body, maxProviderBodyBytes)
 		var req apitypes.CreateProviderRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			return api.WriteError(w, http.StatusBadRequest, "Invalid request body")
@@ -47,10 +48,11 @@ func CreateProvider(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 		id := uuid.NewString()
 
 		if err := queries.CreateProvider(r.Context(), db.CreateProviderParams{
-			ID:      id,
-			Name:    req.Name,
-			BaseUrl: req.BaseURL,
-			Models:  "[]",
+			ID:                       id,
+			Name:                     req.Name,
+			BaseUrl:                  req.BaseURL,
+			Models:                   "[]",
+			DiscoveredContextWindows: "{}",
 		}); err != nil {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return fmt.Errorf("insert provider: %w", err)

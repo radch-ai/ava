@@ -100,7 +100,12 @@ const (
 	itemKindPrompt    = "prompt"
 	itemKindNewThread = "new_thread"
 	itemKindShake     = "shake"
+	itemKindCompact   = "compact"
 )
+
+// threadKindNew is the threads.kind value a plain /new boundary writes;
+// a compaction successor writes threadpage.CompactedKind instead.
+const threadKindNew = "new"
 
 // restartReason explains every outcome recovery assigns.
 const restartReason = "service_restart"
@@ -344,7 +349,9 @@ func (s *TurnService) afterJournalCommit(ctx context.Context, agentID string, ev
 // journals the acceptance. Admission is durable before the gateway
 // exposes the item, so a crash here leaves a known item recovery cancels.
 func (s *TurnService) AcceptItem(ctx context.Context, agentID, itemID, content, kind string, model *apitypes.ModelEntry) (*JournalBatch, error) {
-	if kind != itemKindPrompt && kind != itemKindNewThread && kind != itemKindShake {
+	switch kind {
+	case itemKindPrompt, itemKindNewThread, itemKindShake, itemKindCompact:
+	default:
 		return nil, fmt.Errorf("accept item: unknown kind %q", kind)
 	}
 	var modelJSON sql.NullString
@@ -706,6 +713,7 @@ func (s *TurnService) ExecuteThreadSwitch(ctx context.Context, agentID, itemID s
 				ThreadID:  threadID,
 				CreatedMs: stamp,
 				AgentID:   agentID,
+				Kind:      threadKindNew,
 			})
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil, ErrUnknownAgent
@@ -731,7 +739,7 @@ func (s *TurnService) ExecuteThreadSwitch(ctx context.Context, agentID, itemID s
 				return nil, fmt.Errorf("%s: %w", itemID, errItemNotStarted)
 			}
 			createdAt := threadpage.ISOTime(row.CreatedAt)
-			divider := threadpage.Divider(threadID, row.CreatedAt)
+			divider := threadpage.Divider(threadID, row.CreatedAt, threadpage.DividerText)
 			// The divider carries this transaction's stamp, so the
 			// watermark must cover it: a later batch may not mint a
 			// timestamp at or below rows this one wrote.
@@ -751,6 +759,119 @@ func (s *TurnService) ExecuteThreadSwitch(ctx context.Context, agentID, itemID s
 					ItemID:    itemID,
 					ItemKind:  item.Kind,
 					ThreadID:  threadID,
+					Outcome:   apitypes.ItemCompleted,
+					CreatedAt: createdAt,
+				},
+			})
+		})
+	if err != nil {
+		return nil, batch, err
+	}
+	if batch != nil {
+		for i := range batch.Events {
+			if ev := batch.Events[i]; ev.Kind == apitypes.LifecycleThreadChanged {
+				activated = &ActivatedThread{
+					ID:         ev.ThreadID,
+					PreviousID: ev.PreviousThreadID,
+				}
+				break
+			}
+		}
+	}
+	return activated, batch, nil
+}
+
+// ExecuteCompaction runs a compact item's durable rotation: a successor
+// thread linked to the formerly active one, the summary seeded as its
+// first assistant message, the pointer swap, and the item's completion —
+// one transaction, so a half-seeded successor can never be observed.
+// The two-event batch mirrors a thread switch, with the seeded row
+// riding item_finished so live and replayed clients render the summary
+// in the new segment. The summarization itself is the gateway's model
+// call; this is only its committed effect.
+func (s *TurnService) ExecuteCompaction(ctx context.Context, agentID, itemID, summary string) (*ActivatedThread, *JournalBatch, error) {
+	var activated *ActivatedThread
+	batch, err := journalTx(ctx, s, agentID, "compact thread",
+		func(qtx *db.Queries, stamp, head int64) (*JournalBatch, error) {
+			item, err := qtx.GetQueueItem(ctx, db.GetQueueItemParams{AgentID: agentID, ID: itemID})
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, errItemNotStarted
+			} else if err != nil {
+				return nil, err
+			}
+			if item.State != "started" {
+				return nil, fmt.Errorf("%s: %w", itemID, errItemNotStarted)
+			}
+			if item.Kind != itemKindCompact {
+				return nil, fmt.Errorf("compact thread: item %s has kind %q", itemID, item.Kind)
+			}
+			if summary == "" {
+				return nil, errors.New("compact thread: empty summary")
+			}
+			threadID := uuid.NewString()
+			row, err := qtx.CreateThreadFromActive(ctx, db.CreateThreadFromActiveParams{
+				ThreadID:  threadID,
+				CreatedMs: stamp,
+				AgentID:   agentID,
+				Kind:      threadpage.CompactedKind,
+			})
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, ErrUnknownAgent
+			} else if err != nil {
+				return nil, err
+			}
+			// The seeded row carries the item's id as its turn: the
+			// convention every row an item mints follows, and a lone
+			// assistant row projects as a plain message.
+			rows, err := s.insertRows(ctx, qtx, agentID, threadID, stamp, []ThreadMessageDraft{{
+				ID:      uuid.NewString(),
+				Role:    apitypes.ThreadRoleAssistant,
+				Content: summary,
+				TurnID:  itemID,
+			}})
+			if err != nil {
+				return nil, err
+			}
+			if n, err := qtx.UpdateActiveThread(ctx, db.UpdateActiveThreadParams{
+				ActiveThreadID: threadID,
+				ID:             agentID,
+			}); err != nil {
+				return nil, err
+			} else if n == 0 {
+				return nil, ErrUnknownAgent
+			}
+			if n, err := qtx.SetQueueItemTerminal(ctx, db.SetQueueItemTerminalParams{
+				State:      apitypes.ItemCompleted,
+				FinishedMs: sql.NullInt64{Int64: stamp, Valid: true},
+				AgentID:    agentID,
+				ID:         itemID,
+			}); err != nil {
+				return nil, err
+			} else if n != 1 {
+				return nil, fmt.Errorf("%s: %w", itemID, errItemNotStarted)
+			}
+			createdAt := threadpage.ISOTime(row.CreatedAt)
+			divider := threadpage.Divider(threadID, row.CreatedAt, threadpage.CompactedText)
+			// The divider and the seeded row share this transaction's
+			// stamp span; the watermark covers both, as FinishItem's
+			// row-carrying batches do.
+			s.lastPersistedMs = stamp + int64(len(rows)) - 1
+			return s.appendEvents(ctx, qtx, agentID, itemID, head, stamp, []apitypes.LifecycleEvent{
+				{
+					Kind:             apitypes.LifecycleThreadChanged,
+					ItemID:           itemID,
+					ItemKind:         item.Kind,
+					ThreadID:         threadID,
+					PreviousThreadID: row.PreviousThreadID.String,
+					Divider:          &divider,
+					CreatedAt:        createdAt,
+				},
+				{
+					Kind:      apitypes.LifecycleItemFinished,
+					ItemID:    itemID,
+					ItemKind:  item.Kind,
+					ThreadID:  threadID,
+					Rows:      rows,
 					Outcome:   apitypes.ItemCompleted,
 					CreatedAt: createdAt,
 				},

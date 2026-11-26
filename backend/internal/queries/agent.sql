@@ -10,8 +10,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 -- One conversation boundary; created_at is DB-stamped. The owning
 -- agent row must already exist (immediate FK). previous_thread_id
 -- names the formerly active thread; NULL on the eagerly created
--- initial thread.
-INSERT INTO threads (id, agent_id, previous_thread_id) VALUES (?, ?, ?);
+-- initial thread. kind labels the boundary's divider: 'new' for a
+-- plain /new, 'compact' for a compaction successor.
+INSERT INTO threads (id, agent_id, previous_thread_id, kind) VALUES (?, ?, ?, ?);
 
 -- name: CreateThreadFromActive :one
 -- One conversation boundary linked to the agent's current active
@@ -20,8 +21,8 @@ INSERT INTO threads (id, agent_id, previous_thread_id) VALUES (?, ?, ?);
 -- pointer. sql.ErrNoRows means unknown agent; the caller then swaps
 -- the pointer. created_at is the caller's watermark stamp, so the
 -- divider sorts with the rows the same process writes.
-INSERT INTO threads (id, agent_id, previous_thread_id, created_at)
-SELECT sqlc.arg(thread_id), a.id, a.active_thread_id, sqlc.arg(created_ms)
+INSERT INTO threads (id, agent_id, previous_thread_id, kind, created_at)
+SELECT sqlc.arg(thread_id), a.id, a.active_thread_id, sqlc.arg(kind), sqlc.arg(created_ms)
 FROM agents a WHERE a.id = sqlc.arg(agent_id)
 RETURNING previous_thread_id, created_at;
 
@@ -29,7 +30,7 @@ RETURNING previous_thread_id, created_at;
 -- Display-navigation read: predecessor + creation time of one
 -- thread. sql.ErrNoRows means the thread does not exist for this
 -- agent.
-SELECT previous_thread_id, created_at FROM threads
+SELECT previous_thread_id, created_at, kind FROM threads
 WHERE agent_id = ? AND id = ?;
 
 -- name: GetActiveThreadMeta :one
@@ -37,7 +38,7 @@ WHERE agent_id = ? AND id = ?;
 -- the display endpoint's no-cursor entry read. sql.ErrNoRows means
 -- unknown agent. The join constrains both rows to one agent, so the
 -- id binds once.
-SELECT t.id, t.previous_thread_id, t.created_at
+SELECT t.id, t.previous_thread_id, t.created_at, t.kind
 FROM threads t JOIN agents a ON a.active_thread_id = t.id AND a.id = ?
 WHERE t.agent_id = a.id;
 

@@ -25,13 +25,14 @@ func GetModels(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 		var names []string
 		grouped := map[string][]apitypes.ModelEntry{}
 		for _, row := range rows {
-			custom, err := decodeModels(row.Models)
+			custom, err := DecodeModels(row.Models)
 			if err != nil {
 				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 				return err
 			}
-			system := systemModels(r.Context(), row.BaseUrl, providerKey(r.Context(), vaultStore, row.ID))
-			entries := mergeEntries(row.ID, custom, system)
+			models := systemModels(r.Context(), row.BaseUrl,
+				providerKey(r.Context(), vaultStore, row.ID))
+			entries := mergeEntries(row.ID, custom, systemModelIDs(models))
 			if len(entries) == 0 {
 				continue
 			}
@@ -62,16 +63,21 @@ func GetModels(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 
 // mergeEntries tags one provider row's custom ∪ system ids with the
 // row's id: earlier arguments win the dedupe, result sorted by id.
-func mergeEntries(providerID string, custom, system []string) []apitypes.ModelEntry {
+func mergeEntries(providerID string, custom []apitypes.ProviderModel, system []string) []apitypes.ModelEntry {
 	seen := make(map[string]bool, len(custom)+len(system))
 	entries := make([]apitypes.ModelEntry, 0, len(custom)+len(system))
-	for _, list := range [][]string{custom, system} {
-		for _, id := range list {
-			if !seen[id] {
-				seen[id] = true
-				entries = append(entries, apitypes.ModelEntry{ID: id, ProviderID: providerID})
-			}
+	add := func(id string) {
+		if seen[id] {
+			return
 		}
+		seen[id] = true
+		entries = append(entries, apitypes.ModelEntry{ID: id, ProviderID: providerID})
+	}
+	for _, model := range custom {
+		add(model.ID)
+	}
+	for _, id := range system {
+		add(id)
 	}
 	slices.SortFunc(entries, func(a, b apitypes.ModelEntry) int {
 		return strings.Compare(a.ID, b.ID)

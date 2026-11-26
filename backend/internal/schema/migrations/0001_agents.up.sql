@@ -48,6 +48,11 @@ CREATE TABLE IF NOT EXISTS threads (
     created_at          BIGINT NOT NULL
         DEFAULT (CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)),
     previous_thread_id  TEXT,
+    -- Which of the two chain-growth ways this boundary is: a plain
+    -- /new or a compaction successor, so a divider can label itself
+    -- honestly instead of every rotation claiming "New session".
+    kind              TEXT NOT NULL DEFAULT 'new'
+        CHECK (kind IN ('new', 'compact')),
     PRIMARY KEY (id),
     UNIQUE (agent_id, id),
     FOREIGN KEY (agent_id, previous_thread_id) REFERENCES threads(agent_id, id)

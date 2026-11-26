@@ -1,8 +1,10 @@
 package providers
 
-// GET /api/providers/{id}/models: one provider's system model ids.
+// GET /api/providers/{id}/models: one provider's live-fetched system
+// model ids.
 
 import (
+	"database/sql"
 	"net/http"
 	"testing"
 
@@ -17,7 +19,7 @@ func TestGetProviderModelsUserProvider(t *testing.T) {
 	url := fakeProvider(t).URL
 	for _, stmt := range []string{
 		`INSERT INTO providers (id, name, base_url, models)
-		 VALUES ('u-1', 'Fake', '` + url + `', '["custom-1"]')`,
+		 VALUES ('u-1', 'Fake', '` + url + `', '[{"id":"custom-1"}]')`,
 		`INSERT INTO providers (id, name, base_url, models)
 		 VALUES ('u-2', 'Local', '` + noAuthURL(t) + `', '[]')`,
 		`INSERT INTO providers (id, name, base_url, models)
@@ -54,6 +56,19 @@ func TestGetProviderModelsUserProvider(t *testing.T) {
 	if got := body(rec); got != `{"systemModels":[]}` {
 		t.Errorf("body = %s, want empty list", got)
 	}
+}
+
+// storedWindows reads one provider's discovered map straight from the
+// row — the durable half of discovery.
+func storedWindows(t *testing.T, sqlDB *sql.DB, id string) string {
+	t.Helper()
+	var raw string
+	if err := sqlDB.QueryRow(
+		`SELECT discovered_context_windows FROM providers WHERE id = ?`, id,
+	).Scan(&raw); err != nil {
+		t.Fatalf("read discovered windows for %s: %v", id, err)
+	}
+	return raw
 }
 
 func TestGetProviderModelsNotFound(t *testing.T) {

@@ -267,7 +267,7 @@ func journalBackend(t *testing.T, agentIDs ...string) (*sql.DB, *backend.TurnSer
 		t.Fatalf("opening store failed: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	_, _, turns, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
+	_, _, turns, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits(), nil)
 	if err != nil {
 		t.Fatalf("building backend failed: %v", err)
 	}
@@ -1063,12 +1063,17 @@ func TestCommandAdmission(t *testing.T) {
 		}
 	}
 
-	// /shake carries the same no-argument contract, spelled with its own
-	// name in the rejection.
+	// /shake and /compact carry the same no-argument contract, spelled
+	// with their own names in the rejection.
 	write("shake-args", "/shake now")
 	if res, _ := readAdmission(t, conn, "shake-args", false); res.Accepted ||
 		res.Error != "/shake takes no arguments; submit /shake alone" {
 		t.Fatalf("/shake now = %+v, want its own command-argument rejection", res)
+	}
+	write("compact-args", "/compact now")
+	if res, _ := readAdmission(t, conn, "compact-args", false); res.Accepted ||
+		res.Error != "/compact takes no arguments; submit /compact alone" {
+		t.Fatalf("/compact now = %+v, want its own command-argument rejection", res)
 	}
 
 	// Only the exact spellings are commands: unknown slash text, a
@@ -1078,6 +1083,7 @@ func TestCommandAdmission(t *testing.T) {
 		"case":     "/New",
 		"longer":   "/newer",
 		"embedded": "hi I want /new",
+		"near-c":   "/compaction",
 	} {
 		write(requestID, content)
 		if kind := admittedKind(requestID, content); kind != wstypes.QueueItemKindPrompt {
@@ -1093,6 +1099,10 @@ func TestCommandAdmission(t *testing.T) {
 	write("shake", "/shake")
 	if kind := admittedKind("shake", "/shake"); kind != wstypes.QueueItemKindShake {
 		t.Fatalf("/shake kind = %q, want shake", kind)
+	}
+	write("compact", "/compact")
+	if kind := admittedKind("compact", "/compact"); kind != wstypes.QueueItemKindCompact {
+		t.Fatalf("/compact kind = %q, want compact", kind)
 	}
 }
 

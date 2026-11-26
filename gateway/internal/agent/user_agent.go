@@ -34,6 +34,11 @@ const (
 // no adapter.
 type ModelResolver = func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error)
 
+// WindowNoteFunc records a context window a provider stated in its own
+// rejection. An alias of backend TurnService.RecordDiscoveredWindow, so
+// the bound method value needs no adapter; an unbound note is a no-op.
+type WindowNoteFunc = func(ctx context.Context, providerID, model string, window int) error
+
 // LifecycleJournal is the durable half of a turn: item bookkeeping, the
 // conversation rows each transition commits, and the ordered event feed
 // every subscriber receives. *backend.TurnService satisfies it, so the
@@ -56,9 +61,12 @@ type LifecycleJournal interface {
 	FinishItem(ctx context.Context, agentID, itemID, outcome, reason string, msgs []backend.ThreadMessageDraft) (*backend.JournalBatch, error)
 	// ExecuteThreadSwitch runs a command's durable thread switch.
 	ExecuteThreadSwitch(ctx context.Context, agentID, itemID string) (*backend.ActivatedThread, *backend.JournalBatch, error)
+	// ExecuteCompaction commits a compact item's rotation: successor
+	// thread seeded with the summary, pointer swap, completion.
+	ExecuteCompaction(ctx context.Context, agentID, itemID, summary string) (*backend.ActivatedThread, *backend.JournalBatch, error)
 	// ShakeThreadContext elides this agent's old large tool results
 	// from the replay projection and settles the shake item.
-	ShakeThreadContext(ctx context.Context, agentID, itemID string) (*backend.ShakeResult, *backend.JournalBatch, error)
+	ShakeThreadContext(ctx context.Context, agentID, itemID string) (int, *backend.JournalBatch, error)
 	// ReplayAfter answers one bounded replay page, validating the
 	// cursor's history inside the same read.
 	ReplayAfter(ctx context.Context, agentID, historyID string, afterPos int64, limit int) (*backend.JournalPage, error)
@@ -120,7 +128,11 @@ type UserAgentOptions struct {
 	// GetAgentThread reads one thread as the turn's model input;
 	// bound by the gateway at boot.
 	GetAgentThread AgentThreadSource
-	Logger         zerolog.Logger
+	// NoteDiscoveredWindow records a window a provider stated in an
+	// over-window rejection; bound by the gateway at boot. Optional:
+	// an unbound note drops the lesson.
+	NoteDiscoveredWindow WindowNoteFunc
+	Logger               zerolog.Logger
 }
 
 // UserAgent is one agent's disposable runtime worker: it executes
@@ -158,6 +170,9 @@ type UserAgent struct {
 	tools          AgentToolsFunc
 	getAgentThread AgentThreadSource
 	journal        LifecycleJournal
+	// noteDiscoveredWindow records windows a provider states in its
+	// rejections; nil drops the lesson.
+	noteDiscoveredWindow WindowNoteFunc
 	// turnScrub is the live turn's resolved scrubber (the agent's
 	// servers' known values plus the pattern battery); nil outside a
 	// turn keeps the pattern battery alone. Guarded by mu.
@@ -169,14 +184,15 @@ type UserAgent struct {
 // root ends any turn still running.
 func newUserAgent(opts UserAgentOptions) *UserAgent {
 	a := &UserAgent{
-		state:          opts.State,
-		logger:         opts.Logger,
-		resolveModel:   opts.ResolveModel,
-		getAgentConfig: opts.GetAgentConfig,
-		tools:          opts.Tools,
-		getAgentThread: opts.GetAgentThread,
-		journal:        opts.Journal,
-		onExit:         opts.OnExit,
+		state:                opts.State,
+		logger:               opts.Logger,
+		resolveModel:         opts.ResolveModel,
+		getAgentConfig:       opts.GetAgentConfig,
+		tools:                opts.Tools,
+		getAgentThread:       opts.GetAgentThread,
+		journal:              opts.Journal,
+		noteDiscoveredWindow: opts.NoteDiscoveredWindow,
+		onExit:               opts.OnExit,
 	}
 
 	go a.loop()
@@ -285,14 +301,16 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 	// replay whatever streams from here on.
 	a.beginTurn(msgID)
 
-	// A command item is the whole turn: a durable thread switch or a
-	// context elision and its completion event, never a model call or
-	// a user row.
+	// A command item is the whole turn: a durable thread switch, a
+	// context elision, or — for /compact — one summarization model call
+	// wrapped by durable effects; never a user row.
 	switch claim.item.kind {
 	case wstypes.QueueItemKindNewThread:
 		return a.processCommand(claim, emitCtx, msgID)
 	case wstypes.QueueItemKindShake:
 		return a.processShake(claim, emitCtx, msgID)
+	case wstypes.QueueItemKindCompact:
+		return a.processCompact(claim, emitCtx, msgID)
 	}
 
 	// Starting is the first durable step: the execution thread resolves,

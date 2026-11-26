@@ -10,7 +10,8 @@
 	const COMMANDS = [
 		{ name: '/new', helper: 'Start a fresh conversation' },
 		{ name: '/reset', helper: 'Alias of /new — same fresh session' },
-		{ name: '/shake', helper: 'Elide old tool outputs from the model context' }
+		{ name: '/shake', helper: 'Elide old tool outputs from the model context' },
+		{ name: '/compact', helper: 'Summarize this thread and continue fresh' }
 	]
 
 	let {

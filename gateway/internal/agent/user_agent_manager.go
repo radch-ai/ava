@@ -39,6 +39,10 @@ type UserAgentManagerOptions struct {
 	// model input; bound by the gateway at boot. Required: an unbound
 	// source fails each turn at message level.
 	GetAgentThread AgentThreadSource
+	// NoteDiscoveredWindow records a window a provider stated in its
+	// own rejection; bound by the gateway at boot. Optional: an unbound
+	// note drops the lesson.
+	NoteDiscoveredWindow WindowNoteFunc
 }
 
 // UserAgentManager manages per-agent queue states with thread-safe
@@ -48,12 +52,13 @@ type UserAgentManager struct {
 	statesMu sync.RWMutex
 	states   map[string]*agentState
 
-	logger         zerolog.Logger
-	resolveModel   ModelResolver
-	getAgentConfig AgentConfigSource
-	tools          AgentToolsFunc
-	getAgentThread AgentThreadSource
-	journal        LifecycleJournal
+	logger               zerolog.Logger
+	resolveModel         ModelResolver
+	getAgentConfig       AgentConfigSource
+	tools                AgentToolsFunc
+	getAgentThread       AgentThreadSource
+	journal              LifecycleJournal
+	noteDiscoveredWindow WindowNoteFunc
 
 	// turns counts claimed turns across every lane; Drain waits on it.
 	turns sync.WaitGroup
@@ -74,6 +79,7 @@ func NewUserAgentManager(logger zerolog.Logger, opts *UserAgentManagerOptions) *
 		m.tools = opts.Tools
 		m.getAgentThread = opts.GetAgentThread
 		m.journal = opts.Journal
+		m.noteDiscoveredWindow = opts.NoteDiscoveredWindow
 	}
 	m.rootCtx, m.rootCancel = context.WithCancel(context.Background())
 	return m
@@ -116,14 +122,15 @@ func (m *UserAgentManager) ensureWorker(s *agentState) {
 // newWorker builds and starts a worker; caller holds workerMu.
 func (m *UserAgentManager) newWorker(s *agentState) *UserAgent {
 	return newUserAgent(UserAgentOptions{
-		State:          s,
-		ResolveModel:   m.resolveModel,
-		GetAgentConfig: m.getAgentConfig,
-		Tools:          m.tools,
-		GetAgentThread: m.getAgentThread,
-		Journal:        m.journal,
-		Logger:         m.logger,
-		OnExit:         func(w *UserAgent) { m.workerExited(s, w) },
+		State:                s,
+		ResolveModel:         m.resolveModel,
+		GetAgentConfig:       m.getAgentConfig,
+		Tools:                m.tools,
+		GetAgentThread:       m.getAgentThread,
+		Journal:              m.journal,
+		NoteDiscoveredWindow: m.noteDiscoveredWindow,
+		Logger:               m.logger,
+		OnExit:               func(w *UserAgent) { m.workerExited(s, w) },
 	})
 }
 
