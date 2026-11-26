@@ -40,6 +40,10 @@ type AgentThreadMessage struct {
 	ToolCalls  []AgentThreadCall   `json:"toolCalls,omitempty"`
 	ToolCallID string              `json:"toolCallId,omitempty"`
 	ToolName   string              `json:"toolName,omitempty"`
+	// Elided marks a tool message whose Content is the placeholder
+	// naming the stored row, not the original result. Go-only, like the
+	// rest of this type: the wire contract never carries it.
+	Elided bool `json:"elided,omitempty"`
 }
 
 // ToolEnvelope is the content of a role='tool' row: one completed
@@ -144,10 +148,17 @@ func (s *TurnService) GetAgentThread(ctx context.Context, agentID string) ([]Age
 // threadGroup collects one assistant call group and its outcomes as
 // the row walk encounters them.
 type threadGroup struct {
-	row     int               // index of the assistant row within its turn
-	content string            // the assistant's accompanying text
-	calls   []AgentThreadCall // declared order
-	outcome map[string]string // call id -> model-facing result text
+	row     int                     // index of the assistant row within its turn
+	content string                  // the assistant's accompanying text
+	calls   []AgentThreadCall       // declared order
+	outcome map[string]groupOutcome // call id -> outcome, projected
+}
+
+// groupOutcome is one tool row as the model sees it: the text the
+// projection emits and whether that text is an elision placeholder.
+type groupOutcome struct {
+	text   string
+	elided bool
 }
 
 // projectThread turns raw rows into the model-facing thread history.
@@ -203,7 +214,7 @@ func projectThread(rows []db.ListActiveThreadRowsRow) ([]AgentThreadMessage, err
 			}
 			groups = append(groups, &threadGroup{
 				row: len(pending), content: row.Content, calls: calls,
-				outcome: make(map[string]string, len(calls)),
+				outcome: make(map[string]groupOutcome, len(calls)),
 			})
 		}
 		pending = append(pending, row)
@@ -238,10 +249,15 @@ func projectTurn(rows []db.ListActiveThreadRowsRow, groups []*threadGroup) ([]Ag
 			return nil, fmt.Errorf("thread tool row %s has no call id", row.ID)
 		}
 		// The envelope's Result is the exact model-facing string; an
-		// error always wins.
+		// error always wins. An elided row keeps its payload on disk and
+		// projects to the placeholder naming it.
 		text := env.Result
 		if env.Error != nil {
 			text = *env.Error
+		}
+		elided := row.Elided != 0
+		if elided {
+			text = elidedReference(row.ID, len(text))
 		}
 		target := -1
 		for gi := len(groups) - 1; gi >= 0; gi-- {
@@ -262,7 +278,7 @@ func projectTurn(rows []db.ListActiveThreadRowsRow, groups []*threadGroup) ([]Ag
 		if _, dup := g.outcome[env.CallID]; dup {
 			return nil, fmt.Errorf("thread tool row %s repeats call %q", row.ID, env.CallID)
 		}
-		g.outcome[env.CallID] = text
+		g.outcome[env.CallID] = groupOutcome{text: text, elided: elided}
 	}
 
 	// Second pass: emit rows in order, each group followed by its
@@ -285,9 +301,10 @@ func projectTurn(rows []db.ListActiveThreadRowsRow, groups []*threadGroup) ([]Ag
 				ToolCalls: answered,
 			})
 			for _, c := range answered {
+				outcome := g.outcome[c.ID]
 				out = append(out, AgentThreadMessage{
-					Role: apitypes.ThreadRoleTool, Content: g.outcome[c.ID],
-					ToolCallID: c.ID, ToolName: c.Name,
+					Role: apitypes.ThreadRoleTool, Content: outcome.text,
+					ToolCallID: c.ID, ToolName: c.Name, Elided: outcome.elided,
 				})
 			}
 			continue

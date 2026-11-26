@@ -50,6 +50,7 @@ type fakeJournal struct {
 	failTool     error
 	failFinish   error
 	failSwitch   error
+	failShake    error
 	failSnapshot error
 }
 
@@ -213,6 +214,24 @@ func (f *fakeJournal) ExecuteThreadSwitch(_ context.Context, agentID, itemID str
 	return &backend.ActivatedThread{ID: changed.ThreadID, PreviousID: previous},
 		&backend.JournalBatch{Cursor: backend.FormatCursor(f.history, done.Pos),
 			Events: []apitypes.LifecycleEvent{changed, done}}, nil
+}
+
+func (f *fakeJournal) ShakeThreadContext(_ context.Context, agentID, itemID string) (*backend.ShakeResult, *backend.JournalBatch, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failShake != nil {
+		return nil, nil, f.failShake
+	}
+	item := f.items[fakeKey(agentID, itemID)]
+	if item == nil || item.state != "started" {
+		return nil, nil, errors.New("item is not started")
+	}
+	item.state = apitypes.ItemCompleted
+	f.writes = append(f.writes, fakeWrite{AgentID: agentID, ItemID: itemID, Kind: apitypes.LifecycleItemFinished})
+	return &backend.ShakeResult{Elided: 0}, f.appendLocked(agentID, itemID, apitypes.LifecycleEvent{
+		Kind: apitypes.LifecycleItemFinished, ItemID: itemID, ItemKind: item.kind,
+		ThreadID: item.threadID, Outcome: apitypes.ItemCompleted,
+	}), nil
 }
 
 func (f *fakeJournal) ReplayAfter(_ context.Context, agentID, historyID string, afterPos int64, limit int) (*backend.JournalPage, error) {

@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -508,14 +509,18 @@ const maxPromptBytes = 64 << 10
 var (
 	errPromptEmpty   = errors.New("prompt is empty")
 	errPromptTooLong = errors.New("prompt is too long")
-	// errCommandArguments rejects a recognized command carrying extra
-	// text: /new is the whole submission or it is an ordinary prompt.
-	errCommandArguments = errors.New("/new takes no arguments; submit /new alone")
 	// errNotSynchronized answers a mutation from a peer that has not
 	// finished recovery: it cannot act on a conversation it has not
 	// yet seen.
 	errNotSynchronized = errors.New("not synchronized; retry once the connection is live")
 )
+
+// errCommandArguments rejects a recognized command carrying extra
+// text: a command is the whole submission or it is an ordinary
+// prompt.
+func errCommandArguments(cmd string) error {
+	return fmt.Errorf("%s takes no arguments; submit %s alone", cmd, cmd)
+}
 
 // Recovery bounds: one replay page and one snapshot page. A device that
 // fell further behind asks again with its cursor, so neither is a
@@ -541,9 +546,14 @@ func classifySubmission(trimmed string) (kind string, reject error) {
 		if cmd != trimmed {
 			// The kind is unused when reject != nil; the prompt
 			// spelling keeps one encoding in the package.
-			return wstypes.QueueItemKindPrompt, errCommandArguments
+			return wstypes.QueueItemKindPrompt, errCommandArguments(cmd)
 		}
 		return wstypes.QueueItemKindNewThread, nil
+	case "/shake":
+		if cmd != trimmed {
+			return wstypes.QueueItemKindPrompt, errCommandArguments(cmd)
+		}
+		return wstypes.QueueItemKindShake, nil
 	default:
 		return wstypes.QueueItemKindPrompt, nil
 	}

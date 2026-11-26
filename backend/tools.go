@@ -26,9 +26,9 @@ const MaxAdvertisedToolsetBytes = 128 << 10
 
 // AgentTools answers a lane's per-turn tool set: the effective ids —
 // global switches, per-agent opt-outs and MCP gates applied — matched
-// against the registry's executables, each wrapped in the admission chain.
-// An error fails the turn; an empty set is the honest no-tools turn.
-//
+// against the registry's executables, each wrapped in the admission
+// chain, with the internal read_tool_output always beside them. An
+// error fails the turn; the bound seam never resolves to zero tools.
 // TurnTools carries the whole resolution: the admitted invokables, each
 // tool's metadata, and the scrubber for every observable copy of the
 // turn's traffic (the agent's servers' known values plus the pattern
@@ -50,14 +50,19 @@ func (s *TurnService) AgentTools(ctx context.Context, agentID string) (TurnTools
 	if err != nil {
 		return TurnTools{}, fmt.Errorf("resolve tools for %q: %w", agentID, err)
 	}
-	if len(rows) == 0 {
-		return TurnTools{}, nil
-	}
 
-	impls := make([]tool.InvokableTool, 0, len(rows))
-	infos := make([]*schema.ToolInfo, 0, len(rows))
+	impls := make([]tool.InvokableTool, 0, len(rows)+1)
+	infos := make([]*schema.ToolInfo, 0, len(rows)+1)
+	// read_tool_output is internal, never catalog-managed: it rides
+	// beside the effective ids so a shaken context always keeps its
+	// restore path, even when the catalog resolves nothing.
+	impls = append(impls, &readToolOutputTool{svc: s, agentID: agentID})
+	infos = append(infos, readToolOutputInfo)
+
 	sizes := make(map[string]int, len(rows))
-	total := 0
+	// The internal definition is advertised beside them: its fixed
+	// cost rides the same budget the catalog rows are measured against.
+	total := len(readToolOutputInfoJSON)
 	// One credential read per server per turn: the scrubber's known
 	// values and the call deadline both come from the row.
 	configs := make(map[string]mcp.ServerConfig)
@@ -107,9 +112,6 @@ func (s *TurnService) AgentTools(ctx context.Context, agentID string) (TurnTools
 	if total > MaxAdvertisedToolsetBytes {
 		return TurnTools{}, fmt.Errorf("toolset budget exceeded (%d KiB > %d KiB): %s",
 			total>>10, MaxAdvertisedToolsetBytes>>10, largestTools(sizes))
-	}
-	if len(impls) == 0 {
-		return TurnTools{}, nil
 	}
 	return TurnTools{Impls: impls, Infos: infos, Scrubber: security.NewScrubber(values)}, nil
 }

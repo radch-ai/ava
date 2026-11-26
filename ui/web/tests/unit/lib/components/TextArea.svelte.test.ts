@@ -206,6 +206,21 @@ describe('TextArea', () => {
 				.toBeVisible()
 		})
 
+		it('offers /shake for its prefix', async () => {
+			render(TextArea)
+
+			const textarea = page.getByPlaceholder('Enter your query!')
+			await textarea.fill('/sh')
+
+			await expect
+				.element(
+					page.getByRole('option', {
+						name: /\/shake.*Elide old tool outputs/
+					})
+				)
+				.toBeVisible()
+		})
+
 		it('completes the draft on Enter without submitting', async () => {
 			const mockSubmit = vi.fn()
 			render(TextArea, { onsubmit: mockSubmit })
@@ -369,7 +384,7 @@ describe('TextArea', () => {
 
 			await textarea.fill('/')
 			await userEvent.keyboard('{ArrowDown}{ArrowDown}{ArrowDown}{Enter}')
-			await expect.element(textarea).toHaveValue('/reset')
+			await expect.element(textarea).toHaveValue('/shake')
 		})
 
 		it('moves the single selection on hover and fills that row', async () => {

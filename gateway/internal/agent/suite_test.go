@@ -209,6 +209,7 @@ func (j *lazyJournal) seedAgent(agentID string) error {
 type journalHook struct {
 	agent.LifecycleJournal
 	switchThread   func(ctx context.Context, agentID, itemID string) (*backend.ActivatedThread, *backend.JournalBatch, error)
+	shakeThread    func(ctx context.Context, agentID, itemID string) (*backend.ShakeResult, *backend.JournalBatch, error)
 	appendMessages func(ctx context.Context, agentID, itemID string, msgs []backend.ThreadMessageDraft) (*backend.JournalBatch, error)
 	finishItem     func(ctx context.Context, agentID, itemID, outcome, reason string, msgs []backend.ThreadMessageDraft) (*backend.JournalBatch, error)
 	toolFinished   func(ctx context.Context, agentID, itemID, invocationID, result string, errText *string) (*backend.JournalBatch, error)
@@ -233,6 +234,13 @@ func (h *journalHook) RecordToolFinished(ctx context.Context, agentID, itemID, i
 		return h.toolFinished(ctx, agentID, itemID, invocationID, result, errText)
 	}
 	return h.LifecycleJournal.RecordToolFinished(ctx, agentID, itemID, invocationID, result, errText)
+}
+
+func (h *journalHook) ShakeThreadContext(ctx context.Context, agentID, itemID string) (*backend.ShakeResult, *backend.JournalBatch, error) {
+	if h.shakeThread != nil {
+		return h.shakeThread(ctx, agentID, itemID)
+	}
+	return h.LifecycleJournal.ShakeThreadContext(ctx, agentID, itemID)
 }
 
 func (h *journalHook) ExecuteThreadSwitch(ctx context.Context, agentID, itemID string) (*backend.ActivatedThread, *backend.JournalBatch, error) {

@@ -56,6 +56,9 @@ type LifecycleJournal interface {
 	FinishItem(ctx context.Context, agentID, itemID, outcome, reason string, msgs []backend.ThreadMessageDraft) (*backend.JournalBatch, error)
 	// ExecuteThreadSwitch runs a command's durable thread switch.
 	ExecuteThreadSwitch(ctx context.Context, agentID, itemID string) (*backend.ActivatedThread, *backend.JournalBatch, error)
+	// ShakeThreadContext elides this agent's old large tool results
+	// from the replay projection and settles the shake item.
+	ShakeThreadContext(ctx context.Context, agentID, itemID string) (*backend.ShakeResult, *backend.JournalBatch, error)
 	// ReplayAfter answers one bounded replay page, validating the
 	// cursor's history inside the same read.
 	ReplayAfter(ctx context.Context, agentID, historyID string, afterPos int64, limit int) (*backend.JournalPage, error)
@@ -282,10 +285,14 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 	// replay whatever streams from here on.
 	a.beginTurn(msgID)
 
-	// A command item is the whole turn: the durable thread switch and
-	// its completion event, never a model call or a user row.
-	if claim.item.kind == wstypes.QueueItemKindNewThread {
+	// A command item is the whole turn: a durable thread switch or a
+	// context elision and its completion event, never a model call or
+	// a user row.
+	switch claim.item.kind {
+	case wstypes.QueueItemKindNewThread:
 		return a.processCommand(claim, emitCtx, msgID)
+	case wstypes.QueueItemKindShake:
+		return a.processShake(claim, emitCtx, msgID)
 	}
 
 	// Starting is the first durable step: the execution thread resolves,
@@ -325,7 +332,6 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 		return a.setupFailure(emitCtx, claim, msgID, "load conversation history", err)
 	}
 	runInput := mapAgentThread(records)
-
 	// The resolver seam is immutable after construction, read
 	// directly like every other seam.
 	if a.resolveModel == nil {
@@ -363,20 +369,28 @@ func (a *UserAgent) processTurn(claim *turnClaim) turnOutcome {
 	a.setRecorder(rec)
 	defer rec.close()
 	// Tools arrive through their own seam — permissions and global
-	// switches already applied, ready to wrap. A failed read or an
-	// unreadable manifest fails the turn; an empty set is an honest
-	// tool-less turn. A stop during setup is not a failure.
-	var turnTools []tool.BaseTool
+	// switches already applied, ready to wrap; the bound backend seam
+	// always includes the internal read tool, so only an unbound seam
+	// runs a tool-less turn. A failed read or an unreadable manifest
+	// fails the turn. A stop during setup is not a failure.
+	var resolved backend.TurnTools
 	if a.tools != nil {
-		resolved, err := a.tools(claim.ctx, a.state.agentID)
+		fetched, err := a.tools(claim.ctx, a.state.agentID)
 		if err != nil {
 			return a.setupFailure(emitCtx, claim, msgID, "resolve tools", err)
 		}
-		// The turn's scrubber rides the same resolution: known values
-		// and implementations come from one pass.
+		resolved = fetched
+		// The turn's scrubber rides the same resolution, empty toolset
+		// included: known values and implementations come from one
+		// pass, and a tool-less turn must not fall back to the pattern
+		// battery over its seam's scrubber.
 		a.mu.Lock()
 		a.turnScrub = resolved.Scrubber
 		a.mu.Unlock()
+	}
+	var turnTools []tool.BaseTool
+	if len(resolved.Impls) > 0 {
+		var err error
 		if turnTools, err = a.wrapTools(rec, resolved); err != nil {
 			return a.setupFailure(emitCtx, claim, msgID, "wrap tools", err)
 		}

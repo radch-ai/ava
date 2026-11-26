@@ -59,6 +59,13 @@ func TestQueueItemKindAndStateChecks(t *testing.T) {
 		 VALUES ('i1', 'a', 'chat', 'x', 'accepted', 1)`); err == nil {
 		t.Fatal("unknown kind stored, want CHECK rejection")
 	}
+	// The /shake command is a third admission kind: it runs no model and
+	// stores no row, exactly like /new.
+	if _, err := sqlDB.Exec(
+		`INSERT INTO queue_items (id, agent_id, kind, content, state, accepted_ms)
+		 VALUES ('i-shake', 'a', 'shake', '', 'accepted', 1)`); err != nil {
+		t.Fatalf("shake kind rejected: %v", err)
+	}
 	// Every legal state stores; anything else fails.
 	for _, state := range []string{"accepted", "started", "completed", "failed", "stopped", "cancelled", "interrupted"} {
 		if _, err := sqlDB.Exec(

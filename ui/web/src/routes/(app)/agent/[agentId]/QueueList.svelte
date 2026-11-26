@@ -21,6 +21,8 @@
 		onsendnow: (itemId: string) => void
 	} = $props()
 
+	/** Queue kinds that render as commands: monospaced, never prose. */
+	const commandKinds = new Set(['new_thread', 'shake'])
 	const actionsDisabled = $derived(pendingId !== null)
 </script>
 
@@ -35,7 +37,7 @@
 			<span class="text-primary shrink-0 text-xs font-medium">Next</span>
 			<span
 				class="text-muted-foreground min-w-0 flex-1 truncate text-sm"
-				class:font-mono={next.kind === 'new_thread'}
+				class:font-mono={commandKinds.has(next.kind)}
 			>
 				{next.content}
 			</span>
@@ -47,7 +49,7 @@
 		>
 			<span
 				class="text-muted-foreground min-w-0 flex-1 truncate text-sm"
-				class:font-mono={item.kind === 'new_thread'}
+				class:font-mono={commandKinds.has(item.kind)}
 			>
 				{item.content}
 			</span>

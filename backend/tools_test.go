@@ -8,8 +8,11 @@ package backend_test
 import (
 	"context"
 	"database/sql"
+	"slices"
+	"strings"
 	"testing"
 
+	"github.com/cloudwego/eino/components/tool"
 	"github.com/rs/zerolog"
 
 	"github.com/radch-ai/ava/backend"
@@ -46,7 +49,9 @@ func builtinID(t *testing.T, queries *db.Queries) string {
 	return rows[0].ID
 }
 
-// fetchTools returns the tool names AgentTools handed the lane.
+// fetchTools returns the catalog tool names AgentTools handed the
+// lane; the internal read_tool_output is filtered out so the catalog
+// pins below assert exactly the catalog.
 func fetchTools(t *testing.T, svc *backend.TurnService, agentID string) []string {
 	t.Helper()
 	resolved, err := svc.AgentTools(context.Background(), agentID)
@@ -54,8 +59,10 @@ func fetchTools(t *testing.T, svc *backend.TurnService, agentID string) []string
 		t.Fatalf("AgentTools: %v", err)
 	}
 	var names []string
-	for _, info := range resolved.Infos {
-		names = append(names, info.Name)
+	for _, name := range toolNames(resolved) {
+		if name != "read_tool_output" {
+			names = append(names, name)
+		}
 	}
 	return names
 }
@@ -197,5 +204,133 @@ func TestSyncDoesNotRestoreOptOut(t *testing.T) {
 		t.Fatal(err)
 	} else if len(rows) != 1 || rows[0].ID != id {
 		t.Errorf("superagent tools after reboot = %v, want [%s]", rows, id)
+	}
+}
+
+// read_tool_output is the read side of /shake's elision: an internal
+// tool, not a catalog row — assembled beside the effective ids for
+// every agent, never user-managed, and present even when the catalog
+// resolves nothing, so a placeholder is never stranded.
+func TestAgentToolsIncludesReadToolOutput(t *testing.T) {
+	_, queries, svc := toolsDB(t, true)
+
+	resolved, err := svc.AgentTools(context.Background(), "research")
+	if err != nil {
+		t.Fatalf("AgentTools: %v", err)
+	}
+	if !hasTool(resolved, "read_tool_output") {
+		t.Fatalf("fresh agent fetched = %v, want read_tool_output offered internally", toolNames(resolved))
+	}
+
+	// Exactly one definition rides, and it is never catalog-managed:
+	// a synced row of the same name would hand the model two
+	// same-name definitions.
+	if got := strings.Count(strings.Join(toolNames(resolved), ","), "read_tool_output"); got != 1 {
+		t.Fatalf("read_tool_output offered %d times = %v, want exactly one", got, toolNames(resolved))
+	}
+	catalog, err := queries.ListTools(context.Background())
+	if err != nil {
+		t.Fatalf("list catalog: %v", err)
+	}
+	for _, row := range catalog {
+		if row.Name == "read_tool_output" {
+			t.Fatal("read_tool_output must never be a catalog row")
+		}
+	}
+
+	// The global switch is the outer gate for every catalog tool; the
+	// internal tool stays offered behind it, so an elided context
+	// keeps its restore path.
+	id := builtinID(t, queries)
+	if _, err := queries.ToggleToolEnabled(t.Context(), db.ToggleToolEnabledParams{Enabled: 0, ID: id}); err != nil {
+		t.Fatalf("disable %s: %v", id, err)
+	}
+	resolved, err = svc.AgentTools(context.Background(), "research")
+	if err != nil {
+		t.Fatalf("AgentTools behind the switch: %v", err)
+	}
+	if !hasTool(resolved, "read_tool_output") {
+		t.Fatalf("catalog-empty fetch = %v, want read_tool_output still offered", toolNames(resolved))
+	}
+}
+
+// hasTool reports whether one resolved tool id is present.
+func hasTool(resolved backend.TurnTools, id string) bool {
+	return slices.Contains(toolNames(resolved), id)
+}
+
+// toolNames lists the resolved tool ids.
+func toolNames(resolved backend.TurnTools) []string {
+	out := make([]string, 0, len(resolved.Infos))
+	for _, info := range resolved.Infos {
+		out = append(out, info.Name)
+	}
+	return out
+}
+
+// The internal tool resolved by AgentTools is the scoped read itself:
+// one call restores this agent's elided original, and another agent's
+// reference answers as an ordinary unknown-reference result.
+func TestAgentToolsReadToolOutputInvokesScopedRead(t *testing.T) {
+	turns, sqlDB := journalService(t)
+	ctx := context.Background()
+	original := strings.Repeat("x", 3000)
+
+	seedRows(t, sqlDB, "research", []backend.ThreadMessageDraft{
+		userDraft("search", "t1"),
+		groupDraft(t, "t1", "", callDecl("c1", "fetch")),
+		toolDraft(t, "t1", "c1", "fetch", `{}`, original, nil), // research-row-2
+	})
+	if _, err := sqlDB.Exec(
+		`UPDATE thread_messages SET elided = 1 WHERE agent_id = 'research' AND id = 'research-row-2'`); err != nil {
+		t.Fatalf("elide seed row: %v", err)
+	}
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "other", Name: "Other", Icon: "globe"})
+	seedRows(t, sqlDB, "other", []backend.ThreadMessageDraft{
+		userDraft("search", "t1"),
+		groupDraft(t, "t1", "", callDecl("c1", "fetch")),
+		toolDraft(t, "t1", "c1", "fetch", `{}`, original, nil), // other-row-2
+	})
+	if _, err := sqlDB.Exec(
+		`UPDATE thread_messages SET elided = 1 WHERE agent_id = 'other' AND id = 'other-row-2'`); err != nil {
+		t.Fatalf("elide other row: %v", err)
+	}
+
+	resolved, err := turns.AgentTools(ctx, "research")
+	if err != nil {
+		t.Fatalf("AgentTools: %v", err)
+	}
+	var impl tool.InvokableTool
+	for i, info := range resolved.Infos {
+		if info.Name == "read_tool_output" {
+			impl = resolved.Impls[i]
+		}
+	}
+	if impl == nil {
+		t.Fatalf("resolved = %v, want read_tool_output", toolNames(resolved))
+	}
+
+	got, err := impl.InvokableRun(ctx, `{"reference":"research-row-2"}`)
+	if err != nil || got != original {
+		t.Fatalf("own reference = %d bytes, %v; want the stored original", len(got), err)
+	}
+	got, err = impl.InvokableRun(ctx, `{"reference":"other-row-2"}`)
+	if err != nil || got != "read_tool_output: unknown tool output reference" {
+		t.Fatalf("cross-agent reference = %q, %v; want the unknown-reference result", got, err)
+	}
+
+	// A malformed argument is the tool's own result, never an error:
+	// the model corrects its call instead of losing the turn.
+	for args, want := range map[string]string{
+		``:                  "decode arguments",
+		`null`:              `"reference" is required`,
+		`{}`:                `"reference" is required`,
+		`{"reference":123}`: "decode arguments",
+		`not json`:          "decode arguments",
+	} {
+		got, err := impl.InvokableRun(ctx, args)
+		if err != nil || !strings.Contains(got, want) {
+			t.Errorf("args %q = %q, %v; want result text containing %q", args, got, err, want)
+		}
 	}
 }

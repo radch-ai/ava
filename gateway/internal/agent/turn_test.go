@@ -513,6 +513,30 @@ func TestAssistantTextScrubbedAtPersistence(t *testing.T) {
 	}
 }
 
+// A resolved scrubber owns the observable copies even when the toolset
+// is empty: an empty Impls list is still a resolved seam, and its
+// scrubber — here a zero scrubber that redacts nothing — must ride the
+// turn instead of the nil fallback's pattern battery.
+func TestEmptyToolsetKeepsResolvedScrubber(t *testing.T) {
+	secret := "sk_live_QX9SLYN1SZV7wxyz0"
+	llm := newScriptedLLM(t, sseChunk("the key is "+secret))
+	mgr, _ := journaledLane(t, &agent.UserAgentManagerOptions{
+		ResolveModel:   fixedResolver(llm.URL),
+		GetAgentThread: emptyThread,
+		Tools: func(context.Context, string) (backend.TurnTools, error) {
+			// Zero tools, but the scrubber is resolved: the seam
+			// owns scrub policy for this turn.
+			return backend.TurnTools{Scrubber: new(backend.Scrubber)}, nil
+		},
+	})
+
+	c, sc := wsPair(t)
+	submit(t, mgr, "agent-scrub-seam", "conn-1", sc, "hi")
+	_, p := readUntilMessage(t, c)
+	require.Contains(t, p.Content, secret,
+		"the resolved scrubber owns the durable copy; the pattern battery must not re-apply")
+}
+
 // A canceled turn settles as a stop even when the failing seam
 // returned its own error: classification goes by the turn's context,
 // which has exactly one cancel source.

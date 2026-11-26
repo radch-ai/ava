@@ -99,6 +99,7 @@ const maxReplayPageRows = 1000
 const (
 	itemKindPrompt    = "prompt"
 	itemKindNewThread = "new_thread"
+	itemKindShake     = "shake"
 )
 
 // restartReason explains every outcome recovery assigns.
@@ -343,7 +344,7 @@ func (s *TurnService) afterJournalCommit(ctx context.Context, agentID string, ev
 // journals the acceptance. Admission is durable before the gateway
 // exposes the item, so a crash here leaves a known item recovery cancels.
 func (s *TurnService) AcceptItem(ctx context.Context, agentID, itemID, content, kind string, model *apitypes.ModelEntry) (*JournalBatch, error) {
-	if kind != itemKindPrompt && kind != itemKindNewThread {
+	if kind != itemKindPrompt && kind != itemKindNewThread && kind != itemKindShake {
 		return nil, fmt.Errorf("accept item: unknown kind %q", kind)
 	}
 	var modelJSON sql.NullString

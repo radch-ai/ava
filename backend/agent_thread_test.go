@@ -214,6 +214,45 @@ func TestGetAgentThreadExcludesStructureOnlyGroup(t *testing.T) {
 	}
 }
 
+// An elided tool row keeps its position and pairing; only its content
+// becomes the placeholder naming the stored row.
+func TestGetAgentThreadProjectsElidedOutcome(t *testing.T) {
+	sqlDB, svc := resolverDB(t)
+	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "r-elide", Name: "Thread", Icon: "globe"})
+
+	drafts := []backend.ThreadMessageDraft{
+		userDraft("search", "t1"),
+		groupDraft(t, "t1", "",
+			backend.AgentThreadCall{ID: "call-a", Name: "web_search", Arguments: `{"q":"x"}`},
+		),
+		toolDraft(t, "t1", "call-a", "web_search", `{"q":"x"}`, "a hits", nil),
+	}
+	seedRows(t, sqlDB, "r-elide", drafts)
+	if _, err := sqlDB.Exec(
+		`UPDATE thread_messages SET elided = 1 WHERE agent_id = 'r-elide' AND role = 'tool'`); err != nil {
+		t.Fatalf("mark elided: %v", err)
+	}
+
+	msgs, err := svc.GetAgentThread(context.Background(), "r-elide")
+	if err != nil {
+		t.Fatalf("GetAgentThread: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("replay messages = %d, want the user, the call group, the outcome", len(msgs))
+	}
+	if len(msgs[1].ToolCalls) != 1 || msgs[1].ToolCalls[0].ID != "call-a" ||
+		msgs[1].ToolCalls[0].Arguments != `{"q":"x"}` {
+		t.Errorf("call group changed: %+v", msgs[1].ToolCalls)
+	}
+	outcome := msgs[2]
+	want := fmt.Sprintf("[elided tool output: %d bytes. Restore it with the read_tool_output tool: {\"reference\":%q}]",
+		len("a hits"), "r-elide-row-2")
+	if outcome.Role != apitypes.ThreadRoleTool || outcome.ToolCallID != "call-a" ||
+		outcome.ToolName != "web_search" || !outcome.Elided || outcome.Content != want {
+		t.Errorf("outcome = %+v, want the placeholder %q", outcome, want)
+	}
+}
+
 func TestGetAgentThreadMapsToolErrorToContent(t *testing.T) {
 	sqlDB, svc := resolverDB(t)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "r5", Name: "Thread", Icon: "globe"})
