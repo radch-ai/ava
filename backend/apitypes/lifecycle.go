@@ -27,6 +27,12 @@ const (
 	// LifecycleThreadChanged reports a command's new thread, its
 	// predecessor, and its divider.
 	LifecycleThreadChanged = "thread_changed"
+	// LifecycleConversationRefresh reports a committed mid-loop
+	// compaction rotation: the same prompt item keeps running in the
+	// successor the event names, and Page is the authoritative
+	// post-activation display page that replaces the client's cached
+	// projection wholesale.
+	LifecycleConversationRefresh = "conversation_refresh"
 )
 
 // Terminal item outcomes.
@@ -82,4 +88,10 @@ type LifecycleEvent struct {
 	// CreatedAt is the fact's commit time, ISO-formatted like every
 	// other display timestamp.
 	CreatedAt string `json:"createdAt,omitempty"`
+	// Page is the authoritative display page a committed mid-loop
+	// rotation carries — divider, seeded summary, referenced rows, and
+	// the rows already written to the successor — so subscribers
+	// replace their cached placement and pagination cursor in one
+	// fact instead of inferring it from row events.
+	Page *ThreadPage `json:"page,omitempty"`
 }

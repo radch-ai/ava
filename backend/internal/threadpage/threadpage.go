@@ -100,6 +100,7 @@ func Read(ctx context.Context, queries *db.Queries, agentID, rawCursor string, l
 	threadCreatedAt := int64(0)
 	threadKind := ""
 	beforeCreatedAt := int64(0)
+	beforeBand := int64(0)
 	beforeMessageID := sql.NullString{}
 
 	if rawCursor == "" {
@@ -141,10 +142,12 @@ func Read(ctx context.Context, queries *db.Queries, agentID, rawCursor string, l
 		threadCreatedAt = meta.CreatedAt
 		threadKind = meta.Kind
 		if anchor.messageID != "" {
-			// The anchor must be a visible row of this thread: a
-			// foreign id is an invalid cursor, not an empty page.
+			// The anchor must be a row this thread displays -- its
+			// own or one its references carry: a foreign id is an
+			// invalid cursor, not an empty page. The placement key
+			// (sort triple) is what the keyset read binds.
 			row, err := queries.GetThreadMessageMeta(ctx, db.GetThreadMessageMetaParams{
-				AgentID: agentID, ThreadID: threadID, ID: anchor.messageID,
+				ID: agentID, AgentID: agentID, ThreadID: threadID, AnchorID: anchor.messageID,
 			})
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil, fmt.Errorf("%w: %q", ErrInvalidCursor, rawCursor)
@@ -152,6 +155,7 @@ func Read(ctx context.Context, queries *db.Queries, agentID, rawCursor string, l
 				return nil, fmt.Errorf("resolve cursor for %q: %w", agentID, err)
 			}
 			beforeCreatedAt = row.CreatedAt
+			beforeBand = row.Band
 			beforeMessageID = sql.NullString{String: row.ID, Valid: true}
 		}
 	}
@@ -163,11 +167,13 @@ func Read(ctx context.Context, queries *db.Queries, agentID, rawCursor string, l
 	hasOlder := false
 	if beforeMessageID.Valid {
 		anchored, err := queries.ListThreadPageRowsBefore(ctx, db.ListThreadPageRowsBeforeParams{
+			ID:              agentID,
 			AgentID:         agentID,
 			ThreadID:        threadID,
 			BeforeCreatedAt: beforeCreatedAt,
+			BeforeBand:      beforeBand,
 			BeforeID:        beforeMessageID.String,
-			Limit:           limit + 1,
+			RowLimit:        limit + 1,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("load thread for %q: %w", agentID, err)
@@ -182,9 +188,10 @@ func Read(ctx context.Context, queries *db.Queries, agentID, rawCursor string, l
 		}
 	} else {
 		newest, err := queries.ListThreadPageRows(ctx, db.ListThreadPageRowsParams{
+			ID:       agentID,
 			AgentID:  agentID,
 			ThreadID: threadID,
-			Limit:    limit + 1,
+			RowLimit: limit + 1,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("load thread for %q: %w", agentID, err)

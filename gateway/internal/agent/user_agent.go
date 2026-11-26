@@ -73,6 +73,11 @@ type LifecycleJournal interface {
 	// RotateThreadCompacted commits the itemless compaction rotation,
 	// tagged with the upcoming prompt's item id.
 	RotateThreadCompacted(ctx context.Context, agentID, tagItemID, summary string) (*backend.ActivatedThread, *backend.JournalBatch, error)
+	// RotateThreadMidTurn commits the mid-loop rotation for one running
+	// prompt item: successor thread seeded with the summary, ordered
+	// references to the retained rows, pointer swap, and the item's
+	// rebind — published as one refresh event.
+	RotateThreadMidTurn(ctx context.Context, agentID, itemID, summary string, retain backend.MidTurnRetainMode) (*backend.ActivatedThread, *backend.JournalBatch, error)
 	// ReplayAfter answers one bounded replay page, validating the
 	// cursor's history inside the same read.
 	ReplayAfter(ctx context.Context, agentID, historyID string, afterPos int64, limit int) (*backend.JournalPage, error)
@@ -151,9 +156,9 @@ type UserAgent struct {
 	mu    sync.Mutex
 
 	// working reports a turn in flight; reasoning reports the model
-	// streaming reasoning tokens within it; compacting reports the
-	// pre-prompt automation's summarization call running ahead of a
-	// claim. All guarded by mu.
+	// streaming reasoning tokens within it; compacting reports
+	// auto-compaction's summarization call in flight — the pre-prompt
+	// checker's or a mid-loop rotation's. All guarded by mu.
 	working    bool
 	reasoning  bool
 	compacting bool
@@ -467,7 +472,40 @@ func (a *UserAgent) processTurn(claim *turnClaim, handoff *prePromptHandoff) tur
 			return a.setupFailure(emitCtx, claim, msgID, "wrap tools", err)
 		}
 	}
+	// The mid-loop boundary: the pre-prompt checker's saved records
+	// (prompt excluded) when it ran, otherwise the committed history
+	// minus the user row that just landed as its trailing record. The
+	// turn's tool infos ride the same resolution — no refetch at any
+	// checkpoint.
+	var mlc *midLoopCompactor
+	if handoff != nil {
+		mlc = &midLoopCompactor{
+			lane: a, itemID: msgID, cfg: cfg, emitCtx: emitCtx,
+			instruction: instruction, toolInfos: resolved.Infos, scrub: resolved.Scrubber,
+			olderRecords:       handoff.records,
+			olderIsSummaryOnly: len(handoff.records) == 1 && handoff.records[0].IsSummary,
+			olderPrefixCount:   len(handoff.records),
+		}
+	} else if len(records) == 0 {
+		a.logger.Warn().Str("agent_id", a.state.agentID).
+			Msg("mid-loop compaction skipped; history read returned no rows")
+	} else if trailing := records[len(records)-1]; trailing.Role == apitypes.ThreadRoleUser {
+		older := records[:len(records)-1]
+		mlc = &midLoopCompactor{
+			lane: a, itemID: msgID, cfg: cfg, emitCtx: emitCtx,
+			instruction: instruction, toolInfos: resolved.Infos, scrub: resolved.Scrubber,
+			olderRecords:       older,
+			olderIsSummaryOnly: len(older) == 1 && older[0].IsSummary,
+			olderPrefixCount:   len(records) - 1,
+		}
+	} else {
+		a.logger.Warn().Str("agent_id", a.state.agentID).
+			Msg("mid-loop compaction skipped; history tail is not the prompt row")
+	}
 	handlers := []adk.TypedChatModelAgentMiddleware[*schema.Message]{rec}
+	if mlc != nil {
+		handlers = append(handlers, mlc)
+	}
 	einoAgent, err := buildEinoAgent(claim.ctx, a.state.agentID, instruction, chatModel, turnTools, handlers)
 	if err != nil {
 		return a.setupFailure(emitCtx, claim, msgID, "build agent", err)
@@ -697,6 +735,21 @@ func (a *UserAgent) dropCommittedPrefix() {
 	defer a.mu.Unlock()
 	a.turnPrefix.Reset()
 	a.turnPrefixGen++
+}
+
+// noteMidLoopRotation records that the live turn's prompt row is
+// durably placed by the committed rotation — referenced into the
+// successor (ordinary) or left in its earlier segment (rolling). The
+// queue snapshot stops naming the user row, so a reconnecting device's
+// restored live prefix cannot insert the original submission again at
+// the tail: the canonical projection already carries or precedes it.
+// The caller runs it inside the rotation's publication boundary,
+// before the refresh event exists, so no snapshot can observe the
+// stale id after it.
+func (a *UserAgent) noteMidLoopRotation() {
+	a.state.mu.Lock()
+	a.state.userMsgID = ""
+	a.state.mu.Unlock()
 }
 
 // streamAnswer relays one streamed answer in coalesced deltas and

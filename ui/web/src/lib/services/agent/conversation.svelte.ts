@@ -268,6 +268,15 @@ export function createConversation(agentId: string, seed: ConversationSeed) {
 				placeStoredRows(event.threadId, event.rows ?? [])
 				break
 			}
+			case 'conversation_refresh': {
+				// A committed mid-loop rotation: the authoritative page
+				// replaces the cached projection and its pagination
+				// cursor wholesale. Only sync_ready replaces the live
+				// tail — the running turn's continuation must survive
+				// the refresh below the replaced segments.
+				applySnapshot(event.page)
+				break
+			}
 		}
 	}
 

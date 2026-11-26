@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 
 	"github.com/radch-ai/ava/backend"
@@ -253,6 +254,69 @@ func (f *fakeJournal) RotateThreadCompacted(_ context.Context, agentID, tagItemI
 			Kind: apitypes.LifecycleThreadChanged, ItemID: tagItemID, ItemKind: item.kind,
 			ThreadID: tagItemID + "-successor", PreviousThreadID: "thread-" + agentID,
 		}), nil
+}
+
+// RotateThreadMidTurn mirrors the real rotation's contract on the
+// in-memory store: only a running prompt rotates, the successor
+// inherits the retained tail as references derived from the item's own
+// recorded writes, and one refresh event carries a minimal page.
+func (f *fakeJournal) RotateThreadMidTurn(_ context.Context, agentID, itemID, summary string,
+	retain backend.MidTurnRetainMode) (*backend.ActivatedThread, *backend.JournalBatch, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	item := f.items[fakeKey(agentID, itemID)]
+	if item == nil || item.state != "started" || item.kind != "prompt" {
+		return nil, nil, errors.New("item is not a running prompt")
+	}
+	if summary == "" {
+		return nil, nil, errors.New("empty summary")
+	}
+	type row struct {
+		role      string
+		content   string
+		toolCalls bool
+	}
+	var rows []row
+	for _, w := range f.writesFor(itemID) {
+		for _, d := range w.Drafts {
+			rows = append(rows, row{role: string(d.Role), content: d.Content, toolCalls: len(d.ToolCalls) > 0})
+		}
+	}
+	if retain == backend.RetainLatestBatch {
+		from := -1
+		for i := len(rows) - 1; i >= 0; i-- {
+			if rows[i].role == "assistant" && rows[i].toolCalls {
+				from = i
+				break
+			}
+		}
+		if from < 0 {
+			return nil, nil, errors.New("no complete assistant/tool batch to retain")
+		}
+		rows = rows[from:]
+	}
+	if len(rows) == 0 {
+		return nil, nil, errors.New("retained no rows")
+	}
+	successor := itemID + "-midsuccessor"
+	previous := item.threadID
+	item.threadID = successor
+	page := []apitypes.ThreadMessage{{
+		ID: successor, Role: apitypes.ThreadRoleDivider, Content: "Compacted",
+	}}
+	page = append(page, apitypes.ThreadMessage{
+		ID: successor + "-summary", Role: apitypes.ThreadRoleAssistant, Content: summary,
+	})
+	for i, r := range rows {
+		page = append(page, apitypes.ThreadMessage{
+			ID: itemID + "-ref-" + strconv.Itoa(i), Role: apitypes.ThreadRole(r.role), Content: r.content,
+		})
+	}
+	return &backend.ActivatedThread{ID: successor, PreviousID: previous}, f.appendLocked(agentID, itemID, apitypes.LifecycleEvent{
+		Kind: apitypes.LifecycleConversationRefresh, ItemID: itemID, ItemKind: "prompt",
+		ThreadID: successor, PreviousThreadID: previous,
+		Page: &apitypes.ThreadPage{Items: page, ThreadID: successor},
+	}), nil
 }
 
 func (f *fakeJournal) ExecuteCompaction(_ context.Context, agentID, itemID, summary string) (*backend.ActivatedThread, *backend.JournalBatch, error) {

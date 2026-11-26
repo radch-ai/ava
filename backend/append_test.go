@@ -304,6 +304,12 @@ func TestItemMessagesRejectCorruptDrafts(t *testing.T) {
 			name:   "tool calls on a user row",
 			drafts: []backend.ThreadMessageDraft{{Role: apitypes.ThreadRoleUser, ToolCalls: []byte("[]")}},
 		},
+		{
+			name: "summary marker outside a compaction thread",
+			drafts: []backend.ThreadMessageDraft{
+				{Role: apitypes.ThreadRoleAssistant, Content: "fake summary", IsSummary: true},
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

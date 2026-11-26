@@ -11,7 +11,7 @@
 		 * actions disable while one is in flight. */
 		pendingId = null,
 		/** Auto-compaction in flight: the send-now actions step aside
-		 * while the checker's summarization runs. */
+		 * while the lane summarizes. */
 		compacting = false,
 		onsendnow
 	}: {

@@ -24,7 +24,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -239,6 +238,23 @@ func rawJSONValue(s string) []byte {
 func (s *TurnService) insertRows(ctx context.Context, qtx *db.Queries, agentID, threadID string, stampMs int64, drafts []ThreadMessageDraft) ([]apitypes.ThreadMessage, error) {
 	// Structure is the read path's contract: a row the projection would
 	// treat as corruption is rejected here, before any write.
+	// The summary marker is the compaction seed's identity: a draft
+	// carrying it may land only in a compact-kind thread, so no other
+	// writer can forge the row that range detection and display banding
+	// key on. Checked once, before any write.
+	for _, m := range drafts {
+		if !m.IsSummary {
+			continue
+		}
+		meta, err := qtx.GetThreadMeta(ctx, db.GetThreadMetaParams{AgentID: agentID, ID: threadID})
+		if err != nil {
+			return nil, fmt.Errorf("summary draft: resolve thread %s: %w", threadID, err)
+		}
+		if meta.Kind != threadpage.CompactedKind {
+			return nil, fmt.Errorf("summary rows may only seed a compaction successor, not thread %s (kind %s)", threadID, meta.Kind)
+		}
+		break
+	}
 	seen := make(map[string]struct{}, len(drafts))
 	rows := make([]apitypes.ThreadMessage, 0, len(drafts))
 	for i, m := range drafts {
@@ -266,6 +282,7 @@ func (s *TurnService) insertRows(ctx context.Context, qtx *db.Queries, agentID, 
 			TurnID:    m.TurnID,
 			ToolCalls: toolCalls,
 			ThreadID:  threadID,
+			IsSummary: boolInt(m.IsSummary),
 		}); err != nil {
 			return nil, fmt.Errorf("insert row %d: %w", i, err)
 		}
@@ -824,10 +841,11 @@ func (s *TurnService) ExecuteCompaction(ctx context.Context, agentID, itemID, su
 			// convention every row an item mints follows, and a lone
 			// assistant row projects as a plain message.
 			rows, err := s.insertRows(ctx, qtx, agentID, threadID, stamp, []ThreadMessageDraft{{
-				ID:      uuid.NewString(),
-				Role:    apitypes.ThreadRoleAssistant,
-				Content: summary,
-				TurnID:  itemID,
+				ID:        uuid.NewString(),
+				Role:      apitypes.ThreadRoleAssistant,
+				Content:   summary,
+				TurnID:    itemID,
+				IsSummary: true,
 			}})
 			if err != nil {
 				return nil, err
@@ -938,10 +956,11 @@ func (s *TurnService) RotateThreadCompacted(ctx context.Context, agentID, tagIte
 			// the convention every row an item mints follows, and a
 			// lone assistant row projects as a plain message.
 			rows, err := s.insertRows(ctx, qtx, agentID, threadID, stamp, []ThreadMessageDraft{{
-				ID:      uuid.NewString(),
-				Role:    apitypes.ThreadRoleAssistant,
-				Content: summary,
-				TurnID:  tagItemID,
+				ID:        uuid.NewString(),
+				Role:      apitypes.ThreadRoleAssistant,
+				Content:   summary,
+				TurnID:    tagItemID,
+				IsSummary: true,
 			}})
 			if err != nil {
 				return nil, err
@@ -987,6 +1006,208 @@ func (s *TurnService) RotateThreadCompacted(ctx context.Context, agentID, tagIte
 				break
 			}
 		}
+	}
+	return activated, batch, nil
+}
+
+// MidTurnRetainMode selects which of the running item's committed rows
+// a mid-loop rotation carries into the successor as ordered references.
+type MidTurnRetainMode int
+
+const (
+	// RetainCurrentTurn keeps the whole current prompt: the user row
+	// and every completed assistant/tool round of the running item.
+	RetainCurrentTurn MidTurnRetainMode = iota
+	// RetainLatestBatch keeps only the trailing native batch — the
+	// latest assistant call group and its tool outcomes — so the
+	// summarizer may fold the prompt and earlier rounds into the
+	// summary.
+	RetainLatestBatch
+)
+
+// midTurnRefreshPageLimit is the display page a committed mid-loop
+// rotation carries on its refresh event — the same newest-page budget
+// the synchronization snapshot serves.
+const midTurnRefreshPageLimit = 20
+
+// RotateThreadMidTurn is the mid-loop automation's rotation: between
+// two completed rounds of one running prompt item, it creates the
+// linked successor, seeds the summary, stores the retained tail as
+// ordered references to the source rows, activates the successor, and
+// rebinds the item's subsequent writes there — one transaction, so a
+// half-rotated turn can never be observed. The item stays started and
+// unsettled: its own turn settles it, in the successor. The single
+// refresh event carries the post-activation display page; no
+// thread_changed is minted, because the page is its superset and replay
+// applies journal order.
+func (s *TurnService) RotateThreadMidTurn(ctx context.Context, agentID, itemID, summary string, retain MidTurnRetainMode) (*ActivatedThread, *JournalBatch, error) {
+	var activated *ActivatedThread
+	batch, err := journalTx(ctx, s, agentID, "rotate thread mid-turn",
+		func(qtx *db.Queries, stamp, head int64) (*JournalBatch, error) {
+			if summary == "" {
+				return nil, errors.New("rotate thread mid-turn: empty summary")
+			}
+			item, err := qtx.GetQueueItem(ctx, db.GetQueueItemParams{AgentID: agentID, ID: itemID})
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, errItemNotStarted
+			} else if err != nil {
+				return nil, err
+			}
+			if item.State != "started" {
+				return nil, fmt.Errorf("%s: %w", itemID, errItemNotStarted)
+			}
+			if item.Kind != itemKindPrompt {
+				return nil, fmt.Errorf("rotate thread mid-turn: item %s has kind %q", itemID, item.Kind)
+			}
+			if !item.ThreadID.Valid {
+				return nil, fmt.Errorf("%s: %w", itemID, errItemNotStarted)
+			}
+			source := item.ThreadID.String
+			// The rotation must land on the thread the turn is
+			// actually writing: a stale active pointer means another
+			// boundary moved underneath the checkpoint.
+			active, err := qtx.GetActiveThreadID(ctx, agentID)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil, ErrUnknownAgent
+				}
+				return nil, err
+			}
+			if active != source {
+				return nil, fmt.Errorf("rotate thread mid-turn: active thread %q is not item %s's thread %q", active, itemID, source)
+			}
+			// Between rounds only: a checkpoint with an invocation
+			// still open is not a boundary the rotation may cross.
+			open, err := qtx.CountOpenItemInvocations(ctx, db.CountOpenItemInvocationsParams{
+				AgentID: agentID, ItemID: itemID,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if open != 0 {
+				return nil, fmt.Errorf("rotate thread mid-turn: item %s has %d open invocations", itemID, open)
+			}
+			turnRows, err := qtx.ListItemTurnRows(ctx, db.ListItemTurnRowsParams{
+				AgentID: agentID, ThreadID: source, TurnID: itemID,
+			})
+			if err != nil {
+				return nil, err
+			}
+			retainFrom := 0
+			if retain == RetainLatestBatch {
+				// The trailing batch is the last assistant row that
+				// declared calls plus everything after it — its
+				// outcomes in native order, parallel batch included.
+				retainFrom = -1
+				for i := len(turnRows) - 1; i >= 0; i-- {
+					row := turnRows[i]
+					if row.Role != string(apitypes.ThreadRoleAssistant) || !row.ToolCalls.Valid {
+						continue
+					}
+					if calls := row.ToolCalls.String; calls == "" || calls == "[]" || calls == "null" {
+						continue
+					}
+					retainFrom = i
+					break
+				}
+				if retainFrom < 0 {
+					return nil, fmt.Errorf("rotate thread mid-turn: item %s has no complete assistant/tool batch to retain", itemID)
+				}
+				tools := 0
+				for _, row := range turnRows[retainFrom+1:] {
+					if row.Role == string(apitypes.ThreadRoleTool) {
+						tools++
+					}
+				}
+				if tools == 0 {
+					return nil, fmt.Errorf("rotate thread mid-turn: item %s's latest batch has no tool outcomes", itemID)
+				}
+			}
+			if len(turnRows[retainFrom:]) == 0 {
+				return nil, fmt.Errorf("rotate thread mid-turn: item %s retained no rows", itemID)
+			}
+
+			threadID := uuid.NewString()
+			row, err := qtx.CreateThreadFromActive(ctx, db.CreateThreadFromActiveParams{
+				ThreadID:  threadID,
+				CreatedMs: stamp,
+				AgentID:   agentID,
+				Kind:      threadpage.CompactedKind,
+			})
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, ErrUnknownAgent
+			} else if err != nil {
+				return nil, err
+			}
+			// The seeded row carries the running item's id as its
+			// turn, like every row the item mints, and the summary
+			// marker the range detection keys on.
+			if _, err := s.insertRows(ctx, qtx, agentID, threadID, stamp, []ThreadMessageDraft{{
+				ID:        uuid.NewString(),
+				Role:      apitypes.ThreadRoleAssistant,
+				Content:   summary,
+				TurnID:    itemID,
+				IsSummary: true,
+			}}); err != nil {
+				return nil, err
+			}
+			for position, src := range turnRows[retainFrom:] {
+				if err := qtx.InsertThreadContextRef(ctx, db.InsertThreadContextRefParams{
+					AgentID:   agentID,
+					ThreadID:  threadID,
+					Position:  int64(position),
+					MessageID: src.ID,
+				}); err != nil {
+					return nil, fmt.Errorf("reference row %d: %w", position, err)
+				}
+			}
+			if n, err := qtx.UpdateActiveThread(ctx, db.UpdateActiveThreadParams{
+				ActiveThreadID: threadID,
+				ID:             agentID,
+			}); err != nil {
+				return nil, err
+			} else if n == 0 {
+				return nil, ErrUnknownAgent
+			}
+			// The running item's writes follow it: the expected-source
+			// predicate makes a racing or stale rebind fail closed.
+			if n, err := qtx.RebindQueueItemThread(ctx, db.RebindQueueItemThreadParams{
+				ThreadID:   sql.NullString{String: threadID, Valid: true},
+				AgentID:    agentID,
+				ID:         itemID,
+				ThreadID_2: sql.NullString{String: source, Valid: true},
+			}); err != nil {
+				return nil, err
+			} else if n != 1 {
+				return nil, fmt.Errorf("%s: rebind did not match the started item in its source thread", itemID)
+			}
+			// The refresh page reads the committed shape inside this
+			// transaction: divider, seeded summary, referenced rows.
+			page, err := threadpage.Read(ctx, qtx, agentID, "", midTurnRefreshPageLimit)
+			if err != nil {
+				return nil, err
+			}
+			// The seeded row shares the transaction's stamp span; the
+			// watermark covers it.
+			s.lastPersistedMs = stamp
+			ev := apitypes.LifecycleEvent{
+				Kind:             apitypes.LifecycleConversationRefresh,
+				ItemID:           itemID,
+				ItemKind:         "prompt",
+				ThreadID:         threadID,
+				PreviousThreadID: row.PreviousThreadID.String,
+				Page:             page,
+				CreatedAt:        threadpage.ISOTime(row.CreatedAt),
+			}
+			if batch, err := s.appendEvents(ctx, qtx, agentID, itemID, head, stamp, []apitypes.LifecycleEvent{ev}); err != nil {
+				return nil, err
+			} else {
+				activated = &ActivatedThread{ID: threadID, PreviousID: row.PreviousThreadID.String}
+				return batch, nil
+			}
+		})
+	if err != nil {
+		return nil, batch, err
 	}
 	return activated, batch, nil
 }
@@ -1183,20 +1404,27 @@ func (s *TurnService) SyncSnapshot(ctx context.Context, agentID string, pageLimi
 		if ev.ItemID == "" {
 			continue
 		}
-		page.Items = append(page.Items, apitypes.ThreadMessage{
+		notice := apitypes.ThreadMessage{
 			ID:        "cancelled-" + ev.ItemID,
 			Role:      apitypes.ThreadRoleError,
 			Content:   "cancelled (" + ev.Reason + "): " + ev.Content,
 			CreatedAt: ev.CreatedAt,
-		})
+		}
+		// The page's own order is the authoritative placement — with
+		// references it is not timestamp order — so each notice splices
+		// after the newest row it postdates instead of timestamp-sorting
+		// the whole baseline. Page items keep their relative order, and
+		// notices keep journal order among themselves.
+		at := len(page.Items)
+		for at > 0 && page.Items[at-1].CreatedAt > notice.CreatedAt {
+			at--
+		}
+		page.Items = append(page.Items, notice)
+		if at < len(page.Items)-1 {
+			copy(page.Items[at+1:], page.Items[at:len(page.Items)-1])
+			page.Items[at] = notice
+		}
 	}
-	// Notices are timestamped display rows like any other: sorting them
-	// into the page keeps the baseline in transcript order. A notice is
-	// always minted after its thread's creation, so the head divider
-	// never sorts below one.
-	sort.SliceStable(page.Items, func(i, j int) bool {
-		return page.Items[i].CreatedAt < page.Items[j].CreatedAt
-	})
 	return &SyncSnapshot{Cursor: FormatCursor(s.historyID, head), Page: page}, nil
 }
 

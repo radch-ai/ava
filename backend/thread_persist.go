@@ -42,6 +42,10 @@ type AgentThreadMessage struct {
 	ToolCalls  []AgentThreadCall   `json:"toolCalls,omitempty"`
 	ToolCallID string              `json:"toolCallId,omitempty"`
 	ToolName   string              `json:"toolName,omitempty"`
+	// IsSummary marks a compaction successor's seeded summary row --
+	// the identity the mid-loop range detection keys on. Go-only, like
+	// the rest of this type: the wire contract never carries it.
+	IsSummary bool `json:"isSummary,omitempty"`
 	// Elided marks a tool message whose Content is the placeholder
 	// naming the stored row, not the original result. Go-only, like the
 	// rest of this type: the wire contract never carries it.
@@ -76,6 +80,9 @@ type ThreadMessageDraft struct {
 	Content   string
 	TurnID    string
 	ToolCalls []byte
+	// IsSummary marks the seeded summary of a compaction successor;
+	// only the compaction rotations set it.
+	IsSummary bool
 }
 
 // validateDraft rejects rows the replay projection would treat as
@@ -303,7 +310,7 @@ func projectTurn(rows []db.ListActiveThreadRowsRow, groups []*threadGroup) ([]Ag
 			out = append(out, AgentThreadMessage{
 				ID:   row.ID,
 				Role: apitypes.ThreadRoleAssistant, Content: g.content,
-				ToolCalls: answered,
+				ToolCalls: answered, IsSummary: row.IsSummary != 0,
 			})
 			for _, c := range answered {
 				outcome := g.outcome[c.ID]
@@ -317,10 +324,10 @@ func projectTurn(rows []db.ListActiveThreadRowsRow, groups []*threadGroup) ([]Ag
 		}
 		switch apitypes.ThreadRole(row.Role) {
 		case apitypes.ThreadRoleUser:
-			out = append(out, AgentThreadMessage{ID: row.ID, Role: apitypes.ThreadRoleUser, Content: row.Content})
+			out = append(out, AgentThreadMessage{ID: row.ID, Role: apitypes.ThreadRoleUser, Content: row.Content, IsSummary: row.IsSummary != 0})
 		case apitypes.ThreadRoleAssistant:
 			if row.Content != "" {
-				out = append(out, AgentThreadMessage{ID: row.ID, Role: apitypes.ThreadRoleAssistant, Content: row.Content})
+				out = append(out, AgentThreadMessage{ID: row.ID, Role: apitypes.ThreadRoleAssistant, Content: row.Content, IsSummary: row.IsSummary != 0})
 			}
 		case apitypes.ThreadRoleTool:
 			// emitted from its group above
