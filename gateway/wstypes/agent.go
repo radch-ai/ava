@@ -3,11 +3,17 @@ package wstypes
 import "encoding/json"
 
 // Queue item kinds. QueueItemKindPrompt is an ordinary Eino turn;
-// QueueItemKindNewThread is a /new or /reset command. Every item
-// carries one of these — there is no zero-value spelling.
+// QueueItemKindNewThread is a /new or /reset command; QueueItemKindShake
+// is a /shake command — both commands execute without a model call and
+// store no user row. QueueItemKindCompact is a /compact command: it
+// makes one summarization model call, but is still a command, not a
+// synthetic prompt. Every item carries one of these — there is no
+// zero-value spelling.
 const (
 	QueueItemKindPrompt    = "prompt"
 	QueueItemKindNewThread = "new_thread"
+	QueueItemKindShake     = "shake"
+	QueueItemKindCompact   = "compact"
 )
 
 // ModelRef is a prompt's model selection: the model id plus the
@@ -41,12 +47,16 @@ type SendNowMessage struct {
 // LaneStatus is the payload of a lane_status event. Model is the
 // active lane's model id — display only. Working reports a turn in
 // flight; the composer's stop control tracks it. Reasoning reports
-// the model streaming reasoning tokens right now.
+// the model streaming reasoning tokens right now. Compacting reports
+// auto-compaction's summarization in flight — the pre-prompt
+// checker's or a mid-loop rotation's; the stream's pulse marker and
+// the send-now disable track it.
 type LaneStatus struct {
-	Active    bool   `json:"active"`
-	Working   bool   `json:"working"`
-	Reasoning bool   `json:"reasoning"`
-	Model     string `json:"model"`
+	Active     bool   `json:"active"`
+	Working    bool   `json:"working"`
+	Reasoning  bool   `json:"reasoning"`
+	Compacting bool   `json:"compacting"`
+	Model      string `json:"model"`
 }
 
 // QueueItem is one queued prompt. Kind is always set — a command or an

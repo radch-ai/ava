@@ -22,10 +22,22 @@ import (
 	"github.com/radch-ai/ava/backend/internal/api/vaults"
 	"github.com/radch-ai/ava/backend/internal/db"
 	mcpserver "github.com/radch-ai/ava/backend/internal/mcpserver"
+	"github.com/radch-ai/ava/backend/internal/modelcatalog"
 	"github.com/radch-ai/ava/backend/internal/tooladmission"
 	toolreg "github.com/radch-ai/ava/backend/internal/tools"
 	"github.com/radch-ai/ava/backend/internal/vault"
 )
+
+// ModelCatalog is the models.dev context-window snapshot the resolver's
+// last tier reads. The binary builds one at boot; nil knows nothing.
+type ModelCatalog = modelcatalog.Catalog
+
+// LoadModelCatalog builds the context-window catalog: the embedded
+// snapshot, fetched fresh from url when one is configured and cached at
+// cachePath. Only a broken embedded snapshot fails.
+func LoadModelCatalog(url, cachePath string, logger zerolog.Logger) (*ModelCatalog, error) {
+	return modelcatalog.Load(url, cachePath, logger)
+}
 
 // New builds the backend's route table over an already-open,
 // already-migrated database: agents, heartbeat and cron jobs,
@@ -55,7 +67,10 @@ import (
 //
 // Wire types live in backend/apitypes — the UI's TypeScript types are
 // generated from it (`just typegen`).
-func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte, limits ToolLimits) (http.Handler, auth.Sessions, *TurnService, error) {
+//
+// catalog is the vendored models.dev snapshot the resolver falls back
+// to; nil disables that tier.
+func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte, limits ToolLimits, catalog *ModelCatalog) (http.Handler, auth.Sessions, *TurnService, error) {
 	master, err := vault.NewMasterAEAD(masterKey)
 	if err != nil {
 		return nil, nil, nil, err
@@ -93,6 +108,7 @@ func New(sqlDB *sql.DB, logger zerolog.Logger, masterKey []byte, limits ToolLimi
 		registry:        registry,
 		logger:          logger,
 		admitter:        admitter,
+		catalog:         catalog,
 		lastPersistedMs: watermark,
 		historyID:       historyID,
 	}

@@ -134,6 +134,22 @@ export function createLiveTurns() {
 						(m) => !(m.role === 'assistant' && !m.content)
 					)
 				}
+				// The compacting signal carries the same in-stream
+				// indicator the thinking pulse renders: while the lane
+				// summarizes — the pre-prompt checker or a mid-loop
+				// rotation — the marker row stands in, and the lane
+				// lowering the signal removes it.
+				if (event.data.compacting) {
+					if (!messages.some((m) => m.role === 'compacting')) {
+						messages.push({
+							id: 'local-compacting',
+							role: 'compacting',
+							content: ''
+						})
+					}
+				} else {
+					messages = messages.filter((m) => m.role !== 'compacting')
+				}
 				break
 			}
 		}
@@ -201,11 +217,12 @@ export function createLiveTurns() {
 	}
 
 	/** Takes the tail's rows for freezing at a thread boundary: returns
-	 * them and clears the tail, dropping empty assistant markers (pure
-	 * transient UI that must not be pinned into stored display). */
+	 * them and clears the tail, dropping transient markers (empty
+	 * assistant rows and the compacting pulse — pure UI that must not be
+	 * pinned into stored display). */
 	function takeRows(): LiveMessage[] {
 		const taken = messages.filter(
-			(m) => !(m.role === 'assistant' && !m.content)
+			(m) => !(m.role === 'assistant' && !m.content) && m.role !== 'compacting'
 		)
 		messages = []
 		return taken

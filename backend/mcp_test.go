@@ -23,7 +23,7 @@ import (
 // MCP clients, so each one registers its own teardown.
 func bootBackend(t *testing.T, sqlDB *sql.DB) *backend.TurnService {
 	t.Helper()
-	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
+	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits(), nil)
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}

@@ -34,7 +34,7 @@ const openai: Provider = {
 	name: 'OpenAI',
 	baseUrl: 'https://api.openai.com/v1',
 	hasKey: true,
-	models: ['openai/gpt-4', 'openai/gpt-4o']
+	models: [{ id: 'openai/gpt-4' }, { id: 'openai/gpt-4o' }]
 }
 
 const mistral: Provider = {
@@ -43,6 +43,16 @@ const mistral: Provider = {
 	baseUrl: 'https://api.mistral.ai/v1',
 	hasKey: false,
 	models: []
+}
+
+// A provider with one declared window: the window rides its row, so
+// renaming the id keeps the value.
+const declared: Provider = {
+	...openai,
+	models: [
+		{ id: 'openai/gpt-4', contextWindow: 128000 },
+		{ id: 'openai/gpt-4o' }
+	]
 }
 
 function renderPage(providers: Provider[]): void {
@@ -113,7 +123,7 @@ describe('Providers & Models page', () => {
 			.not.toBeInTheDocument()
 	})
 
-	it('saves an edited provider with plain model ids and no key when blank', async () => {
+	it('saves an edited provider with declared entries and no key when blank', async () => {
 		vi.mocked(providersService.updateProvider).mockResolvedValue(openai)
 		renderPage([openai])
 
@@ -134,7 +144,33 @@ describe('Providers & Models page', () => {
 					name: 'OpenAI',
 					baseUrl: 'https://api.openai.com/v1',
 					apiKey: undefined,
-					models: ['openai/gpt-4', 'openai/gpt-4o']
+					models: [{ id: 'openai/gpt-4' }, { id: 'openai/gpt-4o' }]
+				}
+			)
+		})
+	})
+
+	it('keeps a declared window on its row across an id edit', async () => {
+		vi.mocked(providersService.updateProvider).mockResolvedValue(declared)
+		renderPage([declared])
+
+		await page.getByRole('button', { name: 'Edit' }).click()
+		// Renaming the id keeps the row's window: the window is the
+		// entry's own field, sent beside the id.
+		await page.getByLabelText('Model').first().fill('openai/gpt-4.1')
+		await page.getByRole('button', { name: 'Save' }).click()
+
+		await vi.waitFor(() => {
+			expect(providersService.updateProvider).toHaveBeenCalledWith(
+				'provider-1',
+				{
+					name: 'OpenAI',
+					baseUrl: 'https://api.openai.com/v1',
+					apiKey: undefined,
+					models: [
+						{ id: 'openai/gpt-4.1', contextWindow: 128000 },
+						{ id: 'openai/gpt-4o' }
+					]
 				}
 			)
 		})

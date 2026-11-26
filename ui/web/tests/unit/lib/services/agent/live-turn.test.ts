@@ -14,12 +14,17 @@ function chunk(id: string, delta: string): AgentSocketEvent {
 	}
 }
 
-function laneStatus(working: boolean, reasoning = false): AgentSocketEvent {
+function laneStatus(
+	working: boolean,
+	reasoning = false,
+	compacting = false
+): AgentSocketEvent {
 	return {
 		type: 'lane_status',
 		data: {
 			active: true,
 			working,
+			compacting,
 			reasoning,
 			model: ''
 		}
@@ -366,6 +371,55 @@ describe('reasoning marker', () => {
 
 		expect(live.messages.map((m) => m.role)).toEqual(['user', 'assistant'])
 		expect(live.messages[1].content).toBe('')
+	})
+})
+
+describe('compacting marker', () => {
+	it('stands in while the lane summarizes — once', () => {
+		const live = createLiveTurns()
+		live.applyEvent(laneStatus(true, false, true))
+		live.applyEvent(laneStatus(true, false, true))
+
+		expect(live.messages).toHaveLength(1)
+		expect(live.messages[0]).toMatchObject({
+			id: 'local-compacting',
+			role: 'compacting'
+		})
+	})
+
+	it('is removed when the lane stops compacting', () => {
+		const live = createLiveTurns()
+		live.applyEvent(laneStatus(true, false, true))
+		live.applyEvent(laneStatus(true, false, false))
+
+		expect(live.messages).toHaveLength(0)
+	})
+
+	it('coexists with the thinking marker of the turn it interrupts', () => {
+		const live = createLiveTurns()
+		live.applyEvent(laneStatus(true, true, false))
+		live.applyEvent(laneStatus(true, true, true))
+
+		expect(live.messages.map((m) => m.role)).toEqual([
+			'assistant',
+			'compacting'
+		])
+	})
+
+	it('never freezes into stored display at a boundary', () => {
+		const live = createLiveTurns()
+		live.replaceWith({
+			itemId: 'msg-1',
+			userRow: { id: 'user-row-1', content: 'hi' },
+			text: 'ans',
+			invocations: []
+		})
+		live.applyEvent(laneStatus(true, false, true))
+
+		const taken = live.takeRows()
+
+		expect(taken.map((m) => m.role)).toEqual(['user', 'assistant'])
+		expect(live.messages).toHaveLength(0)
 	})
 })
 

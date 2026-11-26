@@ -76,11 +76,11 @@
 						</p>
 						{#if provider.models.length > 0}
 							<div class="flex flex-wrap gap-1.5 pt-0.5">
-								{#each provider.models as model (model)}
+								{#each provider.models as model (model.id)}
 									<span
 										class="bg-muted text-muted-foreground rounded-full px-2 py-0.5 font-mono text-xs"
 									>
-										{model}
+										{model.id}
 									</span>
 								{/each}
 							</div>

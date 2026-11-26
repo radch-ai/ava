@@ -15,7 +15,7 @@ import (
 )
 
 func TestGetAgentConfigMapsPromptFields(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{
 		ID:                    "persona-1",
 		Name:                  "Persona",
@@ -45,7 +45,7 @@ func TestGetAgentConfigMapsPromptFields(t *testing.T) {
 }
 
 func TestGetAgentConfigUnknownAgentFailsNoRows(t *testing.T) {
-	_, svc := resolverDB(t)
+	_, svc := resolverDB(t, nil)
 
 	_, err := svc.GetAgentConfig(context.Background(), "ghost")
 	if err == nil {

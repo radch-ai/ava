@@ -261,6 +261,20 @@ export function createConversation(agentId: string, seed: ConversationSeed) {
 						]
 					}
 				]
+				// An itemless rotation (the pre-prompt automation) seeds
+				// the successor's summary on this event — no
+				// item_finished ever carries it — so the stored rows
+				// land with the boundary they opened.
+				placeStoredRows(event.threadId, event.rows ?? [])
+				break
+			}
+			case 'conversation_refresh': {
+				// A committed mid-loop rotation: the authoritative page
+				// replaces the cached projection and its pagination
+				// cursor wholesale. Only sync_ready replaces the live
+				// tail — the running turn's continuation must survive
+				// the refresh below the replaced segments.
+				applySnapshot(event.page)
 				break
 			}
 		}
@@ -277,17 +291,24 @@ export function createConversation(agentId: string, seed: ConversationSeed) {
 		const prefix = data.prefix
 		if (!prefix) {
 			liveTurns.replaceWith(undefined)
-			return
+		} else {
+			liveTurns.replaceWith({
+				itemId: prefix.item_id,
+				userRow:
+					active?.user_message_id && active.kind === 'prompt'
+						? { id: active.user_message_id, content: active.content }
+						: undefined,
+				text: prefix.text,
+				invocations: prefix.invocations ?? []
+			})
 		}
-		liveTurns.replaceWith({
-			itemId: prefix.item_id,
-			userRow:
-				active?.user_message_id && active.kind === 'prompt'
-					? { id: active.user_message_id, content: active.content }
-					: undefined,
-			text: prefix.text,
-			invocations: prefix.invocations ?? []
-		})
+		// The hand-off rebuilt the tail wholesale, so the transient
+		// markers it replaced away are gone with it — and the gateway
+		// broadcasts lane_status on change only, so no frame follows
+		// to restore them. The snapshot re-feeds the lane's own
+		// signals: mid-reasoning or mid-compaction reconnects
+		// rehydrate their pulse rows.
+		liveTurns.applyEvent({ type: 'lane_status', data: data.lane })
 	}
 
 	// Connection state from the socket: the handshake declares `live`

@@ -41,6 +41,7 @@ import {
 	type McpServerRow,
 	type MockStore,
 	PROVIDER_SEED_DATA,
+	type ProviderModelRow,
 	type ProviderRow,
 	type ToolRow
 } from './data.ts'
@@ -107,7 +108,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 		name: row.name,
 		baseUrl: row.baseUrl,
 		hasKey: row.apiKey !== '',
-		models: [...row.models].sort()
+		models: [...row.models].sort((a, b) => a.id.localeCompare(b.id))
 	})
 
 	// System models for a row: the template's deterministic list for
@@ -491,7 +492,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				items.unshift({
 					id: thread.id,
 					role: 'divider',
-					content: 'New session',
+					content: thread.kind === 'compacted' ? 'Compacted' : 'New session',
 					createdAt: thread.createdAt
 				} as (typeof items)[number])
 				nextCursor = `${thread.previousId}:`
@@ -739,7 +740,16 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				Array<{ id: string; providerId: string }>
 			> = {}
 			for (const row of store.providers) {
-				const ids = [...new Set([...row.models, ...systemModelsFor(row)])]
+				const seen = new Set<string>()
+				const ids: string[] = []
+				for (const id of [
+					...row.models.map((m) => m.id),
+					...systemModelsFor(row)
+				]) {
+					if (seen.has(id)) continue
+					seen.add(id)
+					ids.push(id)
+				}
 				if (ids.length === 0) continue
 				const entries = ids
 					.map((id) => ({ id, providerId: row.id }))
@@ -762,7 +772,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			})
 		}),
 
-		// One provider's system models, for the settings-page expand.
+		// One provider's system model ids, for the settings-page expand.
 		http.get('*/api/providers/:id/models', ({ params }) => {
 			const id = String(params.id)
 			const row = store.providers.find((provider) => provider.id === id)
@@ -772,7 +782,9 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 					{ status: 404 }
 				)
 			}
-			return HttpResponse.json({ systemModels: systemModelsFor(row) })
+			return HttpResponse.json({
+				systemModels: systemModelsFor(row)
+			})
 		}),
 
 		// The tool catalog: the whole list, then the global switch.
@@ -1245,7 +1257,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				name,
 				baseUrl,
 				apiKey: body.apiKey ?? '',
-				models: [] as string[]
+				models: [] as ProviderModelRow[]
 			}
 			store.providers.push(row)
 			return HttpResponse.json({ id: row.id }, { status: 201 })
@@ -1264,7 +1276,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				name?: string
 				baseUrl?: string
 				apiKey?: string
-				models?: string[]
+				models?: ProviderModelRow[]
 			}
 			if (body.name !== undefined && body.name.trim() === '') {
 				return HttpResponse.json(
@@ -1281,29 +1293,37 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 			if (body.models !== undefined) {
 				const kept = new Set<string>()
 				for (const model of body.models) {
-					if (model.trim() === '') {
+					if (model.id.trim() === '') {
 						return HttpResponse.json(
 							{ message: 'Model id cannot be empty' },
 							{ status: 400 }
 						)
 					}
-					if (kept.has(model)) {
+					if (kept.has(model.id)) {
 						return HttpResponse.json(
-							{ message: `Duplicate model id "${model}"` },
+							{ message: `Duplicate model id "${model.id}"` },
 							{ status: 400 }
 						)
 					}
-					kept.add(model)
+					kept.add(model.id)
+					if (model.contextWindow && model.contextWindow > 10_000_000) {
+						return HttpResponse.json(
+							{ message: 'Context window must be at most 10000000 tokens' },
+							{ status: 400 }
+						)
+					}
 				}
 				// Custom ids are globally unique across providers.
 				for (const model of body.models) {
 					const owner = store.providers.find(
-						(provider) => provider.id !== id && provider.models.includes(model)
+						(provider) =>
+							provider.id !== id &&
+							provider.models.some((m) => m.id === model.id)
 					)
 					if (owner) {
 						return HttpResponse.json(
 							{
-								message: `Model "${model}" already belongs to another provider`
+								message: `Model "${model.id}" already belongs to another provider`
 							},
 							{ status: 409 }
 						)

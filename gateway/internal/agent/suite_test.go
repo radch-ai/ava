@@ -35,7 +35,7 @@ func journalFor(t *testing.T) (*sql.DB, *backend.TurnService) {
 	sqlDB, err := sqlstore.OpenSQLite(":memory:")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	_, _, turns, err := backend.New(sqlDB, zerolog.Nop(), testKey, backend.DefaultToolLimits())
+	_, _, turns, err := backend.New(sqlDB, zerolog.Nop(), testKey, backend.DefaultToolLimits(), nil)
 	require.NoError(t, err)
 	return sqlDB, turns
 }
@@ -209,9 +209,20 @@ func (j *lazyJournal) seedAgent(agentID string) error {
 type journalHook struct {
 	agent.LifecycleJournal
 	switchThread   func(ctx context.Context, agentID, itemID string) (*backend.ActivatedThread, *backend.JournalBatch, error)
+	shakeThread    func(ctx context.Context, agentID, itemID string) (int, *backend.JournalBatch, error)
+	compactThread  func(ctx context.Context, agentID, itemID, summary string) (*backend.ActivatedThread, *backend.JournalBatch, error)
 	appendMessages func(ctx context.Context, agentID, itemID string, msgs []backend.ThreadMessageDraft) (*backend.JournalBatch, error)
 	finishItem     func(ctx context.Context, agentID, itemID, outcome, reason string, msgs []backend.ThreadMessageDraft) (*backend.JournalBatch, error)
+	startItem      func(ctx context.Context, agentID, itemID string) (*backend.ItemStart, *backend.JournalBatch, error)
 	toolFinished   func(ctx context.Context, agentID, itemID, invocationID, result string, errText *string) (*backend.JournalBatch, error)
+	shakeAgent     func(ctx context.Context, agentID string) (int, error)
+}
+
+func (h *journalHook) StartItem(ctx context.Context, agentID, itemID string) (*backend.ItemStart, *backend.JournalBatch, error) {
+	if h.startItem != nil {
+		return h.startItem(ctx, agentID, itemID)
+	}
+	return h.LifecycleJournal.StartItem(ctx, agentID, itemID)
 }
 
 func (h *journalHook) AppendItemMessages(ctx context.Context, agentID, itemID string, msgs []backend.ThreadMessageDraft) (*backend.JournalBatch, error) {
@@ -235,11 +246,38 @@ func (h *journalHook) RecordToolFinished(ctx context.Context, agentID, itemID, i
 	return h.LifecycleJournal.RecordToolFinished(ctx, agentID, itemID, invocationID, result, errText)
 }
 
+func (h *journalHook) ShakeThreadContext(ctx context.Context, agentID, itemID string) (int, *backend.JournalBatch, error) {
+	if h.shakeThread != nil {
+		return h.shakeThread(ctx, agentID, itemID)
+	}
+	return h.LifecycleJournal.ShakeThreadContext(ctx, agentID, itemID)
+}
+
 func (h *journalHook) ExecuteThreadSwitch(ctx context.Context, agentID, itemID string) (*backend.ActivatedThread, *backend.JournalBatch, error) {
 	if h.switchThread != nil {
 		return h.switchThread(ctx, agentID, itemID)
 	}
 	return h.LifecycleJournal.ExecuteThreadSwitch(ctx, agentID, itemID)
+}
+
+func (h *journalHook) ExecuteCompaction(ctx context.Context, agentID, itemID, summary string) (*backend.ActivatedThread, *backend.JournalBatch, error) {
+	if h.compactThread != nil {
+		return h.compactThread(ctx, agentID, itemID, summary)
+	}
+	return h.LifecycleJournal.ExecuteCompaction(ctx, agentID, itemID, summary)
+}
+
+func (h *journalHook) ShakeAgentContext(ctx context.Context, agentID string) (int, error) {
+	if h.shakeAgent != nil {
+		return h.shakeAgent(ctx, agentID)
+	}
+	return h.LifecycleJournal.ShakeAgentContext(ctx, agentID)
+}
+
+// RotateThreadCompacted needs no hook: no test parks or fails it — the
+// checker's rotation paths exercise through the real journal.
+func (h *journalHook) RotateThreadCompacted(ctx context.Context, agentID, tagItemID, summary string) (*backend.ActivatedThread, *backend.JournalBatch, error) {
+	return h.LifecycleJournal.RotateThreadCompacted(ctx, agentID, tagItemID, summary)
 }
 
 // hookedManager builds a manager whose lane commits through hook.

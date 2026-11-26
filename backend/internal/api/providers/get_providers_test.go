@@ -95,9 +95,9 @@ func TestGetProvidersListsRows(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
 	for _, stmt := range []string{
 		`INSERT INTO providers (id, name, base_url, models)
-		 VALUES ('p-1', 'OpenRouter', 'https://openrouter.ai/api/v1', '["or/m1"]')`,
+		 VALUES ('p-1', 'OpenRouter', 'https://openrouter.ai/api/v1', '[{"id":"or/m1"}]')`,
 		`INSERT INTO providers (id, name, base_url, models)
-		 VALUES ('u-1', 'Mistral', 'https://api.mistral.ai/v1', '["mistral/m1"]')`,
+		 VALUES ('u-1', 'Mistral', 'https://api.mistral.ai/v1', '[{"id":"mistral/m1","contextWindow":32000}]')`,
 	} {
 		if _, err := sqlDB.Exec(stmt); err != nil {
 			t.Fatalf("seed provider: %v", err)
@@ -109,8 +109,8 @@ func TestGetProvidersListsRows(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	want := `{"providers":[` +
-		`{"id":"p-1","name":"OpenRouter","baseUrl":"https://openrouter.ai/api/v1","hasKey":true,"models":["or/m1"]},` +
-		`{"id":"u-1","name":"Mistral","baseUrl":"https://api.mistral.ai/v1","hasKey":false,"models":["mistral/m1"]}]}` + "\n"
+		`{"id":"p-1","name":"OpenRouter","baseUrl":"https://openrouter.ai/api/v1","hasKey":true,"models":[{"id":"or/m1"}]},` +
+		`{"id":"u-1","name":"Mistral","baseUrl":"https://api.mistral.ai/v1","hasKey":false,"models":[{"id":"mistral/m1","contextWindow":32000}]}]}` + "\n"
 	if got := rec.Body.String(); got != want {
 		t.Errorf("body = %s\nwant %s", got, want)
 	}

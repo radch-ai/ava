@@ -20,7 +20,8 @@ func DeleteProvider(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		id := r.PathValue("id")
 
-		if _, err := queries.GetProvider(r.Context(), id); errors.Is(err, sql.ErrNoRows) {
+		row, err := queries.GetProvider(r.Context(), id)
+		if errors.Is(err, sql.ErrNoRows) {
 			return api.WriteError(w, http.StatusNotFound,
 				fmt.Sprintf("Provider %q not found", id))
 		} else if err != nil {
@@ -39,6 +40,8 @@ func DeleteProvider(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return fmt.Errorf("delete provider %q: %w", id, err)
 		}
+		// The deleted row leaves no cached listing behind either.
+		evictModelCache(row.BaseUrl)
 
 		return api.WriteJSON(w, http.StatusOK,
 			apitypes.DeleteProviderResponse{Message: "Provider deleted"})

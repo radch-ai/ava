@@ -7,6 +7,7 @@
 
 import type { ThreadItem } from '#lib/types/agent'
 import type { LifecycleEvent } from '#lib/types/gen/apitypes.gen'
+import { type AgentThread, parseAgentThread } from './thread'
 
 export type { LifecycleEvent }
 
@@ -19,7 +20,8 @@ const KNOWN_KINDS: Record<string, true> = {
 	tool_started: true,
 	tool_finished: true,
 	item_finished: true,
-	thread_changed: true
+	thread_changed: true,
+	conversation_refresh: true
 }
 
 const TERMINAL_OUTCOMES: Record<string, true> = {
@@ -37,6 +39,15 @@ interface ThreadLifecycleEvent
 	kind: 'item_started' | 'message_committed' | 'thread_changed'
 	threadId: string
 	rows?: ThreadItem[]
+}
+
+/** A validated conversation refresh: the committed mid-loop rotation's
+ * authoritative page, already shape-checked like a thread read. */
+interface ConversationRefreshEvent
+	extends Omit<LifecycleEvent, 'threadId' | 'page'> {
+	kind: 'conversation_refresh'
+	threadId: string
+	page: AgentThread
 }
 
 /** A validated terminal fact. A cancellation of a submission that never
@@ -67,6 +78,7 @@ export type ValidatedLifecycleEvent =
 	| ThreadLifecycleEvent
 	| ItemFinishedEvent
 	| ToolLifecycleEvent
+	| ConversationRefreshEvent
 
 /** Parses one lifecycle payload; undefined when the shape, kind, or
  * per-kind identity is not one this surface reduces. */
@@ -101,6 +113,20 @@ export function parseLifecycleEvent(
 			(event.rows?.length ?? 0) > 0 &&
 			(typeof event.threadId !== 'string' || event.threadId === '')
 		) {
+			return undefined
+		}
+	} else if (event.kind === 'conversation_refresh') {
+		if (
+			typeof event.threadId !== 'string' ||
+			event.threadId === '' ||
+			typeof event.page !== 'object' ||
+			event.page === null
+		) {
+			return undefined
+		}
+		try {
+			parseAgentThread(event.page)
+		} catch {
 			return undefined
 		}
 	} else if (event.kind === 'item_finished') {

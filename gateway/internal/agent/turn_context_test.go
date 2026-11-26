@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -45,6 +46,20 @@ type contextMessage struct {
 			Arguments string `json:"arguments"`
 		} `json:"function"`
 	} `json:"tool_calls,omitempty"`
+}
+
+// failFirstResolver answers the pre-prompt checker's measurement with
+// an error — degrading it to a nil handoff — and serves every later
+// resolution from the given URL: the turn's own seams then run in
+// their pre-checker order, which the parked-load tests below need.
+func failFirstResolver(url string) agent.ModelResolver {
+	var calls atomic.Int32
+	return func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
+		if calls.Add(1) == 1 {
+			return backend.ResolvedModel{}, errors.New("resolve unavailable")
+		}
+		return fixedResolver(url)(ctx, entry)
+	}
 }
 
 type contextRequest struct {
@@ -100,7 +115,7 @@ func contextBackend(t *testing.T, agentID string) (*sql.DB, *backend.TurnService
 	sqlDB, err := sqlstore.OpenSQLite(":memory:")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x43}, 32), backend.DefaultToolLimits())
+	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x43}, 32), backend.DefaultToolLimits(), nil)
 	require.NoError(t, err)
 	threadID := agentID + "-t1"
 	tx, err := sqlDB.Begin()
@@ -309,7 +324,7 @@ func TestColdRestartRebuildsContextFromReplay(t *testing.T) {
 
 	// A fresh backend over the same store: the read is cold, exactly
 	// as after a restart.
-	_, _, cold, err := backend.New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x43}, 32), backend.DefaultToolLimits())
+	_, _, cold, err := backend.New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x43}, 32), backend.DefaultToolLimits(), nil)
 	require.NoError(t, err)
 	coldMgr := contextManager(t, llm, cold, nil)
 	submit(t, coldMgr, "agent-restart", "conn-1", sc, "new prompt")
@@ -337,8 +352,12 @@ func TestStopDuringReplayLoadIsQuietStop(t *testing.T) {
 		<-release
 		return nil, ctx.Err()
 	}
+	// The pre-prompt checker resolves before it reads the thread, so
+	// a first-call resolver error degrades it to a nil handoff: the
+	// parked replay load below is then the turn's own, exactly the
+	// stop-during-load scenario under test.
 	mgr := hookedManager(t, &agent.UserAgentManagerOptions{
-		ResolveModel:   fixedResolver(llm.URL),
+		ResolveModel:   failFirstResolver(llm.URL),
 		GetAgentThread: replay,
 	}, &journalHook{LifecycleJournal: svc})
 
@@ -435,7 +454,7 @@ func TestThreadSwitchIsolatesModelContext(t *testing.T) {
 		return svc.GetAgentThread(ctx, agentID)
 	}
 	mgr := hookedManager(t, &agent.UserAgentManagerOptions{
-		ResolveModel:   fixedResolver(llm.URL),
+		ResolveModel:   failFirstResolver(llm.URL),
 		GetAgentThread: threads,
 	}, &journalHook{LifecycleJournal: svc})
 

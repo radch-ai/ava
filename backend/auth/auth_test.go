@@ -29,7 +29,7 @@ func newAuthStack(t *testing.T) http.Handler {
 	t.Helper()
 
 	apiHandler, authSessions, _, err := backend.New(testdb.Open(t, true), zerolog.Nop(),
-		bytes.Repeat([]byte{0x42}, 32), backend.DefaultToolLimits())
+		bytes.Repeat([]byte{0x42}, 32), backend.DefaultToolLimits(), nil)
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}

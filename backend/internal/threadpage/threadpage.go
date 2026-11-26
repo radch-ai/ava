@@ -12,8 +12,9 @@
 // inside one thread — `<thread_id>:<message_id>` for a message anchor,
 // `<thread_id>:` for that thread's newest page. Walking past a thread's
 // oldest visible row crosses into its predecessor: the page that
-// exhausts a thread carries the "New session" divider, generated from the
-// thread record whose previous_thread_id names the thread before it.
+// exhausts a thread carries the divider its kind names — "New session"
+// or "Compacted" — generated from the thread record whose
+// previous_thread_id names the thread before it.
 package threadpage
 
 import (
@@ -28,8 +29,16 @@ import (
 	"github.com/radch-ai/ava/backend/internal/db"
 )
 
-// DividerText is the label a thread boundary renders.
-const DividerText = "New session"
+// Divider labels. A boundary tells the reader which of the two chain
+// growth ways produced it: a plain /new or a compaction successor.
+const (
+	DividerText   = "New session"
+	CompactedText = "Compacted"
+)
+
+// CompactedKind is the threads.kind value a compaction successor row
+// carries; everything else is a plain boundary.
+const CompactedKind = "compact"
 
 // Page read classifications. A missing agent and an unusable cursor are
 // the caller's two recoverable answers; anything else is a storage
@@ -45,13 +54,22 @@ func ISOTime(ms int64) string {
 	return time.UnixMilli(ms).UTC().Format("2006-01-02T15:04:05.000Z")
 }
 
+// dividerLabel maps a thread's stored kind to its boundary label.
+func dividerLabel(kind string) string {
+	if kind == CompactedKind {
+		return CompactedText
+	}
+	return DividerText
+}
+
 // Divider is the display record of one thread boundary: the thread's own
-// id keys it, its creation time dates it.
-func Divider(threadID string, createdAt int64) apitypes.ThreadMessage {
+// id keys it, its creation time dates it, and the caller's label names
+// it (dividerLabel derives it from the thread's kind).
+func Divider(threadID string, createdAt int64, label string) apitypes.ThreadMessage {
 	return apitypes.ThreadMessage{
 		ID:        threadID,
 		Role:      apitypes.ThreadRoleDivider,
-		Content:   DividerText,
+		Content:   label,
 		CreatedAt: ISOTime(createdAt),
 	}
 }
@@ -80,7 +98,9 @@ func Read(ctx context.Context, queries *db.Queries, agentID, rawCursor string, l
 	threadID := ""
 	previous := ""
 	threadCreatedAt := int64(0)
+	threadKind := ""
 	beforeCreatedAt := int64(0)
+	beforeBand := int64(0)
 	beforeMessageID := sql.NullString{}
 
 	if rawCursor == "" {
@@ -96,6 +116,7 @@ func Read(ctx context.Context, queries *db.Queries, agentID, rawCursor string, l
 		threadID = meta.ID
 		previous = meta.PreviousThreadID.String
 		threadCreatedAt = meta.CreatedAt
+		threadKind = meta.Kind
 	} else {
 		// The cursor path distinguishes an unknown agent from a foreign
 		// thread or message.
@@ -119,11 +140,14 @@ func Read(ctx context.Context, queries *db.Queries, agentID, rawCursor string, l
 		threadID = anchor.threadID
 		previous = meta.PreviousThreadID.String
 		threadCreatedAt = meta.CreatedAt
+		threadKind = meta.Kind
 		if anchor.messageID != "" {
-			// The anchor must be a visible row of this thread: a
-			// foreign id is an invalid cursor, not an empty page.
+			// The anchor must be a row this thread displays -- its
+			// own or one its references carry: a foreign id is an
+			// invalid cursor, not an empty page. The placement key
+			// (sort triple) is what the keyset read binds.
 			row, err := queries.GetThreadMessageMeta(ctx, db.GetThreadMessageMetaParams{
-				AgentID: agentID, ThreadID: threadID, ID: anchor.messageID,
+				ID: agentID, AgentID: agentID, ThreadID: threadID, AnchorID: anchor.messageID,
 			})
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil, fmt.Errorf("%w: %q", ErrInvalidCursor, rawCursor)
@@ -131,6 +155,7 @@ func Read(ctx context.Context, queries *db.Queries, agentID, rawCursor string, l
 				return nil, fmt.Errorf("resolve cursor for %q: %w", agentID, err)
 			}
 			beforeCreatedAt = row.CreatedAt
+			beforeBand = row.Band
 			beforeMessageID = sql.NullString{String: row.ID, Valid: true}
 		}
 	}
@@ -142,11 +167,13 @@ func Read(ctx context.Context, queries *db.Queries, agentID, rawCursor string, l
 	hasOlder := false
 	if beforeMessageID.Valid {
 		anchored, err := queries.ListThreadPageRowsBefore(ctx, db.ListThreadPageRowsBeforeParams{
+			ID:              agentID,
 			AgentID:         agentID,
 			ThreadID:        threadID,
 			BeforeCreatedAt: beforeCreatedAt,
+			BeforeBand:      beforeBand,
 			BeforeID:        beforeMessageID.String,
-			Limit:           limit + 1,
+			RowLimit:        limit + 1,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("load thread for %q: %w", agentID, err)
@@ -161,9 +188,10 @@ func Read(ctx context.Context, queries *db.Queries, agentID, rawCursor string, l
 		}
 	} else {
 		newest, err := queries.ListThreadPageRows(ctx, db.ListThreadPageRowsParams{
+			ID:       agentID,
 			AgentID:  agentID,
 			ThreadID: threadID,
-			Limit:    limit + 1,
+			RowLimit: limit + 1,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("load thread for %q: %w", agentID, err)
@@ -179,7 +207,7 @@ func Read(ctx context.Context, queries *db.Queries, agentID, rawCursor string, l
 	// boundary sits above the thread's oldest rows.
 	items := make([]apitypes.ThreadMessage, 0, len(rows)+1)
 	if !hasOlder && previous != "" {
-		items = append(items, Divider(threadID, threadCreatedAt))
+		items = append(items, Divider(threadID, threadCreatedAt, dividerLabel(threadKind)))
 	}
 	oldestRowID := ""
 	for i := len(rows) - 1; i >= 0; i-- {
@@ -188,6 +216,7 @@ func Read(ctx context.Context, queries *db.Queries, agentID, rawCursor string, l
 			Role:      apitypes.ThreadRole(rows[i].Role),
 			Content:   rows[i].Content,
 			CreatedAt: ISOTime(rows[i].CreatedAt),
+			IsSummary: rows[i].IsSummary != 0,
 		})
 	}
 	if len(rows) > 0 {

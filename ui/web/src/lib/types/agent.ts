@@ -54,7 +54,7 @@ import type {
  */
 export interface ThreadItem {
 	id: string
-	role: 'user' | 'assistant' | 'tool' | 'error' | 'divider'
+	role: 'user' | 'assistant' | 'tool' | 'error' | 'divider' | 'compacting'
 	content: string
 	/** True while chunks are still arriving for an assistant message. */
 	pending?: boolean
@@ -64,6 +64,9 @@ export interface ThreadItem {
 	args?: string
 	result?: string
 	error?: string | null
+	/** Marks a compaction successor's seeded summary row: rendered
+	 * collapsed behind its boundary, never as prose. */
+	isSummary?: boolean
 }
 
 /**

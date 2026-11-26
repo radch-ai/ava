@@ -26,7 +26,7 @@ func GetProviders(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 			Providers: make([]apitypes.Provider, 0, len(rows)),
 		}
 		for _, row := range rows {
-			custom, err := decodeModels(row.Models)
+			custom, err := DecodeModels(row.Models)
 			if err != nil {
 				_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 				return err

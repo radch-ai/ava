@@ -83,6 +83,7 @@ func CreateAgent(sqlDB *sql.DB, queries *db.Queries) api.Handler {
 			// The initial thread has no predecessor: it is the
 			// start of the agent's display chain.
 			PreviousThreadID: sql.NullString{},
+			Kind:             "new",
 		}); err != nil {
 			_ = tx.Rollback()
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")

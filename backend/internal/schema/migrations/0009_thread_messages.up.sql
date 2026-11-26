@@ -18,6 +18,10 @@ CREATE TABLE IF NOT EXISTS thread_messages (
     turn_id    TEXT NOT NULL,
     tool_calls TEXT,
     thread_id  TEXT NOT NULL,
+    -- /shake's working-context elision flag: 1 means the model replay
+    -- projection replaces this row's payload with a placeholder naming
+    -- it. The stored content is never rewritten.
+    elided     INTEGER NOT NULL DEFAULT 0 CHECK (elided IN (0, 1)),
     -- Composite ownership: a row can never name another agent's
     -- thread. Cascade on agent deletion, like the direct FK above.
     FOREIGN KEY (agent_id, thread_id) REFERENCES threads(agent_id, id)

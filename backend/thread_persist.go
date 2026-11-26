@@ -32,14 +32,24 @@ type AgentThreadCall struct {
 
 // AgentThreadMessage is one conversation record, shaped for
 // the gateway's model-input mapping. ToolCalls is set on assistant
-// rows; ToolCallID/ToolName on tool rows. It is a Go-only type: the
-// HTTP wire contract and its generated UI types do not carry it.
+// rows; ToolCallID/ToolName on tool rows. ID is the stored row id —
+// the reference an elision placeholder names. It is a Go-only type:
+// the HTTP wire contract and its generated UI types do not carry it.
 type AgentThreadMessage struct {
+	ID         string              `json:"id,omitempty"`
 	Role       apitypes.ThreadRole `json:"role"`
 	Content    string              `json:"content"`
 	ToolCalls  []AgentThreadCall   `json:"toolCalls,omitempty"`
 	ToolCallID string              `json:"toolCallId,omitempty"`
 	ToolName   string              `json:"toolName,omitempty"`
+	// IsSummary marks a compaction successor's seeded summary row --
+	// the identity the mid-loop range detection keys on. Go-only, like
+	// the rest of this type: the wire contract never carries it.
+	IsSummary bool `json:"isSummary,omitempty"`
+	// Elided marks a tool message whose Content is the placeholder
+	// naming the stored row, not the original result. Go-only, like the
+	// rest of this type: the wire contract never carries it.
+	Elided bool `json:"elided,omitempty"`
 }
 
 // ToolEnvelope is the content of a role='tool' row: one completed
@@ -70,6 +80,9 @@ type ThreadMessageDraft struct {
 	Content   string
 	TurnID    string
 	ToolCalls []byte
+	// IsSummary marks the seeded summary of a compaction successor;
+	// only the compaction rotations set it.
+	IsSummary bool
 }
 
 // validateDraft rejects rows the replay projection would treat as
@@ -144,10 +157,19 @@ func (s *TurnService) GetAgentThread(ctx context.Context, agentID string) ([]Age
 // threadGroup collects one assistant call group and its outcomes as
 // the row walk encounters them.
 type threadGroup struct {
-	row     int               // index of the assistant row within its turn
-	content string            // the assistant's accompanying text
-	calls   []AgentThreadCall // declared order
-	outcome map[string]string // call id -> model-facing result text
+	row     int                     // index of the assistant row within its turn
+	content string                  // the assistant's accompanying text
+	calls   []AgentThreadCall       // declared order
+	outcome map[string]groupOutcome // call id -> outcome, projected
+}
+
+// groupOutcome is one tool row as the model sees it: the text the
+// projection emits, whether that text is an elision placeholder, and
+// the stored row id it came from.
+type groupOutcome struct {
+	text   string
+	elided bool
+	rowID  string
 }
 
 // projectThread turns raw rows into the model-facing thread history.
@@ -203,7 +225,7 @@ func projectThread(rows []db.ListActiveThreadRowsRow) ([]AgentThreadMessage, err
 			}
 			groups = append(groups, &threadGroup{
 				row: len(pending), content: row.Content, calls: calls,
-				outcome: make(map[string]string, len(calls)),
+				outcome: make(map[string]groupOutcome, len(calls)),
 			})
 		}
 		pending = append(pending, row)
@@ -238,10 +260,15 @@ func projectTurn(rows []db.ListActiveThreadRowsRow, groups []*threadGroup) ([]Ag
 			return nil, fmt.Errorf("thread tool row %s has no call id", row.ID)
 		}
 		// The envelope's Result is the exact model-facing string; an
-		// error always wins.
+		// error always wins. An elided row keeps its payload on disk and
+		// projects to the placeholder naming it.
 		text := env.Result
 		if env.Error != nil {
 			text = *env.Error
+		}
+		elided := row.Elided != 0
+		if elided {
+			text = ElidedReference(row.ID, len(text))
 		}
 		target := -1
 		for gi := len(groups) - 1; gi >= 0; gi-- {
@@ -262,7 +289,7 @@ func projectTurn(rows []db.ListActiveThreadRowsRow, groups []*threadGroup) ([]Ag
 		if _, dup := g.outcome[env.CallID]; dup {
 			return nil, fmt.Errorf("thread tool row %s repeats call %q", row.ID, env.CallID)
 		}
-		g.outcome[env.CallID] = text
+		g.outcome[env.CallID] = groupOutcome{text: text, elided: elided, rowID: row.ID}
 	}
 
 	// Second pass: emit rows in order, each group followed by its
@@ -281,23 +308,26 @@ func projectTurn(rows []db.ListActiveThreadRowsRow, groups []*threadGroup) ([]Ag
 				continue // structure-only; display rows carry it
 			}
 			out = append(out, AgentThreadMessage{
+				ID:   row.ID,
 				Role: apitypes.ThreadRoleAssistant, Content: g.content,
-				ToolCalls: answered,
+				ToolCalls: answered, IsSummary: row.IsSummary != 0,
 			})
 			for _, c := range answered {
+				outcome := g.outcome[c.ID]
 				out = append(out, AgentThreadMessage{
-					Role: apitypes.ThreadRoleTool, Content: g.outcome[c.ID],
-					ToolCallID: c.ID, ToolName: c.Name,
+					ID:   outcome.rowID,
+					Role: apitypes.ThreadRoleTool, Content: outcome.text,
+					ToolCallID: c.ID, ToolName: c.Name, Elided: outcome.elided,
 				})
 			}
 			continue
 		}
 		switch apitypes.ThreadRole(row.Role) {
 		case apitypes.ThreadRoleUser:
-			out = append(out, AgentThreadMessage{Role: apitypes.ThreadRoleUser, Content: row.Content})
+			out = append(out, AgentThreadMessage{ID: row.ID, Role: apitypes.ThreadRoleUser, Content: row.Content, IsSummary: row.IsSummary != 0})
 		case apitypes.ThreadRoleAssistant:
 			if row.Content != "" {
-				out = append(out, AgentThreadMessage{Role: apitypes.ThreadRoleAssistant, Content: row.Content})
+				out = append(out, AgentThreadMessage{ID: row.ID, Role: apitypes.ThreadRoleAssistant, Content: row.Content, IsSummary: row.IsSummary != 0})
 			}
 		case apitypes.ThreadRoleTool:
 			// emitted from its group above

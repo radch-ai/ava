@@ -52,6 +52,11 @@ typegen:
     @just require_tool tygo
     tygo generate
 
+# Refresh the embedded models.dev snapshot (flat id -> context map).
+vendor-model-catalog:
+    @bin=$(command -v jq || command -v jaq) && test -n "$bin" && tmp=$(mktemp) && curl -fsSL https://models.dev/api.json | "$bin" -c 'reduce to_entries[] as $p ({}; reduce ($p.value.models // {} | to_entries[]) as $m (. ; if $m.value.limit.context and $m.value.limit.context > 0 and ((.[$m.key] // 10000000000) > $m.value.limit.context) then . + {($m.key): $m.value.limit.context} else . end))' > "$tmp" && mv "$tmp" backend/internal/modelcatalog/catalog.json
+    @wc -c backend/internal/modelcatalog/catalog.json
+
 ## --- build / run ---
 
 # Build a service into ./bin. Usage: just build <service>

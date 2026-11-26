@@ -20,7 +20,7 @@ import (
 
 func TestReadbackBatchAnswersAppliedCommits(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
-	_, _, turns, err := New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x42}, 32), DefaultToolLimits())
+	_, _, turns, err := New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x42}, 32), DefaultToolLimits(), nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestRecoveryPrunesAtBoot(t *testing.T) {
 
 	sqlDB := testdb.Open(t, false)
 	master := bytes.Repeat([]byte{0x42}, 32)
-	_, _, turns, err := New(sqlDB, zerolog.Nop(), master, DefaultToolLimits())
+	_, _, turns, err := New(sqlDB, zerolog.Nop(), master, DefaultToolLimits(), nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestRecoveryPrunesAtBoot(t *testing.T) {
 	// must advance even though the append counter never fired.
 	reopened := testdb.Open(t, false)
 	defer func() { _ = reopened.Close() }()
-	if _, _, _, err := New(reopened, zerolog.Nop(), master, DefaultToolLimits()); err != nil {
+	if _, _, _, err := New(reopened, zerolog.Nop(), master, DefaultToolLimits(), nil); err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
 	var floor int64
@@ -121,7 +121,7 @@ func TestRecoveryPrunesAtBoot(t *testing.T) {
 // bookkeeping for an outcome nobody observed.
 func TestRecoverySettlesOpenInvocations(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
-	_, _, turns, err := New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x42}, 32), DefaultToolLimits())
+	_, _, turns, err := New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x42}, 32), DefaultToolLimits(), nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestRecoverySettlesOpenInvocations(t *testing.T) {
 // which submissions never ran from the snapshot itself.
 func TestSyncSnapshotCarriesCancelledNotices(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
-	_, _, turns, err := New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x42}, 32), DefaultToolLimits())
+	_, _, turns, err := New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x42}, 32), DefaultToolLimits(), nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestSyncSnapshotCarriesCancelledNotices(t *testing.T) {
 // the turn is over, so nothing can finish them afterwards.
 func TestFinishItemSettlesOpenInvocations(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
-	_, _, turns, err := New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x42}, 32), DefaultToolLimits())
+	_, _, turns, err := New(sqlDB, zerolog.Nop(), bytes.Repeat([]byte{0x42}, 32), DefaultToolLimits(), nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

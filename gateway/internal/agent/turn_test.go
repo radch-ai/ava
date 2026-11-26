@@ -315,10 +315,13 @@ func TestTurnResolverErrorPausesUntilExplicitSelection(t *testing.T) {
 	llm := fakeOpenAI(t, "recovered")
 	defer llm.Close()
 
-	var failFirst atomic.Bool
+	var resolveCalls atomic.Int32
 	// Every resolver call reports the selection it ran on: the routing
 	// choice is not projected on the wire, so the rebind is proven where
-	// it takes effect.
+	// it takes effect. The first two calls fail — the pre-prompt
+	// checker's measurement first, then the turn's own resolve — so
+	// the failure the pause gate records is the turn's, not the
+	// checker's degraded one.
 	resolved := make(chan string, 8)
 	resolver := func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
 		selection := ""
@@ -326,7 +329,7 @@ func TestTurnResolverErrorPausesUntilExplicitSelection(t *testing.T) {
 			selection = entry.ID
 		}
 		resolved <- selection
-		if failFirst.CompareAndSwap(false, true) {
+		if resolveCalls.Add(1) <= 2 {
 			return backend.ResolvedModel{}, errors.New("read default model: no rows")
 		}
 		return backend.ResolvedModel{BaseURL: llm.URL, APIKey: "sk-test", Model: "test-model"}, nil
@@ -379,6 +382,7 @@ func TestTurnResolverErrorPausesUntilExplicitSelection(t *testing.T) {
 	require.Equal(t, item2, snapshot.Next.ID)
 	_, p2 := readUntilMessage(t, c)
 	require.Equal(t, "recovered", p2.Content)
+	require.Equal(t, "", <-resolved, "the checker measured the first item on default routing")
 	require.Equal(t, "", <-resolved, "the failed turn ran on default routing")
 	require.Equal(t, "recovered", <-resolved, "the paused rebind replaced the gated item's selection")
 }
@@ -513,6 +517,57 @@ func TestAssistantTextScrubbedAtPersistence(t *testing.T) {
 	}
 }
 
+// A resolved scrubber owns the observable copies even when the toolset
+// is empty: an empty Impls list is still a resolved seam, and its
+// scrubber — here a zero scrubber that redacts nothing — must ride the
+// turn instead of the nil fallback's pattern battery.
+func TestEmptyToolsetKeepsResolvedScrubber(t *testing.T) {
+	secret := "sk_live_QX9SLYN1SZV7wxyz0"
+	llm := newScriptedLLM(t, sseChunk("the key is "+secret))
+	mgr, _ := journaledLane(t, &agent.UserAgentManagerOptions{
+		ResolveModel:   fixedResolver(llm.URL),
+		GetAgentThread: emptyThread,
+		Tools: func(context.Context, string) (backend.TurnTools, error) {
+			// Zero tools, but the scrubber is resolved: the seam
+			// owns scrub policy for this turn.
+			return backend.TurnTools{Scrubber: new(backend.Scrubber)}, nil
+		},
+	})
+
+	c, sc := wsPair(t)
+	submit(t, mgr, "agent-scrub-seam", "conn-1", sc, "hi")
+	_, p := readUntilMessage(t, c)
+	require.Contains(t, p.Content, secret,
+		"the resolved scrubber owns the durable copy; the pattern battery must not re-apply")
+}
+
+// A prompt turn never consumed a context window: a resolution that
+// answers zero — nothing declared, discovered, or cataloged — must not
+// fail the turn. Only window-aware paths (the compact lane) name the
+// failure.
+func TestPromptTurnRunsOnUnresolvedWindow(t *testing.T) {
+	llm := newScriptedLLM(t, sseChunk("still answering"))
+	mgr, _ := journaledLane(t, &agent.UserAgentManagerOptions{
+		ResolveModel: func(_ context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
+			model := "test-model"
+			if entry != nil {
+				model = entry.ID
+			}
+			return backend.ResolvedModel{
+				ProviderID: "prov-1", BaseURL: llm.URL, APIKey: "sk-test",
+				Model: model, ContextWindowTokens: 0,
+			}, nil
+		},
+		GetAgentThread: emptyThread,
+	})
+
+	c, sc := wsPair(t)
+	submit(t, mgr, "agent-zerowin", "conn-1", sc, "hi")
+	_, p := readUntilMessage(t, c)
+	require.Contains(t, p.Content, "still answering",
+		"a zero-window resolution must not fail a prompt turn")
+}
+
 // A canceled turn settles as a stop even when the failing seam
 // returned its own error: classification goes by the turn's context,
 // which has exactly one cancel source.
@@ -520,7 +575,14 @@ func TestTurnCanceledDuringResolveSettlesAsStop(t *testing.T) {
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
 	defer close(release)
+	var calls atomic.Int32
 	resolver := func(ctx context.Context, entry *apitypes.ModelEntry) (backend.ResolvedModel, error) {
+		// The checker resolves first and must degrade quickly; the
+		// parked call below is the turn's own — the stop-during-
+		// resolve scenario under test.
+		if calls.Add(1) == 1 {
+			return backend.ResolvedModel{}, errors.New("no default model set")
+		}
 		select {
 		case started <- struct{}{}:
 		default:

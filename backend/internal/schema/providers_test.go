@@ -55,6 +55,26 @@ func TestProviderModelsDefaultsEmpty(t *testing.T) {
 	}
 }
 
+// Discovery owns the other column: a row nobody has probed carries an
+// empty object, never NULL.
+func TestProviderDiscoveredWindowsDefaultEmpty(t *testing.T) {
+	sqlDB := testdb.Open(t, true)
+	if _, err := sqlDB.Exec(
+		`INSERT INTO providers (id, name, base_url) VALUES ('p2', 'P2', 'https://p2.dev/v1')`,
+	); err != nil {
+		t.Fatalf("seed provider: %v", err)
+	}
+	var windows string
+	if err := sqlDB.QueryRow(
+		`SELECT discovered_context_windows FROM providers WHERE id = 'p2'`,
+	).Scan(&windows); err != nil {
+		t.Fatalf("read discovered windows: %v", err)
+	}
+	if windows != "{}" {
+		t.Errorf("discovered_context_windows default = %q, want {}", windows)
+	}
+}
+
 // The model pair's owner is a real reference: deleting a provider
 // nulls provider_id on every row pinned to it (the row falls back
 // to default routing), while the id string itself is stored

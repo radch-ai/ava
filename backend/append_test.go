@@ -48,7 +48,7 @@ func startedItem(t *testing.T, svc *backend.TurnService, agentID, itemID, conten
 }
 
 func TestItemRowsLandInExecutionThread(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "a1", Name: "Thread", Icon: "globe"})
 	ctx := context.Background()
 
@@ -83,7 +83,7 @@ func TestItemRowsLandInExecutionThread(t *testing.T) {
 // verbatim, the invocation's call id pairing it to its assistant group —
 // and the projection reads it back beside the call group.
 func TestToolOutcomeRowRoundTrip(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "a2", Name: "Thread", Icon: "globe"})
 	ctx := context.Background()
 
@@ -150,7 +150,7 @@ func TestToolOutcomeRowRoundTrip(t *testing.T) {
 }
 
 func TestRowTimestampsRiseAcrossCommits(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "a1", Name: "Thread", Icon: "globe"})
 	ctx := context.Background()
 
@@ -175,7 +175,7 @@ func TestRowTimestampsRiseAcrossCommits(t *testing.T) {
 // Admission is the gate: an unknown agent has no item to accept, so no
 // row or event can ever name one.
 func TestAcceptItemRejectsUnknownAgent(t *testing.T) {
-	_, svc := resolverDB(t)
+	_, svc := resolverDB(t, nil)
 	_, err := svc.AcceptItem(context.Background(), "ghost", "item-1", "hello", "prompt", nil)
 	if err == nil {
 		t.Fatal("accept for an unknown agent succeeded, want a foreign key rejection")
@@ -185,7 +185,7 @@ func TestAcceptItemRejectsUnknownAgent(t *testing.T) {
 // Terminal rows name themselves: a failure's stored row id is the one the
 // event carries, so live and reloaded state converge.
 func TestFinishItemUsesSuppliedID(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "a3", Name: "Thread", Icon: "globe"})
 	ctx := context.Background()
 
@@ -215,7 +215,7 @@ func TestFinishItemUsesSuppliedID(t *testing.T) {
 // One batch is one transaction: a failing row leaves no earlier row
 // visible, and the next read returns only what committed.
 func TestItemMessageBatchIsAtomic(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "atomic", Name: "Thread", Icon: "globe"})
 	ctx := context.Background()
 	startedItem(t, svc, "atomic", "item-1", "prompt")
@@ -251,7 +251,7 @@ func TestItemMessageBatchIsAtomic(t *testing.T) {
 }
 
 func TestItemMessagesRejectCorruptDrafts(t *testing.T) {
-	sqlDB, svc := resolverDB(t)
+	sqlDB, svc := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "guard", Name: "Thread", Icon: "globe"})
 	ctx := context.Background()
 	startedItem(t, svc, "guard", "item-1", "prompt")
@@ -304,6 +304,12 @@ func TestItemMessagesRejectCorruptDrafts(t *testing.T) {
 			name:   "tool calls on a user row",
 			drafts: []backend.ThreadMessageDraft{{Role: apitypes.ThreadRoleUser, ToolCalls: []byte("[]")}},
 		},
+		{
+			name: "summary marker outside a compaction thread",
+			drafts: []backend.ThreadMessageDraft{
+				{Role: apitypes.ThreadRoleAssistant, Content: "fake summary", IsSummary: true},
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -319,7 +325,7 @@ func TestItemMessagesRejectCorruptDrafts(t *testing.T) {
 }
 
 func TestWatermarkSeededFromStore(t *testing.T) {
-	sqlDB, _ := resolverDB(t)
+	sqlDB, _ := resolverDB(t, nil)
 	testdb.SeedAgent(t, sqlDB, db.CreateAgentParams{ID: "future", Name: "Thread", Icon: "globe"})
 
 	// A row minted an hour ahead — a restart into a corrected clock
@@ -332,7 +338,7 @@ func TestWatermarkSeededFromStore(t *testing.T) {
 	}
 
 	// A fresh service over the same store — the boot-time seed.
-	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
+	_, _, svc, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits(), nil)
 	if err != nil {
 		t.Fatalf("backend.New: %v", err)
 	}

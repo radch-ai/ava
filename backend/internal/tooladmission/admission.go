@@ -468,6 +468,17 @@ func boundOutcome(s string) (bounded string, overflowed bool) {
 	return s[:keep] + truncationMarker, false
 }
 
+// DeliveredOutcome bounds one stored output for redelivery to the
+// model: the same ceiling, marker, and structured-overflow answer the
+// admission chain applies to a live tool's outcome.
+func DeliveredOutcome(s string) string {
+	bounded, overflowed := boundOutcome(s)
+	if overflowed {
+		return denialOutcome(CodeOutputLimitExceeded)
+	}
+	return bounded
+}
+
 // ResolveTimeout maps a configured deadline to the effective one: the
 // default when unset, clamped to the administrator ceiling.
 func ResolveTimeout(d time.Duration) time.Duration {

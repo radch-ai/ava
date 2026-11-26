@@ -58,6 +58,14 @@ UPDATE queue_items
 SET state = ?, finished_ms = ?, reason = ?
 WHERE agent_id = ? AND id = ? AND state = 'started';
 
+-- name: RebindQueueItemThread :execrows
+-- Redirects one started item's subsequent writes to its mid-loop
+-- rotation successor. The state and expected-source predicates make a
+-- stale or racing rebind fail closed: zero rows means the item was not
+-- running in the thread the caller believed active.
+UPDATE queue_items SET thread_id = ?
+ WHERE agent_id = ? AND id = ? AND state = 'started' AND thread_id = ?;
+
 -- name: ListUnfinishedItems :many
 -- Every item without a terminal outcome, admission order. Restart
 -- recovery settles these; nothing re-executes them.
@@ -138,3 +146,10 @@ WHERE agent_id = ? AND pos <= ? AND batch_end = 1;
 -- name: DeleteLifecycleEventsUpTo :exec
 -- Removes the retained prefix through a batch boundary.
 DELETE FROM lifecycle_journal WHERE agent_id = ? AND pos <= ?;
+
+-- name: CountOpenItemInvocations :one
+-- The mid-loop rotation's settle guard: one checkpoint may rotate only
+-- between rounds, when every dispatched invocation of the item has its
+-- outcome recorded. Zero is the only admissible answer.
+SELECT COUNT(*) FROM tool_invocations
+WHERE agent_id = ? AND item_id = ? AND state = 'open';

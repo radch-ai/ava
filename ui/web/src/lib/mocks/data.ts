@@ -10,13 +10,20 @@ import type {
 } from '../types/agent.ts'
 /** A provider row as the mock stores it — apiKey included but never
  * sent in a response (hasKey is the response field). ids are opaque
- * (uuid), never derived from the name. */
+ * (uuid), never derived from the name. models are the operator's
+ * declared entries: the id plus an optional declared context window. */
 export interface ProviderRow {
 	id: string
 	name: string
 	baseUrl: string
 	apiKey: string
-	models: string[]
+	models: ProviderModelRow[]
+}
+
+/** One declared custom model — the backend's ProviderModel. */
+export interface ProviderModelRow {
+	id: string
+	contextWindow?: number
 }
 
 /** A tool row as the mock stores it — the backend's tools table.
@@ -39,6 +46,9 @@ export interface MockThread {
 	/** The thread this one replaced; null on the first thread. */
 	previousId: string | null
 	createdAt: string
+	/** A compaction successor labels its boundary 'Compacted' and
+	 * carries the seeded summary row; the default is a plain /new. */
+	kind?: 'session' | 'compacted'
 	/** Newest first — the page read's order. */
 	messages: ThreadMessage[]
 }
@@ -432,7 +442,20 @@ export function createSeedData(): MockStore {
 					id: 'thread-2',
 					previousId: 'thread-1',
 					createdAt: minutesAgo(10 * 5),
-					messages: all.slice(0, split)
+					kind: 'compacted',
+					// Newest-first array, so the seeded summary a
+					// compaction lands below its boundary sits last.
+					messages: [
+						...all.slice(0, split),
+						{
+							id: 'msg-summary',
+							role: 'assistant' as const,
+							content:
+								'Summary of the compacted session: the user toured the notification system, asked for a weekly digest, and approved the email channel; the digest cron was configured and the first run is pending.',
+							isSummary: true,
+							createdAt: minutesAgo(11 * 5)
+						}
+					]
 				}
 			]
 		],

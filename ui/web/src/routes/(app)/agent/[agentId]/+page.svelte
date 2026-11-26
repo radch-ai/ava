@@ -142,6 +142,14 @@
 				conversation.queueActiveItem !== null)
 	)
 
+	// Auto-compaction in flight — the pre-prompt checker's or a
+	// mid-loop rotation's summarization: the stream's pulse marker
+	// shows it and send-now steps aside.
+	const compacting = $derived(
+		conversation.socketState === 'live' &&
+			(conversation.laneStatus?.compacting ?? false)
+	)
+
 	async function loadActivity() {
 		if (activityFeed || activityError || isLoadingActivity) return
 
@@ -253,6 +261,7 @@
 						next={conversation.queueNextItem}
 						paused={conversation.queuePaused}
 						pendingId={conversation.pendingSendNowId}
+						{compacting}
 						onsendnow={(itemId) =>
 							void conversation.sendNow(itemId, selectedModel)}
 					/>

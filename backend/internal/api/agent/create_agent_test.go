@@ -167,7 +167,7 @@ func TestCreateAgentStoreFailure(t *testing.T) {
 	sqlDB := testdb.Open(t, true)
 	// Break the store under the handler. Referencing tables drop first
 	// so the teardown stays valid under foreign_keys=ON.
-	for _, table := range []string{"thread_messages", "agent_activity", "heartbeat", "cron_jobs", "agents", "threads"} {
+	for _, table := range []string{"thread_context_refs", "thread_messages", "agent_activity", "heartbeat", "cron_jobs", "agents", "threads"} {
 		if _, err := sqlDB.Exec(`DROP TABLE ` + table); err != nil {
 			t.Fatalf("drop %s: %v", table, err)
 		}

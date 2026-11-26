@@ -267,7 +267,7 @@ func journalBackend(t *testing.T, agentIDs ...string) (*sql.DB, *backend.TurnSer
 		t.Fatalf("opening store failed: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	_, _, turns, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits())
+	_, _, turns, err := backend.New(sqlDB, zerolog.Nop(), testMasterKey, backend.DefaultToolLimits(), nil)
 	if err != nil {
 		t.Fatalf("building backend failed: %v", err)
 	}
@@ -1048,19 +1048,32 @@ func TestCommandAdmission(t *testing.T) {
 
 	// Arguments — after a space or a newline — reject the command: it
 	// is a bare switch, never a switch with a prompt.
-	for requestID, content := range map[string]string{
-		"args":    "/new now",
-		"reset":   "/reset extra",
-		"newline": "/new\nnow",
+	for _, tc := range []struct{ requestID, content, want string }{
+		{"args", "/new now", "/new takes no arguments; submit /new alone"},
+		{"reset", "/reset extra", "/reset takes no arguments; submit /reset alone"},
+		{"newline", "/new\nnow", "/new takes no arguments; submit /new alone"},
 	} {
-		write(requestID, content)
-		res, _ := readAdmission(t, conn, requestID, false)
+		write(tc.requestID, tc.content)
+		res, _ := readAdmission(t, conn, tc.requestID, false)
 		if res.Accepted {
-			t.Fatalf("%q must be rejected, got %+v", content, res)
+			t.Fatalf("%q must be rejected, got %+v", tc.content, res)
 		}
-		if res.Error != "/new takes no arguments; submit /new alone" {
-			t.Fatalf("%q rejection reason = %q, want the command-argument message", content, res.Error)
+		if res.Error != tc.want {
+			t.Fatalf("%q rejection reason = %q, want %q", tc.content, res.Error, tc.want)
 		}
+	}
+
+	// /shake and /compact carry the same no-argument contract, spelled
+	// with their own names in the rejection.
+	write("shake-args", "/shake now")
+	if res, _ := readAdmission(t, conn, "shake-args", false); res.Accepted ||
+		res.Error != "/shake takes no arguments; submit /shake alone" {
+		t.Fatalf("/shake now = %+v, want its own command-argument rejection", res)
+	}
+	write("compact-args", "/compact now")
+	if res, _ := readAdmission(t, conn, "compact-args", false); res.Accepted ||
+		res.Error != "/compact takes no arguments; submit /compact alone" {
+		t.Fatalf("/compact now = %+v, want its own command-argument rejection", res)
 	}
 
 	// Only the exact spellings are commands: unknown slash text, a
@@ -1070,6 +1083,7 @@ func TestCommandAdmission(t *testing.T) {
 		"case":     "/New",
 		"longer":   "/newer",
 		"embedded": "hi I want /new",
+		"near-c":   "/compaction",
 	} {
 		write(requestID, content)
 		if kind := admittedKind(requestID, content); kind != wstypes.QueueItemKindPrompt {
@@ -1081,6 +1095,14 @@ func TestCommandAdmission(t *testing.T) {
 	write("new", "/new")
 	if kind := admittedKind("new", "/new"); kind != wstypes.QueueItemKindNewThread {
 		t.Fatalf("/new kind = %q, want new_thread", kind)
+	}
+	write("shake", "/shake")
+	if kind := admittedKind("shake", "/shake"); kind != wstypes.QueueItemKindShake {
+		t.Fatalf("/shake kind = %q, want shake", kind)
+	}
+	write("compact", "/compact")
+	if kind := admittedKind("compact", "/compact"); kind != wstypes.QueueItemKindCompact {
+		t.Fatalf("/compact kind = %q, want compact", kind)
 	}
 }
 

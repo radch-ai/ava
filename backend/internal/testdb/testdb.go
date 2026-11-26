@@ -89,6 +89,7 @@ func SeedAgent(t *testing.T, sqlDB *sql.DB, arg db.CreateAgentParams) {
 		ID:               threadID,
 		AgentID:          arg.ID,
 		PreviousThreadID: sql.NullString{},
+		Kind:             "new",
 	}); err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("seed agent: insert thread: %v", err)

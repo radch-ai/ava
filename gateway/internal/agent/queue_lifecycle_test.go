@@ -116,7 +116,9 @@ func TestEmptyQueueFailureNeverPausesAndStateSurvivesEviction(t *testing.T) {
 	_, err := admitItem(t, mgr, "agent-evict", "conn-1", sc, "after eviction", nil, "")
 	require.NoError(t, err)
 	readUntilError(t, c)
-	require.Equal(t, int32(2), resolverCalls.Load(), "the prompt ran without an explicit selection")
+	// Two resolves per prompt: the checker's measurement (degraded by
+	// the resolver error) and the turn's own.
+	require.Equal(t, int32(4), resolverCalls.Load(), "each prompt ran without an explicit selection")
 	snapshot = readQueueState(t, c)
 	require.False(t, snapshot.Paused)
 	require.Empty(t, snapshot.Items)

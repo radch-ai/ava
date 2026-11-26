@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/radch-ai/ava/backend/apitypes"
@@ -26,6 +25,7 @@ import (
 func UpdateProvider(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		id := r.PathValue("id")
+		r.Body = http.MaxBytesReader(w, r.Body, maxProviderBodyBytes)
 		var req apitypes.UpdateProviderRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			return api.WriteError(w, http.StatusBadRequest, "Invalid request body")
@@ -56,7 +56,7 @@ func UpdateProvider(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 		}
 		name, baseURL, modelsJSON := row.Name, row.BaseUrl, row.Models
 		apiKey := providerKey(r.Context(), vaultStore, id)
-		custom, err := decodeModels(modelsJSON)
+		custom, err := DecodeModels(modelsJSON)
 		if err != nil {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return fmt.Errorf("decode models for provider %q: %w", id, err)
@@ -87,7 +87,8 @@ func UpdateProvider(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 
 		// A patch touching the connection re-verifies the effective
 		// configuration — keyed or keyless — before saving.
-		if req.BaseURL != nil || req.APIKey != nil {
+		probed := req.BaseURL != nil || req.APIKey != nil
+		if probed {
 			if err := probeConnection(r.Context(), baseURL, apiKey); err != nil {
 				return api.WriteError(w, http.StatusBadRequest,
 					"Connection check failed: "+err.Error())
@@ -100,6 +101,16 @@ func UpdateProvider(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 		}); err != nil {
 			_ = api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return fmt.Errorf("update provider %q: %w", id, err)
+		}
+
+		// A repointed baseUrl orphans the limits the departed endpoint
+		// stated in overflow errors: clear them so nothing stale speaks
+		// for the row. Best-effort, like the overflow write itself.
+		if req.BaseURL != nil && *req.BaseURL != row.BaseUrl {
+			_ = queries.SetDiscoveredContextWindows(r.Context(), db.SetDiscoveredContextWindowsParams{
+				DiscoveredContextWindows: encodeDiscoveredWindows(map[string]int{}),
+				ID:                       id,
+			})
 		}
 
 		// The key entry follows the row: replace on a supplied key,
@@ -130,7 +141,7 @@ func UpdateProvider(queries *db.Queries, vaultStore *vault.Store) api.Handler {
 // ownershipProblem returns the 409 message when a candidate id is
 // already claimed by another provider's custom list; "" when the
 // list is claimable.
-func ownershipProblem(ctx context.Context, queries *db.Queries, id string, models []string) (string, error) {
+func ownershipProblem(ctx context.Context, queries *db.Queries, id string, models []apitypes.ProviderModel) (string, error) {
 	rows, err := queries.ListProviders(ctx)
 	if err != nil {
 		return "", fmt.Errorf("list providers: %w", err)
@@ -139,13 +150,15 @@ func ownershipProblem(ctx context.Context, queries *db.Queries, id string, model
 		if row.ID == id {
 			continue
 		}
-		custom, err := decodeModels(row.Models)
+		custom, err := DecodeModels(row.Models)
 		if err != nil {
 			return "", fmt.Errorf("decode models for provider %q: %w", row.ID, err)
 		}
-		for _, m := range models {
-			if slices.Contains(custom, m) {
-				return fmt.Sprintf("Model %q already belongs to another provider", m), nil
+		for _, candidate := range models {
+			for _, existing := range custom {
+				if existing.ID == candidate.ID {
+					return fmt.Sprintf("Model %q already belongs to another provider", candidate.ID), nil
+				}
 			}
 		}
 	}
@@ -153,17 +166,36 @@ func ownershipProblem(ctx context.Context, queries *db.Queries, id string, model
 }
 
 // modelListProblem returns the 400 message for a models list that
-// is not non-empty unique strings; "" when well formed.
-func modelListProblem(models []string) string {
+// is not unique, non-empty ids with sane windows; "" when well formed.
+func modelListProblem(models []apitypes.ProviderModel) string {
+	if len(models) > maxProviderModels {
+		return fmt.Sprintf("Too many model entries (max %d)", maxProviderModels)
+	}
 	seen := make(map[string]bool, len(models))
 	for _, m := range models {
-		if strings.TrimSpace(m) == "" {
+		if strings.TrimSpace(m.ID) == "" {
 			return "Model id cannot be empty"
 		}
-		if seen[m] {
-			return fmt.Sprintf("Duplicate model id %q", m)
+		if seen[m.ID] {
+			return fmt.Sprintf("Duplicate model id %q", m.ID)
 		}
-		seen[m] = true
+		seen[m.ID] = true
+		if m.ContextWindow < 0 {
+			return "Context window must be a positive token count"
+		}
+		if m.ContextWindow > apitypes.MaxModelContextWindow {
+			return fmt.Sprintf("Context window must be at most %d tokens", apitypes.MaxModelContextWindow)
+		}
 	}
 	return ""
 }
+
+// Provider patch bodies stay small: one row is a handful of fields and
+// a bounded model list, so a fast oversized upload fails the decode
+// instead of costing memory.
+const maxProviderBodyBytes = 1 << 20
+
+// One wholesale models replace stays cheap to validate and store:
+// entries are bounded, and a declared window is a real token count
+// under apitypes.MaxModelContextWindow.
+const maxProviderModels = 512

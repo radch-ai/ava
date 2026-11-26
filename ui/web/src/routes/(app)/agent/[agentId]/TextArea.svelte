@@ -9,7 +9,9 @@
 	 * own classification. */
 	const COMMANDS = [
 		{ name: '/new', helper: 'Start a fresh conversation' },
-		{ name: '/reset', helper: 'Alias of /new — same fresh session' }
+		{ name: '/reset', helper: 'Alias of /new — same fresh session' },
+		{ name: '/shake', helper: 'Elide old tool outputs from the model context' },
+		{ name: '/compact', helper: 'Summarize this thread and continue fresh' }
 	]
 
 	let {
@@ -200,6 +202,7 @@
 		{/if}
 	</Popover.Root>
 </div>
+
 {#if submitError}
 	<p class="text-destructive mx-auto mt-1 w-fit text-xs">
 		{submitError}

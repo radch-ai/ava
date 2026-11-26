@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -64,6 +65,10 @@ type Config struct {
 	// at boot. Required: the working context is the committed user
 	// row, so an unbound source fails the turn.
 	GetAgentThread agent.AgentThreadSource
+	// NoteDiscoveredWindow records a context window a provider stated in
+	// its own rejection — bound to TurnService.RecordDiscoveredWindow by
+	// the binary at boot. Zero drops the lesson; it never fails a turn.
+	NoteDiscoveredWindow agent.WindowNoteFunc
 }
 
 // New builds the gateway. The gateway is a single WebSocket endpoint:
@@ -77,17 +82,26 @@ func New(cfg *Config, logger zerolog.Logger) (*Gateway, error) {
 	if cfg.PingInterval > 0 {
 		interval = cfg.PingInterval
 	}
-	mgr := agent.NewUserAgentManager(logger, &agent.UserAgentManagerOptions{
-		ResolveModel:   cfg.ResolveModel,
-		Journal:        cfg.Journal,
-		GetAgentConfig: cfg.GetAgentConfig,
-		Tools:          cfg.Tools,
-		GetAgentThread: cfg.GetAgentThread,
-	})
+	mgr := agent.NewUserAgentManager(logger, managerOptions(cfg))
 	return &Gateway{
 		handler: handleWS(interval, logger, mgr),
 		mgr:     mgr,
 	}, nil
+}
+
+// managerOptions names every Config seam the manager consumes. One
+// literal, kept beside the Config it copies: a seam bound by the
+// binary must never be dropped here — the wiring test pins each by
+// identity.
+func managerOptions(cfg *Config) *agent.UserAgentManagerOptions {
+	return &agent.UserAgentManagerOptions{
+		ResolveModel:         cfg.ResolveModel,
+		Journal:              cfg.Journal,
+		GetAgentConfig:       cfg.GetAgentConfig,
+		Tools:                cfg.Tools,
+		GetAgentThread:       cfg.GetAgentThread,
+		NoteDiscoveredWindow: cfg.NoteDiscoveredWindow,
+	}
 }
 
 // Gateway is the mounted WebSocket endpoint plus its drain half.
@@ -508,14 +522,18 @@ const maxPromptBytes = 64 << 10
 var (
 	errPromptEmpty   = errors.New("prompt is empty")
 	errPromptTooLong = errors.New("prompt is too long")
-	// errCommandArguments rejects a recognized command carrying extra
-	// text: /new is the whole submission or it is an ordinary prompt.
-	errCommandArguments = errors.New("/new takes no arguments; submit /new alone")
 	// errNotSynchronized answers a mutation from a peer that has not
 	// finished recovery: it cannot act on a conversation it has not
 	// yet seen.
 	errNotSynchronized = errors.New("not synchronized; retry once the connection is live")
 )
+
+// errCommandArguments rejects a recognized command carrying extra
+// text: a command is the whole submission or it is an ordinary
+// prompt.
+func errCommandArguments(cmd string) error {
+	return fmt.Errorf("%s takes no arguments; submit %s alone", cmd, cmd)
+}
 
 // Recovery bounds: one replay page and one snapshot page. A device that
 // fell further behind asks again with its cursor, so neither is a
@@ -541,9 +559,19 @@ func classifySubmission(trimmed string) (kind string, reject error) {
 		if cmd != trimmed {
 			// The kind is unused when reject != nil; the prompt
 			// spelling keeps one encoding in the package.
-			return wstypes.QueueItemKindPrompt, errCommandArguments
+			return wstypes.QueueItemKindPrompt, errCommandArguments(cmd)
 		}
 		return wstypes.QueueItemKindNewThread, nil
+	case "/shake":
+		if cmd != trimmed {
+			return wstypes.QueueItemKindPrompt, errCommandArguments(cmd)
+		}
+		return wstypes.QueueItemKindShake, nil
+	case "/compact":
+		if cmd != trimmed {
+			return wstypes.QueueItemKindPrompt, errCommandArguments(cmd)
+		}
+		return wstypes.QueueItemKindCompact, nil
 	default:
 		return wstypes.QueueItemKindPrompt, nil
 	}

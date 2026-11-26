@@ -75,6 +75,9 @@ export function parseAgentThread(thread: unknown): AgentThread {
 		) {
 			throw new Error('Invalid message: malformed message structure')
 		}
+		if ('isSummary' in msg && typeof msg.isSummary !== 'boolean') {
+			throw new Error('Invalid message: malformed message structure')
+		}
 	}
 	return {
 		items: t.items as ThreadMessage[],
