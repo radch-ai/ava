@@ -216,6 +216,7 @@ func Read(ctx context.Context, queries *db.Queries, agentID, rawCursor string, l
 			Role:      apitypes.ThreadRole(rows[i].Role),
 			Content:   rows[i].Content,
 			CreatedAt: ISOTime(rows[i].CreatedAt),
+			IsSummary: rows[i].IsSummary != 0,
 		})
 	}
 	if len(rows) > 0 {

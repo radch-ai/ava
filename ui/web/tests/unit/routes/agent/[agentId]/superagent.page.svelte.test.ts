@@ -175,7 +175,14 @@ function sendSyncReady(
 		next?: { id: string; content: string; kind: string }
 		paused?: boolean
 	} = {},
-	prefix?: { item_id: string; text: string; last_seq: number }
+	prefix?: { item_id: string; text: string; last_seq: number },
+	lane?: {
+		active: boolean
+		working: boolean
+		compacting: boolean
+		reasoning: boolean
+		model: string
+	}
 ) {
 	lifecyclePos += 1
 	capturedOnEvent?.({
@@ -188,7 +195,7 @@ function sendSyncReady(
 				active: queue.active ?? undefined,
 				next: queue.next
 			},
-			lane: {
+			lane: lane ?? {
 				active: false,
 				working: false,
 				compacting: false,
@@ -1284,7 +1291,7 @@ describe('AgentPage (superagent branch)', () => {
 			})
 		})
 
-		it('shows the auto-compacting chip and disables send-now while compacting', async () => {
+		it('shows the in-stream compacting marker and disables send-now while compacting', async () => {
 			render(AgentPageTestWrapper, { data: createMockData() })
 			capturedOnEvent?.({
 				type: 'queue_state',
@@ -1307,13 +1314,13 @@ describe('AgentPage (superagent branch)', () => {
 				}
 			})
 
-			await expect.element(page.getByText('Auto-compacting…')).toBeVisible()
+			await expect.element(page.getByText('Compacting')).toBeVisible()
 			await expect
 				.element(page.getByRole('button', { name: /send immediately/i }))
 				.toBeDisabled()
 
-			// The chip and the disable ride the flag: clearing it restores
-			// the actions and drops the chip.
+			// The marker and the disable ride the flag: clearing it
+			// restores the actions and drops the marker.
 			capturedOnEvent?.({
 				type: 'lane_status',
 				data: {
@@ -1325,7 +1332,7 @@ describe('AgentPage (superagent branch)', () => {
 				}
 			})
 			await vi.waitFor(() => {
-				expect(page.getByText('Auto-compacting…').elements()).toHaveLength(0)
+				expect(page.getByText('Compacting').elements()).toHaveLength(0)
 			})
 			await expect
 				.element(page.getByRole('button', { name: /send immediately/i }))
@@ -1679,6 +1686,25 @@ describe('AgentPage (superagent branch)', () => {
 			await expect
 				.element(page.getByRole('button', { name: 'Stop' }))
 				.toBeVisible()
+		})
+
+		it('rehydrates the compacting pulse after a mid-compaction reconnect', async () => {
+			render(AgentPageTestWrapper, { data: createMockData() })
+
+			// A reconnect while the lane summarizes: the hand-off
+			// carries the compacting signal, and no lane_status frame
+			// follows — the gateway broadcasts it on change only.
+			sendSyncReady({}, undefined, {
+				active: true,
+				working: true,
+				compacting: true,
+				reasoning: false,
+				model: ''
+			})
+
+			// The snapshot re-feeds the lane's own signal: the
+			// in-stream marker is minted from the hand-off itself.
+			await expect.element(page.getByText('Compacting')).toBeVisible()
 		})
 	})
 

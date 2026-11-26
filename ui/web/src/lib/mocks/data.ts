@@ -46,6 +46,9 @@ export interface MockThread {
 	/** The thread this one replaced; null on the first thread. */
 	previousId: string | null
 	createdAt: string
+	/** A compaction successor labels its boundary 'Compacted' and
+	 * carries the seeded summary row; the default is a plain /new. */
+	kind?: 'session' | 'compacted'
 	/** Newest first — the page read's order. */
 	messages: ThreadMessage[]
 }
@@ -405,7 +408,20 @@ export function createSeedData(): MockStore {
 					id: 'thread-2',
 					previousId: 'thread-1',
 					createdAt: minutesAgo(10 * 5),
-					messages: all.slice(0, split)
+					kind: 'compacted',
+					// Newest-first array, so the seeded summary a
+					// compaction lands below its boundary sits last.
+					messages: [
+						...all.slice(0, split),
+						{
+							id: 'msg-summary',
+							role: 'assistant' as const,
+							content:
+								'Summary of the compacted session: the user toured the notification system, asked for a weekly digest, and approved the email channel; the digest cron was configured and the first run is pending.',
+							isSummary: true,
+							createdAt: minutesAgo(11 * 5)
+						}
+					]
 				}
 			]
 		],

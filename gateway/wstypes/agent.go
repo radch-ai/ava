@@ -48,8 +48,9 @@ type SendNowMessage struct {
 // active lane's model id — display only. Working reports a turn in
 // flight; the composer's stop control tracks it. Reasoning reports
 // the model streaming reasoning tokens right now. Compacting reports
-// the pre-prompt automation's summarization in flight; the composer
-// chip and send-now disable track it.
+// auto-compaction's summarization in flight — the pre-prompt
+// checker's or a mid-loop rotation's; the stream's pulse marker and
+// the send-now disable track it.
 type LaneStatus struct {
 	Active     bool   `json:"active"`
 	Working    bool   `json:"working"`

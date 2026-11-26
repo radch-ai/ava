@@ -291,6 +291,7 @@ func (s *TurnService) insertRows(ctx context.Context, qtx *db.Queries, agentID, 
 			Role:      m.Role,
 			Content:   m.Content,
 			CreatedAt: threadpage.ISOTime(createdMs),
+			IsSummary: m.IsSummary,
 		})
 	}
 	return rows, nil

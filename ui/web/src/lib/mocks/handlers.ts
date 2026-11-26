@@ -441,7 +441,7 @@ export function createHandlers(store: MockStore): HttpHandler[] {
 				items.unshift({
 					id: thread.id,
 					role: 'divider',
-					content: 'New session',
+					content: thread.kind === 'compacted' ? 'Compacted' : 'New session',
 					createdAt: thread.createdAt
 				} as (typeof items)[number])
 				nextCursor = `${thread.previousId}:`

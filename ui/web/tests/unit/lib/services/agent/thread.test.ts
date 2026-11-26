@@ -9,8 +9,9 @@ vi.mock('#lib/services/api', () => ({
 import {
 	type AgentThread,
 	getAgentThread,
+	parseAgentThread,
 	type ThreadMessage
-} from '#lib/services/agent'
+} from '#lib/services/agent/thread'
 import { type ApiResponsePromise, api } from '#lib/services/api'
 
 function createThreadMessage(
@@ -192,6 +193,38 @@ describe('agent/thread service', () => {
 				'tool-row',
 				'answer-row'
 			])
+		})
+	})
+
+	describe('parseAgentThread', () => {
+		it("keeps a summary row's flag — the wire name is the display name", () => {
+			const parsed = parseAgentThread(
+				createThread({
+					items: [
+						createThreadMessage({
+							role: 'assistant',
+							content: 'the summary',
+							isSummary: true
+						})
+					]
+				})
+			)
+
+			expect(parsed.items[0].isSummary).toBe(true)
+		})
+
+		it('rejects a non-boolean summary flag', () => {
+			expect(() =>
+				parseAgentThread(
+					createThread({
+						items: [
+							createThreadMessage({
+								isSummary: 'yes' as unknown as boolean
+							})
+						]
+					})
+				)
+			).toThrow('Invalid message: malformed message structure')
 		})
 	})
 })

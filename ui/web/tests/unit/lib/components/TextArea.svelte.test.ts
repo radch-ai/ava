@@ -67,25 +67,6 @@ describe('TextArea', () => {
 		})
 	})
 
-	describe('Auto-compaction chip', () => {
-		it('shows the chip while compacting and drops it when clear', async () => {
-			const { rerender } = render(TextArea, { compacting: true })
-
-			await expect.element(page.getByText('Auto-compacting…')).toBeVisible()
-
-			rerender({ compacting: false })
-			await vi.waitFor(() => {
-				expect(page.getByText('Auto-compacting…').elements()).toHaveLength(0)
-			})
-		})
-
-		it('renders no chip by default', async () => {
-			render(TextArea)
-
-			expect(page.getByText('Auto-compacting…').elements()).toHaveLength(0)
-		})
-	})
-
 	describe('Keyboard submission', () => {
 		it('submits on Enter key', async () => {
 			const mockSubmit = vi.fn()

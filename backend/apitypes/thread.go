@@ -21,6 +21,10 @@ type ThreadMessage struct {
 	Role      ThreadRole `json:"role"`
 	Content   string     `json:"content"`
 	CreatedAt string     `json:"createdAt"`
+	// IsSummary marks a compaction successor's seeded summary row;
+	// clients collapse it behind its boundary instead of rendering
+	// the summary as prose.
+	IsSummary bool `json:"isSummary,omitempty"`
 }
 
 // ThreadPage is one page of one thread, its items ordered

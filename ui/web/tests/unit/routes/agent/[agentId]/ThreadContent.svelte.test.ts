@@ -5,13 +5,14 @@ import ThreadContent from '#routes/agent/[agentId]/ThreadContent.svelte'
 
 interface ThreadItem {
 	id: string
-	role: 'user' | 'assistant' | 'tool' | 'error' | 'divider'
+	role: 'user' | 'assistant' | 'tool' | 'error' | 'divider' | 'compacting'
 	content: string
 	pending?: boolean
 	name?: string
 	args?: string
 	result?: string
 	error?: string | null
+	isSummary?: boolean
 }
 
 const mockMessages: ThreadItem[] = [
@@ -468,6 +469,58 @@ describe('ThreadContent', () => {
 
 			expect(page.getByText('Thinking').elements()).toHaveLength(0)
 			await expect.element(page.getByText('the answer')).toBeVisible()
+		})
+	})
+
+	describe('Compacting marker', () => {
+		it('blinks in-stream while the lane summarizes — the same indicator the thinking pulse renders', async () => {
+			render(ThreadContent, {
+				threadItems: [{ id: 'm1', role: 'compacting', content: '' }]
+			})
+
+			const marker = await page.getByText('Compacting').element()
+			expect(
+				marker.closest('div')?.querySelector('.animate-pulse')
+			).not.toBeNull()
+		})
+	})
+
+	describe('Compacted summary', () => {
+		it('renders collapsed behind its boundary — the label, never the prose', async () => {
+			render(ThreadContent, {
+				threadItems: [
+					{ id: 't2', role: 'divider', content: 'Compacted' },
+					{
+						id: 'm1',
+						role: 'assistant',
+						content: 'the summary of everything before',
+						isSummary: true
+					}
+				]
+			})
+
+			await expect.element(page.getByText('Compacted summary')).toBeVisible()
+			await expect
+				.element(page.getByText(/summary of everything/))
+				.not.toBeVisible()
+		})
+
+		it('expands in place to the summary text', async () => {
+			render(ThreadContent, {
+				threadItems: [
+					{
+						id: 'm1',
+						role: 'assistant',
+						content: 'the summary of everything before',
+						isSummary: true
+					}
+				]
+			})
+
+			await page.getByText('Compacted summary').click()
+			await expect
+				.element(page.getByText(/summary of everything/))
+				.toBeVisible()
 		})
 	})
 

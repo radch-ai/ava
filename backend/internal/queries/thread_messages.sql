@@ -20,9 +20,10 @@
 --
 -- Display queries keep the visibility predicate (role != 'assistant'
 -- OR content != ''): structure-only call rows never consume a page
--- slot. ListActiveThreadRows -- the model replay scope -- keeps its
--- unfiltered predicate and returns is_summary so the gateway can tell
--- a seeded summary from an ordinary assistant row.
+-- slot. Both the display read and ListActiveThreadRows -- the model
+-- replay scope -- return is_summary: the wire marks a compaction
+-- successor's seeded summary row, and the gateway tells it from an
+-- ordinary assistant row.
 --
 -- sqlc's analyzer resolves the recursive CTE only from the statement's
 -- top level, so the target's chain depth joins in as a second `chain`
@@ -40,11 +41,12 @@ WITH RECURSIVE chain(thread_id, depth) AS (
     FROM threads t JOIN chain ON t.id = chain.thread_id
     WHERE t.previous_thread_id IS NOT NULL
 )
-SELECT id, role, content, created_at FROM (
+SELECT id, role, content, created_at, is_summary FROM (
     SELECT m.created_at AS sort_ms,
            CASE WHEN m.is_summary = 1 THEN 0 ELSE 2 END AS band,
            CASE WHEN m.is_summary = 1 THEN '' ELSE m.id END AS sort_seq,
-           m.id AS id, m.role AS role, m.content AS content, m.created_at AS created_at
+           m.id AS id, m.role AS role, m.content AS content, m.created_at AS created_at,
+           m.is_summary AS is_summary
     FROM thread_messages m
     WHERE m.agent_id = sqlc.arg(agent_id) AND m.thread_id = sqlc.arg(thread_id)
       AND (m.role != 'assistant' OR m.content != '')
@@ -59,7 +61,7 @@ SELECT id, role, content, created_at FROM (
                AND s.is_summary = 1
              ORDER BY s.created_at, s.id LIMIT 1),
            1, printf('%020d', r.position),
-           src.id, src.role, src.content, src.created_at
+           src.id, src.role, src.content, src.created_at, src.is_summary
     FROM thread_context_refs r
     JOIN thread_messages src ON src.agent_id = r.agent_id AND src.id = r.message_id
     WHERE r.agent_id = sqlc.arg(agent_id) AND r.thread_id = sqlc.arg(thread_id)
@@ -84,11 +86,12 @@ WITH RECURSIVE chain(thread_id, depth) AS (
     FROM threads t JOIN chain ON t.id = chain.thread_id
     WHERE t.previous_thread_id IS NOT NULL
 )
-SELECT id, role, content, created_at FROM (
+SELECT id, role, content, created_at, is_summary FROM (
     SELECT m.created_at AS sort_ms,
            CASE WHEN m.is_summary = 1 THEN 0 ELSE 2 END AS band,
            CASE WHEN m.is_summary = 1 THEN '' ELSE m.id END AS sort_seq,
-           m.id AS id, m.role AS role, m.content AS content, m.created_at AS created_at
+           m.id AS id, m.role AS role, m.content AS content, m.created_at AS created_at,
+           m.is_summary AS is_summary
     FROM thread_messages m
     WHERE m.agent_id = sqlc.arg(agent_id) AND m.thread_id = sqlc.arg(thread_id)
       AND (m.role != 'assistant' OR m.content != '')
@@ -103,7 +106,7 @@ SELECT id, role, content, created_at FROM (
                AND s.is_summary = 1
              ORDER BY s.created_at, s.id LIMIT 1),
            1, printf('%020d', r.position),
-           src.id, src.role, src.content, src.created_at
+           src.id, src.role, src.content, src.created_at, src.is_summary
     FROM thread_context_refs r
     JOIN thread_messages src ON src.agent_id = r.agent_id AND src.id = r.message_id
     WHERE r.agent_id = sqlc.arg(agent_id) AND r.thread_id = sqlc.arg(thread_id)

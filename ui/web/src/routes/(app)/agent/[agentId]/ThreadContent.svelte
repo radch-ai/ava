@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { BrainCircuit } from '@lucide/svelte'
+	import { BrainCircuit, FoldVertical } from '@lucide/svelte'
 	import { Separator } from '#components/ui/separator'
 	import { threadRowKey } from '#lib/services/agent/thread'
 	import type { ThreadItem } from '#lib/types/agent'
 	import MarkdownBody from './MarkdownBody.svelte'
+	import SummaryLine from './SummaryLine.svelte'
 	import ToolLine from './ToolLine.svelte'
 
 	interface Props {
@@ -100,6 +101,28 @@
 				error={tool.error ?? null}
 				pending={message.pending}
 			/>
+		{:else if message.role === 'assistant' && message.isSummary}
+			<!-- A compaction successor's seeded summary: collapsed behind
+		its boundary like a tool outcome, never a page of prose. -->
+			<SummaryLine content={message.content} />
+		{:else if message.role === 'compacting'}
+			<!-- The lane's compacting signal, the same in-stream indicator
+		the thinking pulse renders; it shows only while the signal is
+		up. -->
+			<div
+				class="text-muted-foreground mr-auto mb-4 flex w-full items-center gap-2 py-1.5"
+			>
+				<FoldVertical class="size-3.5 shrink-0" />
+				<span class="text-xs">Compacting</span>
+				<span class="flex gap-0.5">
+					{#each [0, 150, 300] as delay (delay)}
+						<span
+							class="bg-foreground/50 size-1 animate-pulse rounded-full"
+							style="animation-delay: {delay}ms"
+						></span>
+					{/each}
+				</span>
+			</div>
 		{:else if message.role === 'assistant' && !message.content}
 			<!-- The lane's reasoning signal stands in for an answer row
 		that does not exist yet; it renders only while the signal is

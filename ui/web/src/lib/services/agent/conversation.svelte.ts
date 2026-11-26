@@ -291,17 +291,24 @@ export function createConversation(agentId: string, seed: ConversationSeed) {
 		const prefix = data.prefix
 		if (!prefix) {
 			liveTurns.replaceWith(undefined)
-			return
+		} else {
+			liveTurns.replaceWith({
+				itemId: prefix.item_id,
+				userRow:
+					active?.user_message_id && active.kind === 'prompt'
+						? { id: active.user_message_id, content: active.content }
+						: undefined,
+				text: prefix.text,
+				invocations: prefix.invocations ?? []
+			})
 		}
-		liveTurns.replaceWith({
-			itemId: prefix.item_id,
-			userRow:
-				active?.user_message_id && active.kind === 'prompt'
-					? { id: active.user_message_id, content: active.content }
-					: undefined,
-			text: prefix.text,
-			invocations: prefix.invocations ?? []
-		})
+		// The hand-off rebuilt the tail wholesale, so the transient
+		// markers it replaced away are gone with it — and the gateway
+		// broadcasts lane_status on change only, so no frame follows
+		// to restore them. The snapshot re-feeds the lane's own
+		// signals: mid-reasoning or mid-compaction reconnects
+		// rehydrate their pulse rows.
+		liveTurns.applyEvent({ type: 'lane_status', data: data.lane })
 	}
 
 	// Connection state from the socket: the handshake declares `live`

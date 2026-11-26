@@ -142,8 +142,9 @@
 				conversation.queueActiveItem !== null)
 	)
 
-	// Auto-compaction in flight: the checker's summarization runs
-	// ahead of the claim — the chip shows it and send-now steps aside.
+	// Auto-compaction in flight — the pre-prompt checker's or a
+	// mid-loop rotation's summarization: the stream's pulse marker
+	// shows it and send-now steps aside.
 	const compacting = $derived(
 		conversation.socketState === 'live' &&
 			(conversation.laneStatus?.compacting ?? false)
@@ -277,7 +278,6 @@
 			<TextArea
 				onsubmit={handleComposerSubmit}
 				working={composerWorking}
-				{compacting}
 				oninterrupt={() => conversation.interrupt()}
 				blocked={conversation.socketState !== 'live'}
 			/>
