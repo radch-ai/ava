@@ -147,7 +147,7 @@ func (a *UserAgent) prePromptCheck(ctx context.Context, item *queuedItem) *prePr
 			return nil
 		}
 		whole, toolMass := prePromptTokens(instruction, tools.Infos, records, item.content)
-		if len(records) > 0 && whole*100 >= prePromptCompactThreshold*window {
+		if compactionEligible(records) && whole*100 >= prePromptCompactThreshold*window {
 			// Compact decides first, unconditionally: no preceding
 			// shake — the summary discards what a shake would reclaim.
 			a.setCompacting(true)
@@ -168,8 +168,13 @@ func (a *UserAgent) prePromptCheck(ctx context.Context, item *queuedItem) *prePr
 					Msg("pre-prompt check: commit rotation; prompt proceeds uncompacted")
 				break
 			}
-			// The successor's context is the summary; the recall
-			// re-reads it and exits far below every trigger.
+			// The successor projects a lone summary: eligibility skips
+			// the compact branch, and the shake branch's near-zero
+			// tool mass breaks the loop. The recall may legitimately
+			// sit above the compact trigger — an oversized incoming
+			// prompt — and the prompt then proceeds unchanged; an
+			// unfit request fails at the provider through the existing
+			// error path.
 			reloaded, err := a.getAgentThread(ctx, a.state.agentID)
 			if err != nil {
 				a.logger.Warn().Str("error", a.scrubCopy(err.Error())).Str("agent_id", a.state.agentID).

@@ -51,7 +51,31 @@ const summaryReserveTokens = 16 << 10
 
 // compactSummaryInstruction is the summarization request's system
 // message: the summary is continuation context, not a new instruction.
-const compactSummaryInstruction = `You are compressing an agent conversation so it can continue in a fresh thread. Summarize the transcript: preserve goals, constraints, decisions, relevant established facts, and unfinished work. Omit greetings and detail whose loss cannot change future work. Elided tool outputs appear as placeholders naming how to restore them; do not invent their content. This summary is continuation context, not a new user instruction. Reply with the summary only — no preamble, at most 600 words.`
+const compactSummaryInstruction = `You are compressing an agent conversation so it can continue in a fresh thread. Summarize the transcript: preserve goals, constraints, decisions, relevant established facts, and unfinished work. Omit greetings and detail whose loss cannot change future work. Tool outputs may appear as bracketed omission notes or as elided-output placeholders naming the read_tool_output tool; their content is unavailable to you — never invent or guess it. This summary is continuation context, not a new user instruction. Reply with the summary only — no preamble, at most 600 words.`
+
+// compactionEligible reports whether a projected history carries material
+// worth summarizing: empty and lone-summary histories are ineligible — the
+// first has nothing to compress, the second would re-summarize a summary and
+// rotate while the pressure actually sits in fixed framing or the incoming
+// prompt. Material beyond a seeded summary keeps the history eligible.
+func compactionEligible(records []backend.AgentThreadMessage) bool {
+	if len(records) == 0 {
+		return false
+	}
+	if len(records) == 1 && records[0].IsSummary {
+		return false
+	}
+	return true
+}
+
+// omittedToolNote is the neutral marker the in-memory reduction substitutes
+// for an oversized tool result in a summarization input: it states the
+// omission and promises nothing — no restore tool, no reference. Restore
+// placeholders belong to durable elision only, and those arrive already
+// projected, below the reduction floor.
+func omittedToolNote(size int) string {
+	return fmt.Sprintf("[tool output omitted from this summarization request: %d bytes]", size)
+}
 
 // processCompact runs one compact item: start, summarize the active
 // thread with the resolved model (reducing an over-window range in
@@ -79,9 +103,10 @@ func (a *UserAgent) processCompact(claim *turnClaim, emitCtx context.Context, ms
 	if err != nil {
 		return fail(err)
 	}
-	// An empty thread has nothing to summarize: complete as a no-op,
-	// without rotating — a fresh chain link would carry nothing.
-	if len(records) == 0 {
+	// An empty thread has nothing to summarize and a lone summary would
+	// re-summarize itself and rotate for nothing: both complete as a
+	// no-op, without rotating — a fresh chain link would carry nothing.
+	if !compactionEligible(records) {
 		if err := a.state.commitAndPublish(func() (*backend.JournalBatch, error) {
 			return a.journal.FinishItem(claim.ctx, a.state.agentID, msgID, apitypes.ItemCompleted, "", nil)
 		}); err != nil {
@@ -168,9 +193,9 @@ func (a *UserAgent) summarizeForCompaction(ctx context.Context, cfg backend.Reso
 	reduced := false
 	reduce := func() {
 		// In-range reduction is a projection, never a durable write:
-		// oversized tool payloads substitute the /shake placeholder —
-		// same floor, same text, one implementation — in memory. A
-		// compact that fails after this leaves the thread byte-identical.
+		// oversized tool payloads substitute the neutral omission note
+		// — same floor, no restore promise — in memory. A compact that
+		// fails after this leaves the thread byte-identical.
 		transcript = renderCompactionTranscript(reduceForSummary(records))
 		reduced = true
 	}
@@ -299,10 +324,11 @@ func renderCompactionTranscript(records []backend.AgentThreadMessage) string {
 
 // reduceForSummary projects the thread for a summarization request that
 // must fit the model's window: every tool message at or above the shake
-// floor substitutes the durable road's restore placeholder — the same
-// floor and the same text, so the two paths cannot drift. Nothing else
-// is touched, and the copy means the stored rows and their elision flags
-// are never modified: a compact that fails after this leaves the thread
+// floor substitutes the neutral omission note — the same floor the
+// durable shake path uses, but text that promises no restore and needs
+// no row ID: the rolling records carry none. Nothing else is touched,
+// and the copy means the stored rows and their elision flags are never
+// modified: a compact that fails after this leaves the thread
 // byte-identical. Rows already elided durably arrive as their short
 // placeholder, below the floor, so they pass through unchanged.
 func reduceForSummary(records []backend.AgentThreadMessage) []backend.AgentThreadMessage {
@@ -312,7 +338,7 @@ func reduceForSummary(records []backend.AgentThreadMessage) []backend.AgentThrea
 		if m.Role != apitypes.ThreadRoleTool || len(m.Content) < backend.ShakeMinResultBytes {
 			continue
 		}
-		out[i].Content = backend.ElidedReference(m.ID, len(m.Content))
+		out[i].Content = omittedToolNote(len(m.Content))
 	}
 	return out
 }

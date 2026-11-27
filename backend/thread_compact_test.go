@@ -382,3 +382,114 @@ func TestRotateThreadCompactedSeedsAndSwaps(t *testing.T) {
 		t.Errorf("prompt state = %q, want started", got)
 	}
 }
+
+// The three compaction rotations share one seeding core; what differs
+// is each caller's lifecycle contract. Manual settles the item
+// completed with thread_changed then item_finished; the pre-prompt
+// rotation settles nothing and carries the summary on thread_changed;
+// the mid-turn rotation keeps the item started, rebinds it, and
+// reports one conversation_refresh whose successor projects summary
+// then the referenced turn — the tool row by its full content.
+func TestCompactionRotationsSettleDistinctLifecycles(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("manual", func(t *testing.T) {
+		turns, sqlDB := journalService(t)
+		const agent = "research"
+		seedRows(t, sqlDB, agent, []backend.ThreadMessageDraft{userDraft("t1 prompt", "t1")})
+		activated, batch, err := runCompaction(t, turns, agent, "compact-1", "manual summary")
+		if err != nil {
+			t.Fatalf("execute compaction: %v", err)
+		}
+		if got := itemState(t, sqlDB, agent, "compact-1"); got != apitypes.ItemCompleted {
+			t.Errorf("compact item state = %q, want completed", got)
+		}
+		if len(batch.Events) != 2 ||
+			batch.Events[0].Kind != apitypes.LifecycleThreadChanged ||
+			batch.Events[1].Kind != apitypes.LifecycleItemFinished {
+			t.Fatalf("events = %+v, want thread_changed then item_finished", batch.Events)
+		}
+		if n := countRows(t, sqlDB,
+			`SELECT COUNT(*) FROM thread_messages WHERE agent_id = ? AND thread_id = ?`,
+			agent, activated.ID); n != 1 {
+			t.Errorf("successor rows = %d, want exactly the summary", n)
+		}
+	})
+
+	t.Run("preprompt", func(t *testing.T) {
+		turns, sqlDB := journalService(t)
+		const agent = "research"
+		seedRows(t, sqlDB, agent, []backend.ThreadMessageDraft{userDraft("t1 prompt", "t1")})
+		if _, err := turns.AcceptItem(ctx, agent, "prompt-1", "hello", "prompt", nil); err != nil {
+			t.Fatal(err)
+		}
+		activated, batch, err := turns.RotateThreadCompacted(ctx, agent, "prompt-1", "preprompt summary")
+		if err != nil {
+			t.Fatalf("rotate thread compacted: %v", err)
+		}
+		if got := itemState(t, sqlDB, agent, "prompt-1"); got != "accepted" {
+			t.Errorf("tagged prompt state = %q, want accepted", got)
+		}
+		if len(batch.Events) != 1 || batch.Events[0].Kind != apitypes.LifecycleThreadChanged {
+			t.Fatalf("events = %+v, want the single thread_changed", batch.Events)
+		}
+		changed := batch.Events[0]
+		if len(changed.Rows) != 1 || changed.Rows[0].Content != "preprompt summary" {
+			t.Errorf("thread_changed rows = %+v, want the summary row riding the event", changed.Rows)
+		}
+		if got := activeThreadOf(t, sqlDB, agent); got != activated.ID {
+			t.Errorf("active thread = %s, want the successor %s", got, activated.ID)
+		}
+	})
+
+	t.Run("midturn", func(t *testing.T) {
+		turns, sqlDB := journalService(t)
+		const agent, item = "research", "item-1"
+		if _, err := turns.AcceptItem(ctx, agent, item, "run it", "prompt", nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := turns.StartItem(ctx, agent, item); err != nil {
+			t.Fatal(err)
+		}
+		seedRows(t, sqlDB, agent, []backend.ThreadMessageDraft{
+			groupDraft(t, item, "looking", callDecl("c1", "fetch")),
+			toolDraft(t, item, "c1", "fetch", `{}`, "tool outcome payload", nil),
+		})
+		activated, batch, err := turns.RotateThreadMidTurn(ctx, agent, item, "midturn summary", backend.RetainCurrentTurn)
+		if err != nil {
+			t.Fatalf("rotate thread mid-turn: %v", err)
+		}
+		if got := itemState(t, sqlDB, agent, item); got != "started" {
+			t.Errorf("running item state = %q, want started", got)
+		}
+		if got := itemThreadOf(t, sqlDB, agent, item); got != activated.ID {
+			t.Errorf("item thread = %s, want the successor %s", got, activated.ID)
+		}
+		if len(batch.Events) != 1 || batch.Events[0].Kind != apitypes.LifecycleConversationRefresh {
+			t.Fatalf("events = %+v, want the single conversation_refresh", batch.Events)
+		}
+		projection, err := turns.GetAgentThread(ctx, agent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantRoles := []apitypes.ThreadRole{
+			apitypes.ThreadRoleAssistant, apitypes.ThreadRoleUser,
+			apitypes.ThreadRoleAssistant, apitypes.ThreadRoleTool,
+		}
+		if len(projection) != len(wantRoles) {
+			t.Fatalf("projection rows = %d, want %d (summary, user, assistant, tool)",
+				len(projection), len(wantRoles))
+		}
+		for i, want := range wantRoles {
+			if projection[i].Role != want {
+				t.Errorf("projection[%d] role = %q, want %q", i, projection[i].Role, want)
+			}
+		}
+		if projection[0].Content != "midturn summary" || !projection[0].IsSummary {
+			t.Errorf("projection[0] = %+v, want the seeded summary", projection[0])
+		}
+		if projection[3].Content != "tool outcome payload" {
+			t.Errorf("tool row content = %q, want the full referenced payload", projection[3].Content)
+		}
+	})
+}

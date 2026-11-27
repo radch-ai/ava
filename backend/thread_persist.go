@@ -268,7 +268,7 @@ func projectTurn(rows []db.ListActiveThreadRowsRow, groups []*threadGroup) ([]Ag
 		}
 		elided := row.Elided != 0
 		if elided {
-			text = ElidedReference(row.ID, len(text))
+			text = elidedReference(row.ID, len(text))
 		}
 		target := -1
 		for gi := len(groups) - 1; gi >= 0; gi-- {

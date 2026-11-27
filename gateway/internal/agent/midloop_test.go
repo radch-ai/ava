@@ -184,6 +184,13 @@ func (s *midLoopLLM) summarizerCalls() int {
 	return n
 }
 
+// bodies snapshots every recorded request body.
+func (s *midLoopLLM) bodies() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.body...)
+}
+
 // --- SSE frame builders: rounds carry their tool calls; usage rides
 // its own choices-empty chunk, the only shape the stream parser reads
 // it from. ---
@@ -924,6 +931,61 @@ func TestMidLoopReconnectAfterRollingRotation(t *testing.T) {
 	terminal, _ := drainToTerminal(t, c1, prompt)
 	require.Equal(t, apitypes.ItemCompleted, terminal.Outcome)
 	require.Equal(t, successor, terminal.ThreadID)
+}
+
+// 12c. A rolling summary input that overflows preflight is reduced in
+// memory: the big first-round result inside the selected range becomes
+// the neutral omission note — never a restore placeholder — and the
+// rotation still commits so the turn completes in the successor.
+func TestMidLoopRollingReductionUsesNeutralOmission(t *testing.T) {
+	big := strings.Repeat("measurement observation record ", 300)
+	echo := &fakeTool{name: "echo_tool", result: big}
+	llm := newMidLoopLLM(t,
+		[]string{
+			// reported usage below the trigger; the estimated delta over
+			// the big round-1 result still trips the first rotation
+			mlToolRound("echo_tool", []string{"call-1"}, 1000),
+			// crossing it: the second rolling rotation
+			mlToolRound("echo_tool", []string{"call-2"}, 1700),
+			mlFinal("the answer", 0),
+		},
+		[]string{"rolling one", "rolling two"})
+	sqlDB, svc := contextBackend(t, "agent-mlnote")
+	seedSummaryOnlyThread(t, sqlDB, "agent-mlnote", "prior summary")
+	mgr := midLoopManager(t, llm.url, svc, 1300, echo, nil)
+
+	c, sc := wsPair(t)
+	prompt, err := admitItem(t, mgr, "agent-mlnote", "conn-1", sc, "continue", nil, "")
+	require.NoError(t, err)
+	terminal, kinds := drainToTerminal(t, c, prompt)
+	require.Equal(t, apitypes.ItemCompleted, terminal.Outcome)
+	refreshes := 0
+	for _, k := range kinds {
+		if k == apitypes.LifecycleConversationRefresh {
+			refreshes++
+		}
+	}
+	require.Equal(t, 2, refreshes,
+		"two rolling rotations: the second one's summary input carries the big result")
+
+	// The second rotation's summarization is the reduced one: its
+	// selected range reaches the big first-round result, which the
+	// preflight overflows on and the reduction replaces.
+	var noted int
+	nonStreaming := 0
+	for _, b := range llm.bodies() {
+		if strings.Contains(b, `"stream":true`) {
+			continue
+		}
+		nonStreaming++
+		if strings.Contains(b, "[tool output omitted from this summarization request:") {
+			noted++
+		}
+		require.NotContains(t, b, "[elided tool output:",
+			"a temporary omission is not a restore placeholder")
+	}
+	require.Equal(t, 2, nonStreaming, "one summarization per rotation")
+	require.Equal(t, 1, noted, "exactly the second rotation's input was reduced")
 }
 
 // 13. A rolling selection too large to compact usefully — its bulk is

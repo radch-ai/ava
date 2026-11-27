@@ -41,12 +41,10 @@ func envelopeText(env ToolEnvelope) string {
 	return env.Result
 }
 
-// ElidedReference is the placeholder the projection emits instead of an
+// elidedReference is the placeholder the projection emits instead of an
 // elided tool result. It names the row so the agent can restore the
-// exact original with read_tool_output. The durable elision and the
-// gateway's in-memory compaction reduction both emit this text, so the
-// two can never drift.
-func ElidedReference(rowID string, size int) string {
+// exact original with read_tool_output.
+func elidedReference(rowID string, size int) string {
 	return fmt.Sprintf("[elided tool output: %d bytes. Restore it with the read_tool_output tool: {\"reference\":%q}]", size, rowID)
 }
 

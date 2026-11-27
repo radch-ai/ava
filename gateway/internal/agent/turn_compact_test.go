@@ -265,10 +265,10 @@ func TestCompactLaneSummarizesAndRotates(t *testing.T) {
 	require.NotContains(t, bodies[3], "first answer")
 }
 
-// An oversized source range is reduced in memory — the same placeholder
-// floor and text the durable shake path emits — so the summarization
-// request fits the model's window while the stored rows stay
-// byte-identical and un-elided.
+// An oversized source range is reduced in memory — every oversized tool
+// record becomes the neutral omission note, same floor as shake but
+// promising no restore — so the summarization request fits the model's
+// window while the stored rows stay byte-identical and un-elided.
 func TestCompactLaneReducesOversizedRange(t *testing.T) {
 	bulk := strings.Repeat("measurement observation record ", 140)
 	sqlDB, svc := contextBackend(t, "agent-compactbig")
@@ -288,14 +288,37 @@ func TestCompactLaneReducesOversizedRange(t *testing.T) {
 		"the reduction is in-memory: no row is elided")
 	bodies := llm.received()
 	require.Len(t, bodies, 1, "exactly one summarization request")
-	require.Contains(t, bodies[0], "[elided tool output:")
-	require.Contains(t, bodies[0], "read_tool_output")
+	require.Contains(t, bodies[0], "[tool output omitted from this summarization request:")
+	require.NotContains(t, bodies[0], "[elided tool output:", "a temporary omission is not a restore reference")
 	require.NotContains(t, bodies[0], "measurement observation record",
 		"the oversized payload must not reach the model")
 	var shakes int
 	require.NoError(t, sqlDB.QueryRow(
 		`SELECT COUNT(*) FROM queue_items WHERE agent_id = 'agent-compactbig' AND kind = 'shake'`).Scan(&shakes))
 	require.Zero(t, shakes, "the reduction must not synthesize a /shake submission")
+}
+
+// The reduction substitutes a neutral omission note — never a restore
+// reference — and only for oversized tool records; everything else,
+// including an already-elided placeholder, passes through untouched,
+// and the input slice is never mutated.
+func TestReduceForSummaryNeutralOmission(t *testing.T) {
+	big := strings.Repeat("measurement observation record ", 140) // 4340 bytes, above the 2048 floor
+	records := []backend.AgentThreadMessage{
+		{Role: apitypes.ThreadRoleTool, Content: big},
+		{Role: apitypes.ThreadRoleTool, Content: strings.Repeat("x", 100)},
+		{Role: apitypes.ThreadRoleTool, Content: placeholder("row-elided", 9999)},
+		{Role: apitypes.ThreadRoleUser, Content: big},
+	}
+	out := agent.ReduceForSummary(records)
+
+	require.Equal(t, agent.OmittedToolNote(len(big)), out[0].Content)
+	require.NotContains(t, out[0].Content, "read_tool_output")
+	require.Equal(t, strings.Repeat("x", 100), out[1].Content, "below the floor: unchanged")
+	require.Equal(t, placeholder("row-elided", 9999), out[2].Content,
+		"an already-elided placeholder passes through")
+	require.Equal(t, big, out[3].Content, "user content is never reduced")
+	require.Equal(t, big, records[0].Content, "the reduction is a copy: input untouched")
 }
 
 // An over-window rejection is recoverable once: the lane re-projects
@@ -336,7 +359,7 @@ func TestCompactLaneRecoversFromOverflow(t *testing.T) {
 	require.Len(t, bodies, 2, "one rejected request and one retry")
 	require.NotContains(t, bodies[0], "[elided tool output:",
 		"the first request carries the unreduced transcript")
-	require.Contains(t, bodies[1], "[elided tool output:",
+	require.Contains(t, bodies[1], "[tool output omitted from this summarization request:",
 		"the retry carries the reduced transcript")
 	require.Equal(t, "the summary", compactRows(t, sqlDB, "agent-overflow",
 		activeThreadID(t, sqlDB, "agent-overflow"))[0][1])
@@ -381,7 +404,7 @@ func TestCompactLaneRecoversFromOverflowPhrase(t *testing.T) {
 
 	bodies := llm.received()
 	require.Len(t, bodies, 2, "one rejected request and one retry")
-	require.Contains(t, bodies[1], "[elided tool output:",
+	require.Contains(t, bodies[1], "[tool output omitted from this summarization request:",
 		"the retry carries the reduced transcript")
 	select {
 	case window := <-noted:
@@ -634,6 +657,60 @@ func TestCompactLaneEmptyThreadIsNoOp(t *testing.T) {
 	require.Equal(t, 1, threads, "no successor for an empty thread")
 }
 
+// A thread holding only a seeded summary is equally ineligible: no
+// model call, no rotation that would re-summarize a summary.
+func TestCompactLaneSummaryOnlyThreadIsNoOp(t *testing.T) {
+	llm := newCompactLLM(t, nil, nil)
+	sqlDB, svc := contextBackend(t, "agent-compactsum")
+	seedSummaryOnlyThread(t, sqlDB, "agent-compactsum", "prior summary")
+	mgr := laneCompactManager(t, llm.url, svc, 128<<10, nil)
+
+	c, sc := wsPair(t)
+	compactID, err := admitItem(t, mgr, "agent-compactsum", "conn-1", sc, "/compact", nil, wstypes.QueueItemKindCompact)
+	require.NoError(t, err)
+	terminal, _ := drainToTerminal(t, c, compactID)
+	require.Equal(t, apitypes.ItemCompleted, terminal.Outcome)
+	require.Empty(t, llm.received())
+	require.Equal(t, "agent-compactsum-sum", activeThreadID(t, sqlDB, "agent-compactsum"))
+	var threads int
+	require.NoError(t, sqlDB.QueryRow(
+		`SELECT COUNT(*) FROM threads WHERE agent_id = 'agent-compactsum'`).Scan(&threads))
+	require.Equal(t, 2, threads, "t1 plus the seeded summary thread; no successor")
+}
+
+// A seeded summary followed by fresh material is still eligible: the lone
+// summary is skipped, but conversation added after it compacts normally —
+// one summarization, one successor.
+func TestCompactLaneSummaryPlusMaterialStillCompacts(t *testing.T) {
+	llm := newCompactLLM(t, nil, []string{"summary: goals and decisions"})
+	sqlDB, svc := contextBackend(t, "agent-compactplus")
+	seedSummaryOnlyThread(t, sqlDB, "agent-compactplus", "prior summary")
+	_, err := sqlDB.Exec(
+		`INSERT INTO thread_messages (id, agent_id, role, content, created_at, turn_id, thread_id)
+		 VALUES (?, ?, 'user', ?, ?, ?, ?)`,
+		"agent-compactplus-new", "agent-compactplus", "fresh work after the summary",
+		time.Now().UnixMilli(), "turn-new", "agent-compactplus-sum")
+	require.NoError(t, err)
+	mgr := laneCompactManager(t, llm.url, svc, 128<<10, nil)
+
+	c, sc := wsPair(t)
+	compactID, err := admitItem(t, mgr, "agent-compactplus", "conn-1", sc, "/compact", nil, wstypes.QueueItemKindCompact)
+	require.NoError(t, err)
+	terminal, _ := drainToTerminal(t, c, compactID)
+	require.Equal(t, apitypes.ItemCompleted, terminal.Outcome)
+
+	bodies := llm.received()
+	require.Len(t, bodies, 1, "one summarization")
+	require.Contains(t, bodies[0], "prior summary")
+	require.Contains(t, bodies[0], "fresh work after the summary")
+
+	successor := activeThreadID(t, sqlDB, "agent-compactplus")
+	require.NotEqual(t, "agent-compactplus-sum", successor)
+	rows := compactRows(t, sqlDB, "agent-compactplus", successor)
+	require.Len(t, rows, 1)
+	require.Equal(t, "summary: goals and decisions", rows[0][1])
+}
+
 // A stop during the summarization call is a quiet stop: the item
 // settles stopped, nothing rotates, and the queue does not pause.
 func TestCompactLaneCancelDuringSummaryIsQuietStop(t *testing.T) {
@@ -764,8 +841,8 @@ func TestCompactLaneFailedCompactLeavesThreadUntouched(t *testing.T) {
 		"the stored source rows are byte-identical")
 	bodies := llm.received()
 	require.Len(t, bodies, 1)
-	require.Contains(t, bodies[0], "[elided tool output:",
-		"the summarization request carried the placeholder")
+	require.Contains(t, bodies[0], "[tool output omitted from this summarization request:",
+		"the summarization request carried the omission note")
 }
 
 // The persisted summary scrubs with the seam-resolved scrubber, not the

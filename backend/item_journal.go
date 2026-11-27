@@ -799,6 +799,62 @@ func (s *TurnService) ExecuteThreadSwitch(ctx context.Context, agentID, itemID s
 	return activated, batch, nil
 }
 
+// seedCompactionSuccessor is the rotation core the three compaction paths
+// share, inside the caller's journal transaction: create the compact-kind
+// successor linked to the active thread, seed the summary as its first
+// assistant row (carrying turnID — the convention every row an item mints
+// follows), attach the caller's retained context references in order, and
+// activate the successor. Item settlement, rebinding, and events stay with
+// the callers: their lifecycle contracts differ.
+func (s *TurnService) seedCompactionSuccessor(ctx context.Context, qtx *db.Queries,
+	agentID, turnID, summary string, retainedIDs []string, stamp int64,
+) (db.CreateThreadFromActiveRow, []apitypes.ThreadMessage, string, error) {
+	threadID := uuid.NewString()
+	row, err := qtx.CreateThreadFromActive(ctx, db.CreateThreadFromActiveParams{
+		ThreadID:  threadID,
+		CreatedMs: stamp,
+		AgentID:   agentID,
+		Kind:      threadpage.CompactedKind,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return db.CreateThreadFromActiveRow{}, nil, "", ErrUnknownAgent
+	} else if err != nil {
+		return db.CreateThreadFromActiveRow{}, nil, "", err
+	}
+	rows, err := s.insertRows(ctx, qtx, agentID, threadID, stamp, []ThreadMessageDraft{{
+		ID:        uuid.NewString(),
+		Role:      apitypes.ThreadRoleAssistant,
+		Content:   summary,
+		TurnID:    turnID,
+		IsSummary: true,
+	}})
+	if err != nil {
+		return db.CreateThreadFromActiveRow{}, nil, "", err
+	}
+	for position, id := range retainedIDs {
+		if err := qtx.InsertThreadContextRef(ctx, db.InsertThreadContextRefParams{
+			AgentID:   agentID,
+			ThreadID:  threadID,
+			Position:  int64(position),
+			MessageID: id,
+		}); err != nil {
+			return db.CreateThreadFromActiveRow{}, nil, "", fmt.Errorf("reference row %d: %w", position, err)
+		}
+	}
+	if n, err := qtx.UpdateActiveThread(ctx, db.UpdateActiveThreadParams{
+		ActiveThreadID: threadID,
+		ID:             agentID,
+	}); err != nil {
+		return db.CreateThreadFromActiveRow{}, nil, "", err
+	} else if n == 0 {
+		return db.CreateThreadFromActiveRow{}, nil, "", ErrUnknownAgent
+	}
+	// Exactly one seeded row shares the transaction's stamp span; the
+	// watermark covers it, as FinishItem's row-carrying batches do.
+	s.lastPersistedMs = stamp
+	return row, rows, threadID, nil
+}
+
 // ExecuteCompaction runs a compact item's durable rotation: a successor
 // thread linked to the formerly active one, the summary seeded as its
 // first assistant message, the pointer swap, and the item's completion —
@@ -826,38 +882,9 @@ func (s *TurnService) ExecuteCompaction(ctx context.Context, agentID, itemID, su
 			if summary == "" {
 				return nil, errors.New("compact thread: empty summary")
 			}
-			threadID := uuid.NewString()
-			row, err := qtx.CreateThreadFromActive(ctx, db.CreateThreadFromActiveParams{
-				ThreadID:  threadID,
-				CreatedMs: stamp,
-				AgentID:   agentID,
-				Kind:      threadpage.CompactedKind,
-			})
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil, ErrUnknownAgent
-			} else if err != nil {
-				return nil, err
-			}
-			// The seeded row carries the item's id as its turn: the
-			// convention every row an item mints follows, and a lone
-			// assistant row projects as a plain message.
-			rows, err := s.insertRows(ctx, qtx, agentID, threadID, stamp, []ThreadMessageDraft{{
-				ID:        uuid.NewString(),
-				Role:      apitypes.ThreadRoleAssistant,
-				Content:   summary,
-				TurnID:    itemID,
-				IsSummary: true,
-			}})
+			row, rows, threadID, err := s.seedCompactionSuccessor(ctx, qtx, agentID, itemID, summary, nil, stamp)
 			if err != nil {
 				return nil, err
-			}
-			if n, err := qtx.UpdateActiveThread(ctx, db.UpdateActiveThreadParams{
-				ActiveThreadID: threadID,
-				ID:             agentID,
-			}); err != nil {
-				return nil, err
-			} else if n == 0 {
-				return nil, ErrUnknownAgent
 			}
 			if n, err := qtx.SetQueueItemTerminal(ctx, db.SetQueueItemTerminalParams{
 				State:      apitypes.ItemCompleted,
@@ -871,10 +898,6 @@ func (s *TurnService) ExecuteCompaction(ctx context.Context, agentID, itemID, su
 			}
 			createdAt := threadpage.ISOTime(row.CreatedAt)
 			divider := threadpage.Divider(threadID, row.CreatedAt, threadpage.CompactedText)
-			// The divider and the seeded row share this transaction's
-			// stamp span; the watermark covers both, as FinishItem's
-			// row-carrying batches do.
-			s.lastPersistedMs = stamp + int64(len(rows)) - 1
 			return s.appendEvents(ctx, qtx, agentID, itemID, head, stamp, []apitypes.LifecycleEvent{
 				{
 					Kind:             apitypes.LifecycleThreadChanged,
@@ -941,48 +964,15 @@ func (s *TurnService) RotateThreadCompacted(ctx context.Context, agentID, tagIte
 			if item.Kind != itemKindPrompt {
 				return nil, fmt.Errorf("rotate thread compacted: item %s has kind %q", tagItemID, item.Kind)
 			}
-			threadID := uuid.NewString()
-			row, err := qtx.CreateThreadFromActive(ctx, db.CreateThreadFromActiveParams{
-				ThreadID:  threadID,
-				CreatedMs: stamp,
-				AgentID:   agentID,
-				Kind:      threadpage.CompactedKind,
-			})
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil, ErrUnknownAgent
-			} else if err != nil {
-				return nil, err
-			}
-			// The seeded row carries the tagged item's id as its turn:
-			// the convention every row an item mints follows, and a
-			// lone assistant row projects as a plain message.
-			rows, err := s.insertRows(ctx, qtx, agentID, threadID, stamp, []ThreadMessageDraft{{
-				ID:        uuid.NewString(),
-				Role:      apitypes.ThreadRoleAssistant,
-				Content:   summary,
-				TurnID:    tagItemID,
-				IsSummary: true,
-			}})
+			row, rows, threadID, err := s.seedCompactionSuccessor(ctx, qtx, agentID, tagItemID, summary, nil, stamp)
 			if err != nil {
 				return nil, err
 			}
-			if n, err := qtx.UpdateActiveThread(ctx, db.UpdateActiveThreadParams{
-				ActiveThreadID: threadID,
-				ID:             agentID,
-			}); err != nil {
-				return nil, err
-			} else if n == 0 {
-				return nil, ErrUnknownAgent
-			}
 			createdAt := threadpage.ISOTime(row.CreatedAt)
 			divider := threadpage.Divider(threadID, row.CreatedAt, threadpage.CompactedText)
-			// The divider and the seeded row share this transaction's
-			// stamp span; the watermark covers both, as FinishItem's
-			// row-carrying batches do. The seeded row rides the
-			// thread_changed event itself — there is no item_finished
-			// to carry it, so live and replayed clients render the
-			// summary in the new segment.
-			s.lastPersistedMs = stamp + int64(len(rows)) - 1
+			// The seeded row rides the thread_changed event itself —
+			// there is no item_finished to carry it, so live and
+			// replayed clients render the summary in the new segment.
 			return s.appendEvents(ctx, qtx, agentID, tagItemID, head, stamp, []apitypes.LifecycleEvent{{
 				Kind:             apitypes.LifecycleThreadChanged,
 				ItemID:           tagItemID,
@@ -1128,47 +1118,13 @@ func (s *TurnService) RotateThreadMidTurn(ctx context.Context, agentID, itemID, 
 				return nil, fmt.Errorf("rotate thread mid-turn: item %s retained no rows", itemID)
 			}
 
-			threadID := uuid.NewString()
-			row, err := qtx.CreateThreadFromActive(ctx, db.CreateThreadFromActiveParams{
-				ThreadID:  threadID,
-				CreatedMs: stamp,
-				AgentID:   agentID,
-				Kind:      threadpage.CompactedKind,
-			})
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil, ErrUnknownAgent
-			} else if err != nil {
-				return nil, err
+			ids := make([]string, len(turnRows[retainFrom:]))
+			for i, src := range turnRows[retainFrom:] {
+				ids[i] = src.ID
 			}
-			// The seeded row carries the running item's id as its
-			// turn, like every row the item mints, and the summary
-			// marker the range detection keys on.
-			if _, err := s.insertRows(ctx, qtx, agentID, threadID, stamp, []ThreadMessageDraft{{
-				ID:        uuid.NewString(),
-				Role:      apitypes.ThreadRoleAssistant,
-				Content:   summary,
-				TurnID:    itemID,
-				IsSummary: true,
-			}}); err != nil {
+			row, _, threadID, err := s.seedCompactionSuccessor(ctx, qtx, agentID, itemID, summary, ids, stamp)
+			if err != nil {
 				return nil, err
-			}
-			for position, src := range turnRows[retainFrom:] {
-				if err := qtx.InsertThreadContextRef(ctx, db.InsertThreadContextRefParams{
-					AgentID:   agentID,
-					ThreadID:  threadID,
-					Position:  int64(position),
-					MessageID: src.ID,
-				}); err != nil {
-					return nil, fmt.Errorf("reference row %d: %w", position, err)
-				}
-			}
-			if n, err := qtx.UpdateActiveThread(ctx, db.UpdateActiveThreadParams{
-				ActiveThreadID: threadID,
-				ID:             agentID,
-			}); err != nil {
-				return nil, err
-			} else if n == 0 {
-				return nil, ErrUnknownAgent
 			}
 			// The running item's writes follow it: the expected-source
 			// predicate makes a racing or stale rebind fail closed.
@@ -1188,9 +1144,6 @@ func (s *TurnService) RotateThreadMidTurn(ctx context.Context, agentID, itemID, 
 			if err != nil {
 				return nil, err
 			}
-			// The seeded row shares the transaction's stamp span; the
-			// watermark covers it.
-			s.lastPersistedMs = stamp
 			ev := apitypes.LifecycleEvent{
 				Kind:             apitypes.LifecycleConversationRefresh,
 				ItemID:           itemID,

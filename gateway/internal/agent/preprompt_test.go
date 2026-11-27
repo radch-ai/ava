@@ -375,6 +375,73 @@ func TestPrePromptEmptyHistorySkipsCompact(t *testing.T) {
 	require.Equal(t, apitypes.ItemCompleted, itemStates(t, sqlDB, "agent-ppempty")[prompt])
 }
 
+// A summary-only history is ineligible for the compact branch even
+// above the threshold: the pressure sits in the prompt, not the
+// history, so the one provider request is the turn itself.
+func TestPrePromptSummaryOnlyHistorySkipsCompact(t *testing.T) {
+	sqlDB, svc := contextBackend(t, "agent-ppsummary")
+	seedSummaryOnlyThread(t, sqlDB, "agent-ppsummary", "prior summary of earlier work")
+	llm := newCompactLLM(t, []string{sseChunk("answer")}, nil)
+	mgr := laneCompactManager(t, llm.url, svc, 200, nil)
+	before := activeThreadID(t, sqlDB, "agent-ppsummary")
+
+	c, sc := wsPair(t)
+	giant := strings.Repeat("enormous prompt text ", 40)
+	prompt, err := admitItem(t, mgr, "agent-ppsummary", "conn-1", sc, giant, nil, "")
+	require.NoError(t, err)
+	_, settled := readUntilMessage(t, c)
+	require.Equal(t, "answer", settled.Content)
+
+	bodies := llm.received()
+	require.Len(t, bodies, 1, "exactly one provider request: the turn")
+	require.Contains(t, bodies[0], giant)
+	require.Contains(t, bodies[0], `"stream":true`, "the one request is the turn")
+	require.Equal(t, before, activeThreadID(t, sqlDB, "agent-ppsummary"))
+	require.Equal(t, apitypes.ItemCompleted, itemStates(t, sqlDB, "agent-ppsummary")[prompt])
+	var changed int
+	require.NoError(t, sqlDB.QueryRow(
+		`SELECT COUNT(*) FROM lifecycle_journal WHERE agent_id = 'agent-ppsummary' AND kind = 'thread_changed'`).
+		Scan(&changed))
+	require.Zero(t, changed, "no summarization attempt, no rotation")
+}
+
+// A heavy history compacts once; the successor projects a lone
+// summary, so an oversized prompt cannot trigger a second rotation —
+// it proceeds unchanged and the provider's own fit error is the
+// backstop.
+func TestPrePromptCompactsOnceThenProceedsOnOversizedPrompt(t *testing.T) {
+	bulk := strings.Repeat("measurement observation record ", 140)
+	sqlDB, svc := contextBackend(t, "agent-pponce")
+	seedConversation(t, sqlDB, "agent-pponce", []seedTurn{
+		{turnID: "t1", callID: "call-1", rowID: "row-old", name: "fetch", result: bulk},
+		{turnID: "t2", callID: "call-2", rowID: "row-new", name: "fetch", result: bulk},
+	})
+	giant := strings.Repeat("enormous prompt text ", 220)
+	llm := newCompactLLM(t, []string{sseChunk("the answer")}, []string{"auto summary"})
+	mgr := laneCompactManager(t, llm.url, svc, 1500, nil)
+	before := activeThreadID(t, sqlDB, "agent-pponce")
+
+	c, sc := wsPair(t)
+	prompt, err := admitItem(t, mgr, "agent-pponce", "conn-1", sc, giant, nil, "")
+	require.NoError(t, err)
+	_, settled := readUntilMessage(t, c)
+	require.Equal(t, "the answer", settled.Content)
+
+	bodies := llm.received()
+	require.Len(t, bodies, 2, "one summarization request, then the turn")
+	require.Contains(t, bodies[0], "compressing an agent conversation",
+		"the first request was the summarization")
+	require.Contains(t, bodies[1], giant, "the prompt runs unmodified")
+
+	var successors int
+	require.NoError(t, sqlDB.QueryRow(
+		`SELECT COUNT(*) FROM threads WHERE agent_id = 'agent-pponce' AND kind = 'compact'`).
+		Scan(&successors))
+	require.Equal(t, 1, successors, "exactly one compact rotation")
+	require.NotEqual(t, before, activeThreadID(t, sqlDB, "agent-pponce"))
+	require.Equal(t, apitypes.ItemCompleted, itemStates(t, sqlDB, "agent-pponce")[prompt])
+}
+
 // A stop during the checker skips the automation once: the queue never
 // pauses, the prompt claims and runs uncompacted, nothing rotates.
 func TestPrePromptStopSkipsAutomationOnce(t *testing.T) {
